@@ -115,6 +115,9 @@ func (t *Tree) AddChild(parentID core.NodeID, msg core.Message) (*core.Node, err
 	if parent.State == core.NodeArchived {
 		return nil, fmt.Errorf("%w: %s", ErrNodeArchived, parentID)
 	}
+	if parent.State == core.NodeFeedback {
+		return nil, fmt.Errorf("%w: %s", ErrNodeIsLeaf, parentID)
+	}
 
 	now := time.Now()
 	child := &core.Node{
@@ -140,6 +143,63 @@ func (t *Tree) AddChild(parentID core.NodeID, msg core.Message) (*core.Node, err
 	return child, nil
 }
 
+// AddFeedback appends a feedback message as a permanent leaf child of the
+// given node. The child is on its own dead-end branch and cannot have
+// further children added to it.
+func (t *Tree) AddFeedback(parentID core.NodeID, msg core.Message) (*core.Node, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	parent, err := t.getNode(parentID)
+	if err != nil {
+		return nil, err
+	}
+	if parent.State == core.NodeArchived {
+		return nil, fmt.Errorf("%w: %s", ErrNodeArchived, parentID)
+	}
+	if parent.State == core.NodeFeedback {
+		return nil, fmt.Errorf("%w: %s", ErrNodeIsLeaf, parentID)
+	}
+
+	branchID := core.BranchID(fmt.Sprintf("feedback-%s", core.NewID()[:8]))
+	now := time.Now()
+	child := &core.Node{
+		ID:        core.NodeID(core.NewID()),
+		ParentID:  parentID,
+		Message:   msg,
+		State:     core.NodeFeedback,
+		Version:   1,
+		Depth:     parent.Depth + 1,
+		BranchID:  branchID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := t.walAddNode(child); err != nil {
+		return nil, err
+	}
+
+	t.nodes[child.ID] = child
+	t.children[parentID] = append(t.children[parentID], child.ID)
+	t.branches[branchID] = child.ID
+
+	return child, nil
+}
+
+// Feedback returns all feedback nodes in the tree.
+func (t *Tree) Feedback() []*core.Node {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	var nodes []*core.Node
+	for _, n := range t.nodes {
+		if n.State == core.NodeFeedback {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes
+}
+
 // Branch creates a new branch diverging from the given node.
 func (t *Tree) Branch(fromNodeID core.NodeID, name string, msg core.Message) (core.BranchID, *core.Node, error) {
 	t.mu.Lock()
@@ -151,6 +211,9 @@ func (t *Tree) Branch(fromNodeID core.NodeID, name string, msg core.Message) (co
 	}
 	if from.State == core.NodeArchived {
 		return "", nil, fmt.Errorf("%w: %s", ErrNodeArchived, fromNodeID)
+	}
+	if from.State == core.NodeFeedback {
+		return "", nil, fmt.Errorf("%w: %s", ErrNodeIsLeaf, fromNodeID)
 	}
 
 	branchID := core.BranchID(name)

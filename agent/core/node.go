@@ -89,6 +89,7 @@ const (
 	NodeActive    NodeState = iota // Normal, visible node
 	NodeArchived                   // Soft-deleted
 	NodeCompacted                  // Replaced by a summary
+	NodeFeedback                   // Permanent leaf — cannot have children
 )
 
 // Node is a single message in the conversation tree.

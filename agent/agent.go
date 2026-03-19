@@ -123,22 +123,11 @@ func (a *Agent) Tree() *tree.Tree {
 	return a.cfg.Tree
 }
 
-// Feedback records a rating and optional comment on a node in the conversation tree.
-// The feedback is persisted as a FeedbackContent block in a UserMessage appended
-// at the tip of the active branch. It is metadata — never sent to the LLM.
-func (a *Agent) Feedback(targetNodeID core.NodeID, rating core.Rating, comment string, branch ...core.BranchID) (*core.Node, error) {
-	tr := a.cfg.Tree
-
-	b := tr.Active()
-	if len(branch) > 0 {
-		b = branch[0]
-	}
-
-	tip, err := tr.Tip(b)
-	if err != nil {
-		return nil, err
-	}
-
+// Feedback records a rating and optional comment on a node in the conversation
+// tree. The feedback is attached as a permanent leaf branching off the target
+// node — it lives on its own dead-end branch, is never flattened into LLM
+// messages, and cannot have children.
+func (a *Agent) Feedback(targetNodeID core.NodeID, rating core.Rating, comment string) (*core.Node, error) {
 	msg := core.UserMessage{Content: []core.UserContent{
 		core.FeedbackContent{
 			TargetNodeID: string(targetNodeID),
@@ -147,7 +136,7 @@ func (a *Agent) Feedback(targetNodeID core.NodeID, rating core.Rating, comment s
 		},
 	}}
 
-	return tr.AddChild(tip.ID, msg)
+	return a.cfg.Tree.AddFeedback(targetNodeID, msg)
 }
 
 // FeedbackEntry is a single piece of feedback extracted from the tree.
@@ -158,28 +147,20 @@ type FeedbackEntry struct {
 	Comment      string
 }
 
-// FeedbackSummary collects all feedback entries on the given branch.
-func (a *Agent) FeedbackSummary(branch ...core.BranchID) ([]FeedbackEntry, error) {
-	b := a.cfg.Tree.Active()
-	if len(branch) > 0 {
-		b = branch[0]
-	}
-
-	messages, err := a.cfg.Tree.FlattenBranchAnnotated(b)
-	if err != nil {
-		return nil, err
-	}
+// FeedbackSummary collects all feedback entries across the entire tree.
+func (a *Agent) FeedbackSummary() []FeedbackEntry {
+	nodes := a.cfg.Tree.Feedback()
 
 	var entries []FeedbackEntry
-	for _, am := range messages {
-		um, ok := am.Message.(core.UserMessage)
+	for _, n := range nodes {
+		um, ok := n.Message.(core.UserMessage)
 		if !ok {
 			continue
 		}
 		for _, c := range um.Content {
 			if fb, ok := c.(core.FeedbackContent); ok {
 				entries = append(entries, FeedbackEntry{
-					NodeID:       am.NodeID,
+					NodeID:       n.ID,
 					TargetNodeID: core.NodeID(fb.TargetNodeID),
 					Rating:       fb.Rating,
 					Comment:      fb.Comment,
@@ -187,7 +168,7 @@ func (a *Agent) FeedbackSummary(branch ...core.BranchID) ([]FeedbackEntry, error
 			}
 		}
 	}
-	return entries, nil
+	return entries
 }
 
 // Invoke starts the agent loop on the active branch and returns a stream of deltas.

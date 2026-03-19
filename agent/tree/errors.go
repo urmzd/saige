@@ -10,5 +10,6 @@ var (
 	ErrCheckpointNotFound = errors.New("checkpoint not found")
 	ErrBranchNotFound     = errors.New("branch not found")
 	ErrRootImmutable      = errors.New("root node is immutable")
+	ErrNodeIsLeaf         = errors.New("node is a permanent leaf and cannot have children")
 	ErrInvalidRoot        = errors.New("root must be a SystemMessage")
 )

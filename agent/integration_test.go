@@ -3188,7 +3188,7 @@ func TestFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Leave positive feedback.
+	// Leave positive feedback — creates a dead-end branch off the tip.
 	fbNode, err := agent.Feedback(tip.ID, core.RatingPositive, "Great response!")
 	if err != nil {
 		t.Fatal(err)
@@ -3196,100 +3196,93 @@ func TestFeedback(t *testing.T) {
 	if fbNode == nil {
 		t.Fatal("expected feedback node")
 	}
+	if fbNode.State != core.NodeFeedback {
+		t.Errorf("expected NodeFeedback state, got %d", fbNode.State)
+	}
 
-	// Leave negative feedback on the same node.
+	// Leave a second feedback on the same node — both are siblings.
 	_, err = agent.Feedback(tip.ID, core.RatingNegative, "Actually, not helpful")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Collect feedback summary.
-	entries, err := agent.FeedbackSummary()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Collect feedback summary — scans the whole tree.
+	entries := agent.FeedbackSummary()
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 feedback entries, got %d", len(entries))
 	}
 
-	if entries[0].Rating != core.RatingPositive {
-		t.Errorf("expected positive rating, got %d", entries[0].Rating)
+	// Verify both ratings are present (order is non-deterministic from map iteration).
+	ratings := map[core.Rating]string{}
+	for _, e := range entries {
+		ratings[e.Rating] = e.Comment
+		if e.TargetNodeID != tip.ID {
+			t.Errorf("expected target %s, got %s", tip.ID, e.TargetNodeID)
+		}
 	}
-	if entries[0].Comment != "Great response!" {
-		t.Errorf("expected comment 'Great response!', got %q", entries[0].Comment)
+	if ratings[core.RatingPositive] != "Great response!" {
+		t.Errorf("missing positive feedback")
 	}
-	if entries[0].TargetNodeID != tip.ID {
-		t.Errorf("expected target %s, got %s", tip.ID, entries[0].TargetNodeID)
-	}
-
-	if entries[1].Rating != core.RatingNegative {
-		t.Errorf("expected negative rating, got %d", entries[1].Rating)
+	if ratings[core.RatingNegative] != "Actually, not helpful" {
+		t.Errorf("missing negative feedback")
 	}
 }
 
-func TestFeedbackStrippedFromLLM(t *testing.T) {
-	provider := &toolCallProvider{
-		toolName: "greet",
-		toolID:   "tc-1",
-		toolArgs: map[string]any{"name": "World"},
-		response: "Done",
-	}
-
-	greetTool := &core.ToolFunc{
-		Def: core.ToolDef{
-			Name: "greet",
-			Parameters: core.ParameterSchema{
-				Type: "object",
-				Properties: map[string]core.PropertyDef{
-					"name": {Type: "string"},
-				},
-			},
-		},
-		Fn: func(_ context.Context, args map[string]any) (string, error) {
-			return fmt.Sprintf("Hello, %v!", args["name"]), nil
-		},
-	}
-
+func TestFeedbackIsPermanentLeaf(t *testing.T) {
 	agent := NewAgent(AgentConfig{
 		Name:         "test",
 		SystemPrompt: "Hello",
-		Provider:     provider,
-		Tools:        core.NewToolRegistry(greetTool),
+		Provider:     &mockProvider{response: "response"},
 	})
 
-	// First conversation turn.
 	stream := agent.Invoke(context.Background(), []core.Message{
-		core.NewUserMessage("Greet someone"),
+		core.NewUserMessage("Hi"),
 	})
 	collectDeltas(stream)
 	stream.Wait()
 
-	// Attach feedback.
+	tip, _ := agent.Tree().Tip(agent.Tree().Active())
+	fbNode, _ := agent.Feedback(tip.ID, core.RatingPositive, "good")
+
+	// Cannot add children to a feedback node.
+	_, err := agent.Tree().AddChild(fbNode.ID, core.NewUserMessage("nope"))
+	if err == nil {
+		t.Fatal("expected error adding child to feedback node")
+	}
+
+	// Cannot branch from a feedback node.
+	_, _, err = agent.Tree().Branch(fbNode.ID, "nope", core.NewUserMessage("nope"))
+	if err == nil {
+		t.Fatal("expected error branching from feedback node")
+	}
+}
+
+func TestFeedbackNotInFlatten(t *testing.T) {
+	agent := NewAgent(AgentConfig{
+		Name:         "test",
+		SystemPrompt: "Hello",
+		Provider:     &mockProvider{response: "response"},
+	})
+
+	stream := agent.Invoke(context.Background(), []core.Message{
+		core.NewUserMessage("Hi"),
+	})
+	collectDeltas(stream)
+	stream.Wait()
+
 	tip, _ := agent.Tree().Tip(agent.Tree().Active())
 	agent.Feedback(tip.ID, core.RatingPositive, "nice")
 
-	// Verify feedback is in the tree but stripped from LLM messages.
-	messages, _ := agent.Tree().FlattenBranch(agent.Tree().Active())
-	hasFeedback := false
+	// Feedback is on a dead-end branch — should NOT appear in the main branch flatten.
+	messages, err := agent.Tree().FlattenBranch(agent.Tree().Active())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, msg := range messages {
 		if um, ok := msg.(core.UserMessage); ok {
 			for _, c := range um.Content {
 				if _, ok := c.(core.FeedbackContent); ok {
-					hasFeedback = true
-				}
-			}
-		}
-	}
-	if !hasFeedback {
-		t.Fatal("expected feedback in tree messages")
-	}
-
-	stripped := stripMetadata(messages)
-	for _, msg := range stripped {
-		if um, ok := msg.(core.UserMessage); ok {
-			for _, c := range um.Content {
-				if _, ok := c.(core.FeedbackContent); ok {
-					t.Fatal("feedback should be stripped from LLM messages")
+					t.Fatal("feedback should not appear in main branch flatten")
 				}
 			}
 		}
