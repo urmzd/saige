@@ -7,8 +7,8 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | Package | Role |
 |---------|------|
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, provider adapters |
-| `agent/core/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces |
-| `agent/tree/` | Conversation tree with branching, compaction, WAL |
+| `agent/core/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
+| `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
 | `agent/provider/` | Ollama, OpenAI, Anthropic, Google adapters |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |

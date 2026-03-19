@@ -2,7 +2,7 @@
 
 > Unified Go SDK for AI agents, knowledge graphs, and RAG pipelines.
 
-Combines three packages: agent (streaming AI agent loop with tool dispatch and provider adapters), kg (knowledge graph construction with SurrealDB), and rag (multi-modal RAG pipelines with chunking, retrieval, and reranking).
+Combines three packages: agent (streaming AI agent loop with tool dispatch, provider adapters, and RLHF feedback), kg (knowledge graph construction with SurrealDB), and rag (multi-modal RAG pipelines with chunking, retrieval, and reranking).
 
 ## Docs
 
@@ -12,6 +12,6 @@ Combines three packages: agent (streaming AI agent loop with tool dispatch and p
 
 ## Key Files
 
-- Agent: agent/agent.go, agent/core/provider.go, agent/core/tool.go, agent/core/message.go, agent/core/delta.go
+- Agent: agent/agent.go, agent/core/provider.go, agent/core/tool.go, agent/core/message.go, agent/core/delta.go, agent/core/content.go, agent/core/node.go
 - KG: kg/config.go, kg/kgtypes/kgtypes.go, kg/surrealdb/store.go
 - RAG: rag/config.go, rag/ragtypes/ragtypes.go, rag/internal/pipeline/pipeline.go

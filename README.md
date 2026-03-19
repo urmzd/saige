@@ -34,6 +34,7 @@ These concerns are deeply interconnected — RAG pipelines benefit from knowledg
 | Manual entity extraction | LLM-powered extraction pipeline with fuzzy dedup |
 | Fragmented retrieval | Vector + BM25 + graph retrieval with RRF fusion |
 | No reranking | MMR diversity + cross-encoder reranking built in |
+| No feedback loop | RLHF-ready feedback as permanent leaf nodes in the conversation tree |
 | Provider lock-in | Ollama, OpenAI, Anthropic, Google — one interface |
 
 ## Quick Start
@@ -125,7 +126,7 @@ fmt.Println(result.AssembledContext.Prompt) // context with citations
 
 ## Table of Contents
 
-- [agent — AI Agent Framework](#agent--ai-agent-framework)
+- [agent — AI Agent Framework](#agent--ai-agent-framework) (providers, deltas, tools, sub-agents, markers, feedback/RLHF, compaction, tree, TUI)
 - [kg — Knowledge Graph SDK](#kg--knowledge-graph-sdk)
 - [rag — RAG Pipeline SDK](#rag--rag-pipeline-sdk)
 - [Examples](#examples)
@@ -169,7 +170,7 @@ Three roles. Tool results are content blocks, not a separate role.
 
 ### Deltas
 
-14 concrete types across four categories — LLM-side, execution-side, marker, and metadata:
+15 concrete types across five categories — LLM-side, execution-side, marker, feedback, and metadata:
 
 | Type | Category | Purpose |
 |------|----------|---------|
@@ -183,6 +184,7 @@ Three roles. Tool results are content blocks, not a separate role.
 | `ToolExecDelta` | Execution | Streaming delta from tool/sub-agent |
 | `ToolExecEndDelta` | Execution | Tool finished |
 | `MarkerDelta` | Marker | Tool gated pending approval |
+| `FeedbackDelta` | Feedback | RLHF rating recorded on a node |
 | `UsageDelta` | Metadata | Token usage + wall-clock timing |
 | `ErrorDelta` | Terminal | Provider or tool error |
 | `DoneDelta` | Terminal | Stream complete |
@@ -288,6 +290,25 @@ tr.Branch(nodeID, "experiment", msg)
 tr.Checkpoint(branchID, "before-refactor")
 tr.Rewind(checkpointID)
 ```
+
+### Feedback (RLHF)
+
+Attach positive/negative ratings and comments to any node in the conversation tree. Feedback is stored as permanent leaf nodes branching off the target — never sent to the LLM, available for post-analysis and training.
+
+```go
+// Rate an assistant response.
+tip, _ := a.Tree().Tip(a.Tree().Active())
+a.Feedback(tip.ID, core.RatingPositive, "Clear and helpful")
+a.Feedback(tip.ID, core.RatingNegative, "Too verbose")
+
+// Collect all feedback across the tree.
+for _, entry := range a.FeedbackSummary() {
+    fmt.Printf("node=%s rating=%d comment=%q\n",
+        entry.TargetNodeID, entry.Rating, entry.Comment)
+}
+```
+
+Feedback nodes have `NodeFeedback` state — they cannot have children added, forming dead-end branches that don't interfere with the conversation flow. During `Replay`, feedback emits `FeedbackDelta` for consumers that track ratings.
 
 ### File Pipeline
 
@@ -540,8 +561,8 @@ npx skills add urmzd/graph-agent-dev-kit
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `agent/` | `agent.go`, `stream.go`, `subagent.go`, `aggregator.go`, `runner.go` | Agent loop, streaming, sub-agent delegation |
-| `agent/core/` | `message.go`, `delta.go`, `content.go`, `provider.go`, `tool.go`, `errors.go`, `marker.go`, `compactor.go` | Sealed types, interfaces, error classification |
-| `agent/tree/` | `tree.go`, `flatten.go`, `compact.go`, `diff.go` | Branching conversation tree |
+| `agent/core/` | `message.go`, `delta.go`, `content.go`, `provider.go`, `tool.go`, `errors.go`, `marker.go`, `compactor.go`, `node.go` | Sealed types, interfaces, error classification, feedback |
+| `agent/tree/` | `tree.go`, `flatten.go`, `compact.go`, `diff.go` | Branching conversation tree with feedback leaf nodes |
 | `agent/provider/` | `ollama/`, `openai/`, `anthropic/`, `google/`, `retry/`, `fallback/` | LLM adapters and resilience wrappers |
 | `agent/tui/` | `stream.go`, `styles.go`, `runner.go` | Bubbletea + verbose streaming UI |
 | `agent/agenttest/` | `agenttest.go` | ScriptedProvider, MockTool, assertions |

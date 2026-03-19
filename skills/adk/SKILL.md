@@ -1,38 +1,39 @@
 ---
 name: adk
-description: Build streaming LLM agent loops in Go with typed deltas, tool execution, context compaction, and sub-agent delegation. Use when building AI agents, integrating LLM providers, or implementing tool-use patterns.
+description: Build streaming LLM agent loops in Go with typed deltas, tool execution, context compaction, sub-agent delegation, and RLHF feedback. Use when building AI agents, integrating LLM providers, or implementing tool-use patterns.
 argument-hint: [task]
 ---
 
 # adk
 
-Build LLM agent loops using `adk`.
+Build LLM agent loops using `agent`.
 
 ## Quick Start
 
 ```go
 import (
-    "github.com/urmzd/adk"
-    "github.com/urmzd/adk/ollama"
+    "github.com/urmzd/graph-agent-dev-kit/agent"
+    "github.com/urmzd/graph-agent-dev-kit/agent/core"
+    "github.com/urmzd/graph-agent-dev-kit/agent/provider/ollama"
 )
 
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
 adapter := ollama.NewAdapter(client)
 
-agent := adk.NewAgent(adk.AgentConfig{
+a := agent.NewAgent(agent.AgentConfig{
     Name:         "assistant",
     SystemPrompt: "You are a helpful assistant.",
     Provider:     adapter,
-    Tools:        adk.NewToolRegistry(),
+    Tools:        core.NewToolRegistry(),
     MaxIter:      10,
 })
 
-stream := agent.Invoke(ctx, []adk.Message{
-    adk.NewUserMessage("Hello!"),
+stream := a.Invoke(ctx, []core.Message{
+    core.NewUserMessage("Hello!"),
 })
 
 for delta := range stream.Deltas() {
-    if d, ok := delta.(adk.TextContentDelta); ok {
+    if d, ok := delta.(core.TextContentDelta); ok {
         fmt.Print(d.Content)
     }
 }
@@ -46,36 +47,33 @@ for delta := range stream.Deltas() {
 | **Tools** | Register tools via `ToolRegistry`; use `ToolFunc` for inline definitions |
 | **Compaction** | Configure via `CompactCfg: &core.CompactConfig{Strategy: core.CompactNone\|Sliding\|Summarize}` |
 | **Sub-agents** | Delegate tasks to child agents with their own providers and tools |
-| **SSE Bridge** | `WriteSSE(w, flusher, stream)` to stream deltas over HTTP |
 | **File Upload** | Attach files via `core.NewFileMessage(uri)` or `core.NewUserMessageWithFiles(text, files...)`; URIs are resolved by `Resolvers` and extracted by `Extractors` in `AgentConfig` |
 | **Embeddings** | `core.Embedder` interface; `ollama.NewEmbedder(client)` for Ollama-backed vector embeddings |
+| **Feedback** | `a.Feedback(nodeID, core.RatingPositive, "comment")` — attach RLHF ratings as permanent leaf nodes |
 
-## Sending Files
+## Feedback (RLHF)
 
 ```go
-import "github.com/urmzd/adk/core"
+// Rate an assistant response — creates a dead-end branch off the target node.
+tip, _ := a.Tree().Tip(a.Tree().Active())
+a.Feedback(tip.ID, core.RatingPositive, "Clear and helpful")
 
-// Single file from a URI — media type inferred from extension.
-msg := core.NewFileMessage("file:///path/to/image.png")
-
-// Text prompt combined with one or more file attachments.
-msg = core.NewUserMessageWithFiles("Describe these images.",
-    core.FileContent{URI: "file:///img1.jpg", MediaType: core.MediaJPEG},
-    core.FileContent{URI: "https://example.com/chart.png"},
-)
-
-stream := agent.Invoke(ctx, []core.Message{msg})
+// Collect all feedback across the tree.
+for _, entry := range a.FeedbackSummary() {
+    fmt.Printf("node=%s rating=%d comment=%q\n",
+        entry.TargetNodeID, entry.Rating, entry.Comment)
+}
 ```
 
 ## Adding a Tool
 
 ```go
-tool := &adk.ToolFunc{
-    Def: adk.ToolDef{
+tool := &core.ToolFunc{
+    Def: core.ToolDef{
         Name: "greet", Description: "Greet a person",
-        Parameters: adk.ParameterSchema{
+        Parameters: core.ParameterSchema{
             Type: "object", Required: []string{"name"},
-            Properties: map[string]adk.PropertyDef{
+            Properties: map[string]core.PropertyDef{
                 "name": {Type: "string", Description: "Person's name"},
             },
         },
@@ -84,5 +82,5 @@ tool := &adk.ToolFunc{
         return fmt.Sprintf("Hello, %s!", args["name"]), nil
     },
 }
-registry := adk.NewToolRegistry(tool)
+registry := core.NewToolRegistry(tool)
 ```
