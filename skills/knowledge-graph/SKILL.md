@@ -4,29 +4,29 @@ description: Build and query knowledge graphs with SurrealDB — ingest episodes
 argument-hint: [query]
 ---
 
-# kgdk
+# knowledge-graph
 
-Build and query knowledge graphs using `kgdk`.
+Build and query knowledge graphs using `saige/knowledge`.
 
 ## Quick Start
 
 ```go
 import (
-    kg "github.com/urmzd/kgdk"
-    "github.com/urmzd/adk/provider/ollama"
+    "github.com/urmzd/saige/knowledge"
+    "github.com/urmzd/saige/agent/provider/ollama"
 )
 
 // Connect
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
-graph, _ := kg.NewGraph(ctx,
-    kg.WithSurrealDB("ws://localhost:8000", "default", "knowledge", "root", "root"),
-    kg.WithExtractor(kg.NewOllamaExtractor(client)),
-    kg.WithEmbedder(kg.NewOllamaEmbedder(client)),
+graph, _ := knowledge.NewGraph(ctx,
+    knowledge.WithSurrealDB("ws://localhost:8000", "default", "knowledge", "root", "root"),
+    knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),
+    knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)),
 )
 defer graph.Close(ctx)
 
 // Ingest
-graph.IngestEpisode(ctx, &kg.EpisodeInput{
+graph.IngestEpisode(ctx, &knowledge.EpisodeInput{
     Name: "notes", Body: "Alice presented the roadmap.", Source: "meeting",
 })
 
@@ -48,8 +48,8 @@ facts, _ := graph.SearchFacts(ctx, "roadmap")
 ## Ontology
 
 ```go
-graph.ApplyOntology(ctx, &kg.Ontology{
-    EntityTypes:   []kg.EntityTypeDef{{Name: "Person", Description: "A human"}},
-    RelationTypes: []kg.RelationTypeDef{{Name: "works_on", SourceType: "Person", TargetType: "Project"}},
+graph.ApplyOntology(ctx, &knowledge.Ontology{
+    EntityTypes:   []knowledge.EntityTypeDef{{Name: "Person", Description: "A human"}},
+    RelationTypes: []knowledge.RelationTypeDef{{Name: "works_on", SourceType: "Person", TargetType: "Project"}},
 })
 ```
