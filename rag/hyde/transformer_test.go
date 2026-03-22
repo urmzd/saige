@@ -3,18 +3,19 @@ package hyde_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/urmzd/graph-agent-dev-kit/rag/hyde"
 )
 
 type mockLLM struct {
-	callCount int
+	callCount atomic.Int32
 }
 
 func (m *mockLLM) Generate(_ context.Context, prompt string) (string, error) {
-	m.callCount++
-	return fmt.Sprintf("hypothetical answer %d", m.callCount), nil
+	n := m.callCount.Add(1)
+	return fmt.Sprintf("hypothetical answer %d", n), nil
 }
 
 func TestHyDETransformer(t *testing.T) {
@@ -38,8 +39,8 @@ func TestHyDETransformer(t *testing.T) {
 		t.Errorf("first query should be original, got %q", queries[0])
 	}
 
-	if llm.callCount != 3 {
-		t.Errorf("expected 3 LLM calls, got %d", llm.callCount)
+	if llm.callCount.Load() != 3 {
+		t.Errorf("expected 3 LLM calls, got %d", llm.callCount.Load())
 	}
 
 	// Each hypothetical should be different.

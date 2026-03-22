@@ -15,6 +15,12 @@
   <a href="https://github.com/urmzd/graph-agent-dev-kit/actions/workflows/ci.yml"><img src="https://github.com/urmzd/graph-agent-dev-kit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
+## Showcase
+
+<p align="center">
+  <img src="showcase/agent-basic.png" alt="Basic agent demo" width="600">
+</p>
+
 ## Why?
 
 Building AI applications typically requires wiring together three separate concerns:

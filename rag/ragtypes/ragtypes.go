@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/urmzd/graph-agent-dev-kit/rag/tokenizer"
 )
 
 // --- Errors ---
@@ -332,8 +334,7 @@ func (a *DefaultContextAssembler) Assemble(_ context.Context, query string, hits
 		citation := fmt.Sprintf("[%d]", i+1)
 		text := hit.Variant.Text
 
-		// Rough token estimate: ~4 chars per token.
-		tokens := len(text) / 4
+		tokens := tokenizer.CountTokens(text)
 		if a.MaxTokens > 0 && tokenCount+tokens > a.MaxTokens {
 			break
 		}

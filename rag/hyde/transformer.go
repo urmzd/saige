@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/urmzd/graph-agent-dev-kit/rag/ragtypes"
 )
 
@@ -36,17 +38,27 @@ func New(cfg Config) *Transformer {
 
 // Transform generates hypothetical documents and returns the original query plus all hypotheticals.
 func (t *Transformer) Transform(ctx context.Context, query string) ([]string, error) {
-	queries := make([]string, 0, 1+t.cfg.NumHypothetical)
-	queries = append(queries, query)
-
 	prompt := fmt.Sprintf(t.cfg.PromptTemplate, query)
-	for i := 0; i < t.cfg.NumHypothetical; i++ {
-		hypothetical, err := t.cfg.LLM.Generate(ctx, prompt)
-		if err != nil {
-			return nil, fmt.Errorf("generate hypothetical %d: %w", i, err)
-		}
-		queries = append(queries, hypothetical)
+	hypotheticals := make([]string, t.cfg.NumHypothetical)
+
+	g, gctx := errgroup.WithContext(ctx)
+	for i := range t.cfg.NumHypothetical {
+		g.Go(func() error {
+			h, err := t.cfg.LLM.Generate(gctx, prompt)
+			if err != nil {
+				return fmt.Errorf("generate hypothetical %d: %w", i, err)
+			}
+			hypotheticals[i] = h
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	queries := make([]string, 0, 1+t.cfg.NumHypothetical)
+	queries = append(queries, query)
+	queries = append(queries, hypotheticals...)
 	return queries, nil
 }

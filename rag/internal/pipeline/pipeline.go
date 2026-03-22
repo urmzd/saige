@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"sort"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/urmzd/graph-agent-dev-kit/kg/kgtypes"
 	"github.com/urmzd/graph-agent-dev-kit/rag/ragtypes"
@@ -179,20 +182,29 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 		MetadataFilters: cfg.MetadataFilters,
 	}
 
-	// Collect per-retriever ranked lists for RRF.
+	// Collect per-retriever ranked lists for RRF (parallel).
 	type rankedList struct {
 		hits []ragtypes.SearchHit
 	}
-	var allLists []rankedList
+	totalPairs := len(p.cfg.Retrievers) * len(queries)
+	allLists := make([]rankedList, totalPairs)
 
-	for _, retriever := range p.cfg.Retrievers {
-		for _, q := range queries {
-			hits, err := retriever.Retrieve(ctx, q, searchOpts)
-			if err != nil {
-				return nil, fmt.Errorf("retrieve: %w", err)
-			}
-			allLists = append(allLists, rankedList{hits: hits})
+	g, gctx := errgroup.WithContext(ctx)
+	for ri, retriever := range p.cfg.Retrievers {
+		for qi, q := range queries {
+			idx := ri*len(queries) + qi
+			g.Go(func() error {
+				hits, err := retriever.Retrieve(gctx, q, searchOpts)
+				if err != nil {
+					return err
+				}
+				allLists[idx] = rankedList{hits: hits}
+				return nil
+			})
 		}
+	}
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("retrieve: %w", err)
 	}
 
 	// Step 3: RRF merge + dedup by variant UUID.
@@ -219,11 +231,9 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 	}
 
 	// Sort by RRF score descending.
-	for i := 1; i < len(merged); i++ {
-		for j := i; j > 0 && merged[j].Score > merged[j-1].Score; j-- {
-			merged[j], merged[j-1] = merged[j-1], merged[j]
-		}
-	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].Score > merged[j].Score
+	})
 
 	// Step 4: MinScore filter (after fusion).
 	if cfg.MinScore > 0 {

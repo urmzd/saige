@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/urmzd/graph-agent-dev-kit/rag/ragtypes"
+	"github.com/urmzd/graph-agent-dev-kit/rag/tokenizer"
 )
 
 // Config holds recursive chunker parameters.
@@ -40,7 +41,7 @@ func NewRecursive(cfg *Config) *RecursiveChunker {
 }
 
 func estimateTokens(text string) int {
-	return len(text) / 4
+	return tokenizer.CountTokens(text)
 }
 
 // Chunk splits long sections in the document into smaller ones.
@@ -143,11 +144,23 @@ func (c *RecursiveChunker) splitRecursive(text string, sepIdx int) []string {
 }
 
 func (c *RecursiveChunker) hardSplit(text string) []string {
-	maxChars := c.cfg.MaxTokens * 4
 	var chunks []string
-	for len(text) > maxChars {
-		chunks = append(chunks, text[:maxChars])
-		text = text[maxChars:]
+	for estimateTokens(text) > c.cfg.MaxTokens {
+		// Binary search for the split point that yields MaxTokens tokens.
+		lo, hi := 0, len(text)
+		for lo < hi {
+			mid := (lo + hi + 1) / 2
+			if estimateTokens(text[:mid]) <= c.cfg.MaxTokens {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
+		}
+		if lo == 0 {
+			lo = 1 // ensure progress
+		}
+		chunks = append(chunks, text[:lo])
+		text = text[lo:]
 	}
 	if text != "" {
 		chunks = append(chunks, text)
@@ -160,17 +173,25 @@ func (c *RecursiveChunker) applyOverlap(chunks []string) []string {
 		return chunks
 	}
 
-	overlapChars := c.cfg.Overlap * 4
 	result := make([]string, len(chunks))
 	result[0] = chunks[0]
 
 	for i := 1; i < len(chunks); i++ {
 		prev := chunks[i-1]
-		overlapText := ""
-		if len(prev) > overlapChars {
-			overlapText = prev[len(prev)-overlapChars:]
-		} else {
-			overlapText = prev
+		// Find the suffix of prev that is approximately Overlap tokens.
+		overlapText := prev
+		if estimateTokens(prev) > c.cfg.Overlap {
+			// Binary search for start position yielding Overlap tokens from suffix.
+			lo, hi := 0, len(prev)
+			for lo < hi {
+				mid := (lo + hi) / 2
+				if estimateTokens(prev[mid:]) > c.cfg.Overlap {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			overlapText = prev[lo:]
 		}
 		result[i] = overlapText + chunks[i]
 	}

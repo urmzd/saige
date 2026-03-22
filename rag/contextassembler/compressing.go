@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/urmzd/graph-agent-dev-kit/rag/ragtypes"
+	"github.com/urmzd/graph-agent-dev-kit/rag/tokenizer"
 )
 
 // CompressingAssembler uses an LLM to extract query-relevant sentences from each hit
@@ -32,23 +35,39 @@ Text: %s
 Relevant sentences:`
 
 // Assemble compresses each hit's text via the LLM and builds context with citations.
+// Phase 1 compresses all hits in parallel; phase 2 applies the token budget sequentially.
 func (a *CompressingAssembler) Assemble(ctx context.Context, query string, hits []ragtypes.SearchHit) (*ragtypes.AssembledContext, error) {
+	// Phase 1: Parallel LLM compression.
+	compressedTexts := make([]string, len(hits))
+	g, gctx := errgroup.WithContext(ctx)
+
+	for i, hit := range hits {
+		prompt := fmt.Sprintf(compressionPrompt, query, hit.Variant.Text)
+		g.Go(func() error {
+			text, err := a.LLM.Generate(gctx, prompt)
+			if err != nil {
+				return fmt.Errorf("compress hit %d: %w", i, err)
+			}
+			compressedTexts[i] = text
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Phase 2: Sequential token budget assembly.
 	var blocks []ragtypes.ContextBlock
 	var parts []string
 	tokenCount := 0
 
-	for i, hit := range hits {
-		prompt := fmt.Sprintf(compressionPrompt, query, hit.Variant.Text)
-		compressed, err := a.LLM.Generate(ctx, prompt)
-		if err != nil {
-			return nil, fmt.Errorf("compress hit %d: %w", i, err)
-		}
-
+	for i, compressed := range compressedTexts {
 		if compressed == "" || compressed == "N/A" {
 			continue
 		}
 
-		tokens := len(compressed) / 4
+		tokens := tokenizer.CountTokens(compressed)
 		if a.MaxTokens > 0 && tokenCount+tokens > a.MaxTokens {
 			break
 		}
@@ -58,12 +77,12 @@ func (a *CompressingAssembler) Assemble(ctx context.Context, query string, hits 
 		blocks = append(blocks, ragtypes.ContextBlock{
 			Text:       compressed,
 			Citation:   citation,
-			Provenance: hit.Provenance, // Original provenance preserved.
+			Provenance: hits[i].Provenance,
 		})
 
-		source := hit.Provenance.SourceURI
+		source := hits[i].Provenance.SourceURI
 		if source == "" {
-			source = hit.Provenance.DocumentTitle
+			source = hits[i].Provenance.DocumentTitle
 		}
 		parts = append(parts, fmt.Sprintf("%s %s (Source: %s)", citation, compressed, source))
 	}
