@@ -53,7 +53,7 @@ go get github.com/urmzd/saige
 ```go
 import (
     "github.com/urmzd/saige/agent"
-    "github.com/urmzd/saige/agent/core"
+    "github.com/urmzd/saige/agent/types"
     "github.com/urmzd/saige/agent/provider/ollama"
 )
 
@@ -62,13 +62,13 @@ a := agent.NewAgent(agent.AgentConfig{
     Name:         "assistant",
     SystemPrompt: "You are a helpful assistant.",
     Provider:     ollama.NewAdapter(client),
-    Tools:        core.NewToolRegistry(myTool),
+    Tools:        types.NewToolRegistry(myTool),
 })
 
-stream := a.Invoke(ctx, []core.Message{core.NewUserMessage("Hello!")})
+stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("Hello!")})
 for delta := range stream.Deltas() {
     switch d := delta.(type) {
-    case core.TextContentDelta:
+    case types.TextContentDelta:
         fmt.Print(d.Content)
     }
 }
@@ -78,20 +78,20 @@ for delta := range stream.Deltas() {
 
 ```go
 import (
-    "github.com/urmzd/saige/kg"
-    "github.com/urmzd/saige/kg/kgtypes"
+    "github.com/urmzd/saige/knowledge"
+    "github.com/urmzd/saige/knowledge/types"
     "github.com/urmzd/saige/agent/provider/ollama"
 )
 
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
-graph, _ := kg.NewGraph(ctx,
-    kg.WithSurrealDB("ws://localhost:8000", "default", "knowledge", "root", "root"),
-    kg.WithExtractor(kg.NewOllamaExtractor(client)),
-    kg.WithEmbedder(kg.NewOllamaEmbedder(client)),
+graph, _ := knowledge.NewGraph(ctx,
+    knowledge.WithSurrealDB("ws://localhost:8000", "default", "knowledge", "root", "root"),
+    knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),
+    knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)),
 )
 defer graph.Close(ctx)
 
-graph.IngestEpisode(ctx, &kgtypes.EpisodeInput{
+graph.IngestEpisode(ctx, &types.EpisodeInput{
     Name: "meeting-notes",
     Body: "Alice presented the Q4 roadmap. Bob raised concerns about the timeline.",
 })
@@ -104,7 +104,7 @@ results, _ := graph.SearchFacts(ctx, "Who presented the roadmap?")
 ```go
 import (
     "github.com/urmzd/saige/rag"
-    "github.com/urmzd/saige/rag/ragtypes"
+    "github.com/urmzd/saige/rag/types"
     "github.com/urmzd/saige/rag/memstore"
 )
 
@@ -118,12 +118,12 @@ pipe, _ := rag.NewPipeline(
 )
 defer pipe.Close(ctx)
 
-pipe.Ingest(ctx, &ragtypes.RawDocument{
+pipe.Ingest(ctx, &types.RawDocument{
     SourceURI: "https://example.com/paper.pdf",
     Data:      pdfBytes,
 })
 
-result, _ := pipe.Search(ctx, "attention mechanism", ragtypes.WithLimit(5))
+result, _ := pipe.Search(ctx, "attention mechanism", types.WithLimit(5))
 fmt.Println(result.AssembledContext.Prompt) // context with citations
 ```
 
@@ -197,14 +197,14 @@ Three roles. Tool results are content blocks, not a separate role.
 ### Tools
 
 ```go
-tool := &core.ToolFunc{
-    Def: core.ToolDef{
+tool := &types.ToolFunc{
+    Def: types.ToolDef{
         Name:        "greet",
         Description: "Greet a person",
-        Parameters: core.ParameterSchema{
+        Parameters: types.ParameterSchema{
             Type:     "object",
             Required: []string{"name"},
-            Properties: map[string]core.PropertyDef{
+            Properties: map[string]types.PropertyDef{
                 "name": {Type: "string", Description: "Person's name"},
             },
         },
@@ -230,7 +230,7 @@ a := agent.NewAgent(agent.AgentConfig{
             Description:  "Searches the web for information",
             SystemPrompt: "You are a research assistant.",
             Provider:     adapter,
-            Tools:        core.NewToolRegistry(searchTool),
+            Tools:        types.NewToolRegistry(searchTool),
         },
     },
 })
@@ -241,8 +241,8 @@ a := agent.NewAgent(agent.AgentConfig{
 Gate tool execution pending consumer approval:
 
 ```go
-safeTool := core.WithMarkers(myTool,
-    core.Marker{Kind: "human_approval", Message: "This modifies production data."},
+safeTool := types.WithMarkers(myTool,
+    types.Marker{Kind: "human_approval", Message: "This modifies production data."},
 )
 
 // Consumer resolves:
@@ -254,7 +254,7 @@ stream.ResolveMarker(d.ToolCallID, approved, nil)
 Constrain LLM responses to a JSON schema:
 
 ```go
-schema := core.SchemaFrom[MyResponse]()
+schema := types.SchemaFrom[MyResponse]()
 a := agent.NewAgent(agent.AgentConfig{
     Provider:       adapter,
     ResponseSchema: schema,
@@ -303,8 +303,8 @@ Attach positive/negative ratings and comments to any node in the conversation tr
 ```go
 // Rate an assistant response.
 tip, _ := a.Tree().Tip(a.Tree().Active())
-a.Feedback(tip.ID, core.RatingPositive, "Clear and helpful")
-a.Feedback(tip.ID, core.RatingNegative, "Too verbose")
+a.Feedback(tip.ID, types.RatingPositive, "Clear and helpful")
+a.Feedback(tip.ID, types.RatingNegative, "Too verbose")
 
 // Collect all feedback across the tree.
 for _, entry := range a.FeedbackSummary() {
@@ -322,12 +322,12 @@ Automatic URI resolution and content negotiation for multi-modal input:
 ```go
 a := agent.NewAgent(agent.AgentConfig{
     Provider: adapter,
-    Resolvers: map[string]core.Resolver{
+    Resolvers: map[string]types.Resolver{
         "file": myFileResolver,
         "s3":   myS3Resolver,
     },
-    Extractors: map[core.MediaType]core.Extractor{
-        core.MediaPDF: myPDFExtractor,
+    Extractors: map[types.MediaType]types.Extractor{
+        types.MediaPDF: myPDFExtractor,
     },
 })
 ```
@@ -353,7 +353,7 @@ tea.NewProgram(model).Run()
 import "github.com/urmzd/saige/agent/agenttest"
 
 provider := &agenttest.ScriptedProvider{
-    Responses: [][]core.Delta{
+    Responses: [][]types.Delta{
         agenttest.ToolCallResponse("id-1", "greet", map[string]any{"name": "Alice"}),
         agenttest.TextResponse("Hello, Alice!"),
     },
@@ -362,7 +362,7 @@ provider := &agenttest.ScriptedProvider{
 
 ---
 
-## kg — Knowledge Graph SDK
+## knowledge — Knowledge Graph SDK
 
 Build and query knowledge graphs with LLM-powered entity extraction, fuzzy deduplication, and hybrid search.
 
@@ -397,10 +397,10 @@ Combines vector similarity (HNSW) and full-text (BM25) via **Reciprocal Rank Fus
 
 ```go
 results, _ := graph.SearchFacts(ctx, "Who works at Acme?",
-    kgtypes.WithLimit(10),
-    kgtypes.WithGroupID("project-alpha"),
+    types.WithLimit(10),
+    types.WithGroupID("project-alpha"),
 )
-for _, fact := range kg.FactsToStrings(results.Facts) {
+for _, fact := range knowledge.FactsToStrings(results.Facts) {
     fmt.Println(fact) // "Alice -> Acme Corp: works at"
 }
 ```
@@ -415,7 +415,7 @@ for _, fact := range kg.FactsToStrings(results.Facts) {
 
 ```go
 detail, _ := graph.GetNode(ctx, entityUUID, 2) // BFS to depth 2
-sub := kg.Subgraph(detail)                      // extract visualization data
+sub := knowledge.Subgraph(detail)                      // extract visualization data
 ```
 
 ### SurrealDB Backend
@@ -521,7 +521,7 @@ faithfulness, _ := rageval.Faithfulness(ctx, llm, query, answer, context)
 relevancy, _ := rageval.AnswerRelevancy(ctx, embedder, query, answer)
 ```
 
-### ADK Tool Bindings
+### Agent Tool Bindings
 
 5 tools for integrating RAG into agent workflows:
 
@@ -546,12 +546,12 @@ tools := adktool.NewTools(pipeline)
 | TUI | `examples/agent/tui/` | Interactive and verbose modes |
 | Runner | `examples/agent/runner/` | Multi-turn conversation loop |
 | Concurrent | `examples/agent/concurrent-subagents/` | Parallel sub-agent execution |
-| Knowledge Graph | `examples/kg/basic/` | Build and query a knowledge graph |
+| Knowledge Graph | `examples/knowledge/basic/` | Build and query a knowledge graph |
 | RAG | `examples/rag/arxiv/` | Full pipeline with arXiv papers |
 
 ```bash
 go run ./examples/agent/basic/
-go run ./examples/kg/basic/
+go run ./examples/knowledge/basic/
 go run ./examples/rag/arxiv/
 ```
 
@@ -566,7 +566,7 @@ npx skills add urmzd/saige
 ```mermaid
 graph TB
     subgraph agent["agent/ -- AI Agent Framework"]
-        core["agent/core/<br/>Provider, Tool, Delta,<br/>Message, Node, WAL"]
+        agenttypes["agent/types/<br/>Provider, Tool, Delta,<br/>Message, Node, WAL"]
         agentloop["agent/<br/>Agent loop, streaming,<br/>sub-agents"]
         providers["agent/provider/<br/>ollama, openai,<br/>anthropic, google"]
         resilience["agent/provider/<br/>retry, fallback"]
@@ -575,14 +575,14 @@ graph TB
         agenttest["agent/agenttest/<br/>Test utilities"]
     end
 
-    subgraph kg["kg/ -- Knowledge Graph"]
-        kgtypes["kg/kgtypes/<br/>Graph, Store, Extractor"]
-        engine["kg/internal/engine/<br/>Extraction, dedup"]
-        surrealdb["kg/surrealdb/<br/>SurrealDB backend"]
+    subgraph kg["knowledge/ -- Knowledge Graph"]
+        kgtypes["knowledge/types/<br/>Graph, Store, Extractor"]
+        engine["knowledge/internal/engine/<br/>Extraction, dedup"]
+        surrealdb["knowledge/surrealdb/<br/>SurrealDB backend"]
     end
 
     subgraph rag["rag/ -- RAG Pipeline"]
-        ragtypes["rag/ragtypes/<br/>Pipeline, Store, Retriever"]
+        ragtypes["rag/types/<br/>Pipeline, Store, Retriever"]
         pipeline["rag/internal/pipeline/<br/>Ingest, search, RRF"]
         retrievers["rag/vector, bm25,<br/>parent, graph retrievers"]
         rerankers["rag/reranker/<br/>MMR, cross-encoder"]
@@ -590,10 +590,10 @@ graph TB
         adktool["rag/adktool/<br/>Agent tool bindings"]
     end
 
-    agentloop --> core
-    providers --> core
+    agentloop --> agenttypes
+    providers --> agenttypes
     resilience --> providers
-    tree --> core
+    tree --> agenttypes
     tui --> agentloop
 
     engine --> kgtypes
@@ -605,24 +605,24 @@ graph TB
     chunkers --> ragtypes
 
     adktool --> ragtypes
-    adktool -.->|integrates| core
+    adktool -.->|integrates| agenttypes
     retrievers -.->|graphretriever| kgtypes
 ```
 
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `agent/` | `agent.go`, `stream.go`, `subagent.go`, `aggregator.go`, `runner.go` | Agent loop, streaming, sub-agent delegation |
-| `agent/core/` | `message.go`, `delta.go`, `content.go`, `provider.go`, `tool.go`, `errors.go`, `marker.go`, `compactor.go`, `node.go` | Sealed types, interfaces, error classification, feedback |
+| `agent/types/` | `message.go`, `delta.go`, `content.go`, `provider.go`, `tool.go`, `errors.go`, `marker.go`, `compactor.go`, `node.go` | Sealed types, interfaces, error classification, feedback |
 | `agent/tree/` | `tree.go`, `flatten.go`, `compact.go`, `diff.go` | Branching conversation tree with feedback leaf nodes |
 | `agent/provider/` | `ollama/`, `openai/`, `anthropic/`, `google/`, `retry/`, `fallback/` | LLM adapters and resilience wrappers |
 | `agent/tui/` | `stream.go`, `styles.go`, `runner.go` | Bubbletea + verbose streaming UI |
 | `agent/agenttest/` | `agenttest.go` | ScriptedProvider, MockTool, assertions |
-| `kg/` | `config.go`, `query.go`, `ollama.go` | Knowledge graph public API |
-| `kg/kgtypes/` | `kgtypes.go` | Core KG types and interfaces |
-| `kg/surrealdb/` | `store.go`, `schema.go`, `records.go` | SurrealDB store implementation |
-| `kg/internal/` | `engine/`, `extraction/`, `fuzzy/` | Engine orchestration, LLM extraction, dedup |
+| `knowledge/` | `config.go`, `query.go`, `ollama.go` | Knowledge graph public API |
+| `knowledge/types/` | `types.go` | Core knowledge graph types and interfaces |
+| `knowledge/surrealdb/` | `store.go`, `schema.go`, `records.go` | SurrealDB store implementation |
+| `knowledge/internal/` | `engine/`, `extraction/`, `fuzzy/` | Engine orchestration, LLM extraction, dedup |
 | `rag/` | `config.go`, `version.go` | RAG pipeline configuration |
-| `rag/ragtypes/` | `ragtypes.go` | Core RAG types and interfaces |
+| `rag/types/` | `types.go` | Core RAG types and interfaces |
 | `rag/internal/` | `pipeline/pipeline.go` | Pipeline engine (ingest, search, RRF) |
 | `rag/chunker/` | `chunker.go`, `semantic.go` | Recursive and semantic chunking |
 | `rag/bm25retriever/` | `retriever.go` | In-memory BM25 lexical search |
@@ -633,7 +633,7 @@ graph TB
 | `rag/hyde/` | `transformer.go` | HyDE query expansion |
 | `rag/contextassembler/` | `compressing.go` | LLM-based context compression |
 | `rag/rageval/` | `eval.go` | Evaluation metrics |
-| `rag/adktool/` | `tools.go` | ADK tool bindings |
+| `rag/adktool/` | `tools.go` | Agent tool bindings |
 | `rag/memstore/` | `store.go` | In-memory store for testing |
 
 ## License

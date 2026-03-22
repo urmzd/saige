@@ -7,17 +7,17 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | Package | Role |
 |---------|------|
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, provider adapters |
-| `agent/core/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
+| `agent/types/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
 | `agent/provider/` | Ollama, OpenAI, Anthropic, Google adapters |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |
-| `kg/` | Knowledge graph public API (NewGraph, query helpers) |
-| `kg/kgtypes/` | Core KG types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
-| `kg/surrealdb/` | SurrealDB Store implementation |
-| `kg/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
+| `knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
+| `knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
+| `knowledge/surrealdb/` | SurrealDB Store implementation |
+| `knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
 | `rag/` | RAG pipeline configuration and constructor |
-| `rag/ragtypes/` | Core RAG types: Document, Section, Variant, Pipeline/Store interfaces |
+| `rag/types/` | Core RAG types: Document, Section, Variant, Pipeline/Store interfaces |
 | `rag/chunker/` | Recursive and semantic text chunking |
 | `rag/bm25retriever/` | In-memory BM25 lexical search |
 | `rag/vectorretriever/` | Vector similarity search |
