@@ -564,6 +564,52 @@ npx skills add urmzd/graph-agent-dev-kit
 
 ## Architecture
 
+```mermaid
+graph TB
+    subgraph agent["agent/ -- AI Agent Framework"]
+        core["agent/core/<br/>Provider, Tool, Delta,<br/>Message, Node, WAL"]
+        agentloop["agent/<br/>Agent loop, streaming,<br/>sub-agents"]
+        providers["agent/provider/<br/>ollama, openai,<br/>anthropic, google"]
+        resilience["agent/provider/<br/>retry, fallback"]
+        tree["agent/tree/<br/>Conversation graph"]
+        tui["agent/tui/<br/>Terminal UI"]
+        agenttest["agent/agenttest/<br/>Test utilities"]
+    end
+
+    subgraph kg["kg/ -- Knowledge Graph"]
+        kgtypes["kg/kgtypes/<br/>Graph, Store, Extractor"]
+        engine["kg/internal/engine/<br/>Extraction, dedup"]
+        surrealdb["kg/surrealdb/<br/>SurrealDB backend"]
+    end
+
+    subgraph rag["rag/ -- RAG Pipeline"]
+        ragtypes["rag/ragtypes/<br/>Pipeline, Store, Retriever"]
+        pipeline["rag/internal/pipeline/<br/>Ingest, search, RRF"]
+        retrievers["rag/vector, bm25,<br/>parent, graph retrievers"]
+        rerankers["rag/reranker/<br/>MMR, cross-encoder"]
+        chunkers["rag/chunker/<br/>Recursive, semantic"]
+        adktool["rag/adktool/<br/>Agent tool bindings"]
+    end
+
+    agentloop --> core
+    providers --> core
+    resilience --> providers
+    tree --> core
+    tui --> agentloop
+
+    engine --> kgtypes
+    surrealdb --> kgtypes
+
+    pipeline --> ragtypes
+    retrievers --> ragtypes
+    rerankers --> ragtypes
+    chunkers --> ragtypes
+
+    adktool --> ragtypes
+    adktool -.->|integrates| core
+    retrievers -.->|graphretriever| kgtypes
+```
+
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `agent/` | `agent.go`, `stream.go`, `subagent.go`, `aggregator.go`, `runner.go` | Agent loop, streaming, sub-agent delegation |
