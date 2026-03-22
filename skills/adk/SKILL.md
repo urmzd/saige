@@ -12,9 +12,9 @@ Build LLM agent loops using `agent`.
 
 ```go
 import (
-    "github.com/urmzd/graph-agent-dev-kit/agent"
-    "github.com/urmzd/graph-agent-dev-kit/agent/core"
-    "github.com/urmzd/graph-agent-dev-kit/agent/provider/ollama"
+    "github.com/urmzd/saige/agent"
+    "github.com/urmzd/saige/agent/core"
+    "github.com/urmzd/saige/agent/provider/ollama"
 )
 
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")

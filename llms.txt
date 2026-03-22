@@ -1,8 +1,8 @@
-# graph-agent-dev-kit
+# saige — Super AI Graph Ecosystem
 
-> Unified Go SDK for AI agents, knowledge graphs, and RAG pipelines.
+> A unified Go SDK for streaming AI agents, knowledge graphs, and RAG pipelines.
 
-Combines three packages: agent (streaming AI agent loop with tool dispatch, provider adapters, and RLHF feedback), kg (knowledge graph construction with SurrealDB), and rag (multi-modal RAG pipelines with chunking, retrieval, and reranking).
+Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, provider adapters, and RLHF feedback), kg (LLM-powered knowledge graph construction with SurrealDB and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, and citations).
 
 ## Docs
 

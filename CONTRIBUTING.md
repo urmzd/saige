@@ -9,8 +9,8 @@
 ## Getting Started
 
 ```bash
-git clone git@github.com:urmzd/graph-agent-dev-kit.git
-cd graph-agent-dev-kit
+git clone git@github.com:urmzd/saige.git
+cd saige
 ```
 
 ## Development

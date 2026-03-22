@@ -1,4 +1,4 @@
-# graph-agent-dev-kit
+# saige
 
 A unified Go SDK combining AI agent orchestration, knowledge graph construction, and RAG pipelines.
 

@@ -10,7 +10,7 @@
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability, please report it through
-[GitHub Security Advisories](https://github.com/urmzd/graph-agent-dev-kit/security/advisories/new).
+[GitHub Security Advisories](https://github.com/urmzd/saige/security/advisories/new).
 
 **Do not open a public issue for security vulnerabilities.**
 

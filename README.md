@@ -1,18 +1,22 @@
 <p align="center">
-  <h1 align="center">graph-agent-dev-kit</h1>
+  <h1 align="center">saige</h1>
   <p align="center">
-    A unified Go SDK for building streaming AI agents, knowledge graphs, and RAG pipelines.
+    <strong>Super AI Graph Ecosystem</strong>
+    <br />
+    A unified Go SDK for streaming AI agents, knowledge graphs, and RAG pipelines.
     <br /><br />
-    <a href="https://pkg.go.dev/github.com/urmzd/graph-agent-dev-kit">Install</a>
+    <a href="https://pkg.go.dev/github.com/urmzd/saige">Install</a>
     &middot;
-    <a href="https://github.com/urmzd/graph-agent-dev-kit/issues">Report Bug</a>
+    <a href="https://github.com/urmzd/saige/issues">Report Bug</a>
     &middot;
-    <a href="https://pkg.go.dev/github.com/urmzd/graph-agent-dev-kit">Go Docs</a>
+    <a href="https://pkg.go.dev/github.com/urmzd/saige">Go Docs</a>
   </p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/urmzd/graph-agent-dev-kit/actions/workflows/ci.yml"><img src="https://github.com/urmzd/graph-agent-dev-kit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/urmzd/saige/actions/workflows/ci.yml"><img src="https://github.com/urmzd/saige/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/urmzd/saige"><img src="https://pkg.go.dev/badge/github.com/urmzd/saige.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
 </p>
 
 ## Showcase
@@ -21,41 +25,36 @@
   <img src="showcase/agent-basic.png" alt="Basic agent demo" width="600">
 </p>
 
-## Why?
+## Features
 
-Building AI applications typically requires wiring together three separate concerns:
+- **Streaming-first agent loop** with 15 typed delta events and parallel tool execution
+- **Conversation tree** with branching, checkpoints, rewind, and RLHF feedback
+- **Sub-agent delegation** — child agents as tools, deltas forwarded with attribution
+- **Human-in-the-loop markers** — gate tool execution pending approval
+- **Knowledge graph construction** — LLM-powered entity extraction, fuzzy dedup, temporal tracking
+- **Multi-retriever RAG** — vector + BM25 + graph retrieval fused via Reciprocal Rank Fusion
+- **Reranking** — MMR diversity and cross-encoder scoring built in
+- **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface
+- **Provider resilience** — retry + fallback composition out of the box
+- **Structured output** — constrain LLM responses to JSON schema
 
-- **Agent orchestration** — streaming LLM loops, tool dispatch, sub-agents, provider failover.
-- **Knowledge graphs** — entity extraction, relation storage, hybrid search across structured knowledge.
-- **RAG pipelines** — document ingestion, chunking, multi-retriever fusion, reranking, citations.
+### Why one SDK?
 
-These concerns are deeply interconnected — RAG pipelines benefit from knowledge graph retrieval, agents need both for grounded responses, and all three share LLM providers and embedding models.
-
-**graph-agent-dev-kit** unifies them into a single Go module with shared interfaces:
-
-| Problem | Solution |
-|---------|----------|
-| Separate agent/KG/RAG libraries with incompatible types | Single module, shared `Provider`, `Embedder`, `Tool` interfaces |
-| Untyped LLM streaming | Sealed `Delta` interface with 14 concrete types |
-| Manual entity extraction | LLM-powered extraction pipeline with fuzzy dedup |
-| Fragmented retrieval | Vector + BM25 + graph retrieval with RRF fusion |
-| No reranking | MMR diversity + cross-encoder reranking built in |
-| No feedback loop | RLHF-ready feedback as permanent leaf nodes in the conversation tree |
-| Provider lock-in | Ollama, OpenAI, Anthropic, Google — one interface |
+Agent orchestration, knowledge graphs, and RAG pipelines are deeply interconnected — RAG benefits from graph retrieval, agents need both for grounded responses, and all three share providers and embedders. **saige** unifies them under shared `Provider`, `Embedder`, and `Tool` interfaces, eliminating the wiring complexity of combining separate libraries.
 
 ## Quick Start
 
 ```bash
-go get github.com/urmzd/graph-agent-dev-kit
+go get github.com/urmzd/saige
 ```
 
 ### Build an Agent
 
 ```go
 import (
-    "github.com/urmzd/graph-agent-dev-kit/agent"
-    "github.com/urmzd/graph-agent-dev-kit/agent/core"
-    "github.com/urmzd/graph-agent-dev-kit/agent/provider/ollama"
+    "github.com/urmzd/saige/agent"
+    "github.com/urmzd/saige/agent/core"
+    "github.com/urmzd/saige/agent/provider/ollama"
 )
 
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
@@ -79,9 +78,9 @@ for delta := range stream.Deltas() {
 
 ```go
 import (
-    "github.com/urmzd/graph-agent-dev-kit/kg"
-    "github.com/urmzd/graph-agent-dev-kit/kg/kgtypes"
-    "github.com/urmzd/graph-agent-dev-kit/agent/provider/ollama"
+    "github.com/urmzd/saige/kg"
+    "github.com/urmzd/saige/kg/kgtypes"
+    "github.com/urmzd/saige/agent/provider/ollama"
 )
 
 client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
@@ -104,9 +103,9 @@ results, _ := graph.SearchFacts(ctx, "Who presented the roadmap?")
 
 ```go
 import (
-    "github.com/urmzd/graph-agent-dev-kit/rag"
-    "github.com/urmzd/graph-agent-dev-kit/rag/ragtypes"
-    "github.com/urmzd/graph-agent-dev-kit/rag/memstore"
+    "github.com/urmzd/saige/rag"
+    "github.com/urmzd/saige/rag/ragtypes"
+    "github.com/urmzd/saige/rag/memstore"
 )
 
 pipe, _ := rag.NewPipeline(
@@ -266,8 +265,8 @@ a := agent.NewAgent(agent.AgentConfig{
 
 ```go
 import (
-    "github.com/urmzd/graph-agent-dev-kit/agent/provider/retry"
-    "github.com/urmzd/graph-agent-dev-kit/agent/provider/fallback"
+    "github.com/urmzd/saige/agent/provider/retry"
+    "github.com/urmzd/saige/agent/provider/fallback"
 )
 
 provider := fallback.New(
@@ -338,7 +337,7 @@ a := agent.NewAgent(agent.AgentConfig{
 Two display modes for streaming agent progress:
 
 ```go
-import "github.com/urmzd/graph-agent-dev-kit/agent/tui"
+import "github.com/urmzd/saige/agent/tui"
 
 // Non-interactive (works in pipes/CI)
 result := tui.StreamVerbose(header, stream.Deltas(), os.Stdout)
@@ -351,7 +350,7 @@ tea.NewProgram(model).Run()
 ### Testing
 
 ```go
-import "github.com/urmzd/graph-agent-dev-kit/agent/agenttest"
+import "github.com/urmzd/saige/agent/agenttest"
 
 provider := &agenttest.ScriptedProvider{
     Responses: [][]core.Delta{
@@ -514,7 +513,7 @@ rag.WithHyDE(myLLM, 3) // generate 3 hypothetical docs
 ### Evaluation Metrics
 
 ```go
-import "github.com/urmzd/graph-agent-dev-kit/rag/rageval"
+import "github.com/urmzd/saige/rag/rageval"
 
 precision := rageval.ContextPrecision(results, relevantUUIDs)
 recall := rageval.ContextRecall(results, relevantUUIDs)
@@ -527,7 +526,7 @@ relevancy, _ := rageval.AnswerRelevancy(ctx, embedder, query, answer)
 5 tools for integrating RAG into agent workflows:
 
 ```go
-import "github.com/urmzd/graph-agent-dev-kit/rag/adktool"
+import "github.com/urmzd/saige/rag/adktool"
 
 tools := adktool.NewTools(pipeline)
 // rag_search, rag_lookup, rag_update, rag_delete, rag_reconstruct
@@ -559,7 +558,7 @@ go run ./examples/rag/arxiv/
 ## Agent Skill
 
 ```bash
-npx skills add urmzd/graph-agent-dev-kit
+npx skills add urmzd/saige
 ```
 
 ## Architecture
