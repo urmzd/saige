@@ -1805,14 +1805,16 @@ func TestToolResultContentInSystemMessage(t *testing.T) {
 func TestWALMultipleTransactions(t *testing.T) {
 	wal := memwal.New()
 
+	ctx := context.Background()
+
 	// Multiple committed transactions
 	for i := 0; i < 5; i++ {
-		txID, _ := wal.Begin()
-		wal.Append(txID, core.TxOp{Kind: core.TxOpAddNode})
-		wal.Commit(txID)
+		txID, _ := wal.Begin(ctx)
+		wal.Append(ctx, txID, core.TxOp{Kind: core.TxOpAddNode})
+		wal.Commit(ctx, txID)
 	}
 
-	committed, _ := wal.Recover()
+	committed, _ := wal.Recover(ctx)
 	if len(committed) != 5 {
 		t.Errorf("committed = %d, want 5", len(committed))
 	}
@@ -1821,11 +1823,12 @@ func TestWALMultipleTransactions(t *testing.T) {
 func TestWALAbortedNotRecovered(t *testing.T) {
 	wal := memwal.New()
 
-	txID, _ := wal.Begin()
-	wal.Append(txID, core.TxOp{Kind: core.TxOpAddNode})
-	wal.Abort(txID)
+	ctx := context.Background()
+	txID, _ := wal.Begin(ctx)
+	wal.Append(ctx, txID, core.TxOp{Kind: core.TxOpAddNode})
+	wal.Abort(ctx, txID)
 
-	committed, _ := wal.Recover()
+	committed, _ := wal.Recover(ctx)
 	if len(committed) != 0 {
 		t.Errorf("committed = %d, want 0 (all aborted)", len(committed))
 	}
@@ -1833,7 +1836,7 @@ func TestWALAbortedNotRecovered(t *testing.T) {
 
 func TestWALReplayNonexistent(t *testing.T) {
 	wal := memwal.New()
-	_, err := wal.Replay("nonexistent-tx")
+	_, err := wal.Replay(context.Background(), "nonexistent-tx")
 	if err == nil {
 		t.Error("expected error for nonexistent tx")
 	}
@@ -1847,7 +1850,7 @@ func TestTreeBranchWithWAL(t *testing.T) {
 	user, _ := tr.AddChild(root.ID, core.NewUserMessage("hello"))
 	tr.Branch(user.ID, "alt", core.NewUserMessage("branch msg"))
 
-	committed, _ := wal.Recover()
+	committed, _ := wal.Recover(context.Background())
 	// AddChild(hello) + Branch(branch msg) = 2 transactions
 	if len(committed) != 2 {
 		t.Errorf("committed = %d, want 2", len(committed))
@@ -1862,7 +1865,7 @@ func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 	user, _ := tr.AddChild(root.ID, core.NewUserMessage("original"))
 	tr.UpdateUserMessage(user.ID, core.NewUserMessage("edited"))
 
-	committed, _ := wal.Recover()
+	committed, _ := wal.Recover(context.Background())
 	// AddChild + UpdateUserMessage = 2 transactions
 	if len(committed) != 2 {
 		t.Errorf("committed = %d, want 2", len(committed))
