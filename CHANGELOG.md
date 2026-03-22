@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (2026-03-22)
+
+### Features
+
+- **rag**: add parallelism, tokenizer, extractors, sources, and caching ([2b2bc72](https://github.com/urmzd/graph-agent-dev-kit/commit/2b2bc727bd9478e34898da0c0bc4ba8b626366cb))
+
+### Documentation
+
+- add showcase screenshot ([fdf3e88](https://github.com/urmzd/graph-agent-dev-kit/commit/fdf3e88023dbb5ea7f2c1a183227cd2e403c3c0e))
+- add RLHF feedback to README, AGENTS.md, llms.txt, and skill ([7d492b3](https://github.com/urmzd/graph-agent-dev-kit/commit/7d492b3ff265cb89ef9ef55e095185225a4ced86))
+
+[Full Changelog](https://github.com/urmzd/graph-agent-dev-kit/compare/v0.2.1...v0.3.0)
+
+
 ## 0.2.1 (2026-03-19)
 
 ### Bug Fixes
