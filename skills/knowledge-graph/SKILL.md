@@ -57,3 +57,21 @@ graph.ApplyOntology(ctx, &knowledge.Ontology{
     RelationTypes: []knowledge.RelationTypeDef{{Name: "works_on", SourceType: "Person", TargetType: "Project"}},
 })
 ```
+
+## Agent Tool Bindings
+
+```go
+import "github.com/urmzd/saige/knowledge/tool"
+
+tools := tool.NewTools(graph)
+// kg_search, kg_ingest
+```
+
+## CLI
+
+```bash
+saige kg search --db "$SAIGE_KG_DB" --query "Who presented?"
+saige kg ingest --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the roadmap."
+saige kg graph  --db "$SAIGE_KG_DB"
+saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
+```
