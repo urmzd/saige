@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">saige</h1>
   <p align="center">
-    <strong>Super AI Graph Ecosystem</strong>
+    <strong>Super Artificial Intelligence Graph Environment</strong>
     <br />
     A unified Go SDK for streaming AI agents, knowledge graphs, and RAG pipelines.
     <br /><br />
@@ -180,7 +180,6 @@ fmt.Println(result.AssembledContext.Prompt) // context with citations
 - [rag — RAG Pipeline SDK](#rag--rag-pipeline-sdk)
 - [Examples](#examples)
 - [Agent Skill](#agent-skill)
-- [Architecture](#architecture)
 
 ---
 
@@ -644,111 +643,6 @@ go run ./examples/rag/arxiv/
 ```bash
 npx skills add urmzd/saige
 ```
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph cli["cmd/saige/ -- CLI"]
-        clicmd["cmd/saige/<br/>chat, ask, rag, kg commands"]
-    end
-
-    subgraph agent["agent/ -- AI Agent Framework"]
-        agenttypes["agent/types/<br/>Provider, Tool, Delta,<br/>Message, Node, WAL"]
-        agentloop["agent/<br/>Agent loop, streaming,<br/>sub-agents"]
-        providers["agent/provider/<br/>ollama, openai,<br/>anthropic, google"]
-        resilience["agent/provider/<br/>retry, fallback"]
-        tree["agent/tree/<br/>Conversation graph"]
-        tui["agent/tui/<br/>Terminal UI"]
-        agenttest["agent/agenttest/<br/>Test utilities"]
-    end
-
-    subgraph kg["knowledge/ -- Knowledge Graph"]
-        kgtypes["knowledge/types/<br/>Graph, Store, Extractor"]
-        engine["knowledge/internal/engine/<br/>Extraction, dedup"]
-        kgpgstore["knowledge/pgstore/<br/>PostgreSQL + pgvector"]
-        kgtool["knowledge/tool/<br/>Agent tool bindings"]
-    end
-
-    subgraph shared["postgres/ -- Shared Infrastructure"]
-        pgpool["postgres/<br/>Pool + migrations"]
-    end
-
-    subgraph rag["rag/ -- RAG Pipeline"]
-        ragtypes["rag/types/<br/>Pipeline, Store, Retriever"]
-        pipeline["rag/internal/pipeline/<br/>Ingest, search, RRF"]
-        ragpgstore["rag/pgstore/<br/>PostgreSQL + pgvector"]
-        retrievers["rag/vector, bm25,<br/>parent, graph retrievers"]
-        rerankers["rag/reranker/<br/>MMR, cross-encoder"]
-        chunkers["rag/chunker/<br/>Recursive, semantic"]
-        ragtool["rag/tool/<br/>Agent tool bindings"]
-    end
-
-    clicmd --> agentloop
-    clicmd --> tui
-    clicmd --> ragtool
-    clicmd --> kgtool
-    clicmd --> pgpool
-
-    agentloop --> agenttypes
-    providers --> agenttypes
-    resilience --> providers
-    tree --> agenttypes
-    tui --> agentloop
-
-    engine --> kgtypes
-    kgpgstore --> kgtypes
-    kgpgstore --> pgpool
-    kgtool --> kgtypes
-    kgtool -.->|integrates| agenttypes
-    ragpgstore --> pgpool
-
-    pipeline --> ragtypes
-    ragpgstore --> ragtypes
-    retrievers --> ragtypes
-    rerankers --> ragtypes
-    chunkers --> ragtypes
-
-    ragtool --> ragtypes
-    ragtool -.->|integrates| agenttypes
-    retrievers -.->|graphretriever| kgtypes
-```
-
-| Package | Files | Purpose |
-|---------|-------|---------|
-| `cmd/saige/` | `main.go`, `chat.go`, `ask.go`, `rag.go`, `kg.go`, `provider.go`, `connect.go` | CLI: chat, ask, rag, kg commands with multi-provider support |
-| `agent/` | `agent.go`, `stream.go`, `subagent.go`, `aggregator.go`, `runner.go` | Agent loop, streaming, sub-agent delegation |
-| `agent/types/` | `message.go`, `delta.go`, `content.go`, `provider.go`, `tool.go`, `errors.go`, `marker.go`, `compactor.go`, `node.go` | Sealed types, interfaces, error classification, feedback |
-| `agent/tree/` | `tree.go`, `flatten.go`, `compact.go`, `diff.go` | Branching conversation tree with feedback leaf nodes |
-| `agent/provider/` | `ollama/`, `openai/`, `anthropic/`, `google/`, `retry/`, `fallback/` | LLM adapters and resilience wrappers |
-| `agent/tui/` | `stream.go`, `styles.go`, `runner.go` | Bubbletea + verbose streaming UI |
-| `agent/agenttest/` | `agenttest.go` | ScriptedProvider, MockTool, assertions |
-| `knowledge/` | `config.go`, `query.go`, `ollama.go` | Knowledge graph public API |
-| `knowledge/types/` | `types.go` | Core knowledge graph types and interfaces |
-| `knowledge/pgstore/` | `store.go`, `entity.go`, `relation.go`, `episode.go`, `search.go`, `graph.go` | PostgreSQL + pgvector store implementation |
-| `knowledge/tool/` | `tools.go` | Agent tool bindings (kg_search, kg_ingest) |
-| `knowledge/internal/` | `engine/`, `extraction/`, `fuzzy/` | Engine orchestration, LLM extraction, dedup |
-| `postgres/` | `pool.go`, `migrate.go` | Shared PostgreSQL connection pool and schema migrations |
-| `rag/` | `config.go`, `version.go` | RAG pipeline configuration |
-| `rag/types/` | `types.go` | Core RAG types and interfaces |
-| `rag/pgstore/` | `store.go`, `document.go`, `section.go`, `variant.go`, `search.go` | PostgreSQL + pgvector RAG store |
-| `rag/internal/` | `pipeline/pipeline.go` | Pipeline engine (ingest, search, RRF) |
-| `rag/chunker/` | `chunker.go`, `semantic.go` | Recursive and semantic chunking |
-| `rag/bm25retriever/` | `retriever.go` | In-memory BM25 lexical search |
-| `rag/vectorretriever/` | `retriever.go` | Vector similarity search |
-| `rag/graphretriever/` | `retriever.go` | Knowledge graph retrieval |
-| `rag/parentretriever/` | `retriever.go` | Parent context expansion |
-| `rag/reranker/` | `mmr.go`, `crossencoder.go` | MMR + cross-encoder reranking |
-| `rag/hyde/` | `transformer.go` | HyDE query expansion |
-| `rag/contextassembler/` | `compressing.go` | LLM-based context compression |
-| `rag/eval/` | `eval.go` | Evaluation metrics (NDCG, MRR, HitRate, precision, recall, faithfulness, relevancy, correctness, LLM-as-judge) |
-| `rag/tool/` | `tools.go` | Agent tool bindings |
-| `rag/memstore/` | `store.go` | In-memory store for testing |
-| `rag/embedderregistry/` | `registry.go` | Dispatch embedding by content type |
-| `rag/embeddingcache/` | `cache.go` | Caching layer for embeddings |
-| `rag/extractor/` | `auto.go`, `plaintext.go`, `html.go`, `pdf.go` | Content extraction from raw documents |
-| `rag/source/` | `filesystem.go`, `http.go` | Source URI resolution |
-| `rag/tokenizer/` | `tokenizer.go` | Token counting utilities |
 
 ## License
 

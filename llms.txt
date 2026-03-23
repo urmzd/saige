@@ -1,4 +1,4 @@
-# saige — Super AI Graph Ecosystem
+# saige — Super Artificial Intelligence Graph Environment
 
 > A unified Go SDK and CLI for streaming AI agents, knowledge graphs, and RAG pipelines.
 
