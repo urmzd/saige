@@ -4,14 +4,12 @@ package hyde
 import (
 	"context"
 	"fmt"
+	"text/template"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/urmzd/saige/rag/types"
 )
-
-// DefaultPromptTemplate is the default prompt for generating hypothetical documents.
-const DefaultPromptTemplate = "Write a short passage that would answer the following question:\n\n%s\n\nPassage:"
 
 // Config holds HyDE transformer parameters.
 type Config struct {
@@ -22,7 +20,8 @@ type Config struct {
 
 // Transformer generates hypothetical answer documents via an LLM to improve retrieval recall.
 type Transformer struct {
-	cfg Config
+	cfg  Config
+	tmpl *template.Template
 }
 
 // New creates a HyDE query transformer. NumHypothetical defaults to 3 if <= 0.
@@ -30,15 +29,16 @@ func New(cfg Config) *Transformer {
 	if cfg.NumHypothetical <= 0 {
 		cfg.NumHypothetical = 3
 	}
-	if cfg.PromptTemplate == "" {
-		cfg.PromptTemplate = DefaultPromptTemplate
+	tmpl := defaultPromptTmpl
+	if cfg.PromptTemplate != "" {
+		tmpl = template.Must(template.New("custom").Parse(cfg.PromptTemplate))
 	}
-	return &Transformer{cfg: cfg}
+	return &Transformer{cfg: cfg, tmpl: tmpl}
 }
 
 // Transform generates hypothetical documents and returns the original query plus all hypotheticals.
 func (t *Transformer) Transform(ctx context.Context, query string) ([]string, error) {
-	prompt := fmt.Sprintf(t.cfg.PromptTemplate, query)
+	prompt := renderPrompt(t.tmpl, map[string]any{"Query": query})
 	hypotheticals := make([]string, t.cfg.NumHypothetical)
 
 	g, gctx := errgroup.WithContext(ctx)

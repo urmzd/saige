@@ -1,0 +1,5 @@
+Write a short passage that would answer the following question:
+
+{{.Query}}
+
+Passage:
