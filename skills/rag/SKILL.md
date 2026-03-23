@@ -134,3 +134,12 @@ import "github.com/urmzd/saige/rag/tool"
 tools := tool.NewTools(pipeline)
 // rag_search, rag_lookup, rag_update, rag_delete, rag_reconstruct
 ```
+
+## CLI
+
+```bash
+saige rag ingest --db "$SAIGE_RAG_DB" --file paper.pdf --mime application/pdf
+saige rag search --db "$SAIGE_RAG_DB" --query "attention mechanism"
+saige rag lookup --db "$SAIGE_RAG_DB" --uuid <variant-uuid>
+saige rag delete --db "$SAIGE_RAG_DB" --uuid <doc-uuid>
+```
