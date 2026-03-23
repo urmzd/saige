@@ -6,6 +6,7 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 
 | Package | Role |
 |---------|------|
+| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops) |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, provider adapters |
 | `agent/types/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
@@ -15,6 +16,7 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | `knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
 | `knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
 | `knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |
+| `knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
 | `knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
 | `postgres/` | Shared PostgreSQL connection pool and schema migrations |
 | `rag/` | RAG pipeline configuration and constructor |
@@ -36,6 +38,20 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | `rag/extractor/` | Content extraction from raw documents |
 | `rag/source/` | Source URI resolution |
 | `rag/tokenizer/` | Token counting utilities |
+
+## CLI
+
+```bash
+saige chat                          # interactive multi-turn TUI
+saige chat --provider anthropic     # use Anthropic (needs ANTHROPIC_API_KEY)
+saige chat --verbose                # plain-text mode
+saige ask "question"                # single-shot query
+echo "question" | saige ask --raw   # pipe-friendly raw output
+saige rag search --db DSN --query Q # standalone RAG search
+saige kg search --db DSN --query Q  # standalone KG search
+```
+
+Provider auto-detection: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GOOGLE_API_KEY` → Ollama.
 
 ## Commands
 
