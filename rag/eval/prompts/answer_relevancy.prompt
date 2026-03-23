@@ -1,0 +1,6 @@
+Generate {{.Count}} questions that the following response could answer. Each question should be diverse and capture a different aspect of the response.
+
+Response:
+{{.Response}}
+
+Return one question per line. Do not number them. Do not add any other text.

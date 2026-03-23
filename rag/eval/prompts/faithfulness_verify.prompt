@@ -1,0 +1,11 @@
+Given the context below, classify each claim as "supported" or "unsupported". A claim is supported if the context contains information that directly or logically entails it.
+
+Context:
+{{.Context}}
+
+Claims:
+{{.Claims}}
+
+For each claim, respond with exactly one line in the format:
+<verdict>|<reason>
+where <verdict> is either "supported" or "unsupported" and <reason> is a brief explanation.

@@ -1,0 +1,19 @@
+You are an impartial judge evaluating the quality of a response to a query.
+
+Query:
+{{.Query}}
+
+Context provided to the system:
+{{.Context}}
+
+Response:
+{{.Response}}
+
+Evaluation criteria:
+{{.Rubric}}
+
+First, provide your chain-of-thought reasoning. Then give a final score.
+
+Respond in exactly this format:
+REASONING: <your detailed reasoning>
+SCORE: <decimal between 0.0 and 1.0>

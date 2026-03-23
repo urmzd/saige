@@ -1,0 +1,13 @@
+You are evaluating the correctness of a generated answer against a reference answer.
+
+Reference answer:
+{{.GroundTruth}}
+
+Generated answer:
+{{.Response}}
+
+Score the generated answer on a scale from 0.0 to 1.0 based on factual correctness and completeness compared to the reference.
+
+Respond in exactly this format:
+REASON: <one sentence explaining your score>
+SCORE: <decimal between 0.0 and 1.0>

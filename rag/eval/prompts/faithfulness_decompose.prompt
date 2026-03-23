@@ -1,0 +1,6 @@
+Decompose the following response into independent, atomic factual claims. Each claim should be a single, self-contained statement.
+
+Response:
+{{.Response}}
+
+Return one claim per line. Do not number them. Do not add any other text.
