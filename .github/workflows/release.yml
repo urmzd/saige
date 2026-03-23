@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       force:
@@ -14,20 +15,70 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   ci:
+    if: github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/ci.yml
 
   release:
-    name: Release
     needs: ci
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: urmzd/semantic-release@v1
+        id: sr
         with:
-          force: ${{ github.event.inputs.force || 'false' }}
+          force: ${{ inputs.force }}
+
+    outputs:
+      released: ${{ steps.sr.outputs.released }}
+      tag: ${{ steps.sr.outputs.tag }}
+      version: ${{ steps.sr.outputs.version }}
+
+  build:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact: saige-linux
+          - os: macos-latest
+            platform: darwin
+            artifact: saige-darwin
+          - os: windows-latest
+            platform: windows
+            artifact: saige.exe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build static CLI binary
+        shell: bash
+        run: |
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ needs.release.outputs.version }} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o build/bin/${{ matrix.artifact }} ./cmd/saige
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "${{ needs.release.outputs.tag }}" "build/bin/${{ matrix.artifact }}" --clobber
