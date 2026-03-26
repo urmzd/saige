@@ -640,9 +640,7 @@ go run ./examples/rag/arxiv/
 
 ## Agent Skill
 
-```bash
-npx skills add urmzd/saige
-```
+This repo's conventions are available as portable agent skills in [`skills/`](skills/).
 
 ## License
 
