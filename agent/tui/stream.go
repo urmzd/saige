@@ -541,7 +541,7 @@ func StreamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer) Verbo
 
 		case types.TextContentDelta:
 			text.WriteString(d.Content)
-			fmt.Fprint(w, d.Content)
+			_, _ = fmt.Fprint(w, d.Content)
 			coordinatorStreaming = true
 
 		case types.TextEndDelta:
@@ -574,7 +574,7 @@ func StreamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer) Verbo
 				content := inner.Content
 
 				if agentNewLine[d.ToolCallID] {
-					fmt.Fprint(w, FormatAgentOutput(name, ""))
+					_, _ = fmt.Fprint(w, FormatAgentOutput(name, ""))
 					agentNewLine[d.ToolCallID] = false
 				}
 				if strings.Contains(content, "\n") {

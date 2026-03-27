@@ -144,8 +144,7 @@ func (m *mockExtractor) Extract(_ context.Context, _ string) ([]types.ExtractedE
 }
 
 type mockEmbedder struct {
-	embeddings [][]float32
-	err        error
+	err error
 }
 
 func (m *mockEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {

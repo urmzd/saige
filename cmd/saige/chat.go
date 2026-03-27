@@ -15,7 +15,7 @@ func runChat(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	cf := addCommonFlags(fs)
 	verbose := fs.Bool("verbose", false, "Use plain-text streaming instead of interactive TUI")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	provider, err := resolveProvider(ctx, cf)
 	if err != nil {

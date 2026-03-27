@@ -65,7 +65,7 @@ func kgGraph_(ctx context.Context, dsn string) (kgtypes.Graph, func()) {
 	}
 
 	return graph, func() {
-		graph.Close(ctx)
+		_ = graph.Close(ctx)
 		pool.Close()
 	}
 }
@@ -75,7 +75,7 @@ func kgSearch(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 10, "Max results")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *query == "" {
 		fmt.Fprintln(os.Stderr, "error: --query is required")
@@ -100,7 +100,7 @@ func kgIngest(ctx context.Context, args []string) {
 	name := fs.String("name", "", "Episode name")
 	text := fs.String("text", "", "Text content to ingest")
 	source := fs.String("source", "", "Source description")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *name == "" || *text == "" {
 		fmt.Fprintln(os.Stderr, "error: --name and --text are required")
@@ -127,7 +127,7 @@ func kgGraph(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("kg graph", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	limit := fs.Int("limit", 100, "Max relations to return")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	graph, cleanup := kgGraph_(ctx, *db)
 	defer cleanup()
@@ -146,7 +146,7 @@ func kgNode(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	id := fs.String("id", "", "Entity UUID")
 	depth := fs.Int("depth", 1, "Traversal depth")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *id == "" {
 		fmt.Fprintln(os.Stderr, "error: --id is required")

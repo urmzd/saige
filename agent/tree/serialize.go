@@ -8,6 +8,13 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+const (
+	contentText       = "text"
+	contentToolResult = "tool_result"
+	contentConfig     = "config"
+	contentUnknown    = "unknown"
+)
+
 // serializedTree is the JSON wire format for a Tree.
 type serializedTree struct {
 	Nodes       []serializedNode                `json:"nodes"`
@@ -137,53 +144,53 @@ func unmarshalMessage(role types.Role, data json.RawMessage) (types.Message, err
 func systemContentType(c types.SystemContent) string {
 	switch c.(type) {
 	case types.TextContent:
-		return "text"
+		return contentText
 	case types.ToolResultContent:
-		return "tool_result"
+		return contentToolResult
 	case types.ConfigContent:
-		return "config"
+		return contentConfig
 	default:
-		return "unknown"
+		return contentUnknown
 	}
 }
 
 func userContentType(c types.UserContent) string {
 	switch c.(type) {
 	case types.TextContent:
-		return "text"
+		return contentText
 	case types.ToolResultContent:
-		return "tool_result"
+		return contentToolResult
 	case types.ConfigContent:
-		return "config"
+		return contentConfig
 	case types.FileContent:
 		return "file"
 	case types.FeedbackContent:
 		return "feedback"
 	default:
-		return "unknown"
+		return contentUnknown
 	}
 }
 
 func assistantContentType(c types.AssistantContent) string {
 	switch c.(type) {
 	case types.TextContent:
-		return "text"
+		return contentText
 	case types.ToolUseContent:
 		return "tool_use"
 	default:
-		return "unknown"
+		return contentUnknown
 	}
 }
 
 func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 	switch ce.Type {
-	case "text":
+	case contentText:
 		var c types.TextContent
 		return c, json.Unmarshal(ce.Data, &c)
-	case "tool_result":
+	case contentToolResult:
 		var c types.ToolResultContent
 		return c, json.Unmarshal(ce.Data, &c)
-	case "config":
+	case contentConfig:
 		var c types.ConfigContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
@@ -193,13 +200,13 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 
 func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
 	switch ce.Type {
-	case "text":
+	case contentText:
 		var c types.TextContent
 		return c, json.Unmarshal(ce.Data, &c)
-	case "tool_result":
+	case contentToolResult:
 		var c types.ToolResultContent
 		return c, json.Unmarshal(ce.Data, &c)
-	case "config":
+	case contentConfig:
 		var c types.ConfigContent
 		return c, json.Unmarshal(ce.Data, &c)
 	case "file":
@@ -215,7 +222,7 @@ func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
 
 func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, error) {
 	switch ce.Type {
-	case "text":
+	case contentText:
 		var c types.TextContent
 		return c, json.Unmarshal(ce.Data, &c)
 	case "tool_use":

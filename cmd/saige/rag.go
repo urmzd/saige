@@ -74,7 +74,7 @@ func ragPipeline(ctx context.Context, dsn string) (ragtypes.Pipeline, func()) {
 	}
 
 	return pipeline, func() {
-		pipeline.Close(ctx)
+		_ = pipeline.Close(ctx)
 		pool.Close()
 	}
 }
@@ -84,7 +84,7 @@ func ragSearch(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 10, "Max results")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *query == "" {
 		fmt.Fprintln(os.Stderr, "error: --query is required")
@@ -107,7 +107,7 @@ func ragLookup(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("rag lookup", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	uuid := fs.String("uuid", "", "Variant UUID")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *uuid == "" {
 		fmt.Fprintln(os.Stderr, "error: --uuid is required")
@@ -132,7 +132,7 @@ func ragIngest(ctx context.Context, args []string) {
 	file := fs.String("file", "", "File path to ingest")
 	mime := fs.String("mime", "text/plain", "MIME type")
 	source := fs.String("source", "", "Source URI")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "error: --file is required")
@@ -170,7 +170,7 @@ func ragDelete(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("rag delete", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	uuid := fs.String("uuid", "", "Document UUID")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if *uuid == "" {
 		fmt.Fprintln(os.Stderr, "error: --uuid is required")
@@ -191,5 +191,5 @@ func ragDelete(ctx context.Context, args []string) {
 func printJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	_ = enc.Encode(v)
 }
