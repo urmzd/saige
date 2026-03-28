@@ -36,7 +36,7 @@ func (s *HTTP) Fetch(ctx context.Context) ([]types.RawDocument, error) {
 		}
 
 		data, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read body from %s: %w", url, err)
 		}

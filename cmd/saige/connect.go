@@ -54,12 +54,12 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 	embedModel := cf.resolvedEmbedModel()
 
 	switch name {
-	case "ollama":
+	case providerOllama:
 		client := ollamaProvider.NewClient(*cf.ollamaHost, "", embedModel)
 		emb := ollamaProvider.NewEmbedder(client)
 		return &textEmbedder{embed: emb.Embed}, emb, nil
 
-	case "openai":
+	case providerOpenAI:
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("OPENAI_API_KEY is required")
@@ -71,7 +71,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		emb := openaiProvider.NewEmbedder(apiKey, embedModel, opts...)
 		return &textEmbedder{embed: emb.Embed}, emb, nil
 
-	case "google":
+	case providerGoogle:
 		apiKey := os.Getenv("GOOGLE_API_KEY")
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("GOOGLE_API_KEY is required")
@@ -82,7 +82,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		}
 		return &textEmbedder{embed: emb.Embed}, emb, nil
 
-	case "anthropic":
+	case providerAnthropic:
 		return nil, nil, fmt.Errorf("anthropic does not provide an embedding API; use --embed-model with another provider or use ollama")
 
 	default:
@@ -147,7 +147,7 @@ func buildTools(ctx context.Context, cf *commonFlags) ([]agenttypes.Tool, func()
 			cleanup()
 			return nil, nil, fmt.Errorf("rag pipeline: %w", err)
 		}
-		cleanups = append(cleanups, func() { pipeline.Close(ctx) })
+		cleanups = append(cleanups, func() { _ = pipeline.Close(ctx) })
 		tools = append(tools, ragtool.NewTools(pipeline)...)
 	}
 
@@ -172,7 +172,7 @@ func buildTools(ctx context.Context, cf *commonFlags) ([]agenttypes.Tool, func()
 			cleanup()
 			return nil, nil, fmt.Errorf("kg graph: %w", err)
 		}
-		cleanups = append(cleanups, func() { graph.Close(ctx) })
+		cleanups = append(cleanups, func() { _ = graph.Close(ctx) })
 		tools = append(tools, kgtool.NewTools(graph)...)
 	}
 

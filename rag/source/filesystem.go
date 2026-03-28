@@ -36,7 +36,7 @@ func (s *Filesystem) Fetch(_ context.Context) ([]types.RawDocument, error) {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.Walk of a trusted root
 		if err != nil {
 			return err
 		}

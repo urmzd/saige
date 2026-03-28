@@ -50,8 +50,8 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 		SubAgents: info.SubAgents,
 	}
 	PopulateEnv(&header)
-	fmt.Fprintln(w, renderHeader(header, 80))
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, renderHeader(header, 80))
+	_, _ = fmt.Fprintln(w)
 
 	for {
 		select {
@@ -60,7 +60,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 		default:
 		}
 
-		fmt.Fprint(w, promptStyle.Render(">>> "))
+		_, _ = fmt.Fprint(w, promptStyle.Render(">>> "))
 		if !scanner.Scan() {
 			return scanner.Err()
 		}
@@ -82,7 +82,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 		// Pass empty header — already printed above
 		result := StreamVerbose(AgentHeader{}, stream.Deltas(), w)
 		if result.Err != nil {
-			fmt.Fprintln(w, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, result.Err)))
+			_, _ = fmt.Fprintln(w, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, result.Err)))
 		} else if result.Text != "" {
 			fmt.Fprintln(w)
 		}

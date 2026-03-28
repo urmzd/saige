@@ -17,7 +17,7 @@ func runAsk(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("ask", flag.ExitOnError)
 	cf := addCommonFlags(fs)
 	raw := fs.Bool("raw", false, "Output raw text only (no styling), useful for pipes")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	question := strings.Join(fs.Args(), " ")
 	if question == "" {
