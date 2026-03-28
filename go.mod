@@ -15,7 +15,7 @@ require (
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	golang.org/x/net v0.45.0
-	golang.org/x/sync v0.17.0
+	golang.org/x/sync v0.20.0
 	google.golang.org/genai v1.50.0
 )
 
