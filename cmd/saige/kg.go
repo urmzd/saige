@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/knowledge"
 	kgtypes "github.com/urmzd/saige/knowledge/types"
 )
@@ -75,10 +76,15 @@ func kgSearch(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 10, "Max results")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "kg search"})
+
 	if *query == "" {
-		fmt.Fprintln(os.Stderr, "error: --query is required")
+		out.Error(fmt.Errorf("--query is required"))
 		os.Exit(1)
 	}
 
@@ -87,11 +93,14 @@ func kgSearch(ctx context.Context, args []string) {
 
 	result, err := graph.SearchFacts(ctx, *query, kgtypes.WithLimit(*limit))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(result)
+	if err := out.Result(result); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func kgIngest(ctx context.Context, args []string) {
@@ -100,10 +109,15 @@ func kgIngest(ctx context.Context, args []string) {
 	name := fs.String("name", "", "Episode name")
 	text := fs.String("text", "", "Text content to ingest")
 	source := fs.String("source", "", "Source description")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "kg ingest"})
+
 	if *name == "" || *text == "" {
-		fmt.Fprintln(os.Stderr, "error: --name and --text are required")
+		out.Error(fmt.Errorf("--name and --text are required"))
 		os.Exit(1)
 	}
 
@@ -116,29 +130,40 @@ func kgIngest(ctx context.Context, args []string) {
 		Source: *source,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(result)
+	if err := out.Result(result); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func kgGraph(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("kg graph", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	limit := fs.Int("limit", 100, "Max relations to return")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
+
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "kg graph"})
 
 	graph, cleanup := kgGraph_(ctx, *db)
 	defer cleanup()
 
 	data, err := graph.GetGraph(ctx, int64(*limit))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(data)
+	if err := out.Result(data); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func kgNode(ctx context.Context, args []string) {
@@ -146,10 +171,15 @@ func kgNode(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
 	id := fs.String("id", "", "Entity UUID")
 	depth := fs.Int("depth", 1, "Traversal depth")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "kg node"})
+
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "error: --id is required")
+		out.Error(fmt.Errorf("--id is required"))
 		os.Exit(1)
 	}
 
@@ -158,9 +188,12 @@ func kgNode(ctx context.Context, args []string) {
 
 	detail, err := graph.GetNode(ctx, *id, *depth)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(detail)
+	if err := out.Result(detail); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }

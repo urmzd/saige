@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 
+	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/extractor"
 	"github.com/urmzd/saige/rag/pgstore"
@@ -84,10 +84,15 @@ func ragSearch(ctx context.Context, args []string) {
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	query := fs.String("query", "", "Search query")
 	limit := fs.Int("limit", 10, "Max results")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "rag search"})
+
 	if *query == "" {
-		fmt.Fprintln(os.Stderr, "error: --query is required")
+		out.Error(fmt.Errorf("--query is required"))
 		os.Exit(1)
 	}
 
@@ -96,21 +101,29 @@ func ragSearch(ctx context.Context, args []string) {
 
 	result, err := pipeline.Search(ctx, *query, ragtypes.WithLimit(*limit))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(result)
+	if err := out.Result(result); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func ragLookup(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("rag lookup", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	uuid := fs.String("uuid", "", "Variant UUID")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "rag lookup"})
+
 	if *uuid == "" {
-		fmt.Fprintln(os.Stderr, "error: --uuid is required")
+		out.Error(fmt.Errorf("--uuid is required"))
 		os.Exit(1)
 	}
 
@@ -119,11 +132,14 @@ func ragLookup(ctx context.Context, args []string) {
 
 	hit, err := pipeline.Lookup(ctx, *uuid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(hit)
+	if err := out.Result(hit); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func ragIngest(ctx context.Context, args []string) {
@@ -132,16 +148,21 @@ func ragIngest(ctx context.Context, args []string) {
 	file := fs.String("file", "", "File path to ingest")
 	mime := fs.String("mime", "text/plain", "MIME type")
 	source := fs.String("source", "", "Source URI")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "rag ingest"})
+
 	if *file == "" {
-		fmt.Fprintln(os.Stderr, "error: --file is required")
+		out.Error(fmt.Errorf("--file is required"))
 		os.Exit(1)
 	}
 
 	data, err := os.ReadFile(*file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
@@ -159,21 +180,29 @@ func ragIngest(ctx context.Context, args []string) {
 		Data:      data,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(result)
+	if err := out.Result(result); err != nil {
+		out.Error(err)
+		os.Exit(1)
+	}
 }
 
 func ragDelete(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("rag delete", flag.ExitOnError)
 	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
 	uuid := fs.String("uuid", "", "Document UUID")
+	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
+	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
+	out.Header(tui.OutputHeader{Operation: "rag delete"})
+
 	if *uuid == "" {
-		fmt.Fprintln(os.Stderr, "error: --uuid is required")
+		out.Error(fmt.Errorf("--uuid is required"))
 		os.Exit(1)
 	}
 
@@ -181,15 +210,9 @@ func ragDelete(ctx context.Context, args []string) {
 	defer cleanup()
 
 	if err := pipeline.Delete(ctx, *uuid); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
-	printJSON(map[string]string{"status": "deleted", "uuid": *uuid})
-}
-
-func printJSON(v any) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	out.Status(fmt.Sprintf("deleted %s", *uuid))
 }

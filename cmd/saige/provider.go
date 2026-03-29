@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/urmzd/saige/agent/provider/anthropic"
@@ -87,13 +89,18 @@ func (cf *commonFlags) resolvedEmbedModel() string {
 }
 
 // resolveProvider creates a types.Provider from the resolved flags.
-func resolveProvider(ctx context.Context, cf *commonFlags) (types.Provider, error) {
+// When verbose is false, provider debug logging is suppressed to avoid
+// corrupting interactive TUI output.
+func resolveProvider(ctx context.Context, cf *commonFlags, verbose bool) (types.Provider, error) {
 	name := cf.resolvedProvider()
 	model := cf.resolvedModel()
 
 	switch name {
 	case providerOllama:
 		client := ollama.NewClient(*cf.ollamaHost, model, cf.resolvedEmbedModel())
+		if !verbose {
+			client.Logger = log.New(io.Discard, "", 0)
+		}
 		return ollama.NewAdapter(client), nil
 
 	case providerOpenAI:

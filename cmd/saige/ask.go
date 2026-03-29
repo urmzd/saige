@@ -17,6 +17,7 @@ func runAsk(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("ask", flag.ExitOnError)
 	cf := addCommonFlags(fs)
 	raw := fs.Bool("raw", false, "Output raw text only (no styling), useful for pipes")
+	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
 	_ = fs.Parse(args)
 
 	question := strings.Join(fs.Args(), " ")
@@ -28,15 +29,17 @@ func runAsk(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	provider, err := resolveProvider(ctx, cf)
+	out := tui.ResolveOutput(*raw, tui.TemplateByName(*tmplName))
+
+	provider, err := resolveProvider(ctx, cf, false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 
 	tools, cleanup, err := buildTools(ctx, cf)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		out.Error(err)
 		os.Exit(1)
 	}
 	defer cleanup()
@@ -53,25 +56,12 @@ func runAsk(ctx context.Context, args []string) {
 	agent := agentsdk.NewAgent(agentCfg)
 	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
 
-	if *raw {
-		for delta := range stream.Deltas() {
-			switch d := delta.(type) {
-			case types.TextContentDelta:
-				fmt.Print(d.Content)
-			case types.ErrorDelta:
-				fmt.Fprintf(os.Stderr, "error: %v\n", d.Error)
-				os.Exit(1)
-			}
-		}
-		fmt.Println()
-	} else {
-		result := tui.StreamVerbose(tui.AgentHeader{}, stream.Deltas(), os.Stdout)
-		if result.Err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", result.Err)
-			os.Exit(1)
-		}
-		fmt.Println()
+	result := out.StreamDeltas(tui.AgentHeader{}, stream.Deltas())
+	if result.Err != nil {
+		out.Error(result.Err)
+		os.Exit(1)
 	}
+	fmt.Println()
 }
 
 func readStdin() string {
