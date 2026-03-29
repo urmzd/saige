@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	knowledgetypes "github.com/urmzd/saige/knowledge/types"
+	"github.com/urmzd/saige/rag/contextassembler"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
@@ -272,7 +273,7 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 	if cfg.AssembleContext && len(merged) > 0 {
 		assembler := p.cfg.ContextAssembler
 		if assembler == nil {
-			assembler = &ragtypes.DefaultContextAssembler{MaxTokens: cfg.MaxTokens}
+			assembler = &contextassembler.DefaultAssembler{MaxTokens: cfg.MaxTokens}
 		}
 		assembled, err := assembler.Assemble(ctx, query, merged)
 		if err != nil {

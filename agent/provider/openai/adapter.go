@@ -216,7 +216,11 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 				out = append(out, openai.SystemMessage(strings.Join(textParts, "")))
 			}
 			for _, tr := range toolResults {
-				out = append(out, openai.ToolMessage(tr.Text, tr.ToolCallID))
+				text := tr.Text
+				if tr.IsError {
+					text = "[TOOL ERROR] " + text
+				}
+				out = append(out, openai.ToolMessage(text, tr.ToolCallID))
 			}
 
 		case types.UserMessage:
@@ -242,7 +246,11 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 				out = append(out, openai.UserMessage(parts))
 			}
 			for _, tr := range toolResults {
-				out = append(out, openai.ToolMessage(tr.Text, tr.ToolCallID))
+				text := tr.Text
+				if tr.IsError {
+					text = "[TOOL ERROR] " + text
+				}
+				out = append(out, openai.ToolMessage(text, tr.ToolCallID))
 			}
 
 		case types.AssistantMessage:

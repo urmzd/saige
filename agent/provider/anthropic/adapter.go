@@ -232,7 +232,7 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 				case types.TextContent:
 					system = append(system, anthropic.TextBlockParam{Text: bc.Text})
 				case types.ToolResultContent:
-					block := anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, false)
+					block := anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, bc.IsError)
 					out = appendMsg(out, "user", block)
 				}
 			}
@@ -243,7 +243,7 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 				case types.TextContent:
 					out = appendMsg(out, "user", anthropic.NewTextBlock(bc.Text))
 				case types.ToolResultContent:
-					out = appendMsg(out, "user", anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, false))
+					out = appendMsg(out, "user", anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, bc.IsError))
 				case types.FileContent:
 					if bc.Data != nil && isImageType(bc.MediaType) {
 						b64 := base64.StdEncoding.EncodeToString(bc.Data)

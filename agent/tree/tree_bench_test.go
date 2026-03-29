@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -14,7 +15,7 @@ func BenchmarkAddChild(b *testing.B) {
 	b.ResetTimer()
 	parent := root
 	for i := 0; i < b.N; i++ {
-		child, _ := tr.AddChild(parent.ID, types.NewUserMessage(fmt.Sprintf("msg-%d", i)))
+		child, _ := tr.AddChild(context.Background(), parent.ID, types.NewUserMessage(fmt.Sprintf("msg-%d", i)))
 		parent = child
 	}
 }
@@ -25,7 +26,7 @@ func BenchmarkFlattenBranch(b *testing.B) {
 			tr, _ := New(types.NewSystemMessage("system"))
 			parent := tr.Root()
 			for i := 0; i < depth; i++ {
-				child, _ := tr.AddChild(parent.ID, types.NewUserMessage(fmt.Sprintf("msg-%d", i)))
+				child, _ := tr.AddChild(context.Background(), parent.ID, types.NewUserMessage(fmt.Sprintf("msg-%d", i)))
 				parent = child
 			}
 
@@ -41,10 +42,10 @@ func BenchmarkFlattenBranch(b *testing.B) {
 func BenchmarkBranch(b *testing.B) {
 	tr, _ := New(types.NewSystemMessage("system"))
 	root := tr.Root()
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tr.Branch(user.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage("branched"))
+		tr.Branch(context.Background(), user.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage("branched"))
 	}
 }

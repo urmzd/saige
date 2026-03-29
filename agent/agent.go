@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/tree"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // AgentConfig holds configuration for an Agent.
@@ -37,6 +38,54 @@ type AgentConfig struct {
 	Metrics types.Metrics
 }
 
+// AgentOption configures an AgentConfig using the functional options pattern.
+type AgentOption func(*AgentConfig)
+
+// WithCompactConfig sets the compaction strategy.
+func WithCompactConfig(cfg *types.CompactConfig) AgentOption {
+	return func(c *AgentConfig) { c.CompactCfg = cfg }
+}
+
+// WithSubAgents registers sub-agents for delegation.
+func WithSubAgents(subs ...SubAgentDef) AgentOption {
+	return func(c *AgentConfig) { c.SubAgents = append(c.SubAgents, subs...) }
+}
+
+// WithTree attaches a pre-existing conversation tree.
+func WithTree(t *tree.Tree) AgentOption {
+	return func(c *AgentConfig) { c.Tree = t }
+}
+
+// WithResolvers sets URI scheme resolvers for file content.
+func WithResolvers(resolvers map[string]types.Resolver) AgentOption {
+	return func(c *AgentConfig) { c.Resolvers = resolvers }
+}
+
+// WithExtractors sets media type extractors for non-native content.
+func WithExtractors(extractors map[types.MediaType]types.Extractor) AgentOption {
+	return func(c *AgentConfig) { c.Extractors = extractors }
+}
+
+// WithResponseSchema constrains the final LLM output to a JSON schema.
+func WithResponseSchema(schema *types.ParameterSchema) AgentOption {
+	return func(c *AgentConfig) { c.ResponseSchema = schema }
+}
+
+// WithLogger sets the agent's logger.
+func WithLogger(logger *slog.Logger) AgentOption {
+	return func(c *AgentConfig) { c.Logger = logger }
+}
+
+// WithMetrics sets the metrics collector.
+func WithMetrics(metrics types.Metrics) AgentOption {
+	return func(c *AgentConfig) { c.Metrics = metrics }
+}
+
+// WithMaxIter overrides the maximum agent loop iterations.
+func WithMaxIter(n int) AgentOption {
+	return func(c *AgentConfig) { c.MaxIter = n }
+}
+
 // Agent runs an LLM agent loop with tool execution.
 // All conversations are backed by a Tree.
 type Agent struct {
@@ -47,7 +96,11 @@ type Agent struct {
 // NewAgent creates a new Agent. If no Tree is provided, one is created
 // automatically from the SystemPrompt. Initial config is seeded into the
 // tree so that serialise/restore round-trips include the full agent config.
-func NewAgent(cfg AgentConfig) *Agent {
+// Options are applied after the base config, allowing incremental composition.
+func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if cfg.MaxIter <= 0 {
 		cfg.MaxIter = 10
 	}
@@ -75,6 +128,9 @@ func NewAgent(cfg AgentConfig) *Agent {
 	return &Agent{cfg: cfg, tools: tools}
 }
 
+// registerSubAgent registers a SubAgentDef as a delegate tool. Each invocation
+// constructs a fresh Agent — the sub-agent's conversation history is intentionally
+// discarded between delegations, so sub-agents are stateless across calls.
 func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
 	registry.Register(&subAgentTool{
 		def: types.ToolDef{
@@ -140,7 +196,7 @@ func (a *Agent) Tree() *tree.Tree {
 // tree. The feedback is attached as a permanent leaf branching off the target
 // node — it lives on its own dead-end branch, is never flattened into LLM
 // messages, and cannot have children.
-func (a *Agent) Feedback(targetNodeID types.NodeID, rating types.Rating, comment string) (*types.Node, error) {
+func (a *Agent) Feedback(ctx context.Context, targetNodeID types.NodeID, rating types.Rating, comment string) (*types.Node, error) {
 	msg := types.UserMessage{Content: []types.UserContent{
 		types.FeedbackContent{
 			TargetNodeID: string(targetNodeID),
@@ -149,7 +205,7 @@ func (a *Agent) Feedback(targetNodeID types.NodeID, rating types.Rating, comment
 		},
 	}}
 
-	return a.cfg.Tree.AddFeedback(targetNodeID, msg)
+	return a.cfg.Tree.AddFeedback(ctx, targetNodeID, msg)
 }
 
 // FeedbackEntry is a single piece of feedback extracted from the tree.
@@ -211,32 +267,49 @@ type resolvedConfig struct {
 	compactNow bool
 }
 
-// resolveConfig walks messages and merges ConfigContent blocks (last write wins per field).
-// Starts from AgentConfig defaults; ConfigContent in the tree overrides them.
-func (a *Agent) resolveConfig(messages []types.Message) resolvedConfig {
+// prepareMessages resolves config and strips metadata in a single pass over the
+// message history. This avoids the cost of two separate O(n) walks per iteration.
+func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []types.Message) {
 	rc := resolvedConfig{maxIter: a.cfg.MaxIter}
 	if a.cfg.CompactCfg != nil {
 		rc.compactor = a.cfg.CompactCfg.ToCompactor()
 	}
 
+	out := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
 		switch v := msg.(type) {
 		case types.SystemMessage:
+			filtered := make([]types.SystemContent, 0, len(v.Content))
 			for _, c := range v.Content {
 				if cc, ok := c.(types.ConfigContent); ok {
 					mergeConfig(&rc, cc)
+				} else {
+					filtered = append(filtered, c)
 				}
+			}
+			if len(filtered) > 0 {
+				out = append(out, types.SystemMessage{Content: filtered})
 			}
 		case types.UserMessage:
+			filtered := make([]types.UserContent, 0, len(v.Content))
 			for _, c := range v.Content {
-				if cc, ok := c.(types.ConfigContent); ok {
-					mergeConfig(&rc, cc)
+				switch cv := c.(type) {
+				case types.ConfigContent:
+					mergeConfig(&rc, cv)
+				case types.FeedbackContent:
+					continue
+				default:
+					filtered = append(filtered, c)
 				}
 			}
+			if len(filtered) > 0 {
+				out = append(out, types.UserMessage{Content: filtered})
+			}
+		default:
+			out = append(out, msg)
 		}
 	}
-
-	return rc
+	return rc, out
 }
 
 func mergeConfig(rc *resolvedConfig, cc types.ConfigContent) {
@@ -252,41 +325,6 @@ func mergeConfig(rc *resolvedConfig, cc types.ConfigContent) {
 	if cc.CompactNow {
 		rc.compactNow = true
 	}
-}
-
-// stripMetadata removes ConfigContent and FeedbackContent blocks from messages
-// before sending to the LLM. These are tree metadata, not conversation context.
-func stripMetadata(messages []types.Message) []types.Message {
-	out := make([]types.Message, 0, len(messages))
-	for _, msg := range messages {
-		switch v := msg.(type) {
-		case types.SystemMessage:
-			filtered := make([]types.SystemContent, 0, len(v.Content))
-			for _, c := range v.Content {
-				if _, ok := c.(types.ConfigContent); !ok {
-					filtered = append(filtered, c)
-				}
-			}
-			if len(filtered) > 0 {
-				out = append(out, types.SystemMessage{Content: filtered})
-			}
-		case types.UserMessage:
-			filtered := make([]types.UserContent, 0, len(v.Content))
-			for _, c := range v.Content {
-				switch c.(type) {
-				case types.ConfigContent, types.FeedbackContent:
-					continue
-				}
-				filtered = append(filtered, c)
-			}
-			if len(filtered) > 0 {
-				out = append(out, types.UserMessage{Content: filtered})
-			}
-		default:
-			out = append(out, msg)
-		}
-	}
-	return out
 }
 
 // callProvider invokes the LLM, using structured output when available.
@@ -377,15 +415,11 @@ func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []ty
 
 // uriScheme extracts the scheme from a URI (e.g. "file" from "file:///path").
 func uriScheme(uri string) string {
-	for i, c := range uri {
-		if c == ':' {
-			return uri[:i]
-		}
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (i == 0 || (c < '0' || c > '9') && c != '+' && c != '-' && c != '.') {
-			break
-		}
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme == "" {
+		return ""
 	}
-	return ""
+	return u.Scheme
 }
 
 // ── Run loop ─────────────────────────────────────────────────────────
@@ -411,7 +445,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
-		if _, err := tr.AddChild(tip.ID, msg); err != nil {
+		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
@@ -434,16 +468,13 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			return
 		}
 
-		// Resolve config from tree each iteration.
-		resolved := a.resolveConfig(messages)
+		// Resolve config and strip metadata in a single pass.
+		resolved, llmMessages := a.prepareMessages(messages)
 
 		// Check iteration cap.
 		if iterCount >= resolved.maxIter {
 			break
 		}
-
-		// Strip config before sending to LLM or compactor.
-		llmMessages := stripMetadata(messages)
 
 		// Resolve file URIs to data.
 		llmMessages = a.resolveFiles(ctx, llmMessages)
@@ -502,7 +533,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
-		if _, err := tr.AddChild(tip.ID, msg); err != nil {
+		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
@@ -530,14 +561,17 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		// Build a single SystemMessage with all tool results and persist.
 		toolResultContents := make([]types.ToolResultContent, len(results))
 		for i, r := range results {
-			text := r.result
-			if r.err != "" && text == "" {
-				text = "Error: " + r.err
-			}
-			toolResultContents[i] = types.ToolResultContent{
+			trc := types.ToolResultContent{
 				ToolCallID: r.toolCallID,
-				Text:       text,
+				Text:       r.result,
 			}
+			if r.err != "" {
+				trc.IsError = true
+				if trc.Text == "" {
+					trc.Text = r.err
+				}
+			}
+			toolResultContents[i] = trc
 		}
 
 		toolResultMsg := types.NewToolResultMessage(toolResultContents...)
@@ -546,7 +580,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
-		if _, err := tr.AddChild(tip.ID, toolResultMsg); err != nil {
+		if _, err := tr.AddChild(ctx, tip.ID, toolResultMsg); err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
@@ -656,7 +690,6 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 				errStr := ""
 				if execErr != nil {
 					errStr = execErr.Error()
-					result = "Error: " + errStr
 				}
 				results[idx] = toolResult{
 					toolCallID: tc.ID,
