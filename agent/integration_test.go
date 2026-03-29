@@ -458,12 +458,15 @@ func TestAgentToolNotFound(t *testing.T) {
 		t.Errorf("expected 'tool not found' error, got %q", execEnds[0].Error)
 	}
 
-	// The error should be persisted as a tool result
+	// The error should be persisted as a tool result with IsError flag
 	msgs, _ := agent.Tree().FlattenBranch("main")
 	sysMsg := msgs[3].(types.SystemMessage)
 	tr := sysMsg.Content[0].(types.ToolResultContent)
-	if !strings.Contains(tr.Text, "Error:") {
-		t.Errorf("tool result text = %q, expected Error prefix", tr.Text)
+	if !tr.IsError {
+		t.Error("expected IsError to be true for tool-not-found result")
+	}
+	if !strings.Contains(tr.Text, "tool not found") {
+		t.Errorf("tool result text = %q, expected 'tool not found' message", tr.Text)
 	}
 }
 
@@ -499,8 +502,8 @@ func TestAgentToolReturnsError(t *testing.T) {
 	if execEnds[0].Error != "tool broke" {
 		t.Errorf("tool error = %q, want 'tool broke'", execEnds[0].Error)
 	}
-	if execEnds[0].Result != "Error: tool broke" {
-		t.Errorf("tool result = %q, want 'Error: tool broke'", execEnds[0].Result)
+	if execEnds[0].Result != "" {
+		t.Errorf("tool result = %q, want empty string on error", execEnds[0].Result)
 	}
 }
 
@@ -934,7 +937,7 @@ func TestAgentWithSlidingWindowCompactor(t *testing.T) {
 		} else {
 			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
-		node, _ := tr.AddChild(current.ID, msg)
+		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
 
@@ -1493,11 +1496,11 @@ func TestInvokeOnExplicitBranch(t *testing.T) {
 	root := tr.Root()
 
 	// Set up a side branch.
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("setup"))
-	asst, _ := tr.AddChild(user.ID, types.AssistantMessage{
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
+	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
 		Content: []types.AssistantContent{types.TextContent{Text: "ok"}},
 	})
-	branchID, _, _ := tr.Branch(asst.ID, "side", types.NewUserMessage("side question"))
+	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "side", types.NewUserMessage("side question"))
 
 	provider := &mockProvider{response: "side answer"}
 
@@ -1559,8 +1562,8 @@ func TestInvokeUsesActiveCursor(t *testing.T) {
 	root := tr.Root()
 
 	// Create a side branch
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("setup"))
-	branchID, _, _ := tr.Branch(user.ID, "side", types.NewUserMessage("side msg"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
+	branchID, _, _ := tr.Branch(context.Background(), user.ID, "side", types.NewUserMessage("side msg"))
 
 	// Set side as active
 	tr.SetActive(branchID)
@@ -1651,13 +1654,13 @@ func TestAgentBranchAndContinue(t *testing.T) {
 
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
-	asst, _ := tr.AddChild(user.ID, types.AssistantMessage{
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
 		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
 	})
 
 	// Branch from assistant
-	branchID, _, _ := tr.Branch(asst.ID, "edit", types.NewUserMessage("different question"))
+	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "edit", types.NewUserMessage("different question"))
 
 	agent := NewAgent(AgentConfig{
 		Provider: provider,
@@ -1847,8 +1850,8 @@ func TestTreeBranchWithWAL(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"), tree.WithWAL(wal))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
-	tr.Branch(user.ID, "alt", types.NewUserMessage("branch msg"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	tr.Branch(context.Background(), user.ID, "alt", types.NewUserMessage("branch msg"))
 
 	committed, _ := wal.Recover(context.Background())
 	// AddChild(hello) + Branch(branch msg) = 2 transactions
@@ -1862,8 +1865,8 @@ func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"), tree.WithWAL(wal))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("original"))
-	tr.UpdateUserMessage(user.ID, types.NewUserMessage("edited"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("original"))
+	tr.UpdateUserMessage(context.Background(), user.ID, types.NewUserMessage("edited"))
 
 	committed, _ := wal.Recover(context.Background())
 	// AddChild + UpdateUserMessage = 2 transactions
@@ -1879,15 +1882,15 @@ func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 func TestConcurrentInvocationsOnDifferentBranches(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("shared"))
-	asst, _ := tr.AddChild(user.ID, types.AssistantMessage{
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("shared"))
+	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
 		Content: []types.AssistantContent{types.TextContent{Text: "shared reply"}},
 	})
 
 	// Create multiple branches
 	branches := make([]types.BranchID, 5)
 	for i := range branches {
-		bid, _, _ := tr.Branch(asst.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("branch %d input", i)))
+		bid, _, _ := tr.Branch(context.Background(), asst.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("branch %d input", i)))
 		branches[i] = bid
 	}
 
@@ -2028,8 +2031,8 @@ func TestArchiveNonRecursive(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
-	asst, _ := tr.AddChild(user.ID, types.AssistantMessage{
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
 		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
 	})
 
@@ -2079,7 +2082,7 @@ func TestDeepConversationTree(t *testing.T) {
 		} else {
 			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
-		node, err := tr.AddChild(current.ID, msg)
+		node, err := tr.AddChild(context.Background(), current.ID, msg)
 		if err != nil {
 			t.Fatalf("AddChild %d: %v", i, err)
 		}
@@ -2105,12 +2108,12 @@ func TestDeepConversationTree(t *testing.T) {
 func TestMultipleBranchesFromSameNode(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
 
 	// Create 5 branches from the same node
 	branchIDs := make([]types.BranchID, 5)
 	for i := range 5 {
-		bid, _, err := tr.Branch(user.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("alt-%d", i)))
+		bid, _, err := tr.Branch(context.Background(), user.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("alt-%d", i)))
 		if err != nil {
 			t.Fatalf("Branch %d: %v", i, err)
 		}
@@ -2136,14 +2139,14 @@ func TestMultipleBranchesFromSameNode(t *testing.T) {
 func TestBranchNameCollision(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
 
 	// Create two branches with the same name
-	bid1, _, err := tr.Branch(user.ID, "same", types.NewUserMessage("first"))
+	bid1, _, err := tr.Branch(context.Background(), user.ID, "same", types.NewUserMessage("first"))
 	if err != nil {
 		t.Fatalf("Branch 1: %v", err)
 	}
-	bid2, _, err := tr.Branch(user.ID, "same", types.NewUserMessage("second"))
+	bid2, _, err := tr.Branch(context.Background(), user.ID, "same", types.NewUserMessage("second"))
 	if err != nil {
 		t.Fatalf("Branch 2: %v", err)
 	}
@@ -2179,7 +2182,7 @@ func TestTreeCompactChangesActiveBranch(t *testing.T) {
 		} else {
 			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
-		node, _ := tr.AddChild(current.ID, msg)
+		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
 
@@ -2212,7 +2215,7 @@ func TestTreeCompactOriginalBranchIntact(t *testing.T) {
 	current := root
 	for i := 0; i < 8; i++ {
 		msg := types.NewUserMessage(fmt.Sprintf("msg-%d", i))
-		node, _ := tr.AddChild(current.ID, msg)
+		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
 
@@ -2278,7 +2281,7 @@ func TestCheckpointRewindAndInvoke(t *testing.T) {
 	}
 
 	tip, _ := tr.Tip(rewindBranch)
-	altBranch, _, err := tr.Branch(tip.ID, "alt-turn-2", types.NewUserMessage("alternate turn 2"))
+	altBranch, _, err := tr.Branch(context.Background(), tip.ID, "alt-turn-2", types.NewUserMessage("alternate turn 2"))
 	if err != nil {
 		t.Fatalf("Branch: %v", err)
 	}
@@ -2326,7 +2329,7 @@ func TestUpdateUserMessageAndInvoke(t *testing.T) {
 	userNodeID := path[1]
 
 	// Edit the user message
-	editBranch, _, err := tr.UpdateUserMessage(userNodeID, types.NewUserMessage("edited question"))
+	editBranch, _, err := tr.UpdateUserMessage(context.Background(), userNodeID, types.NewUserMessage("edited question"))
 	if err != nil {
 		t.Fatalf("UpdateUserMessage: %v", err)
 	}
@@ -2361,8 +2364,8 @@ func TestAgentRespectsSetActive(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("setup"))
-	bid, _, _ := tr.Branch(user.ID, "alt", types.NewUserMessage("alt setup"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
+	bid, _, _ := tr.Branch(context.Background(), user.ID, "alt", types.NewUserMessage("alt setup"))
 
 	tr.SetActive(bid)
 
@@ -2393,13 +2396,13 @@ func TestDiffAfterAgentInvoke(t *testing.T) {
 	tr, _ := tree.New(types.NewSystemMessage("sys"))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(root.ID, types.NewUserMessage("shared"))
-	asst, _ := tr.AddChild(user.ID, types.AssistantMessage{
+	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("shared"))
+	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
 		Content: []types.AssistantContent{types.TextContent{Text: "shared reply"}},
 	})
 
 	// Branch
-	bid, _, _ := tr.Branch(asst.ID, "alt", types.NewUserMessage("alt question"))
+	bid, _, _ := tr.Branch(context.Background(), asst.ID, "alt", types.NewUserMessage("alt question"))
 
 	// Invoke on both branches
 	provider := &mockProvider{response: "reply"}
@@ -2515,7 +2518,7 @@ func TestEndToEndScenario(t *testing.T) {
 	fullPath, _ := tr.Path(tip1.ID)
 	userNodeID := fullPath[1]
 
-	editBranch, _, _ := tr.UpdateUserMessage(userNodeID, types.NewUserMessage("Tell me about Rust testing instead"))
+	editBranch, _, _ := tr.UpdateUserMessage(context.Background(), userNodeID, types.NewUserMessage("Tell me about Rust testing instead"))
 
 	editMsgs, _ := tr.FlattenBranch(editBranch)
 	if len(editMsgs) != 2 {
@@ -2827,7 +2830,7 @@ func TestFlattenAnnotatedWithCompactedNodes(t *testing.T) {
 		} else {
 			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
-		node, _ := tr.AddChild(current.ID, msg)
+		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
 
@@ -2873,7 +2876,7 @@ func TestTreeConcurrentReadWrite(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, err := tr.AddChild(root.ID, types.NewUserMessage(fmt.Sprintf("writer-%d", idx)))
+			_, err := tr.AddChild(context.Background(), root.ID, types.NewUserMessage(fmt.Sprintf("writer-%d", idx)))
 			if err != nil {
 				errCh <- fmt.Errorf("writer %d: %w", idx, err)
 			}
@@ -3192,7 +3195,7 @@ func TestFeedback(t *testing.T) {
 	}
 
 	// Leave positive feedback — creates a dead-end branch off the tip.
-	fbNode, err := agent.Feedback(tip.ID, types.RatingPositive, "Great response!")
+	fbNode, err := agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "Great response!")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3204,7 +3207,7 @@ func TestFeedback(t *testing.T) {
 	}
 
 	// Leave a second feedback on the same node — both are siblings.
-	_, err = agent.Feedback(tip.ID, types.RatingNegative, "Actually, not helpful")
+	_, err = agent.Feedback(context.Background(), tip.ID, types.RatingNegative, "Actually, not helpful")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3245,16 +3248,16 @@ func TestFeedbackIsPermanentLeaf(t *testing.T) {
 	stream.Wait()
 
 	tip, _ := agent.Tree().Tip(agent.Tree().Active())
-	fbNode, _ := agent.Feedback(tip.ID, types.RatingPositive, "good")
+	fbNode, _ := agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "good")
 
 	// Cannot add children to a feedback node.
-	_, err := agent.Tree().AddChild(fbNode.ID, types.NewUserMessage("nope"))
+	_, err := agent.Tree().AddChild(context.Background(), fbNode.ID, types.NewUserMessage("nope"))
 	if err == nil {
 		t.Fatal("expected error adding child to feedback node")
 	}
 
 	// Cannot branch from a feedback node.
-	_, _, err = agent.Tree().Branch(fbNode.ID, "nope", types.NewUserMessage("nope"))
+	_, _, err = agent.Tree().Branch(context.Background(), fbNode.ID, "nope", types.NewUserMessage("nope"))
 	if err == nil {
 		t.Fatal("expected error branching from feedback node")
 	}
@@ -3274,7 +3277,7 @@ func TestFeedbackNotInFlatten(t *testing.T) {
 	stream.Wait()
 
 	tip, _ := agent.Tree().Tip(agent.Tree().Active())
-	agent.Feedback(tip.ID, types.RatingPositive, "nice")
+	agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "nice")
 
 	// Feedback is on a dead-end branch — should NOT appear in the main branch flatten.
 	messages, err := agent.Tree().FlattenBranch(agent.Tree().Active())

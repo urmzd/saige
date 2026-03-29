@@ -51,12 +51,12 @@ func SaveSessionToFile(s *Session, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // LoadSessionFromFile loads a session from a JSON file.
 func LoadSessionFromFile(path string) (*Session, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed internally, not from user input
 	if err != nil {
 		return nil, fmt.Errorf("read session file: %w", err)
 	}

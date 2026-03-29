@@ -1,7 +1,8 @@
 ---
 name: agent
 description: Build streaming LLM agent loops in Go with typed deltas, tool execution, context compaction, sub-agent delegation, and RLHF feedback. Use when building AI agents, integrating LLM providers, or implementing tool-use patterns.
-argument-hint: [task]
+metadata:
+  argument-hint: [task]
 ---
 
 # agent

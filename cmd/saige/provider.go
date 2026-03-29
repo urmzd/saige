@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"github.com/urmzd/saige/agent/provider/anthropic"
@@ -14,17 +16,17 @@ import (
 )
 
 var defaultModels = map[string]string{
-	"anthropic": "claude-sonnet-4-6-20250514",
-	"openai":    "gpt-4o",
-	"google":    "gemini-2.0-flash",
-	"ollama":    "qwen3.5:4b",
+	providerAnthropic: "claude-sonnet-4-6-20250514",
+	providerOpenAI:    "gpt-4o",
+	providerGoogle:    "gemini-2.0-flash",
+	providerOllama:    "qwen3.5:4b",
 }
 
 var defaultEmbedModels = map[string]string{
-	"anthropic": "",
-	"openai":    "text-embedding-3-small",
-	"google":    "text-embedding-004",
-	"ollama":    "nomic-embed-text",
+	providerAnthropic: "",
+	providerOpenAI:    "text-embedding-3-small",
+	providerGoogle:    "text-embedding-004",
+	providerOllama:    "nomic-embed-text",
 }
 
 // commonFlags holds flags shared by chat and ask commands.
@@ -59,15 +61,15 @@ func (cf *commonFlags) resolvedProvider() string {
 		return *cf.provider
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		return "anthropic"
+		return providerAnthropic
 	}
 	if os.Getenv("OPENAI_API_KEY") != "" {
-		return "openai"
+		return providerOpenAI
 	}
 	if os.Getenv("GOOGLE_API_KEY") != "" {
-		return "google"
+		return providerGoogle
 	}
-	return "ollama"
+	return providerOllama
 }
 
 // resolvedModel returns the model name, falling back to the provider default.
@@ -87,16 +89,21 @@ func (cf *commonFlags) resolvedEmbedModel() string {
 }
 
 // resolveProvider creates a types.Provider from the resolved flags.
-func resolveProvider(ctx context.Context, cf *commonFlags) (types.Provider, error) {
+// When verbose is false, provider debug logging is suppressed to avoid
+// corrupting interactive TUI output.
+func resolveProvider(ctx context.Context, cf *commonFlags, verbose bool) (types.Provider, error) {
 	name := cf.resolvedProvider()
 	model := cf.resolvedModel()
 
 	switch name {
-	case "ollama":
+	case providerOllama:
 		client := ollama.NewClient(*cf.ollamaHost, model, cf.resolvedEmbedModel())
+		if !verbose {
+			client.Logger = log.New(io.Discard, "", 0)
+		}
 		return ollama.NewAdapter(client), nil
 
-	case "openai":
+	case providerOpenAI:
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			return nil, fmt.Errorf("OPENAI_API_KEY is required for openai provider")
@@ -107,14 +114,14 @@ func resolveProvider(ctx context.Context, cf *commonFlags) (types.Provider, erro
 		}
 		return openai.NewAdapter(apiKey, model, opts...), nil
 
-	case "anthropic":
+	case providerAnthropic:
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
 		if apiKey == "" {
 			return nil, fmt.Errorf("ANTHROPIC_API_KEY is required for anthropic provider")
 		}
 		return anthropic.NewAdapter(apiKey, model), nil
 
-	case "google":
+	case providerGoogle:
 		apiKey := os.Getenv("GOOGLE_API_KEY")
 		if apiKey == "" {
 			return nil, fmt.Errorf("GOOGLE_API_KEY is required for google provider")
