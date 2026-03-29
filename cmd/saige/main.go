@@ -10,6 +10,14 @@ import (
 
 const version = "0.4.0"
 
+// Provider name constants.
+const (
+	providerOllama    = "ollama"
+	providerOpenAI    = "openai"
+	providerGoogle    = "google"
+	providerAnthropic = "anthropic"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()

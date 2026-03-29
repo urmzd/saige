@@ -4,10 +4,7 @@ package types
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
-
-	"github.com/urmzd/saige/rag/tokenizer"
 )
 
 // --- Errors ---
@@ -318,57 +315,3 @@ type IngestResult struct {
 	Variants     int    `json:"variants"`
 }
 
-// --- Default context assembler ---
-
-// DefaultContextAssembler builds context with numbered citations from exact source text.
-type DefaultContextAssembler struct {
-	MaxTokens int
-}
-
-func (a *DefaultContextAssembler) Assemble(_ context.Context, query string, hits []SearchHit) (*AssembledContext, error) {
-	var blocks []ContextBlock
-	var parts []string
-	tokenCount := 0
-
-	for i, hit := range hits {
-		citation := fmt.Sprintf("[%d]", i+1)
-		text := hit.Variant.Text
-
-		tokens := tokenizer.CountTokens(text)
-		if a.MaxTokens > 0 && tokenCount+tokens > a.MaxTokens {
-			break
-		}
-		tokenCount += tokens
-
-		blocks = append(blocks, ContextBlock{
-			Text:       text,
-			Citation:   citation,
-			Provenance: hit.Provenance,
-		})
-
-		source := hit.Provenance.SourceURI
-		if source == "" {
-			source = hit.Provenance.DocumentTitle
-		}
-		parts = append(parts, fmt.Sprintf("%s %s (Source: %s)", citation, text, source))
-	}
-
-	prompt := fmt.Sprintf("Context for query %q:\n\n%s", query, joinStrings(parts, "\n\n"))
-
-	return &AssembledContext{
-		Prompt:     prompt,
-		Blocks:     blocks,
-		TokenCount: tokenCount,
-	}, nil
-}
-
-func joinStrings(parts []string, sep string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	result := parts[0]
-	for _, p := range parts[1:] {
-		result += sep + p
-	}
-	return result
-}

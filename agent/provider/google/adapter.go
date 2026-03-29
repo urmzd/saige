@@ -148,8 +148,13 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 					systemParts = append(systemParts, &genai.Part{Text: bc.Text})
 				case types.ToolResultContent:
 					// Tool results go as function responses from "user" role.
+					resp := map[string]any{"result": bc.Text}
+					if bc.IsError {
+						resp["error"] = bc.Text
+						delete(resp, "result")
+					}
 					contents = append(contents, genai.NewContentFromFunctionResponse(
-						bc.ToolCallID, map[string]any{"result": bc.Text}, "user",
+						bc.ToolCallID, resp, "user",
 					))
 				}
 			}
@@ -161,8 +166,13 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 				case types.TextContent:
 					parts = append(parts, &genai.Part{Text: bc.Text})
 				case types.ToolResultContent:
+					resp := map[string]any{"result": bc.Text}
+					if bc.IsError {
+						resp["error"] = bc.Text
+						delete(resp, "result")
+					}
 					contents = append(contents, genai.NewContentFromFunctionResponse(
-						bc.ToolCallID, map[string]any{"result": bc.Text}, "user",
+						bc.ToolCallID, resp, "user",
 					))
 				case types.FileContent:
 					if bc.Data != nil {

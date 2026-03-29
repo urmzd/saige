@@ -59,6 +59,7 @@ func (ToolUseContent) isAssistantContent() {}
 type ToolResultContent struct {
 	ToolCallID string
 	Text       string
+	IsError    bool // true when Text represents an error, not a successful result
 }
 
 func (ToolResultContent) isSystemContent() {}

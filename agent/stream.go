@@ -156,11 +156,7 @@ func replayUserToolResults(stream *EventStream, content []types.UserContent) {
 			stream.send(types.ToolExecStartDelta{ToolCallID: v.ToolCallID})
 			stream.send(types.ToolExecEndDelta{ToolCallID: v.ToolCallID, Result: v.Text})
 		case types.FeedbackContent:
-			stream.send(types.FeedbackDelta{
-				TargetNodeID: v.TargetNodeID,
-				Rating:       v.Rating,
-				Comment:      v.Comment,
-			})
+			stream.send(types.FeedbackDelta(v))
 		}
 	}
 }

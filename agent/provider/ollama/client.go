@@ -66,7 +66,7 @@ func (c *Client) GenerateWithModel(ctx context.Context, prompt, model string, fo
 	if err != nil {
 		return "", fmt.Errorf("ollama generate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -112,13 +112,13 @@ func (c *Client) GenerateStream(ctx context.Context, prompt string) (<-chan stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		close(ch)
 		return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
 	}
 
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 
 		scanner := bufio.NewScanner(resp.Body)
@@ -171,7 +171,7 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -238,14 +238,14 @@ func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan Chat
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		close(ch)
 		c.Logger.Printf("[ollama] chat_stream failed: %d", resp.StatusCode)
 		return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
 	}
 
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 
 		scanner := bufio.NewScanner(resp.Body)

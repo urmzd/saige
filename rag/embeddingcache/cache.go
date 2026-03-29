@@ -128,6 +128,6 @@ func (c *Cache) put(key string, embedding []float32) {
 
 func cacheKey(v types.ContentVariant) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s:%s", v.ContentType, v.Text)
+	_, _ = fmt.Fprintf(h, "%s:%s", v.ContentType, v.Text)
 	return hex.EncodeToString(h.Sum(nil))
 }
