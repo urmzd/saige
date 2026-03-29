@@ -4,11 +4,12 @@ package contextassembler
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/tokenizer"
+	"github.com/urmzd/saige/rag/types"
 )
 
 // CompressingAssembler uses an LLM to extract query-relevant sentences from each hit
@@ -79,22 +80,11 @@ func (a *CompressingAssembler) Assemble(ctx context.Context, query string, hits 
 		parts = append(parts, fmt.Sprintf("%s %s (Source: %s)", citation, compressed, source))
 	}
 
-	promptText := fmt.Sprintf("Context for query %q:\n\n%s", query, joinStrings(parts, "\n\n"))
+	promptText := fmt.Sprintf("Context for query %q:\n\n%s", query, strings.Join(parts, "\n\n"))
 
 	return &types.AssembledContext{
 		Prompt:     promptText,
 		Blocks:     blocks,
 		TokenCount: tokenCount,
 	}, nil
-}
-
-func joinStrings(parts []string, sep string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	result := parts[0]
-	for _, p := range parts[1:] {
-		result += sep + p
-	}
-	return result
 }

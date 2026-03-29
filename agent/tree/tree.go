@@ -17,11 +17,6 @@ func WithWAL(wal types.WAL) Option {
 	return func(t *Tree) { t.wal = wal }
 }
 
-// WithStore sets the persistence store for the tree.
-func WithStore(store types.Store) Option {
-	return func(t *Tree) { t.store = store }
-}
-
 // Tree is a branching conversation graph rooted at a system message.
 type Tree struct {
 	mu          sync.RWMutex
@@ -32,7 +27,6 @@ type Tree struct {
 	active      types.BranchID                 // the branch Invoke reads from
 	checkpoints map[types.CheckpointID]types.Checkpoint
 	wal         types.WAL
-	store       types.Store
 }
 
 // New creates a new conversation tree rooted at the given system message.

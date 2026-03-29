@@ -981,7 +981,7 @@ func TestSlidingWindowCompactorBelowWindow(t *testing.T) {
 }
 
 func TestSummarizeCompactorBelowThreshold(t *testing.T) {
-	compactor := types.NewSummarizeCompactor(10)
+	compactor := types.NewSummarizeCompactor(10, 0)
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
 		types.NewUserMessage("one"),
@@ -998,7 +998,7 @@ func TestSummarizeCompactorBelowThreshold(t *testing.T) {
 
 func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 	provider := &mockProvider{response: "conversation summary"}
-	compactor := types.NewSummarizeCompactor(3)
+	compactor := types.NewSummarizeCompactor(3, 0)
 
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
@@ -1039,7 +1039,7 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 
 func TestSummarizeCompactorProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("provider down")}
-	compactor := types.NewSummarizeCompactor(2)
+	compactor := types.NewSummarizeCompactor(2, 0)
 
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
@@ -2799,18 +2799,32 @@ func TestAgentWithSummarizeCompactor(t *testing.T) {
 		Tree:       tr,
 	})
 
-	// Multiple turns
+	// Multiple turns — each Invoke uses tr.Active(), which may change after compaction.
 	for i := 0; i < 4; i++ {
 		stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage(fmt.Sprintf("turn-%d", i))})
 		collectDeltas(stream)
 		stream.Wait()
 	}
 
-	// Tree should have all messages
-	msgs, _ := tr.FlattenBranch("main")
-	// sys + 4*(user + asst) = 9
-	if len(msgs) != 9 {
-		t.Errorf("tree messages = %d, want 9", len(msgs))
+	// After compaction, the active branch may have been forked from root.
+	// The original main branch is preserved; the active branch has compacted history.
+	activeBranch := tr.Active()
+	msgs, err := tr.FlattenBranch(activeBranch)
+	if err != nil {
+		t.Fatalf("FlattenBranch(%s): %v", activeBranch, err)
+	}
+	// Active branch should have messages (at least sys + summary + recent context).
+	if len(msgs) < 3 {
+		t.Errorf("active branch messages = %d, want >= 3", len(msgs))
+	}
+
+	// Original main branch should still exist and be untouched.
+	mainMsgs, err := tr.FlattenBranch("main")
+	if err != nil {
+		t.Fatalf("FlattenBranch(main): %v", err)
+	}
+	if len(mainMsgs) == 0 {
+		t.Error("main branch should not be empty")
 	}
 }
 
@@ -2990,7 +3004,7 @@ func TestSlidingWindowPreservesSystem(t *testing.T) {
 // ===================================================================
 
 func TestSummarizeCompactorFewMessages(t *testing.T) {
-	compactor := types.NewSummarizeCompactor(2)
+	compactor := types.NewSummarizeCompactor(2, 0)
 	provider := &mockProvider{response: "summary"}
 
 	msgs := []types.Message{

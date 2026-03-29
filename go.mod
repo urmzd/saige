@@ -16,7 +16,7 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.8
 	golang.org/x/net v0.52.0
 	golang.org/x/sync v0.20.0
-	google.golang.org/genai v1.50.0
+	google.golang.org/genai v1.51.0
 )
 
 require (

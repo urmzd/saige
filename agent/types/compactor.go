@@ -26,6 +26,7 @@ type CompactConfig struct {
 	Strategy   CompactStrategy
 	WindowSize int // for sliding_window
 	Threshold  int // for summarize
+	KeepLast   int // recent messages to preserve during summarize (default 4)
 }
 
 // ToCompactor converts the config into a Compactor implementation.
@@ -34,7 +35,7 @@ func (cc CompactConfig) ToCompactor() Compactor {
 	case CompactSlidingWindow:
 		return NewSlidingWindowCompactor(cc.WindowSize)
 	case CompactSummarize:
-		return NewSummarizeCompactor(cc.Threshold)
+		return NewSummarizeCompactor(cc.Threshold, cc.KeepLast)
 	default:
 		return NoopCompactor{}
 	}
@@ -60,20 +61,50 @@ func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, 
 	if len(messages) <= c.WindowSize+1 {
 		return messages, nil
 	}
-	// Keep first (system) + last N
-	result := make([]Message, 0, c.WindowSize+1)
+	// Keep first (system) + last N, but don't split a tool-result from its tool-call.
+	cut := len(messages) - c.WindowSize
+	if cut > 0 && cut < len(messages) && hasToolResult(messages[cut]) {
+		cut-- // include the preceding assistant message with the tool call
+	}
+	if cut <= 0 {
+		return messages, nil
+	}
+	result := make([]Message, 0, len(messages)-cut+1)
 	result = append(result, messages[0])
-	result = append(result, messages[len(messages)-c.WindowSize:]...)
+	result = append(result, messages[cut:]...)
 	return result, nil
+}
+
+// hasToolResult reports whether a message contains a ToolResultContent block.
+func hasToolResult(msg Message) bool {
+	switch v := msg.(type) {
+	case SystemMessage:
+		for _, c := range v.Content {
+			if _, ok := c.(ToolResultContent); ok {
+				return true
+			}
+		}
+	case UserMessage:
+		for _, c := range v.Content {
+			if _, ok := c.(ToolResultContent); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SummarizeCompactor summarizes older messages when history exceeds a threshold.
 type SummarizeCompactor struct {
 	Threshold int
+	KeepLast  int
 }
 
-func NewSummarizeCompactor(threshold int) *SummarizeCompactor {
-	return &SummarizeCompactor{Threshold: threshold}
+func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
+	if keepLast <= 0 {
+		keepLast = 4
+	}
+	return &SummarizeCompactor{Threshold: threshold, KeepLast: keepLast}
 }
 
 func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
@@ -81,11 +112,7 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 		return messages, nil
 	}
 
-	// Summarize all but last 4 messages using the provider
-	keepLast := 4
-	if keepLast > len(messages)-1 {
-		keepLast = len(messages) - 1
-	}
+	keepLast := min(c.KeepLast, len(messages)-1)
 
 	toSummarize := messages[1 : len(messages)-keepLast]
 	if len(toSummarize) == 0 {
@@ -161,9 +188,16 @@ func MessagesToText(msgs []Message) string {
 			}
 		case AssistantMessage:
 			for _, c := range v.Content {
-				if tc, ok := c.(TextContent); ok {
+				switch bc := c.(type) {
+				case TextContent:
 					b.WriteString("Assistant: ")
-					b.WriteString(tc.Text)
+					b.WriteString(bc.Text)
+					b.WriteByte('\n')
+				case ToolUseContent:
+					b.WriteString("Tool Call [")
+					b.WriteString(bc.ID)
+					b.WriteString("]: ")
+					b.WriteString(bc.Name)
 					b.WriteByte('\n')
 				}
 			}
