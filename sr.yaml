@@ -21,6 +21,7 @@ types:
   - name: docs
     section: Documentation
   - name: refactor
+    bump: patch
     section: Refactoring
   - name: revert
     section: Reverts
