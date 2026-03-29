@@ -176,7 +176,11 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 				out = append(out, ChatMessage{Role: "system", Content: strings.Join(textParts, "")})
 			}
 			for _, tr := range toolResults {
-				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
+				text := tr.Text
+				if tr.IsError {
+					text = "[TOOL ERROR] " + text
+				}
+				out = append(out, ChatMessage{Role: "tool", Content: text})
 			}
 		case types.UserMessage:
 			// Split: text goes to user role, tool results go to tool role.
@@ -203,7 +207,11 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 				})
 			}
 			for _, tr := range toolResults {
-				out = append(out, ChatMessage{Role: "tool", Content: tr.Text})
+				text := tr.Text
+				if tr.IsError {
+					text = "[TOOL ERROR] " + text
+				}
+				out = append(out, ChatMessage{Role: "tool", Content: text})
 			}
 		case types.AssistantMessage:
 			msg := ChatMessage{Role: "assistant"}

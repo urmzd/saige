@@ -28,9 +28,11 @@
 ## Features
 
 - **Streaming-first agent loop** with 15 typed delta events and parallel tool execution
-- **Conversation tree** with branching, checkpoints, rewind, and RLHF feedback
-- **Sub-agent delegation** — child agents as tools, deltas forwarded with attribution
+- **Functional options** — compose agents incrementally with `AgentOption` functions
+- **Conversation tree** with branching, checkpoints, rewind, and RLHF feedback — all context-aware
+- **Sub-agent delegation** — stateless child agents as tools, deltas forwarded with attribution
 - **Human-in-the-loop markers** — gate tool execution pending approval
+- **Structured tool errors** — `IsError` flag on tool results, distinguishable from successful output
 - **Knowledge graph construction** — LLM-powered entity extraction, fuzzy dedup, temporal tracking
 - **Multi-retriever RAG** — vector + BM25 + graph retrieval fused via Reciprocal Rank Fusion
 - **Reranking** — MMR diversity and cross-encoder scoring built in
@@ -97,6 +99,18 @@ a := agent.NewAgent(agent.AgentConfig{
     Provider:     ollama.NewAdapter(client),
     Tools:        types.NewToolRegistry(myTool),
 })
+
+// Or compose incrementally with functional options:
+a := agent.NewAgent(agent.AgentConfig{
+    Name:         "assistant",
+    SystemPrompt: "You are a helpful assistant.",
+    Provider:     ollama.NewAdapter(client),
+    Tools:        types.NewToolRegistry(myTool),
+},
+    agent.WithMaxIter(20),
+    agent.WithLogger(slog.Default()),
+    agent.WithMetrics(myMetrics),
+)
 
 stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("Hello!")})
 for delta := range stream.Deltas() {
@@ -216,6 +230,8 @@ Three roles. Tool results are content blocks, not a separate role.
 | `UserMessage` | user | `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent` |
 | `AssistantMessage` | assistant | `TextContent`, `ToolUseContent` |
 
+`ToolResultContent` carries an `IsError` field that signals whether the text represents an error or a successful result. This distinction is preserved through to the LLM — Anthropic passes it natively, Google uses an `error` key in the function response, and OpenAI/Ollama prefix the text with `[TOOL ERROR]`.
+
 ### Deltas
 
 15 concrete types across five categories — LLM-side, execution-side, marker, feedback, and metadata:
@@ -262,7 +278,7 @@ When the LLM requests multiple tool calls, all tools execute **concurrently**.
 
 ### Sub-Agents
 
-Sub-agents are registered as tools and execute within parallel tool dispatch. Their deltas are forwarded through the parent's stream:
+Sub-agents are registered as tools and execute within parallel tool dispatch. Their deltas are forwarded through the parent's stream. **Sub-agents are stateless** — a fresh agent is constructed for each delegation, so conversation history is not preserved between calls. This is intentional: sub-agents are task executors, not persistent conversational partners.
 
 ```go
 a := agent.NewAgent(agent.AgentConfig{
@@ -299,9 +315,8 @@ Constrain LLM responses to a JSON schema:
 ```go
 schema := types.SchemaFrom[MyResponse]()
 a := agent.NewAgent(agent.AgentConfig{
-    Provider:       adapter,
-    ResponseSchema: schema,
-})
+    Provider: adapter,
+}, agent.WithResponseSchema(schema))
 ```
 
 ### Provider Resilience
@@ -330,11 +345,13 @@ Data-driven context management:
 
 ### Conversation Tree
 
-Persistent branching conversation graph with checkpoints, rewind, and archive:
+Persistent branching conversation graph with checkpoints, rewind, and archive. All mutation methods (`AddChild`, `Branch`, `UpdateUserMessage`, `AddFeedback`) accept a `context.Context` for cancellation, deadlines, and tracing — including WAL writes:
 
 ```go
 tr := a.Tree()
-tr.Branch(nodeID, "experiment", msg)
+tr.AddChild(ctx, parentID, msg)
+tr.Branch(ctx, nodeID, "experiment", msg)
+tr.UpdateUserMessage(ctx, nodeID, newMsg)
 tr.Checkpoint(branchID, "before-refactor")
 tr.Rewind(checkpointID)
 ```
@@ -346,8 +363,8 @@ Attach positive/negative ratings and comments to any node in the conversation tr
 ```go
 // Rate an assistant response.
 tip, _ := a.Tree().Tip(a.Tree().Active())
-a.Feedback(tip.ID, types.RatingPositive, "Clear and helpful")
-a.Feedback(tip.ID, types.RatingNegative, "Too verbose")
+a.Feedback(ctx, tip.ID, types.RatingPositive, "Clear and helpful")
+a.Feedback(ctx, tip.ID, types.RatingNegative, "Too verbose")
 
 // Collect all feedback across the tree.
 for _, entry := range a.FeedbackSummary() {
@@ -365,14 +382,15 @@ Automatic URI resolution and content negotiation for multi-modal input:
 ```go
 a := agent.NewAgent(agent.AgentConfig{
     Provider: adapter,
-    Resolvers: map[string]types.Resolver{
+},
+    agent.WithResolvers(map[string]types.Resolver{
         "file": myFileResolver,
         "s3":   myS3Resolver,
-    },
-    Extractors: map[types.MediaType]types.Extractor{
+    }),
+    agent.WithExtractors(map[types.MediaType]types.Extractor{
         types.MediaPDF: myPDFExtractor,
-    },
-})
+    }),
+)
 ```
 
 ### TUI
@@ -640,9 +658,7 @@ go run ./examples/rag/arxiv/
 
 ## Agent Skill
 
-```bash
-npx skills add urmzd/saige
-```
+This repo's conventions are available as portable agent skills in [`skills/`](skills/).
 
 ## License
 

@@ -105,7 +105,7 @@ func (t *Tree) getNode(id types.NodeID) (*types.Node, error) {
 }
 
 // AddChild appends a message as a child of the given parent node.
-func (t *Tree) AddChild(parentID types.NodeID, msg types.Message) (*types.Node, error) {
+func (t *Tree) AddChild(ctx context.Context, parentID types.NodeID, msg types.Message) (*types.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -133,7 +133,7 @@ func (t *Tree) AddChild(parentID types.NodeID, msg types.Message) (*types.Node, 
 		UpdatedAt: now,
 	}
 
-	if err := t.walAddNode(child); err != nil {
+	if err := t.walAddNode(ctx, child); err != nil {
 		return nil, err
 	}
 
@@ -147,7 +147,7 @@ func (t *Tree) AddChild(parentID types.NodeID, msg types.Message) (*types.Node, 
 // AddFeedback appends a feedback message as a permanent leaf child of the
 // given node. The child is on its own dead-end branch and cannot have
 // further children added to it.
-func (t *Tree) AddFeedback(parentID types.NodeID, msg types.Message) (*types.Node, error) {
+func (t *Tree) AddFeedback(ctx context.Context, parentID types.NodeID, msg types.Message) (*types.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -176,7 +176,7 @@ func (t *Tree) AddFeedback(parentID types.NodeID, msg types.Message) (*types.Nod
 		UpdatedAt: now,
 	}
 
-	if err := t.walAddNode(child); err != nil {
+	if err := t.walAddNode(ctx, child); err != nil {
 		return nil, err
 	}
 
@@ -202,7 +202,7 @@ func (t *Tree) Feedback() []*types.Node {
 }
 
 // Branch creates a new branch diverging from the given node.
-func (t *Tree) Branch(fromNodeID types.NodeID, name string, msg types.Message) (types.BranchID, *types.Node, error) {
+func (t *Tree) Branch(ctx context.Context, fromNodeID types.NodeID, name string, msg types.Message) (types.BranchID, *types.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -235,7 +235,7 @@ func (t *Tree) Branch(fromNodeID types.NodeID, name string, msg types.Message) (
 		UpdatedAt: now,
 	}
 
-	if err := t.walAddNode(child); err != nil {
+	if err := t.walAddNode(ctx, child); err != nil {
 		return "", nil, err
 	}
 
@@ -247,7 +247,7 @@ func (t *Tree) Branch(fromNodeID types.NodeID, name string, msg types.Message) (
 }
 
 // UpdateUserMessage edits a user message by creating a new branch from the parent.
-func (t *Tree) UpdateUserMessage(nodeID types.NodeID, newMsg types.UserMessage) (types.BranchID, *types.Node, error) {
+func (t *Tree) UpdateUserMessage(ctx context.Context, nodeID types.NodeID, newMsg types.UserMessage) (types.BranchID, *types.Node, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -281,7 +281,7 @@ func (t *Tree) UpdateUserMessage(nodeID types.NodeID, newMsg types.UserMessage) 
 		UpdatedAt: now,
 	}
 
-	if err := t.walAddNode(child); err != nil {
+	if err := t.walAddNode(ctx, child); err != nil {
 		return "", nil, err
 	}
 
@@ -513,11 +513,10 @@ func (t *Tree) nodePathUnlocked(nodeID types.NodeID) (types.TreePath, error) {
 }
 
 // walAddNode writes a node addition to the WAL if configured.
-func (t *Tree) walAddNode(node *types.Node) error {
+func (t *Tree) walAddNode(ctx context.Context, node *types.Node) error {
 	if t.wal == nil {
 		return nil
 	}
-	ctx := context.TODO()
 	txID, err := t.wal.Begin(ctx)
 	if err != nil {
 		return err

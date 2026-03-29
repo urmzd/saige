@@ -1,9 +1,10 @@
 ---
 name: rag
 description: Build multi-modal RAG pipelines with graph-enhanced retrieval in Go using saige/rag — chunking, multi-retriever fusion, reranking, HyDE, evaluation metrics, and PostgreSQL + pgvector storage.
-version: 0.1.0
-author: urmzd
-tags: [rag, retrieval, embeddings, knowledge-graph, go, saige]
+metadata:
+  version: 0.1.0
+  author: urmzd
+  tags: rag retrieval embeddings knowledge-graph go saige
 ---
 
 # rag

@@ -21,8 +21,10 @@ import (
 // It reads user input, invokes the agent, renders streaming deltas, resolves
 // markers, and loops until the user types /quit or cancels with ctrl+c.
 type Runner struct {
-	Title   string
-	Verbose bool // use plain text streaming instead of bubbletea
+	Title    string
+	Verbose  bool     // use plain text streaming instead of bubbletea
+	Template Template // output template; zero value uses TemplateDefault
+	Output   Output   // optional; if nil, a StyledOutput is created
 }
 
 // Name implements agentsdk.NamedRunner.
@@ -30,6 +32,12 @@ func (r *Runner) Name() string { return "tui" }
 
 // Run implements agentsdk.Runner. It starts the interactive conversation loop.
 func (r *Runner) Run(ctx context.Context, agent *agentsdk.Agent) error {
+	if r.Template.Name == "" {
+		r.Template = TemplateDefault
+	}
+	if r.Output == nil {
+		r.Output = NewStyledOutput(os.Stdout, os.Stderr, r.Template)
+	}
 	if r.Verbose {
 		return r.runVerbose(ctx, agent)
 	}
@@ -43,15 +51,18 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	info := agent.Info()
-	header := AgentHeader{
+	r.Output.Header(OutputHeader{
+		Operation: info.Name,
+		Provider:  info.Provider,
+	})
+
+	agentHeader := AgentHeader{
 		Name:      info.Name,
 		Provider:  info.Provider,
 		Tools:     info.Tools,
 		SubAgents: info.SubAgents,
 	}
-	PopulateEnv(&header)
-	fmt.Fprintln(w, renderHeader(header, 80))
-	fmt.Fprintln(w)
+	PopulateEnv(&agentHeader)
 
 	for {
 		select {
@@ -60,7 +71,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 		default:
 		}
 
-		fmt.Fprint(w, promptStyle.Render(">>> "))
+		_, _ = fmt.Fprint(w, promptStyle.Render(">>> "))
 		if !scanner.Scan() {
 			return scanner.Err()
 		}
@@ -79,10 +90,10 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 
 		go r.resolveMarkersVerbose(ctx, stream, scanner, w)
 
-		// Pass empty header — already printed above
-		result := StreamVerbose(AgentHeader{}, stream.Deltas(), w)
+		// Pass empty header — already printed above via Output.Header
+		result := r.Output.StreamDeltas(AgentHeader{}, stream.Deltas())
 		if result.Err != nil {
-			fmt.Fprintln(w, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, result.Err)))
+			r.Output.Error(result.Err)
 		} else if result.Text != "" {
 			fmt.Fprintln(w)
 		}
@@ -100,7 +111,7 @@ func (r *Runner) resolveMarkersVerbose(ctx context.Context, stream *agentsdk.Eve
 // ── Interactive mode ─────────────────────────────────────────────────
 
 func (r *Runner) runInteractive(ctx context.Context, agent *agentsdk.Agent) error {
-	m := newRunnerModel(agent, ctx)
+	m := newRunnerModel(agent, ctx, r.Template)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	finalModel, err := p.Run()
 	if err != nil {
@@ -131,6 +142,7 @@ type markerPending struct {
 
 type runnerModel struct {
 	header    AgentHeader
+	template  Template
 	ctx       context.Context
 	agent     *agentsdk.Agent
 	phase     runnerPhase
@@ -152,7 +164,7 @@ type runnerModel struct {
 	synthesizing bool
 }
 
-func newRunnerModel(agent *agentsdk.Agent, ctx context.Context) runnerModel {
+func newRunnerModel(agent *agentsdk.Agent, ctx context.Context, tmpl Template) runnerModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message (/quit to exit)"
 	ti.Focus()
@@ -176,6 +188,7 @@ func newRunnerModel(agent *agentsdk.Agent, ctx context.Context) runnerModel {
 
 	return runnerModel{
 		header:      header,
+		template:    tmpl,
 		ctx:         ctx,
 		agent:       agent,
 		phase:       phaseInput,
@@ -383,7 +396,7 @@ func (m runnerModel) handleDelta(d types.Delta) (tea.Model, tea.Cmd) {
 		return m.finishTurn()
 	}
 
-	lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing}
+	lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing, streaming: true, template: m.template}
 	m.viewport.SetContent(lr.renderLog())
 	m.viewport.GotoBottom()
 
@@ -402,20 +415,26 @@ func (m runnerModel) finishTurn() (tea.Model, tea.Cmd) {
 func (m runnerModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(renderHeader(m.header, m.width))
-	b.WriteString("\n")
+	if m.template.ShowHeader {
+		b.WriteString(renderHeader(m.header, m.width))
+		b.WriteString("\n")
+	}
 
 	switch m.phase {
 	case phaseInput:
 		if m.output.Len() > 0 {
-			b.WriteString(RenderMarkdown(m.output.String()))
+			if m.template.RenderMarkdown {
+				b.WriteString(RenderMarkdown(m.output.String()))
+			} else {
+				b.WriteString(m.output.String())
+			}
 			b.WriteString("\n")
 		}
 		b.WriteString(m.textInput.View())
 		b.WriteString("\n")
 
 	case phaseStreaming:
-		lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing}
+		lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing, streaming: true, template: m.template}
 		if m.ready {
 			m.viewport.SetContent(lr.renderLog())
 			b.WriteString(m.viewport.View())
