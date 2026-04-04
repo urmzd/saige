@@ -90,6 +90,16 @@ type FileContent struct {
 
 func (FileContent) isUserContent() {}
 
+// ThinkingContent holds an extended thinking block from a provider that
+// supports it (e.g. Anthropic). The Signature is opaque and must be passed
+// back to the provider for multi-turn conversations.
+type ThinkingContent struct {
+	Thinking  string `json:"thinking"`
+	Signature string `json:"signature"`
+}
+
+func (ThinkingContent) isAssistantContent() {}
+
 // ── Feedback ──────────────────────────────────────────────────────────
 
 // Rating represents a binary feedback signal.
