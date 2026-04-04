@@ -27,7 +27,7 @@ func WriteExperiment(dir string, result *ExperimentResult) error {
 		filepath.Join(dir, "outputs", "exp"),
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
 	}
@@ -85,14 +85,14 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }
 
 func readJSON(path string, v any) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
