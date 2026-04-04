@@ -13,6 +13,7 @@ const (
 	contentTypeText       = "text"
 	contentTypeToolResult = "tool_result"
 	contentTypeConfig     = "config"
+	contentTypeThinking   = "thinking"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -59,6 +60,16 @@ type contentEnvelope struct {
 // messageEnvelope wraps content blocks with type tags.
 type messageEnvelope struct {
 	Content []contentEnvelope `json:"content"`
+}
+
+// MarshalMessage serializes a Message to its JSON envelope representation.
+func MarshalMessage(msg types.Message) (json.RawMessage, error) {
+	return marshalMessage(msg)
+}
+
+// UnmarshalMessage deserializes a Message from its role and JSON envelope.
+func UnmarshalMessage(role types.Role, data json.RawMessage) (types.Message, error) {
+	return unmarshalMessage(role, data)
 }
 
 func marshalMessage(msg types.Message) (json.RawMessage, error) {
@@ -178,6 +189,8 @@ func assistantContentType(c types.AssistantContent) string {
 		return contentTypeText
 	case types.ToolUseContent:
 		return "tool_use"
+	case types.ThinkingContent:
+		return contentTypeThinking
 	default:
 		return contentTypeUnknown
 	}
@@ -228,6 +241,9 @@ func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, erro
 		return c, json.Unmarshal(ce.Data, &c)
 	case "tool_use":
 		var c types.ToolUseContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeThinking:
+		var c types.ThinkingContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown assistant content type: %s", ce.Type)
