@@ -50,7 +50,7 @@ func saveNode(ctx context.Context, q querier, node *types.Node) error {
 		string(node.Message.Role()),
 		msgBytes,
 		int(node.State),
-		int64(node.Version),
+		int64(node.Version), //nolint:gosec // version values never exceed int64 range
 		node.Depth,
 		string(node.BranchID),
 		cidx,
@@ -106,7 +106,7 @@ func scanNode(rows pgx.Row) (*types.Node, error) {
 		ParentID:   types.NodeID(parentUUID),
 		Message:    msg,
 		State:      types.NodeState(state),
-		Version:    uint64(version),
+		Version:    uint64(version), //nolint:gosec // version stored as int64 in DB, always non-negative
 		Depth:      depth,
 		BranchID:   types.BranchID(branchID),
 		CreatedAt:  createdAt,
