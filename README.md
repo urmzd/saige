@@ -222,6 +222,12 @@ type Provider interface {
 | Anthropic | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | — |
 | Google | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
 
+> **Note:** Anthropic does not offer an embedding API. When using Anthropic as your LLM
+> provider with RAG or Knowledge Graph features, supply a separate embedder from another
+> provider. In the CLI: `--provider anthropic` with an additional API key set
+> (e.g. `OPENAI_API_KEY`). In Go code: construct the Anthropic adapter for `Provider`
+> and a separate OpenAI/Google/Ollama adapter for the `Embedder`.
+
 ### Messages
 
 Three roles. Tool results are content blocks, not a separate role.
@@ -230,19 +236,22 @@ Three roles. Tool results are content blocks, not a separate role.
 |------|------|---------------|
 | `SystemMessage` | system | `TextContent`, `ToolResultContent`, `ConfigContent` |
 | `UserMessage` | user | `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent` |
-| `AssistantMessage` | assistant | `TextContent`, `ToolUseContent` |
+| `AssistantMessage` | assistant | `TextContent`, `ToolUseContent`, `ThinkingContent` |
 
 `ToolResultContent` carries an `IsError` field that signals whether the text represents an error or a successful result. This distinction is preserved through to the LLM — Anthropic passes it natively, Google uses an `error` key in the function response, and OpenAI/Ollama prefix the text with `[TOOL ERROR]`.
 
 ### Deltas
 
-15 concrete types across five categories — LLM-side, execution-side, marker, feedback, and metadata:
+18 concrete types across six categories — LLM-side, thinking, execution-side, marker, feedback, and metadata:
 
 | Type | Category | Purpose |
 |------|----------|---------|
 | `TextStartDelta` | LLM | Text block opened |
 | `TextContentDelta` | LLM | Text chunk |
 | `TextEndDelta` | LLM | Text block closed |
+| `ThinkingStartDelta` | Thinking | Extended thinking block opened |
+| `ThinkingContentDelta` | Thinking | Thinking chunk |
+| `ThinkingEndDelta` | Thinking | Thinking block closed (carries signature) |
 | `ToolCallStartDelta` | LLM | Tool call generation started |
 | `ToolCallArgumentDelta` | LLM | JSON argument chunk |
 | `ToolCallEndDelta` | LLM | Tool call complete |

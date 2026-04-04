@@ -120,6 +120,10 @@ func Replay(messages []types.Message) *EventStream {
 			case types.AssistantMessage:
 				for _, c := range v.Content {
 					switch bc := c.(type) {
+					case types.ThinkingContent:
+						stream.send(types.ThinkingStartDelta{})
+						stream.send(types.ThinkingContentDelta{Content: bc.Thinking})
+						stream.send(types.ThinkingEndDelta{Signature: bc.Signature})
 					case types.TextContent:
 						stream.send(types.TextStartDelta{})
 						stream.send(types.TextContentDelta{Content: bc.Text})

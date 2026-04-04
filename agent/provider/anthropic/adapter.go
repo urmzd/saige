@@ -24,6 +24,7 @@ type Adapter struct {
 	client    anthropic.Client
 	model     anthropic.Model
 	maxTokens int64
+	thinking  *int64 // nil = disabled; set to budget tokens to enable extended thinking
 }
 
 // Option configures the Anthropic adapter.
@@ -32,6 +33,13 @@ type Option func(*Adapter)
 // WithMaxTokens sets the max tokens for responses.
 func WithMaxTokens(n int64) Option {
 	return func(a *Adapter) { a.maxTokens = n }
+}
+
+// WithThinking enables extended thinking with the given token budget.
+// Requires a minimum budget of 1024 tokens and a model that supports
+// extended thinking (e.g. claude-sonnet-4-5-20250514).
+func WithThinking(budgetTokens int64) Option {
+	return func(a *Adapter) { a.thinking = &budgetTokens }
 }
 
 // NewAdapter creates a new Anthropic provider adapter using the official SDK.
@@ -64,6 +72,9 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	if len(aTools) > 0 {
 		params.Tools = aTools
 	}
+	if a.thinking != nil {
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
+	}
 
 	stream := a.client.Messages.NewStreaming(ctx, params)
 	return a.consumeStream(stream, nil), nil
@@ -80,6 +91,9 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		MaxTokens: a.maxTokens,
 		Messages:  aMsgs,
 		System:    systemBlocks,
+	}
+	if a.thinking != nil {
+		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
 	}
 
 	if schema != nil {
@@ -124,6 +138,7 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 		var currentBlockType string
 		var currentBlockName string
 		var toolArgsBuf []byte
+		var signatureBuf string
 
 		for stream.Next() {
 			evt := stream.Current()
@@ -143,10 +158,12 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 				switch evt.ContentBlock.Type {
 				case "text":
 					out <- types.TextStartDelta{}
+				case "thinking":
+					signatureBuf = ""
+					out <- types.ThinkingStartDelta{}
 				case "tool_use":
 					toolArgsBuf = toolArgsBuf[:0]
 					if isStructuredTool != nil && isStructuredTool(evt.ContentBlock.Name) {
-						// Emit as text for structured output.
 						out <- types.TextStartDelta{}
 					} else {
 						out <- types.ToolCallStartDelta{
@@ -160,6 +177,10 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 				switch evt.Delta.Type {
 				case "text_delta":
 					out <- types.TextContentDelta{Content: evt.Delta.Text}
+				case "thinking_delta":
+					out <- types.ThinkingContentDelta{Content: evt.Delta.Thinking}
+				case "signature_delta":
+					signatureBuf += evt.Delta.Signature
 				case "input_json_delta":
 					toolArgsBuf = append(toolArgsBuf, evt.Delta.PartialJSON...)
 					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
@@ -173,6 +194,8 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 				switch currentBlockType {
 				case "text":
 					out <- types.TextEndDelta{}
+				case "thinking":
+					out <- types.ThinkingEndDelta{Signature: signatureBuf}
 				case "tool_use":
 					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
 						out <- types.TextEndDelta{}
@@ -257,6 +280,8 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 		case types.AssistantMessage:
 			for _, c := range v.Content {
 				switch bc := c.(type) {
+				case types.ThinkingContent:
+					out = appendMsg(out, "assistant", anthropic.NewThinkingBlock(bc.Signature, bc.Thinking))
 				case types.TextContent:
 					out = appendMsg(out, "assistant", anthropic.NewTextBlock(bc.Text))
 				case types.ToolUseContent:

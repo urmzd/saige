@@ -22,6 +22,9 @@ func TestDeltaTypes(t *testing.T) {
 		DoneDelta{},
 		FeedbackDelta{TargetNodeID: "n-1", Rating: RatingPositive, Comment: "good"},
 		UsageDelta{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, Latency: time.Second},
+		ThinkingStartDelta{},
+		ThinkingContentDelta{Content: "let me think..."},
+		ThinkingEndDelta{Signature: "sig-opaque"},
 	}
 
 	for i, d := range deltas {
@@ -31,8 +34,8 @@ func TestDeltaTypes(t *testing.T) {
 		// isDelta() is unexported but called implicitly through interface satisfaction
 	}
 
-	if len(deltas) != 14 {
-		t.Errorf("expected 14 delta types, got %d", len(deltas))
+	if len(deltas) != 17 {
+		t.Errorf("expected 17 delta types, got %d", len(deltas))
 	}
 }
 

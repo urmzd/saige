@@ -521,3 +521,48 @@ func (t *Tree) walAddNode(ctx context.Context, node *types.Node) error {
 	}
 	return t.wal.Commit(ctx, txID)
 }
+
+// FromStore reconstructs a Tree from persisted data (e.g. from pgstore.LoadTree).
+// The nodes slice must contain at least the root. The children map and active
+// branch are inferred from the node data and branches map.
+func FromStore(
+	nodes []*types.Node,
+	branches map[types.BranchID]types.NodeID,
+	checkpoints map[types.CheckpointID]types.Checkpoint,
+	rootID types.NodeID,
+	active types.BranchID,
+) (*Tree, error) {
+	if len(nodes) == 0 {
+		return nil, ErrNodeNotFound
+	}
+
+	t := &Tree{
+		nodes:       make(map[types.NodeID]*types.Node, len(nodes)),
+		children:    make(map[types.NodeID][]types.NodeID),
+		branches:    make(map[types.BranchID]types.NodeID, len(branches)),
+		checkpoints: make(map[types.CheckpointID]types.Checkpoint, len(checkpoints)),
+		rootID:      rootID,
+		active:      active,
+	}
+
+	for _, n := range nodes {
+		t.nodes[n.ID] = n
+	}
+
+	// Rebuild children map from parent pointers.
+	for _, n := range nodes {
+		if n.ParentID != "" {
+			t.children[n.ParentID] = append(t.children[n.ParentID], n.ID)
+		}
+	}
+
+	for bid, nid := range branches {
+		t.branches[bid] = nid
+	}
+
+	for cpID, cp := range checkpoints {
+		t.checkpoints[cpID] = cp
+	}
+
+	return t, nil
+}

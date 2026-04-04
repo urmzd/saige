@@ -103,3 +103,42 @@ CREATE TABLE IF NOT EXISTS rag_variant (
 CREATE INDEX IF NOT EXISTS idx_rag_variant_section ON rag_variant(section_id)
 ---
 CREATE INDEX IF NOT EXISTS idx_rag_variant_embedding ON rag_variant USING hnsw (embedding vector_cosine_ops)
+---
+CREATE TABLE IF NOT EXISTS agent_node (
+    id          BIGSERIAL PRIMARY KEY,
+    uuid        TEXT NOT NULL UNIQUE,
+    parent_uuid TEXT,
+    role        TEXT NOT NULL,
+    message     JSONB NOT NULL,
+    state       INT NOT NULL DEFAULT 0,
+    version     BIGINT NOT NULL DEFAULT 1,
+    depth       INT NOT NULL DEFAULT 0,
+    branch_id   TEXT NOT NULL,
+    child_index INT NOT NULL DEFAULT 0,
+    summary_of  TEXT[],
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    archived_at TIMESTAMPTZ,
+    archived_by TEXT NOT NULL DEFAULT ''
+)
+---
+CREATE INDEX IF NOT EXISTS idx_agent_node_parent ON agent_node(parent_uuid)
+---
+CREATE INDEX IF NOT EXISTS idx_agent_node_branch ON agent_node(branch_id)
+---
+CREATE TABLE IF NOT EXISTS agent_branch (
+    id        BIGSERIAL PRIMARY KEY,
+    branch_id TEXT NOT NULL UNIQUE,
+    tip_uuid  TEXT NOT NULL
+)
+---
+CREATE TABLE IF NOT EXISTS agent_checkpoint (
+    id         BIGSERIAL PRIMARY KEY,
+    uuid       TEXT NOT NULL UNIQUE,
+    branch_id  TEXT NOT NULL,
+    node_uuid  TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+---
+CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_branch ON agent_checkpoint(branch_id)

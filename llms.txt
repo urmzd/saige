@@ -2,7 +2,7 @@
 
 > A unified Go SDK and CLI for streaming AI agents, knowledge graphs, and RAG pipelines.
 
-Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, provider adapters, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, and citations). Includes a CLI (`saige`) with interactive chat, single-shot queries, and standalone RAG/KG operations.
+Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, human-in-the-loop markers, structured output, provider resilience via retry/fallback, conversation tree with branching and compaction, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, HyDE query transformation, and citations). Includes a universal evaluation framework with built-in scorers for text quality, agent performance, RAG relevance, and knowledge graph extraction. Ships a CLI (`saige`) with interactive chat, single-shot queries, and standalone RAG/KG operations.
 
 ## Docs
 
@@ -13,7 +13,9 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 ## Key Files
 
 - CLI: cmd/saige/main.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/connect.go
-- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go
+- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go
+- Tree: agent/tree/tree.go, agent/tree/compact.go, agent/tree/serialize.go
 - Knowledge: knowledge/config.go, knowledge/types/types.go, knowledge/pgstore/store.go, knowledge/tool/tools.go
-- RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/eval/eval.go, rag/tool/tools.go
+- RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/tool/tools.go
+- Eval: eval/eval.go, eval/experiment.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, knowledge/eval/scorers.go, rag/eval/scorers.go
 - Shared: postgres/pool.go, postgres/migrate.go

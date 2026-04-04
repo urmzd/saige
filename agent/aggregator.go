@@ -22,6 +22,8 @@ type DefaultAggregator struct {
 	toolName      string
 	argsBuf       strings.Builder
 	inTool        bool
+	thinkingBuf   strings.Builder
+	inThinking    bool
 }
 
 // NewDefaultAggregator creates a new DefaultAggregator.
@@ -31,6 +33,21 @@ func NewDefaultAggregator() *DefaultAggregator {
 
 func (a *DefaultAggregator) Push(d types.Delta) {
 	switch v := d.(type) {
+	case types.ThinkingStartDelta:
+		a.inThinking = true
+		a.thinkingBuf.Reset()
+	case types.ThinkingContentDelta:
+		if a.inThinking {
+			a.thinkingBuf.WriteString(v.Content)
+		}
+	case types.ThinkingEndDelta:
+		if a.inThinking {
+			a.contentBlocks = append(a.contentBlocks, types.ThinkingContent{
+				Thinking:  a.thinkingBuf.String(),
+				Signature: v.Signature,
+			})
+			a.inThinking = false
+		}
 	case types.TextStartDelta:
 		a.inText = true
 		a.textBuf.Reset()
@@ -87,4 +104,6 @@ func (a *DefaultAggregator) Reset() {
 	a.toolName = ""
 	a.argsBuf.Reset()
 	a.inTool = false
+	a.thinkingBuf.Reset()
+	a.inThinking = false
 }

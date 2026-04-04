@@ -82,6 +82,29 @@ type ToolExecEndDelta struct {
 
 func (ToolExecEndDelta) isDelta() {}
 
+// ── Thinking streaming (from LLM) ──────────────────────────────────
+
+// ThinkingStartDelta signals the beginning of an extended thinking block.
+type ThinkingStartDelta struct{}
+
+func (ThinkingStartDelta) isDelta() {}
+
+// ThinkingContentDelta carries an incremental thinking fragment.
+type ThinkingContentDelta struct {
+	Content string
+}
+
+func (ThinkingContentDelta) isDelta() {}
+
+// ThinkingEndDelta signals the end of an extended thinking block.
+// Signature is an opaque token required for multi-turn round-trips
+// with providers that support extended thinking (e.g. Anthropic).
+type ThinkingEndDelta struct {
+	Signature string
+}
+
+func (ThinkingEndDelta) isDelta() {}
+
 // ── Marker deltas ───────────────────────────────────────────────────
 
 // MarkerDelta signals that a tool call requires resolution before execution.

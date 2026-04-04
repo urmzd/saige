@@ -8,7 +8,8 @@ import (
 	"os/signal"
 )
 
-const version = "0.4.0"
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 // Provider name constants.
 const (
