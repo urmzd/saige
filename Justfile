@@ -29,9 +29,9 @@ fmt:
 install:
     CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" ./cmd/saige
 
-# Build all packages
+# Build CLI binary to bin/
 build:
-    go build ./...
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/saige ./cmd/saige
 
 # Run govulncheck
 vuln:
@@ -58,5 +58,5 @@ docker-build:
 
 # Clean build artifacts
 clean:
-    rm -f coverage.out
+    rm -rf bin/ coverage.out
     go clean -cache -testcache
