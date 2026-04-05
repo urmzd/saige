@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0 (2026-04-05)
+
+### Features
+
+- add persistence, extended thinking, and observability (#22) ([69067fa](https://github.com/urmzd/saige/commit/69067fa4c2f247b8389f5864af9c3ed209fc5778))
+- **eval**: add universal evaluation framework (#21) ([9e18876](https://github.com/urmzd/saige/commit/9e1887652313bb1c7f48ef6100d1d81d2cdbb2ba))
+
+### Miscellaneous
+
+- remove arxiv binary and ignore build artifacts ([29f7794](https://github.com/urmzd/saige/commit/29f7794baf6f5e6bc65319e486a8cc36c69fb565))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.7.0...v0.8.0)
+
+
 ## 0.7.0 (2026-03-30)
 
 ### Features
