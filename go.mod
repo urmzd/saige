@@ -11,7 +11,7 @@ require (
 	github.com/dslipak/pdf v0.0.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.1
-	github.com/openai/openai-go/v3 v3.29.0
+	github.com/openai/openai-go/v3 v3.30.0
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	go.opentelemetry.io/otel v1.43.0
