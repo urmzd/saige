@@ -47,7 +47,7 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - run: go test -coverprofile=coverage.out -covermode=atomic ./...
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.go-version == 'stable'
         with:
           name: coverage
