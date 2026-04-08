@@ -39,6 +39,8 @@
 - **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface
 - **Provider resilience** — retry + fallback composition out of the box
 - **Structured output** — constrain LLM responses to JSON schema
+- **Research tools** — web search (SearXNG), file search, file read, knowledge graph CRUD — ready to register with any agent
+- **MCP server** — expose any saige tool pack over stdio (JSON-RPC) for Claude Code, Gemini CLI, or any MCP client
 - **Universal evaluation** — composable `Scorer` interface, A/B experiment runner, text quality metrics, LLM-as-judge, and subsystem-specific scorers for agent, RAG, and knowledge graph
 
 ### Why one SDK?
@@ -53,7 +55,7 @@ go get github.com/urmzd/saige
 
 ### CLI
 
-The `saige` CLI provides two interaction modes plus standalone RAG/KG operations:
+The `saige` CLI provides two interaction modes, standalone RAG/KG operations, and an MCP server:
 
 ```bash
 # Interactive multi-turn chat (Bubble Tea TUI)
@@ -80,6 +82,11 @@ saige kg ingest --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the
 saige kg search --db "$SAIGE_KG_DB" --query "Who presented?"
 saige kg graph  --db "$SAIGE_KG_DB" --limit 50
 saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
+
+# MCP server — expose tools over stdio for Claude Code, Gemini CLI, etc.
+saige-mcp --tools research --searxng-url http://localhost:8080
+saige-mcp --tools kg --db "$SAIGE_KG_DB"
+saige-mcp --tools all --db "$SAIGE_DB" --searxng-url http://localhost:8080
 ```
 
 **Provider auto-detection:** The CLI checks for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` in order, falling back to Ollama (no key needed). Override with `--provider` or `SAIGE_PROVIDER`.
@@ -192,7 +199,8 @@ fmt.Println(result.AssembledContext.Prompt) // context with citations
 - [CLI](#cli)
 - [agent — AI Agent Framework](#agent--ai-agent-framework) (providers, deltas, tools, sub-agents, markers, feedback/RLHF, compaction, tree, TUI)
 - [kg — Knowledge Graph SDK](#kg--knowledge-graph-sdk)
-- [rag — RAG Pipeline SDK](#rag--rag-pipeline-sdk)
+- [rag — RAG Pipeline SDK](#rag--rag-pipeline-sdk) (research tools, SearXNG client, graph formatting)
+- [saige-mcp — MCP Server](#saige-mcp--mcp-server)
 - [eval — Universal Evaluation Framework](#eval--universal-evaluation-framework)
 - [Examples](#examples)
 - [Agent Skill](#agent-skill)
@@ -629,12 +637,14 @@ results, _ := eval.Evaluate(ctx, cases, pipeline,
 
 ### Agent Tool Bindings
 
-5 RAG tools and 2 KG tools for integrating into agent workflows:
+5 RAG tools, 2 KG tools, and 6 research tools for integrating into agent workflows:
 
 ```go
 import (
     ragtool "github.com/urmzd/saige/rag/tool"
-    kgtool "github.com/urmzd/saige/knowledge/tool"
+    kgtool  "github.com/urmzd/saige/knowledge/tool"
+    "github.com/urmzd/saige/tools/research"
+    "github.com/urmzd/saige/rag/source/searxng"
 )
 
 ragTools := ragtool.NewTools(pipeline)
@@ -642,7 +652,91 @@ ragTools := ragtool.NewTools(pipeline)
 
 kgTools := kgtool.NewTools(graph)
 // kg_search, kg_ingest
+
+researchTools := research.NewTools(searxng.New("http://localhost:8080"), graph, ".")
+// web_search, file_search, read_file, search_knowledge, store_knowledge, get_knowledge_graph
 ```
+
+### Research Tools
+
+The `tools/research` package provides 6 tools for web search, local file exploration, and knowledge graph CRUD:
+
+| Tool | Description |
+|------|-------------|
+| `web_search` | Search the web via SearXNG (privacy-respecting metasearch engine). Results come from third-party search engines and may be inaccurate or outdated. |
+| `file_search` | Regex search across local file contents with glob filtering |
+| `read_file` | Read file contents with line numbers, offset, and limit |
+| `search_knowledge` | Query the knowledge graph for stored facts |
+| `store_knowledge` | Extract entities and relationships from text into the knowledge graph |
+| `get_knowledge_graph` | Visualize the knowledge graph as a text summary |
+
+All parameters are optional except where noted — pass `nil` for `searxng.Client` (omits web_search) or `nil` for `Graph` (omits KG tools).
+
+### SearXNG Client
+
+The `rag/source/searxng` package provides a standalone HTTP client for SearXNG metasearch instances:
+
+```go
+import "github.com/urmzd/saige/rag/source/searxng"
+
+client := searxng.New("http://localhost:8080")
+results, _ := client.Search(ctx, "retrieval augmented generation")
+// []searxng.Result with Title, URL, Snippet
+```
+
+### Graph Formatting
+
+The `knowledge/graph` package provides DOT and text formatters for knowledge graph visualization:
+
+```go
+import "github.com/urmzd/saige/knowledge/graph"
+
+dot := graph.ToDOT(graphData)   // Graphviz DOT
+text := graph.ToText(graphData) // human/AI-readable summary
+```
+
+---
+
+## saige-mcp — MCP Server
+
+The `saige-mcp` binary exposes saige's tool registry over the [Model Context Protocol](https://modelcontextprotocol.io/) (stdio transport). Any MCP-compatible client can use saige tools.
+
+```bash
+go install github.com/urmzd/saige/cmd/saige-mcp@latest
+
+# Expose research tools (web search + file ops + KG)
+saige-mcp --tools research --searxng-url http://localhost:8080 --db "$SAIGE_DB"
+
+# Expose only KG tools
+saige-mcp --tools kg --db "$SAIGE_DB"
+
+# Expose everything
+saige-mcp --tools all --db "$SAIGE_DB" --searxng-url http://localhost:8080
+```
+
+### Claude Code Integration
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "saige": {
+      "command": "saige-mcp",
+      "args": ["--tools", "research", "--searxng-url", "http://localhost:8080"]
+    }
+  }
+}
+```
+
+### Flags
+
+| Flag | Env | Description |
+|------|-----|-------------|
+| `--tools` | — | Comma-separated tool packs: `research`, `kg`, `all` (default: `all`) |
+| `--db` | `SAIGE_DB` | PostgreSQL DSN for KG tools |
+| `--searxng-url` | `SEARXNG_URL` | SearXNG base URL for web search |
+| `--root` | — | Root directory for file search/read (default: `.`) |
 
 ---
 

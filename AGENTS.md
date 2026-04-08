@@ -7,6 +7,7 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | Package | Role |
 |---------|------|
 | `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops) |
+| `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) over stdio JSON-RPC |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, provider adapters |
 | `agent/types/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
@@ -17,6 +18,7 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | `knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
 | `knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |
 | `knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
+| `knowledge/graph/` | Graph formatting utilities (DOT, text) for visualization |
 | `knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
 | `postgres/` | Shared PostgreSQL connection pool and schema migrations |
 | `rag/` | RAG pipeline configuration and constructor |
@@ -37,7 +39,9 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | `rag/embeddingcache/` | Caching layer for embeddings |
 | `rag/extractor/` | Content extraction from raw documents |
 | `rag/source/` | Source URI resolution |
+| `rag/source/searxng/` | SearXNG metasearch HTTP client |
 | `rag/tokenizer/` | Token counting utilities |
+| `tools/research/` | Research tools: web search, file search/read, knowledge graph CRUD |
 
 ## CLI
 
@@ -49,6 +53,11 @@ saige ask "question"                # single-shot query
 echo "question" | saige ask --raw   # pipe-friendly raw output
 saige rag search --db DSN --query Q # standalone RAG search
 saige kg search --db DSN --query Q  # standalone KG search
+
+# MCP server (separate binary)
+saige-mcp --tools research --searxng-url URL  # research tools over MCP/stdio
+saige-mcp --tools kg --db DSN                 # KG tools over MCP/stdio
+saige-mcp --tools all --db DSN --searxng-url URL
 ```
 
 Provider auto-detection: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GOOGLE_API_KEY` → Ollama.
