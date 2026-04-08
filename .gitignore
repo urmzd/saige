@@ -1,3 +1,4 @@
 .claude/
 bin/
 saige
+.fastembed_cache/
