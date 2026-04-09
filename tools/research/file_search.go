@@ -93,7 +93,7 @@ func (t *FileSearchTool) Execute(ctx context.Context, args map[string]any) (stri
 			return nil
 		}
 
-		f, err := os.Open(path)
+		f, err := os.Open(path) //nolint:gosec // path comes from filepath.WalkDir of a user-scoped root
 		if err != nil {
 			return nil
 		}

@@ -67,7 +67,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string
 		return "", fmt.Errorf("read_file: file too large (%d bytes), max 5MB", info.Size())
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // intentional: tool's purpose is reading user-specified files
 	if err != nil {
 		return "", fmt.Errorf("read_file: %w", err)
 	}
