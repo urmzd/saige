@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0 (2026-04-09)
+
+### Features
+
+- absorb zoro research tools and add MCP server ([e0a3474](https://github.com/urmzd/saige/commit/e0a347443b003b95cfce5bd3a718df70fc891e98))
+
+### Bug Fixes
+
+- **ci**: suppress gosec G304 on intentional file tools, bump Go to 1.25.9 ([b9f0292](https://github.com/urmzd/saige/commit/b9f0292159ef69e448bc2c3bf476ff33a12b42e1))
+
+### Documentation
+
+- add research tools, SearXNG client, graph formatting, and MCP server ([872a33f](https://github.com/urmzd/saige/commit/872a33feeb1eeb90aead8a2748df9ecf6aef1752))
+
+### Miscellaneous
+
+- **gitignore**: ignore .fastembed_cache ([d60dc69](https://github.com/urmzd/saige/commit/d60dc69eb3dcef3213bebadc0aad835dafc3cecd))
+- add linguist overrides to fix language stats (#25) ([39066cf](https://github.com/urmzd/saige/commit/39066cf684dd3b11e1a0c3333793f43741ce3a78))
+- **deps**: bump github.com/anthropics/anthropic-sdk-go ([5dcdf7c](https://github.com/urmzd/saige/commit/5dcdf7c9ea3aadf96ca465a035d1bdd21792f238))
+- **deps**: bump github.com/openai/openai-go/v3 from 3.29.0 to 3.30.0 ([a513c57](https://github.com/urmzd/saige/commit/a513c57e81a2f7404f88d3c41ecfc67ab1e1703e))
+- **deps**: bump actions/setup-go from 5 to 6 ([ce416d1](https://github.com/urmzd/saige/commit/ce416d1db81baeb0eea46c755b660ce377261acf))
+- **deps**: bump actions/create-github-app-token from 1 to 3 ([f17d9da](https://github.com/urmzd/saige/commit/f17d9dae6a23a7e4be404d133e4a137aeaa73a93))
+- **deps**: bump golangci/golangci-lint-action from 6 to 9 ([e7c4e02](https://github.com/urmzd/saige/commit/e7c4e02d72d0d201eb05ce801cf081723655504d))
+- **deps**: bump actions/upload-artifact from 4 to 7 ([e35b2f1](https://github.com/urmzd/saige/commit/e35b2f1016620ae365943356e1aac899e56843d8))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.8.0...v0.9.0)
+
+
 ## 0.8.0 (2026-04-05)
 
 ### Features
