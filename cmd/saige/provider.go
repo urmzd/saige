@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/google"
 	"github.com/urmzd/saige/agent/provider/ollama"
@@ -41,18 +41,29 @@ type commonFlags struct {
 	kgDB       *string
 }
 
-// addCommonFlags registers provider and connection flags on a FlagSet.
-func addCommonFlags(fs *flag.FlagSet) *commonFlags {
-	cf := &commonFlags{}
-	cf.provider = fs.String("provider", envOr("SAIGE_PROVIDER", ""), "LLM provider (anthropic|openai|google|ollama)")
-	cf.model = fs.String("model", "", "Model name (provider-specific default)")
-	cf.system = fs.String("system", "You are a helpful assistant.", "System prompt")
-	cf.ollamaHost = fs.String("ollama-host", envOr("OLLAMA_HOST", "http://localhost:11434"), "Ollama host URL")
-	cf.baseURL = fs.String("base-url", "", "Custom API base URL (OpenAI-compatible)")
-	cf.embedModel = fs.String("embed-model", "", "Embedding model name (provider-specific default)")
-	cf.ragDB = fs.String("rag-db", envOr("SAIGE_RAG_DB", ""), "Postgres DSN for RAG tools")
-	cf.kgDB = fs.String("kg-db", envOr("SAIGE_KG_DB", ""), "Postgres DSN for KG tools")
-	return cf
+// persistentFlagVars holds the package-level vars bound to PersistentFlags on the root command.
+var persistentFlagVars = &commonFlags{
+	provider:   new(string),
+	model:      new(string),
+	system:     new(string),
+	ollamaHost: new(string),
+	baseURL:    new(string),
+	embedModel: new(string),
+	ragDB:      new(string),
+	kgDB:       new(string),
+}
+
+// addPersistentFlags registers provider and connection flags on the root command's PersistentFlags.
+func addPersistentFlags(cmd *cobra.Command) {
+	pf := cmd.PersistentFlags()
+	pf.StringVar(persistentFlagVars.provider, "provider", envOr("SAIGE_PROVIDER", ""), "LLM provider (anthropic|openai|google|ollama)")
+	pf.StringVar(persistentFlagVars.model, "model", "", "Model name (provider-specific default)")
+	pf.StringVar(persistentFlagVars.system, "system", "You are a helpful assistant.", "System prompt")
+	pf.StringVar(persistentFlagVars.ollamaHost, "ollama-host", envOr("OLLAMA_HOST", "http://localhost:11434"), "Ollama host URL")
+	pf.StringVar(persistentFlagVars.baseURL, "base-url", "", "Custom API base URL (OpenAI-compatible)")
+	pf.StringVar(persistentFlagVars.embedModel, "embed-model", "", "Embedding model name (provider-specific default)")
+	pf.StringVar(persistentFlagVars.ragDB, "rag-db", envOr("SAIGE_RAG_DB", ""), "Postgres DSN for RAG tools")
+	pf.StringVar(persistentFlagVars.kgDB, "kg-db", envOr("SAIGE_KG_DB", ""), "Postgres DSN for KG tools")
 }
 
 // resolvedProvider returns the provider name, falling back to env then auto-detect.

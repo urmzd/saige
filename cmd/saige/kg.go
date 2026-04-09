@@ -2,45 +2,29 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/knowledge"
 	kgtypes "github.com/urmzd/saige/knowledge/types"
 )
 
-func runKG(ctx context.Context, args []string) {
-	if len(args) < 1 {
-		printKGUsage()
-		os.Exit(1)
+func newKgCmd(ctx context.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "kg",
+		Short: "Knowledge graph operations (search, ingest, graph, node)",
 	}
 
-	switch args[0] {
-	case "search":
-		kgSearch(ctx, args[1:])
-	case "ingest":
-		kgIngest(ctx, args[1:])
-	case "graph":
-		kgGraph(ctx, args[1:])
-	case "node":
-		kgNode(ctx, args[1:])
-	default:
-		fmt.Fprintf(os.Stderr, "unknown kg command: %s\n", args[0])
-		printKGUsage()
-		os.Exit(1)
-	}
-}
+	cmd.AddCommand(
+		newKgSearchCmd(ctx),
+		newKgIngestCmd(ctx),
+		newKgGraphCmd(ctx),
+		newKgNodeCmd(ctx),
+	)
 
-func printKGUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: saige kg <command> [flags]
-
-Commands:
-  search   Search knowledge graph facts
-  ingest   Ingest text into the graph
-  graph    Export full graph data
-  node     Explore a node's neighborhood`)
+	return cmd
 }
 
 func kgGraph_(ctx context.Context, dsn string) (kgtypes.Graph, func()) {
@@ -71,129 +55,172 @@ func kgGraph_(ctx context.Context, dsn string) (kgtypes.Graph, func()) {
 	}
 }
 
-func kgSearch(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("kg search", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
-	query := fs.String("query", "", "Search query")
-	limit := fs.Int("limit", 10, "Max results")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newKgSearchCmd(ctx context.Context) *cobra.Command {
+	var db, query, tmplName string
+	var limit int
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "kg search"})
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search knowledge graph facts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "kg search"})
 
-	if *query == "" {
-		out.Error(fmt.Errorf("--query is required"))
-		os.Exit(1)
+			if query == "" {
+				out.Error(fmt.Errorf("--query is required"))
+				os.Exit(1)
+			}
+
+			graph, cleanup := kgGraph_(ctx, db)
+			defer cleanup()
+
+			result, err := graph.SearchFacts(ctx, query, kgtypes.WithLimit(limit))
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(result); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	graph, cleanup := kgGraph_(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_KG_DB]")
+	cmd.Flags().StringVar(&query, "query", "", "Search query")
+	cmd.Flags().IntVar(&limit, "limit", 10, "Max results")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	result, err := graph.SearchFacts(ctx, *query, kgtypes.WithLimit(*limit))
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(result); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-func kgIngest(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("kg ingest", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
-	name := fs.String("name", "", "Episode name")
-	text := fs.String("text", "", "Text content to ingest")
-	source := fs.String("source", "", "Source description")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newKgIngestCmd(ctx context.Context) *cobra.Command {
+	var db, name, text, source, tmplName string
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "kg ingest"})
+	cmd := &cobra.Command{
+		Use:   "ingest",
+		Short: "Ingest text into the graph",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "kg ingest"})
 
-	if *name == "" || *text == "" {
-		out.Error(fmt.Errorf("--name and --text are required"))
-		os.Exit(1)
+			if name == "" || text == "" {
+				out.Error(fmt.Errorf("--name and --text are required"))
+				os.Exit(1)
+			}
+
+			graph, cleanup := kgGraph_(ctx, db)
+			defer cleanup()
+
+			result, err := graph.IngestEpisode(ctx, &kgtypes.EpisodeInput{
+				Name:   name,
+				Body:   text,
+				Source: source,
+			})
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(result); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	graph, cleanup := kgGraph_(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_KG_DB]")
+	cmd.Flags().StringVar(&name, "name", "", "Episode name")
+	cmd.Flags().StringVar(&text, "text", "", "Text content to ingest")
+	cmd.Flags().StringVar(&source, "source", "", "Source description")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	result, err := graph.IngestEpisode(ctx, &kgtypes.EpisodeInput{
-		Name:   *name,
-		Body:   *text,
-		Source: *source,
-	})
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(result); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-func kgGraph(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("kg graph", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
-	limit := fs.Int("limit", 100, "Max relations to return")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newKgGraphCmd(ctx context.Context) *cobra.Command {
+	var db, tmplName string
+	var limit int
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "kg graph"})
+	cmd := &cobra.Command{
+		Use:   "graph",
+		Short: "Export full graph data",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "kg graph"})
 
-	graph, cleanup := kgGraph_(ctx, *db)
-	defer cleanup()
+			graph, cleanup := kgGraph_(ctx, db)
+			defer cleanup()
 
-	data, err := graph.GetGraph(ctx, int64(*limit))
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
+			data, err := graph.GetGraph(ctx, int64(limit))
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(data); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	if err := out.Result(data); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_KG_DB]")
+	cmd.Flags().IntVar(&limit, "limit", 100, "Max relations to return")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
+
+	return cmd
 }
 
-func kgNode(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("kg node", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_KG_DB]")
-	id := fs.String("id", "", "Entity UUID")
-	depth := fs.Int("depth", 1, "Traversal depth")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newKgNodeCmd(ctx context.Context) *cobra.Command {
+	var db, id, tmplName string
+	var depth int
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "kg node"})
+	cmd := &cobra.Command{
+		Use:   "node",
+		Short: "Explore a node's neighborhood",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "kg node"})
 
-	if *id == "" {
-		out.Error(fmt.Errorf("--id is required"))
-		os.Exit(1)
+			if id == "" {
+				out.Error(fmt.Errorf("--id is required"))
+				os.Exit(1)
+			}
+
+			graph, cleanup := kgGraph_(ctx, db)
+			defer cleanup()
+
+			detail, err := graph.GetNode(ctx, id, depth)
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(detail); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	graph, cleanup := kgGraph_(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_KG_DB]")
+	cmd.Flags().StringVar(&id, "id", "", "Entity UUID")
+	cmd.Flags().IntVar(&depth, "depth", 1, "Traversal depth")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	detail, err := graph.GetNode(ctx, *id, *depth)
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(detail); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }

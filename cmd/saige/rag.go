@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/extractor"
@@ -13,36 +13,20 @@ import (
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
-func runRAG(ctx context.Context, args []string) {
-	if len(args) < 1 {
-		printRAGUsage()
-		os.Exit(1)
+func newRagCmd(ctx context.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rag",
+		Short: "RAG document operations (search, lookup, ingest, delete)",
 	}
 
-	switch args[0] {
-	case "search":
-		ragSearch(ctx, args[1:])
-	case "lookup":
-		ragLookup(ctx, args[1:])
-	case "ingest":
-		ragIngest(ctx, args[1:])
-	case "delete":
-		ragDelete(ctx, args[1:])
-	default:
-		fmt.Fprintf(os.Stderr, "unknown rag command: %s\n", args[0])
-		printRAGUsage()
-		os.Exit(1)
-	}
-}
+	cmd.AddCommand(
+		newRagSearchCmd(ctx),
+		newRagLookupCmd(ctx),
+		newRagIngestCmd(ctx),
+		newRagDeleteCmd(ctx),
+	)
 
-func printRAGUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: saige rag <command> [flags]
-
-Commands:
-  search   Search documents
-  lookup   Get variant by UUID
-  ingest   Ingest a document
-  delete   Delete a document`)
+	return cmd
 }
 
 func ragPipeline(ctx context.Context, dsn string) (ragtypes.Pipeline, func()) {
@@ -79,140 +63,181 @@ func ragPipeline(ctx context.Context, dsn string) (ragtypes.Pipeline, func()) {
 	}
 }
 
-func ragSearch(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("rag search", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
-	query := fs.String("query", "", "Search query")
-	limit := fs.Int("limit", 10, "Max results")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newRagSearchCmd(ctx context.Context) *cobra.Command {
+	var db, query, tmplName string
+	var limit int
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "rag search"})
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search documents",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "rag search"})
 
-	if *query == "" {
-		out.Error(fmt.Errorf("--query is required"))
-		os.Exit(1)
+			if query == "" {
+				out.Error(fmt.Errorf("--query is required"))
+				os.Exit(1)
+			}
+
+			pipeline, cleanup := ragPipeline(ctx, db)
+			defer cleanup()
+
+			result, err := pipeline.Search(ctx, query, ragtypes.WithLimit(limit))
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(result); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	pipeline, cleanup := ragPipeline(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_RAG_DB]")
+	cmd.Flags().StringVar(&query, "query", "", "Search query")
+	cmd.Flags().IntVar(&limit, "limit", 10, "Max results")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	result, err := pipeline.Search(ctx, *query, ragtypes.WithLimit(*limit))
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(result); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-func ragLookup(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("rag lookup", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
-	uuid := fs.String("uuid", "", "Variant UUID")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newRagLookupCmd(ctx context.Context) *cobra.Command {
+	var db, uuid, tmplName string
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "rag lookup"})
+	cmd := &cobra.Command{
+		Use:   "lookup",
+		Short: "Get variant by UUID",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "rag lookup"})
 
-	if *uuid == "" {
-		out.Error(fmt.Errorf("--uuid is required"))
-		os.Exit(1)
+			if uuid == "" {
+				out.Error(fmt.Errorf("--uuid is required"))
+				os.Exit(1)
+			}
+
+			pipeline, cleanup := ragPipeline(ctx, db)
+			defer cleanup()
+
+			hit, err := pipeline.Lookup(ctx, uuid)
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(hit); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	pipeline, cleanup := ragPipeline(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_RAG_DB]")
+	cmd.Flags().StringVar(&uuid, "uuid", "", "Variant UUID")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	hit, err := pipeline.Lookup(ctx, *uuid)
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(hit); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-func ragIngest(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("rag ingest", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
-	file := fs.String("file", "", "File path to ingest")
-	mime := fs.String("mime", "text/plain", "MIME type")
-	source := fs.String("source", "", "Source URI")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newRagIngestCmd(ctx context.Context) *cobra.Command {
+	var db, file, mime, source, tmplName string
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "rag ingest"})
+	cmd := &cobra.Command{
+		Use:   "ingest",
+		Short: "Ingest a document",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "rag ingest"})
 
-	if *file == "" {
-		out.Error(fmt.Errorf("--file is required"))
-		os.Exit(1)
+			if file == "" {
+				out.Error(fmt.Errorf("--file is required"))
+				os.Exit(1)
+			}
+
+			data, err := os.ReadFile(file)
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			pipeline, cleanup := ragPipeline(ctx, db)
+			defer cleanup()
+
+			sourceURI := source
+			if sourceURI == "" {
+				sourceURI = "file://" + file
+			}
+
+			result, err := pipeline.Ingest(ctx, &ragtypes.RawDocument{
+				SourceURI: sourceURI,
+				MIMEType:  mime,
+				Data:      data,
+			})
+			if err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			if err := out.Result(result); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+			return nil
+		},
 	}
 
-	data, err := os.ReadFile(*file)
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_RAG_DB]")
+	cmd.Flags().StringVar(&file, "file", "", "File path to ingest")
+	cmd.Flags().StringVar(&mime, "mime", "text/plain", "MIME type")
+	cmd.Flags().StringVar(&source, "source", "", "Source URI")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	pipeline, cleanup := ragPipeline(ctx, *db)
-	defer cleanup()
-
-	sourceURI := *source
-	if sourceURI == "" {
-		sourceURI = "file://" + *file
-	}
-
-	result, err := pipeline.Ingest(ctx, &ragtypes.RawDocument{
-		SourceURI: sourceURI,
-		MIMEType:  *mime,
-		Data:      data,
-	})
-	if err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	if err := out.Result(result); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-func ragDelete(ctx context.Context, args []string) {
-	fs := flag.NewFlagSet("rag delete", flag.ExitOnError)
-	db := fs.String("db", "", "Postgres DSN [$SAIGE_RAG_DB]")
-	uuid := fs.String("uuid", "", "Document UUID")
-	jsonMode := fs.Bool("json", false, "Output as JSON (no styling)")
-	tmplName := fs.String("template", "default", "Output template (default|minimal|detailed)")
-	_ = fs.Parse(args)
+func newRagDeleteCmd(ctx context.Context) *cobra.Command {
+	var db, uuid, tmplName string
+	var jsonMode bool
 
-	out := tui.ResolveOutput(*jsonMode, tui.TemplateByName(*tmplName))
-	out.Header(tui.OutputHeader{Operation: "rag delete"})
+	cmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete a document",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := tui.ResolveOutput(jsonMode, tui.TemplateByName(tmplName))
+			out.Header(tui.OutputHeader{Operation: "rag delete"})
 
-	if *uuid == "" {
-		out.Error(fmt.Errorf("--uuid is required"))
-		os.Exit(1)
+			if uuid == "" {
+				out.Error(fmt.Errorf("--uuid is required"))
+				os.Exit(1)
+			}
+
+			pipeline, cleanup := ragPipeline(ctx, db)
+			defer cleanup()
+
+			if err := pipeline.Delete(ctx, uuid); err != nil {
+				out.Error(err)
+				os.Exit(1)
+			}
+
+			out.Status(fmt.Sprintf("deleted %s", uuid))
+			return nil
+		},
 	}
 
-	pipeline, cleanup := ragPipeline(ctx, *db)
-	defer cleanup()
+	cmd.Flags().StringVar(&db, "db", "", "Postgres DSN [$SAIGE_RAG_DB]")
+	cmd.Flags().StringVar(&uuid, "uuid", "", "Document UUID")
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "Output as JSON (no styling)")
+	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
-	if err := pipeline.Delete(ctx, *uuid); err != nil {
-		out.Error(err)
-		os.Exit(1)
-	}
-
-	out.Status(fmt.Sprintf("deleted %s", *uuid))
+	return cmd
 }
