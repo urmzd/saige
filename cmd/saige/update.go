@@ -27,7 +27,7 @@ func selfUpdate(current string) error {
 	if err != nil {
 		return fmt.Errorf("fetching release info: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -69,11 +69,11 @@ func selfUpdate(current string) error {
 	}
 
 	// 5. Download to a temp file.
-	dlResp, err := http.Get(downloadURL)
+	dlResp, err := http.Get(downloadURL) //nolint:gosec // URL is from GitHub API response, not user input
 	if err != nil {
 		return fmt.Errorf("downloading update: %w", err)
 	}
-	defer dlResp.Body.Close()
+	defer func() { _ = dlResp.Body.Close() }()
 
 	if dlResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download returned status %d", dlResp.StatusCode)
@@ -84,16 +84,16 @@ func selfUpdate(current string) error {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // clean up on failure; on success the rename moves it
+	defer func() { _ = os.Remove(tmpName) }() // clean up on failure; on success the rename moves it
 
 	if _, err := io.Copy(tmp, dlResp.Body); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("writing update: %w", err)
 	}
-	tmp.Close()
+	_ = tmp.Close()
 
 	// 6. chmod +x, then replace current executable.
-	if err := os.Chmod(tmpName, 0755); err != nil {
+	if err := os.Chmod(tmpName, 0755); err != nil { //nolint:gosec // executable needs 0755
 		return fmt.Errorf("chmod: %w", err)
 	}
 

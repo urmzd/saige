@@ -158,7 +158,7 @@ func newRagIngestCmd(ctx context.Context) *cobra.Command {
 				os.Exit(1)
 			}
 
-			data, err := os.ReadFile(file)
+			data, err := os.ReadFile(file) //nolint:gosec // file path is from CLI flag, not untrusted input
 			if err != nil {
 				out.Error(err)
 				os.Exit(1)
