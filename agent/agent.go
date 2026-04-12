@@ -553,7 +553,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		rx, llmErr := a.callProvider(ctx, llmMessages, toolDefs)
 		if llmErr != nil {
 			log.Error("provider call failed", "error", llmErr, "iteration", iterCount)
-			a.cfg.Metrics.RecordProviderCall(ctx, types.ProviderName(a.cfg.Provider), time.Since(llmStart), llmErr)
+			a.cfg.Metrics.RecordProviderCall(ctx, "chat", types.ProviderName(a.cfg.Provider), time.Since(llmStart), llmErr)
 			stream.send(types.ErrorDelta{Error: llmErr})
 			return
 		}
@@ -572,7 +572,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 
 		// Emit enriched usage delta.
 		latency := time.Since(llmStart)
-		a.cfg.Metrics.RecordProviderCall(ctx, types.ProviderName(a.cfg.Provider), latency, nil)
+		a.cfg.Metrics.RecordProviderCall(ctx, "chat", types.ProviderName(a.cfg.Provider), latency, nil)
 		enriched := types.UsageDelta{Latency: latency}
 		if usage != nil {
 			enriched.PromptTokens = usage.PromptTokens
