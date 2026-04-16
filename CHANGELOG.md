@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.1 (2026-04-16)
+
+### Bug Fixes
+
+- **ci**: migrate sr v4 to v7 for artifact and input support (#30) ([6157a0e](https://github.com/urmzd/saige/commit/6157a0e78f6dd84b321bf89aad55014643a54be9))
+
+### Misc
+
+- migrate sr config and action to v4 ([a42affe](https://github.com/urmzd/saige/commit/a42affe909f327dcbd5258f631f1b87f48351d0c))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.11.0...v0.11.1)
+
+
 ## 0.11.0 (2026-04-12)
 
 ### Features
