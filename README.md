@@ -194,16 +194,18 @@ fmt.Println(result.AssembledContext.Prompt) // context with citations
 
 ---
 
-## Table of Contents
+## Contents
 
-- [CLI](#cli)
+- [Features](#features)
+- [Quick Start](#quick-start)
 - [agent — AI Agent Framework](#agent--ai-agent-framework) (providers, deltas, tools, sub-agents, markers, feedback/RLHF, compaction, tree, TUI)
-- [kg — Knowledge Graph SDK](#kg--knowledge-graph-sdk)
+- [knowledge — Knowledge Graph SDK](#knowledge--knowledge-graph-sdk)
 - [rag — RAG Pipeline SDK](#rag--rag-pipeline-sdk) (research tools, SearXNG client, graph formatting)
 - [saige-mcp — MCP Server](#saige-mcp--mcp-server)
 - [eval — Universal Evaluation Framework](#eval--universal-evaluation-framework)
 - [Examples](#examples)
 - [Agent Skill](#agent-skill)
+- [License](#license)
 
 ---
 
