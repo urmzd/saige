@@ -14,11 +14,15 @@ var _ types.Metrics = (*Metrics)(nil)
 
 // Metrics implements types.Metrics using OpenTelemetry metrics,
 // following the GenAI semantic conventions.
+//
+// Per the GenAI conventions, gen_ai.client.operation.duration is a single
+// instrument disambiguated by the gen_ai.operation.name attribute (chat,
+// execute_tool, invoke_agent). Registering it under one name avoids duplicate
+// instrument warnings and double-counted histograms; the operation is keyed by
+// attribute, not by a separate instrument.
 type Metrics struct {
 	tokenUsage        metric.Int64Histogram
 	operationDuration metric.Float64Histogram
-	toolDuration      metric.Float64Histogram
-	agentDuration     metric.Float64Histogram
 }
 
 // NewMetrics creates an OTel-backed Metrics implementation.
@@ -39,27 +43,9 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, err
 	}
 
-	toolDuration, err := meter.Float64Histogram("gen_ai.client.operation.duration",
-		metric.WithDescription("GenAI operation duration"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	agentDuration, err := meter.Float64Histogram("gen_ai.client.operation.duration",
-		metric.WithDescription("GenAI operation duration"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	return &Metrics{
 		tokenUsage:        tokenUsage,
 		operationDuration: operationDuration,
-		toolDuration:      toolDuration,
-		agentDuration:     agentDuration,
 	}, nil
 }
 
@@ -88,7 +74,7 @@ func (m *Metrics) RecordToolCall(ctx context.Context, toolName string, duration 
 	if err != nil {
 		attrs = append(attrs, attribute.String("error.type", errorType(err)))
 	}
-	m.toolDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
+	m.operationDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 }
 
 func (m *Metrics) RecordProviderCall(ctx context.Context, operationName, provider string, duration time.Duration, err error) {
@@ -107,5 +93,5 @@ func (m *Metrics) RecordAgentInvocation(ctx context.Context, agentID string, dur
 		attribute.String("gen_ai.operation.name", "invoke_agent"),
 		attribute.String("gen_ai.agent.name", agentID),
 	}
-	m.agentDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
+	m.operationDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 }
