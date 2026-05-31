@@ -885,7 +885,16 @@ func (a *Agent) getAssistantMessage(
 			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), streamErr)
 			return types.StepResult{}, streamErr
 		}
-		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), nil)
+		providerName := types.ProviderName(provider)
+		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", providerName, time.Since(llmStart), nil)
+		// Record token usage once per completed LLM call with the merged
+		// prompt/completion counts. Skipped for cache hits (no new tokens were
+		// produced) and when the provider reported no usage at all.
+		if liveUsage != nil && !liveUsage.CacheHit &&
+			(liveUsage.PromptTokens > 0 || liveUsage.CompletionTokens > 0) {
+			a.cfg.Metrics.RecordTokenUsage(stepCtx, "chat", providerName,
+				liveUsage.PromptTokens, liveUsage.CompletionTokens)
+		}
 		var msg *types.AssistantMessage
 		if m, ok := agg.Message().(types.AssistantMessage); ok {
 			msg = &m
