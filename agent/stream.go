@@ -118,21 +118,7 @@ func Replay(messages []types.Message) *EventStream {
 		for _, msg := range messages {
 			switch v := msg.(type) {
 			case types.AssistantMessage:
-				for _, c := range v.Content {
-					switch bc := c.(type) {
-					case types.ThinkingContent:
-						stream.send(types.ThinkingStartDelta{})
-						stream.send(types.ThinkingContentDelta{Content: bc.Thinking})
-						stream.send(types.ThinkingEndDelta{Signature: bc.Signature})
-					case types.TextContent:
-						stream.send(types.TextStartDelta{})
-						stream.send(types.TextContentDelta{Content: bc.Text})
-						stream.send(types.TextEndDelta{})
-					case types.ToolUseContent:
-						stream.send(types.ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
-						stream.send(types.ToolCallEndDelta{Arguments: bc.Arguments})
-					}
-				}
+				replayAssistantBlocks(stream, v)
 			case types.SystemMessage:
 				replayToolResults(stream, v.Content)
 			case types.UserMessage:
@@ -144,11 +130,35 @@ func Replay(messages []types.Message) *EventStream {
 	return stream
 }
 
+// replayAssistantBlocks emits an AssistantMessage's content as live deltas. It
+// is shared by Replay and by the durable LLM step's replay path so a memoized
+// (non-streamed) assistant message still produces a consistent delta sequence.
+func replayAssistantBlocks(stream *EventStream, msg types.AssistantMessage) {
+	for _, c := range msg.Content {
+		switch bc := c.(type) {
+		case types.ThinkingContent:
+			stream.send(types.ThinkingStartDelta{})
+			stream.send(types.ThinkingContentDelta{Content: bc.Thinking})
+			stream.send(types.ThinkingEndDelta{Signature: bc.Signature})
+		case types.TextContent:
+			stream.send(types.TextStartDelta{})
+			stream.send(types.TextContentDelta{Content: bc.Text})
+			stream.send(types.TextEndDelta{})
+		case types.ToolUseContent:
+			stream.send(types.ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
+			stream.send(types.ToolCallEndDelta{Arguments: bc.Arguments})
+		}
+	}
+}
+
 func replayToolResults(stream *EventStream, content []types.SystemContent) {
 	for _, c := range content {
-		if tr, ok := c.(types.ToolResultContent); ok {
-			stream.send(types.ToolExecStartDelta{ToolCallID: tr.ToolCallID})
-			stream.send(types.ToolExecEndDelta{ToolCallID: tr.ToolCallID, Result: tr.Text})
+		switch v := c.(type) {
+		case types.ToolResultContent:
+			stream.send(types.ToolExecStartDelta{ToolCallID: v.ToolCallID})
+			stream.send(types.ToolExecEndDelta{ToolCallID: v.ToolCallID, Result: v.Text, Blocks: v.Blocks})
+		case types.HandoffContent:
+			stream.send(types.HandoffDelta{From: v.From, To: v.To, Reason: v.Reason})
 		}
 	}
 }
@@ -158,9 +168,11 @@ func replayUserToolResults(stream *EventStream, content []types.UserContent) {
 		switch v := c.(type) {
 		case types.ToolResultContent:
 			stream.send(types.ToolExecStartDelta{ToolCallID: v.ToolCallID})
-			stream.send(types.ToolExecEndDelta{ToolCallID: v.ToolCallID, Result: v.Text})
+			stream.send(types.ToolExecEndDelta{ToolCallID: v.ToolCallID, Result: v.Text, Blocks: v.Blocks})
 		case types.FeedbackContent:
 			stream.send(types.FeedbackDelta(v))
+		case types.HandoffContent:
+			stream.send(types.HandoffDelta{From: v.From, To: v.To, Reason: v.Reason})
 		}
 	}
 }

@@ -74,10 +74,13 @@ type ToolExecDelta struct {
 func (ToolExecDelta) isDelta() {}
 
 // ToolExecEndDelta signals a tool has finished executing.
+// Result is the text projection shown to humans (unchanged contract).
+// Blocks carries optional rich output for consumers (e.g. TUIs) that render images.
 type ToolExecEndDelta struct {
 	ToolCallID string
-	Result     string
+	Result     string // text projection — UNCHANGED meaning
 	Error      string
+	Blocks     []ToolResultBlock // optional; nil for plain-text results
 }
 
 func (ToolExecEndDelta) isDelta() {}
@@ -118,6 +121,19 @@ type MarkerDelta struct {
 
 func (MarkerDelta) isDelta() {}
 
+// ── Handoff deltas ──────────────────────────────────────────────────
+
+// HandoffDelta signals that control transferred from one agent to another
+// mid-stream. The EventStream does not close — subsequent deltas come from the
+// new active agent. Consumers use this to re-render headers / attribution.
+type HandoffDelta struct {
+	From   string // previously active agent ("" if entry agent)
+	To     string // newly active agent
+	Reason string
+}
+
+func (HandoffDelta) isDelta() {}
+
 // ── Terminal deltas ─────────────────────────────────────────────────
 
 // ErrorDelta carries an error from the stream.
@@ -153,9 +169,41 @@ type UsageDelta struct {
 	Latency          time.Duration
 
 	// Response metadata for OpenTelemetry GenAI semantic conventions.
-	ResponseModel  string   // gen_ai.response.model
-	ResponseID     string   // gen_ai.response.id
-	FinishReasons  []string // gen_ai.response.finish_reasons
+	ResponseModel string   // gen_ai.response.model
+	ResponseID    string   // gen_ai.response.id
+	FinishReasons []string // gen_ai.response.finish_reasons
+
+	// CacheHit is true when this usage was served from a response cache.
+	// Token fields carry the ORIGINAL recorded counts for observability, but
+	// cost/billing accounting should treat a cache hit as zero new tokens.
+	CacheHit bool
 }
 
 func (UsageDelta) isDelta() {}
+
+// Merge combines two usage deltas, accumulating token counts and taking the
+// most recent non-zero metadata. Providers may emit usage in multiple parts
+// (e.g. Anthropic reports prompt tokens at message_start and completion tokens
+// at message_delta); Merge reassembles the full total. Latency is taken from
+// the most recent non-zero value, not summed.
+func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
+	u.PromptTokens += o.PromptTokens
+	u.CompletionTokens += o.CompletionTokens
+	u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	if o.Latency != 0 {
+		u.Latency = o.Latency
+	}
+	if o.ResponseModel != "" {
+		u.ResponseModel = o.ResponseModel
+	}
+	if o.ResponseID != "" {
+		u.ResponseID = o.ResponseID
+	}
+	if len(o.FinishReasons) > 0 {
+		u.FinishReasons = o.FinishReasons
+	}
+	if o.CacheHit {
+		u.CacheHit = true
+	}
+	return u
+}

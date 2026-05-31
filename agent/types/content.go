@@ -58,8 +58,12 @@ func (ToolUseContent) isAssistantContent() {}
 // Valid in SystemMessage (automatic execution) or UserMessage (human-in-the-loop).
 type ToolResultContent struct {
 	ToolCallID string
-	Text       string
-	IsError    bool // true when Text represents an error, not a successful result
+	Text       string // ALWAYS the text projection — providers that ignore Blocks use this
+	IsError    bool   // true when Text represents an error, not a successful result
+	// Blocks carries optional rich multi-modal output. nil for plain-text results.
+	// Blocks with Kind image|file hold bytes in Data (json:"-", not persisted);
+	// only the URI/metadata round-trips through tree serialization.
+	Blocks []ToolResultBlock `json:"blocks,omitempty"`
 }
 
 func (ToolResultContent) isSystemContent() {}
@@ -77,6 +81,20 @@ type ConfigContent struct {
 
 func (ConfigContent) isSystemContent() {}
 func (ConfigContent) isUserContent()   {}
+
+// HandoffContent marks a transfer of control to another agent in the same
+// handoff group. It is an agent-scoped overlay: it does not mutate the immutable
+// root, but selects which agent is active for subsequent iterations. Like
+// ConfigContent, it is stripped from the message stream before the LLM sees it —
+// its effect is resolved by the agent loop, not sent as text.
+type HandoffContent struct {
+	To     string `json:"to"`               // target agent name in the group
+	From   string `json:"from,omitempty"`   // agent that initiated the handoff
+	Reason string `json:"reason,omitempty"` // optional rationale (telemetry / audit only)
+}
+
+func (HandoffContent) isSystemContent() {}
+func (HandoffContent) isUserContent()   {} // allow human-forced handoffs too
 
 // FileContent represents a file attachment. Only valid in UserMessages —
 // users attach files, the system/assistant do not.

@@ -239,13 +239,7 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 			if len(textParts) > 0 {
 				out = append(out, openai.SystemMessage(strings.Join(textParts, "")))
 			}
-			for _, tr := range toolResults {
-				text := tr.Text
-				if tr.IsError {
-					text = "[TOOL ERROR] " + text
-				}
-				out = append(out, openai.ToolMessage(text, tr.ToolCallID))
-			}
+			out = appendOpenAIToolResults(out, toolResults)
 
 		case types.UserMessage:
 			var parts []openai.ChatCompletionContentPartUnionParam
@@ -269,13 +263,7 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 			} else if len(parts) > 1 {
 				out = append(out, openai.UserMessage(parts))
 			}
-			for _, tr := range toolResults {
-				text := tr.Text
-				if tr.IsError {
-					text = "[TOOL ERROR] " + text
-				}
-				out = append(out, openai.ToolMessage(text, tr.ToolCallID))
-			}
+			out = appendOpenAIToolResults(out, toolResults)
 
 		case types.AssistantMessage:
 			var textParts []string
@@ -305,6 +293,53 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 		}
 	}
 	return out
+}
+
+// appendOpenAIToolResults emits a tool message (text projection with placeholders
+// for non-text blocks) for each result, plus a follow-up user image message for
+// each image block, since OpenAI tool messages accept text only.
+func appendOpenAIToolResults(out []openai.ChatCompletionMessageParamUnion, toolResults []types.ToolResultContent) []openai.ChatCompletionMessageParamUnion {
+	// First pass: emit ALL tool messages. OpenAI requires the tool messages that
+	// answer one assistant tool_calls block to be contiguous, so image follow-ups
+	// (which are user messages) must not be interleaved between them.
+	for _, tr := range toolResults {
+		out = append(out, openai.ToolMessage(openAIToolResultText(tr), tr.ToolCallID))
+	}
+	// Second pass: emit image follow-ups after every tool message.
+	for _, tr := range toolResults {
+		for _, b := range tr.Blocks {
+			if b.Kind == types.ToolResultBlockImage && b.Data != nil && isImageType(b.MediaType) {
+				dataURI := fmt.Sprintf("data:%s;base64,%s", b.MediaType, base64.StdEncoding.EncodeToString(b.Data))
+				out = append(out, openai.UserMessage([]openai.ChatCompletionContentPartUnionParam{
+					openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURI}),
+				}))
+			}
+		}
+	}
+	return out
+}
+
+// openAIToolResultText projects a tool result to text. With no rich blocks it is
+// exactly the previous behavior; rich blocks add bracketed placeholders so the
+// model is aware of artifacts surfaced as separate image messages.
+func openAIToolResultText(tr types.ToolResultContent) string {
+	text := tr.Text
+	if tr.IsError {
+		text = "[TOOL ERROR] " + text
+	}
+	for _, b := range tr.Blocks {
+		switch b.Kind {
+		case types.ToolResultBlockImage:
+			text += "\n[image: " + b.Filename + "]"
+		case types.ToolResultBlockFile:
+			text += "\n[file: " + b.Filename + "]"
+		case types.ToolResultBlockJSON:
+			if tr.Text == "" {
+				text += string(b.JSON)
+			}
+		}
+	}
+	return text
 }
 
 func fileContentToPart(fc types.FileContent) openai.ChatCompletionContentPartUnionParam {
