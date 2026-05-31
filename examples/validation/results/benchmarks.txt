@@ -1,0 +1,18 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/urmzd/saige/agent
+cpu: Apple M4 Pro
+BenchmarkAgentTextLoop-12     	  244786	      4885 ns/op	    6340 B/op	      59 allocs/op
+BenchmarkAgentToolLoop-12     	  112986	     10663 ns/op	    9359 B/op	     111 allocs/op
+BenchmarkRunDurableNoop-12    	  273354	      4357 ns/op	    6813 B/op	      65 allocs/op
+PASS
+ok  	github.com/urmzd/saige/agent	5.070s
+goos: darwin
+goarch: arm64
+pkg: github.com/urmzd/saige/agent/provider/cache
+cpu: Apple M4 Pro
+BenchmarkKey-12          	 2586646	       462.7 ns/op	     720 B/op	      29 allocs/op
+BenchmarkCacheHit-12     	 2328718	       515.3 ns/op	     920 B/op	      24 allocs/op
+BenchmarkCacheMiss-12    	  478262	      2504 ns/op	    4128 B/op	      39 allocs/op
+PASS
+ok  	github.com/urmzd/saige/agent/provider/cache	4.852s
