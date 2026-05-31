@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/urmzd/saige/rag/types"
 )
@@ -204,8 +205,9 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 				}
 
 				results = append(results, types.SearchHit{
-					Variant: v,
-					Score:   score,
+					Variant:   v,
+					Score:     score,
+					Timestamp: docTimestamp(doc),
 					Provenance: types.Provenance{
 						DocumentUUID:   doc.UUID,
 						DocumentTitle:  doc.Title,
@@ -232,6 +234,15 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 
 func (s *Store) Close(_ context.Context) error {
 	return nil
+}
+
+// docTimestamp returns the document's recency timestamp, preferring UpdatedAt
+// and falling back to CreatedAt. The zero value means "unknown".
+func docTimestamp(doc *types.Document) time.Time {
+	if !doc.UpdatedAt.IsZero() {
+		return doc.UpdatedAt
+	}
+	return doc.CreatedAt
 }
 
 func mergeMetadata(docMeta, variantMeta map[string]string) map[string]string {

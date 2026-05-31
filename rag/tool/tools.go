@@ -85,8 +85,8 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 	// Return provenance-only hits (no full content to keep agent context lean).
 	type provenanceHit struct {
-		VariantUUID string             `json:"variant_uuid"`
-		Score       float64            `json:"score"`
+		VariantUUID string               `json:"variant_uuid"`
+		Score       float64              `json:"score"`
 		ContentType ragtypes.ContentType `json:"content_type"`
 		Provenance  ragtypes.Provenance  `json:"provenance"`
 	}
@@ -242,15 +242,59 @@ func (t *ReconstructTool) Execute(ctx context.Context, args map[string]any) (str
 
 // --- NewTools ---
 
-// NewTools returns all 5 rag tools for use with agent.
-func NewTools(pipeline ragtypes.Pipeline) []agenttypes.Tool {
-	return []agenttypes.Tool{
+// config controls how NewTools assembles the tool set.
+type config struct {
+	readOnly bool
+}
+
+// Option configures NewTools.
+type Option func(*config)
+
+// ReadOnly omits every mutating tool (rag_update, rag_delete) from the returned
+// set, exposing only safe read tools (rag_search, rag_lookup, rag_reconstruct).
+// Use this for untrusted or query-only agents.
+func ReadOnly() Option {
+	return func(c *config) { c.readOnly = true }
+}
+
+// mutatingMarker is the human-approval gate attached to mutating RAG tools.
+// When the agent loop encounters a tool carrying this marker, it pauses and
+// waits for explicit approval before executing.
+func mutatingMarker(tool string) agenttypes.Marker {
+	return agenttypes.Marker{
+		Kind:    "human_approval",
+		Message: "Mutating RAG operation requires human approval: " + tool,
+		Meta:    map[string]any{"tool": tool, "mutating": true},
+	}
+}
+
+// NewTools returns rag tools for use with an agent.
+//
+// By default the read tools (rag_search, rag_lookup, rag_reconstruct) are
+// returned as-is and the mutating tools (rag_update, rag_delete) are wrapped in
+// a "human_approval" marker so the agent loop pauses for approval before they
+// run. Pass ReadOnly() to omit the mutating tools entirely instead.
+func NewTools(pipeline ragtypes.Pipeline, opts ...Option) []agenttypes.Tool {
+	cfg := config{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	tools := []agenttypes.Tool{
 		&SearchTool{pipeline: pipeline},
 		&LookupTool{pipeline: pipeline},
-		&UpdateTool{pipeline: pipeline},
-		&DeleteTool{pipeline: pipeline},
-		&ReconstructTool{pipeline: pipeline},
 	}
+
+	if !cfg.readOnly {
+		tools = append(tools,
+			agenttypes.WithMarkers(&UpdateTool{pipeline: pipeline}, mutatingMarker("rag_update")),
+			agenttypes.WithMarkers(&DeleteTool{pipeline: pipeline}, mutatingMarker("rag_delete")),
+		)
+	}
+
+	tools = append(tools, &ReconstructTool{pipeline: pipeline})
+
+	return tools
 }
 
 // toInt converts a JSON number (float64) to int.

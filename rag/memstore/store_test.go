@@ -3,6 +3,7 @@ package memstore_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/urmzd/saige/rag/memstore"
 	"github.com/urmzd/saige/rag/types"
@@ -104,6 +105,61 @@ func TestSearchByEmbedding(t *testing.T) {
 	// Only v1 and v3 have cosine similarity 1.0 with query.
 	if len(hits) != 2 {
 		t.Fatalf("expected 2 hits with min score 0.9, got %d", len(hits))
+	}
+}
+
+func TestSearchByEmbeddingPopulatesTimestamp(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	created := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Document with UpdatedAt set: timestamp should prefer UpdatedAt.
+	updatedDoc := &types.Document{
+		UUID:      "doc-updated",
+		CreatedAt: created,
+		UpdatedAt: updated,
+		Sections: []types.Section{{
+			UUID: "sec-u", DocumentUUID: "doc-updated",
+			Variants: []types.ContentVariant{
+				{UUID: "vu", SectionUUID: "sec-u", ContentType: types.ContentText, Embedding: []float32{1, 0}},
+			},
+		}},
+	}
+	// Document with only CreatedAt: timestamp should fall back to CreatedAt.
+	createdDoc := &types.Document{
+		UUID:      "doc-created",
+		CreatedAt: created,
+		Sections: []types.Section{{
+			UUID: "sec-c", DocumentUUID: "doc-created",
+			Variants: []types.ContentVariant{
+				{UUID: "vc", SectionUUID: "sec-c", ContentType: types.ContentText, Embedding: []float32{1, 0}},
+			},
+		}},
+	}
+	if err := store.CreateDocument(ctx, updatedDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateDocument(ctx, createdDoc); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := store.SearchByEmbedding(ctx, []float32{1, 0}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byUUID := make(map[string]types.SearchHit, len(hits))
+	for _, h := range hits {
+		byUUID[h.Variant.UUID] = h
+	}
+
+	if got := byUUID["vu"].Timestamp; !got.Equal(updated) {
+		t.Errorf("updated doc hit timestamp = %v, want %v", got, updated)
+	}
+	if got := byUUID["vc"].Timestamp; !got.Equal(created) {
+		t.Errorf("created doc hit timestamp = %v, want %v", got, created)
 	}
 }
 

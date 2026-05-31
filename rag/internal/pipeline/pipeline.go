@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -15,13 +17,54 @@ import (
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
+// ln2 is the natural logarithm of 2, used for half-life exponential decay.
+const ln2 = 0.6931471805599453
+
+// applyRecency multiplies each hit's fused score by an exponential time-decay
+// factor blended by the configured weight. It is a no-op unless WithRecency
+// supplied a positive half-life, preserving the default (recency-free) ranking.
+func applyRecency(hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) {
+	if cfg.RecencyHalfLife <= 0 {
+		return
+	}
+	weight := cfg.RecencyWeight
+	if weight < 0 {
+		weight = 0
+	}
+	if weight > 1 {
+		weight = 1
+	}
+	now := cfg.RecencyNow
+	if now.IsZero() {
+		now = time.Now()
+	}
+	halfLife := float64(cfg.RecencyHalfLife)
+	for i := range hits {
+		recency := recencyFactor(hits[i].Timestamp, now, halfLife)
+		hits[i].Score = (1-weight)*hits[i].Score + weight*hits[i].Score*recency
+	}
+}
+
+// recencyFactor returns exp(-ln2 * age / halfLife) in (0,1]. A zero timestamp
+// (unknown age) or non-positive age yields 1.0 (no decay).
+func recencyFactor(ts, now time.Time, halfLife float64) float64 {
+	if ts.IsZero() || halfLife <= 0 {
+		return 1.0
+	}
+	age := now.Sub(ts)
+	if age <= 0 {
+		return 1.0
+	}
+	return math.Exp(-ln2 * float64(age) / halfLife)
+}
+
 // Config holds the pipeline's dependencies.
 type Config struct {
 	Store            ragtypes.Store
 	ContentExtractor ragtypes.ContentExtractor
 	Chunker          ragtypes.Chunker
 	Embedders        ragtypes.EmbedderRegistry
-	Graph          knowledgetypes.Graph
+	Graph            knowledgetypes.Graph
 	DedupBehavior    ragtypes.DedupBehavior
 	StoreOriginals   bool
 	Logger           *slog.Logger
@@ -210,7 +253,7 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 
 	// Step 3: RRF merge + dedup by variant UUID.
 	const rrfK = 60
-	scores := make(map[string]float64)    // variant UUID -> RRF score
+	scores := make(map[string]float64)            // variant UUID -> RRF score
 	hitMap := make(map[string]ragtypes.SearchHit) // variant UUID -> best hit
 
 	for _, list := range allLists {
@@ -231,7 +274,10 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 		merged = append(merged, hit)
 	}
 
-	// Sort by RRF score descending.
+	// Step 3.5: Optional time-decay recency blending (opt-in via WithRecency).
+	applyRecency(merged, cfg)
+
+	// Sort by (recency-adjusted) score descending.
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Score > merged[j].Score
 	})

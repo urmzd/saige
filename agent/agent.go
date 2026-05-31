@@ -35,6 +35,26 @@ type AgentConfig struct {
 	// today's streaming behavior). A DBOS-backed runner lives in agent/durable/dbos.
 	StepRunner types.StepRunner
 
+	// Store persists the conversation tree. Defaults to nil, which preserves
+	// today's in-memory-only behavior (the tree lives only for the agent's
+	// lifetime). When set, each node added during a run is written to the Store
+	// best-effort (errors are logged, never fatal), and NewAgent can hydrate the
+	// tree from the Store via WithStore (see WithStore / LoadTreeFromStore).
+	Store types.Store
+
+	// LLMTimeout bounds each provider (LLM) call. A child context with this
+	// deadline wraps the call in getAssistantMessage. 0 means no timeout.
+	LLMTimeout time.Duration
+
+	// ToolTimeout bounds each individual tool execution. A child context with
+	// this deadline wraps each tool step in executeOneTool. 0 means no timeout.
+	ToolTimeout time.Duration
+
+	// MaxParallelTools caps how many tool goroutines run concurrently when tools
+	// are fanned out (NoopStepRunner path). 0 means unlimited. Under a durable
+	// StepRunner tools always run sequentially, so this has no effect there.
+	MaxParallelTools int
+
 	// File pipeline configuration.
 	Resolvers  map[string]types.Resolver           // URI scheme → Resolver (e.g. "file", "https", "s3")
 	Extractors map[types.MediaType]types.Extractor // MediaType → Extractor for non-native types
@@ -105,6 +125,35 @@ func WithStepRunner(r types.StepRunner) AgentOption {
 	return func(c *AgentConfig) { c.StepRunner = r }
 }
 
+// WithStore configures a types.Store so the conversation tree is persisted.
+// With no Store (the default) the tree is in-memory only — fully backward
+// compatible. When a Store is set, each node added during a run is written
+// best-effort; loading a previously-persisted tree is done explicitly via
+// LoadTreeFromStore before NewAgent (pass the rebuilt tree with WithTree).
+func WithStore(s types.Store) AgentOption {
+	return func(c *AgentConfig) { c.Store = s }
+}
+
+// WithLLMTimeout bounds each provider (LLM) call with a child context deadline.
+// A slow provider is cancelled and surfaces a timeout error instead of hanging.
+// A non-positive duration disables the timeout.
+func WithLLMTimeout(d time.Duration) AgentOption {
+	return func(c *AgentConfig) { c.LLMTimeout = d }
+}
+
+// WithToolTimeout bounds each individual tool execution with a child context
+// deadline. A slow tool is cancelled and surfaces a timeout error. A
+// non-positive duration disables the timeout.
+func WithToolTimeout(d time.Duration) AgentOption {
+	return func(c *AgentConfig) { c.ToolTimeout = d }
+}
+
+// WithMaxParallelTools caps how many tool goroutines run concurrently when tools
+// are fanned out. A non-positive value means unlimited (today's behavior).
+func WithMaxParallelTools(n int) AgentOption {
+	return func(c *AgentConfig) { c.MaxParallelTools = n }
+}
+
 // Agent runs an LLM agent loop with tool execution.
 // All conversations are backed by a Tree.
 type Agent struct {
@@ -152,6 +201,16 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	}
 
 	a := &Agent{cfg: cfg, tools: tools}
+
+	// When a Store is configured, persist the tree's root node + main branch tip
+	// up front so a later LoadTreeFromStore has an anchor even before the first
+	// Invoke. Best-effort: a failure here is logged, never fatal (mirrors the
+	// per-node persistence in runLoop).
+	if cfg.Store != nil {
+		if root := cfg.Tree.Root(); root != nil {
+			a.persistNode(context.Background(), root)
+		}
+	}
 
 	// Build the handoff group (if any). The entry agent shares this tree; each
 	// member's handoff_to_<target> tools are wired into its registry.
@@ -601,6 +660,50 @@ func uriScheme(uri string) string {
 	return u.Scheme
 }
 
+// ── Store persistence ────────────────────────────────────────────────
+
+// persistNode writes a freshly-added node and its branch tip to the configured
+// Store. It is best-effort: a nil Store is a no-op, and any error is logged but
+// never propagated, so persistence failures cannot break a live agent run. When
+// the Store exposes a transaction, the node + branch tip are committed together
+// so a reader never observes a tip pointing at an unsaved node.
+func (a *Agent) persistNode(ctx context.Context, node *types.Node) {
+	if a.cfg.Store == nil || node == nil {
+		return
+	}
+	err := a.cfg.Store.Tx(ctx, func(tx types.StoreTx) error {
+		if err := tx.SaveNode(ctx, node); err != nil {
+			return err
+		}
+		return tx.SaveBranch(ctx, node.BranchID, node.ID)
+	})
+	if err != nil {
+		a.cfg.Logger.Warn("store persist failed",
+			"agent", a.cfg.Name, "node", node.ID, "branch", node.BranchID, "error", err)
+	}
+}
+
+// LoadTreeFromStore reconstructs a conversation tree from a Store by loading the
+// subtree rooted at rootID and rebuilding it via tree.FromStore. The returned
+// tree can be passed to NewAgent via WithTree to resume a persisted session. The
+// active branch defaults to "main" unless overridden.
+//
+// This is the read counterpart to WithStore's write path. It is a free function
+// (not a method) so a tree can be hydrated before an Agent exists.
+func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.NodeID, active types.BranchID) (*tree.Tree, error) {
+	if store == nil {
+		return nil, fmt.Errorf("agent: nil store")
+	}
+	nodes, branches, err := store.LoadTree(ctx, rootID)
+	if err != nil {
+		return nil, fmt.Errorf("load tree: %w", err)
+	}
+	if active == "" {
+		active = types.BranchID("main")
+	}
+	return tree.FromStore(nodes, branches, nil, rootID, active)
+}
+
 // ── Run loop ─────────────────────────────────────────────────────────
 
 func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.Message, branch types.BranchID) {
@@ -623,6 +726,12 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 
 	var handoffCount int
 
+	// pendingWork is true when the previous iteration executed tool calls and the
+	// loop continued, meaning the assistant still owes a turn to consume those
+	// results. If the iteration cap then fires, the run was truncated mid-task and
+	// we emit ErrMaxIterations so consumers can tell "finished" from "cut off".
+	pendingWork := false
+
 	for iterCount := 0; ; iterCount++ {
 		select {
 		case <-ctx.Done():
@@ -643,8 +752,15 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		resolved, llmMessages := a.prepareMessages(messages)
 		active := a.resolveActive(&resolved, llmMessages)
 
-		// Check iteration cap.
+		// Check iteration cap. If we break here while the last assistant turn left
+		// tool calls pending (pendingWork), the run was truncated, not finished —
+		// emit ErrMaxIterations so consumers can distinguish the two. A clean
+		// natural finish (text-only turn, empty response) clears pendingWork and
+		// does NOT emit it.
 		if iterCount >= resolved.maxIter {
+			if pendingWork {
+				stream.send(types.ErrorDelta{Error: types.ErrMaxIterations})
+			}
 			break
 		}
 
@@ -674,7 +790,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		stream.send(enriched)
 
 		if msg == nil {
-			break
+			break // empty response: a clean (if degenerate) finish
 		}
 
 		// Persist assistant message to tree.
@@ -683,20 +799,25 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
-		if _, err := tr.AddChild(ctx, tip.ID, *msg); err != nil {
+		assistantNode, err := tr.AddChild(ctx, tip.ID, *msg)
+		if err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
+		a.persistNode(ctx, assistantNode)
 
 		toolCalls := assistantToolCalls(msg)
 		if len(toolCalls) == 0 {
-			break
+			break // text-only turn: the assistant finished naturally
 		}
 
-		// Execute all tool calls using the ACTIVE agent's tool registry, then
-		// persist results BEFORE any handoff so every tool_use gets a matching
+		// Execute all tool calls using the ACTIVE agent's tool registry. The
+		// assistant now owes a turn to consume those results (pendingWork), so the
+		// iteration cap can distinguish a truncated run from a clean finish.
+		// Persist results BEFORE any handoff so every tool_use gets a matching
 		// tool_result (provider contract) and rich Blocks are persisted.
 		results := a.executeToolsConcurrently(ctx, stream, toolCalls, active.tools)
+		pendingWork = true
 		if err := a.persistToolResults(ctx, tr, branch, results); err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
@@ -721,10 +842,12 @@ func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, stream *EventStr
 			stream.send(types.ErrorDelta{Error: err})
 			return false
 		}
-		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
+		node, err := tr.AddChild(ctx, tip.ID, msg)
+		if err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return false
 		}
+		a.persistNode(ctx, node)
 	}
 	return true
 }
@@ -793,8 +916,12 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 	if err != nil {
 		return err
 	}
-	_, err = tr.AddChild(ctx, tip.ID, types.NewToolResultMessage(contents...))
-	return err
+	node, err := tr.AddChild(ctx, tip.ID, types.NewToolResultMessage(contents...))
+	if err != nil {
+		return err
+	}
+	a.persistNode(ctx, node)
+	return nil
 }
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
@@ -828,10 +955,12 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 		stream.send(types.ErrorDelta{Error: err})
 		return true
 	}
-	if _, err := tr.AddChild(ctx, tip.ID, overlay); err != nil {
+	node, err := tr.AddChild(ctx, tip.ID, overlay)
+	if err != nil {
 		stream.send(types.ErrorDelta{Error: err})
 		return true
 	}
+	a.persistNode(ctx, node)
 	return false
 }
 
@@ -852,6 +981,13 @@ func (a *Agent) getAssistantMessage(
 	start := time.Now()
 	res, err := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (types.StepResult, error) {
 		ran = true
+		// Bound the provider call (and its stream aggregation) with a child
+		// deadline so a slow provider is cancelled rather than hanging the loop.
+		if a.cfg.LLMTimeout > 0 {
+			var cancel context.CancelFunc
+			stepCtx, cancel = context.WithTimeout(stepCtx, a.cfg.LLMTimeout)
+			defer cancel()
+		}
 		llmStart := time.Now()
 		rx, llmErr := a.callProvider(stepCtx, provider, llmMessages, toolDefs)
 		if llmErr != nil {
@@ -885,7 +1021,30 @@ func (a *Agent) getAssistantMessage(
 			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), streamErr)
 			return types.StepResult{}, streamErr
 		}
-		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), nil)
+		// (timeouts) A well-behaved provider observes stepCtx and closes its
+		// channel when the deadline fires. Surface that as a transient provider
+		// error so the turn fails instead of treating a truncated stream as a
+		// clean finish.
+		if a.cfg.LLMTimeout > 0 && stepCtx.Err() == context.DeadlineExceeded {
+			toErr := &types.ProviderError{
+				Provider: types.ProviderName(provider),
+				Model:    types.ProviderModel(provider),
+				Kind:     types.ErrorKindTransient,
+				Err:      fmt.Errorf("llm call exceeded timeout %s: %w", a.cfg.LLMTimeout, context.DeadlineExceeded),
+			}
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), toErr)
+			return types.StepResult{}, toErr
+		}
+		providerName := types.ProviderName(provider)
+		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", providerName, time.Since(llmStart), nil)
+		// (token metric) Record token usage once per completed LLM call with the
+		// merged prompt/completion counts. Skipped for cache hits (no new tokens
+		// were produced) and when the provider reported no usage at all.
+		if liveUsage != nil && !liveUsage.CacheHit &&
+			(liveUsage.PromptTokens > 0 || liveUsage.CompletionTokens > 0) {
+			a.cfg.Metrics.RecordTokenUsage(stepCtx, "chat", providerName,
+				liveUsage.PromptTokens, liveUsage.CompletionTokens)
+		}
 		var msg *types.AssistantMessage
 		if m, ok := agg.Message().(types.AssistantMessage); ok {
 			msg = &m
@@ -939,11 +1098,23 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 		return results
 	}
 
+	// Optional concurrency cap: a buffered channel acts as a counting semaphore.
+	// A slot is acquired before each tool runs and released after, so at most
+	// MaxParallelTools goroutines execute a tool simultaneously. 0 = unlimited.
+	var sem chan struct{}
+	if a.cfg.MaxParallelTools > 0 {
+		sem = make(chan struct{}, a.cfg.MaxParallelTools)
+	}
+
 	var wg sync.WaitGroup
 	for i, tc := range toolCalls {
 		wg.Add(1)
 		go func(idx int, tc types.ToolUseContent) {
 			defer wg.Done()
+			if sem != nil {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+			}
 			results[idx] = a.executeOneTool(ctx, stream, tc, tools)
 		}(i, tc)
 	}
@@ -1032,6 +1203,15 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	// multi-modal Blocks; a plain Tool yields text only.
 	stepName := "tool-" + tc.ID
 	sr, stepErr := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (types.StepResult, error) {
+		// Bound this tool call with a child deadline so a slow tool is cancelled
+		// rather than hanging the loop. Tools that respect stepCtx return the
+		// deadline error; tools that ignore it still run to completion (we cannot
+		// preempt a blocking call), but the deadline is observable below.
+		if a.cfg.ToolTimeout > 0 {
+			var cancel context.CancelFunc
+			stepCtx, cancel = context.WithTimeout(stepCtx, a.cfg.ToolTimeout)
+			defer cancel()
+		}
 		toolStart := time.Now()
 		var (
 			text    string
@@ -1047,6 +1227,13 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 			}
 		} else {
 			text, execErr = tool.Execute(stepCtx, tc.Arguments)
+		}
+		// Surface a deadline overrun as a tool error even when the tool ignored
+		// stepCtx and returned no error of its own, so the turn can distinguish a
+		// timed-out tool from a successful one.
+		if execErr == nil && a.cfg.ToolTimeout > 0 && stepCtx.Err() == context.DeadlineExceeded {
+			execErr = fmt.Errorf("tool %s exceeded timeout %s: %w", tc.Name, a.cfg.ToolTimeout, context.DeadlineExceeded)
+			text, blocks = "", nil
 		}
 		a.cfg.Metrics.RecordToolCall(stepCtx, tc.Name, time.Since(toolStart), execErr)
 		out := types.StepResult{Kind: types.StepKindTool, ToolCallID: tc.ID, ToolResult: text, ToolBlocks: blocks}

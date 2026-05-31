@@ -48,6 +48,14 @@ check: lint vet test
 bench:
     go test -bench=. -benchmem ./...
 
+# Run benchmarks and write the report into the validation results folder
+bench-report:
+    go test -run=^$ -bench=. -benchmem ./agent/ ./agent/provider/cache/ | tee examples/validation/results/benchmarks.txt
+
+# Run the live validation harness against a real model (needs OPENAI_API_KEY)
+validate:
+    go run ./examples/validation
+
 # Run fuzz tests for a specific package and function
 fuzz PACKAGE FUNC DURATION="30s":
     go test -fuzz={{FUNC}} -fuzztime={{DURATION}} {{PACKAGE}}

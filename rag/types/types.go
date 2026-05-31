@@ -78,12 +78,12 @@ type RawDocument struct {
 
 // Provenance tracks the origin of a search hit for citation purposes.
 type Provenance struct {
-	DocumentUUID string `json:"document_uuid"`
-	DocumentTitle string `json:"document_title,omitempty"`
-	SourceURI    string `json:"source_uri,omitempty"`
-	SectionUUID  string `json:"section_uuid"`
+	DocumentUUID   string `json:"document_uuid"`
+	DocumentTitle  string `json:"document_title,omitempty"`
+	SourceURI      string `json:"source_uri,omitempty"`
+	SectionUUID    string `json:"section_uuid"`
 	SectionHeading string `json:"section_heading,omitempty"`
-	SectionIndex int    `json:"section_index"`
+	SectionIndex   int    `json:"section_index"`
 }
 
 // SearchHit is a scored content variant with full provenance for citation tracking.
@@ -91,6 +91,10 @@ type SearchHit struct {
 	Variant    ContentVariant `json:"variant"`
 	Score      float64        `json:"score"`
 	Provenance Provenance     `json:"provenance"`
+	// Timestamp is the source document's last-updated (or created) time. It is
+	// populated by stores during search and used by the WithRecency option to
+	// apply time-decay scoring. The zero value means "unknown".
+	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
 // FilterOp defines metadata filter comparison operations.
@@ -128,7 +132,7 @@ type SearchPipelineResult struct {
 	Query              string            `json:"query"`
 	TransformedQueries []string          `json:"transformed_queries,omitempty"`
 	Hits               []SearchHit       `json:"hits"`
-	Context            *AssembledContext  `json:"context,omitempty"`
+	Context            *AssembledContext `json:"context,omitempty"`
 }
 
 // --- Search options ---
@@ -144,6 +148,13 @@ type SearchConfig struct {
 	MinScore        float64
 	AssembleContext bool
 	MaxTokens       int
+
+	// Recency time-decay scoring. Enabled only when RecencyHalfLife > 0.
+	RecencyHalfLife time.Duration
+	RecencyWeight   float64
+	// RecencyNow overrides the reference time for age computation (test seam).
+	// Zero value means time.Now() is used.
+	RecencyNow time.Time
 }
 
 // WithContentTypes filters search results to specific content types.
@@ -173,6 +184,24 @@ func WithContextAssembly(maxTokens int) SearchOption {
 	return func(c *SearchConfig) {
 		c.AssembleContext = true
 		c.MaxTokens = maxTokens
+	}
+}
+
+// WithRecency enables time-decay recency scoring after RRF fusion. Each hit's
+// fused score is blended with an exponential recency factor
+// exp(-ln2 * age / halfLife) derived from the hit's source-document timestamp.
+//
+// halfLife is the age at which the recency factor reaches 0.5; weight in [0,1]
+// controls how much recency influences the final score:
+//
+//	score = (1-weight)*score + weight*score*recencyFactor
+//
+// A non-positive halfLife is a no-op, preserving today's behavior. Hits with a
+// zero timestamp are treated as having no decay (recency factor 1.0).
+func WithRecency(halfLife time.Duration, weight float64) SearchOption {
+	return func(c *SearchConfig) {
+		c.RecencyHalfLife = halfLife
+		c.RecencyWeight = weight
 	}
 }
 
@@ -292,7 +321,7 @@ type ContextAssembler interface {
 type DedupBehavior int
 
 const (
-	DedupSkip    DedupBehavior = iota
+	DedupSkip DedupBehavior = iota
 	DedupReplace
 )
 
@@ -314,4 +343,3 @@ type IngestResult struct {
 	Sections     int    `json:"sections"`
 	Variants     int    `json:"variants"`
 }
-
