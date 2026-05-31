@@ -35,6 +35,13 @@ type AgentConfig struct {
 	// today's streaming behavior). A DBOS-backed runner lives in agent/durable/dbos.
 	StepRunner types.StepRunner
 
+	// Store persists the conversation tree. Defaults to nil, which preserves
+	// today's in-memory-only behavior (the tree lives only for the agent's
+	// lifetime). When set, each node added during a run is written to the Store
+	// best-effort (errors are logged, never fatal), and NewAgent can hydrate the
+	// tree from the Store via WithStore (see WithStore / LoadTreeFromStore).
+	Store types.Store
+
 	// File pipeline configuration.
 	Resolvers  map[string]types.Resolver           // URI scheme → Resolver (e.g. "file", "https", "s3")
 	Extractors map[types.MediaType]types.Extractor // MediaType → Extractor for non-native types
@@ -105,6 +112,15 @@ func WithStepRunner(r types.StepRunner) AgentOption {
 	return func(c *AgentConfig) { c.StepRunner = r }
 }
 
+// WithStore configures a types.Store so the conversation tree is persisted.
+// With no Store (the default) the tree is in-memory only — fully backward
+// compatible. When a Store is set, each node added during a run is written
+// best-effort; loading a previously-persisted tree is done explicitly via
+// LoadTreeFromStore before NewAgent (pass the rebuilt tree with WithTree).
+func WithStore(s types.Store) AgentOption {
+	return func(c *AgentConfig) { c.Store = s }
+}
+
 // Agent runs an LLM agent loop with tool execution.
 // All conversations are backed by a Tree.
 type Agent struct {
@@ -152,6 +168,16 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	}
 
 	a := &Agent{cfg: cfg, tools: tools}
+
+	// When a Store is configured, persist the tree's root node + main branch tip
+	// up front so a later LoadTreeFromStore has an anchor even before the first
+	// Invoke. Best-effort: a failure here is logged, never fatal (mirrors the
+	// per-node persistence in runLoop).
+	if cfg.Store != nil {
+		if root := cfg.Tree.Root(); root != nil {
+			a.persistNode(context.Background(), root)
+		}
+	}
 
 	// Build the handoff group (if any). The entry agent shares this tree; each
 	// member's handoff_to_<target> tools are wired into its registry.
@@ -601,6 +627,50 @@ func uriScheme(uri string) string {
 	return u.Scheme
 }
 
+// ── Store persistence ────────────────────────────────────────────────
+
+// persistNode writes a freshly-added node and its branch tip to the configured
+// Store. It is best-effort: a nil Store is a no-op, and any error is logged but
+// never propagated, so persistence failures cannot break a live agent run. When
+// the Store exposes a transaction, the node + branch tip are committed together
+// so a reader never observes a tip pointing at an unsaved node.
+func (a *Agent) persistNode(ctx context.Context, node *types.Node) {
+	if a.cfg.Store == nil || node == nil {
+		return
+	}
+	err := a.cfg.Store.Tx(ctx, func(tx types.StoreTx) error {
+		if err := tx.SaveNode(ctx, node); err != nil {
+			return err
+		}
+		return tx.SaveBranch(ctx, node.BranchID, node.ID)
+	})
+	if err != nil {
+		a.cfg.Logger.Warn("store persist failed",
+			"agent", a.cfg.Name, "node", node.ID, "branch", node.BranchID, "error", err)
+	}
+}
+
+// LoadTreeFromStore reconstructs a conversation tree from a Store by loading the
+// subtree rooted at rootID and rebuilding it via tree.FromStore. The returned
+// tree can be passed to NewAgent via WithTree to resume a persisted session. The
+// active branch defaults to "main" unless overridden.
+//
+// This is the read counterpart to WithStore's write path. It is a free function
+// (not a method) so a tree can be hydrated before an Agent exists.
+func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.NodeID, active types.BranchID) (*tree.Tree, error) {
+	if store == nil {
+		return nil, fmt.Errorf("agent: nil store")
+	}
+	nodes, branches, err := store.LoadTree(ctx, rootID)
+	if err != nil {
+		return nil, fmt.Errorf("load tree: %w", err)
+	}
+	if active == "" {
+		active = types.BranchID("main")
+	}
+	return tree.FromStore(nodes, branches, nil, rootID, active)
+}
+
 // ── Run loop ─────────────────────────────────────────────────────────
 
 func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.Message, branch types.BranchID) {
@@ -683,10 +753,12 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
-		if _, err := tr.AddChild(ctx, tip.ID, *msg); err != nil {
+		assistantNode, err := tr.AddChild(ctx, tip.ID, *msg)
+		if err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
+		a.persistNode(ctx, assistantNode)
 
 		toolCalls := assistantToolCalls(msg)
 		if len(toolCalls) == 0 {
@@ -721,10 +793,12 @@ func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, stream *EventStr
 			stream.send(types.ErrorDelta{Error: err})
 			return false
 		}
-		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
+		node, err := tr.AddChild(ctx, tip.ID, msg)
+		if err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return false
 		}
+		a.persistNode(ctx, node)
 	}
 	return true
 }
@@ -793,8 +867,12 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 	if err != nil {
 		return err
 	}
-	_, err = tr.AddChild(ctx, tip.ID, types.NewToolResultMessage(contents...))
-	return err
+	node, err := tr.AddChild(ctx, tip.ID, types.NewToolResultMessage(contents...))
+	if err != nil {
+		return err
+	}
+	a.persistNode(ctx, node)
+	return nil
 }
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
@@ -828,10 +906,12 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 		stream.send(types.ErrorDelta{Error: err})
 		return true
 	}
-	if _, err := tr.AddChild(ctx, tip.ID, overlay); err != nil {
+	node, err := tr.AddChild(ctx, tip.ID, overlay)
+	if err != nil {
 		stream.send(types.ErrorDelta{Error: err})
 		return true
 	}
+	a.persistNode(ctx, node)
 	return false
 }
 
