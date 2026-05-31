@@ -78,7 +78,7 @@ func (ToolExecDelta) isDelta() {}
 // Blocks carries optional rich output for consumers (e.g. TUIs) that render images.
 type ToolExecEndDelta struct {
 	ToolCallID string
-	Result     string            // text projection — UNCHANGED meaning
+	Result     string // text projection — UNCHANGED meaning
 	Error      string
 	Blocks     []ToolResultBlock // optional; nil for plain-text results
 }

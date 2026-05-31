@@ -36,8 +36,8 @@ type AgentConfig struct {
 	StepRunner types.StepRunner
 
 	// File pipeline configuration.
-	Resolvers  map[string]types.Resolver            // URI scheme → Resolver (e.g. "file", "https", "s3")
-	Extractors map[types.MediaType]types.Extractor    // MediaType → Extractor for non-native types
+	Resolvers  map[string]types.Resolver           // URI scheme → Resolver (e.g. "file", "https", "s3")
+	Extractors map[types.MediaType]types.Extractor // MediaType → Extractor for non-native types
 
 	// Structured output: if set, constrains final LLM output to this JSON schema.
 	ResponseSchema *types.ParameterSchema
