@@ -18,6 +18,8 @@ type mockStore struct {
 	findByNameType    func(ctx context.Context, name, entityType string) ([]types.Entity, error)
 	findByFuzzyName   func(ctx context.Context, name string, limit int) ([]types.Entity, error)
 	createRelationFn  func(ctx context.Context, rel *types.RelationInput) (string, error)
+	invalidateRelFn   func(ctx context.Context, uuid string, invalidAt time.Time) error
+	invalidated       []invalidationCall
 	findRelsBetween   func(ctx context.Context, src, tgt string) ([]types.Relation, error)
 	createEpisodeFn   func(ctx context.Context, input *types.EpisodeInput, uuids []string) (string, error)
 	searchEmbeddingFn func(ctx context.Context, emb []float32, opts *types.SearchOptions) ([]types.ScoredFact, error)
@@ -26,6 +28,12 @@ type mockStore struct {
 	getNodeFn         func(ctx context.Context, id string, depth int) (*types.NodeDetail, error)
 	getProvenanceFn   func(ctx context.Context, factUUID string) ([]types.Episode, error)
 	closed            bool
+}
+
+// invalidationCall records an InvalidateRelation invocation for assertions.
+type invalidationCall struct {
+	uuid      string
+	invalidAt time.Time
 }
 
 func newMockStore() *mockStore {
@@ -75,7 +83,11 @@ func (m *mockStore) CreateRelation(ctx context.Context, rel *types.RelationInput
 	return uuid, nil
 }
 
-func (m *mockStore) InvalidateRelation(_ context.Context, _ string, _ time.Time) error {
+func (m *mockStore) InvalidateRelation(ctx context.Context, uuid string, invalidAt time.Time) error {
+	m.invalidated = append(m.invalidated, invalidationCall{uuid: uuid, invalidAt: invalidAt})
+	if m.invalidateRelFn != nil {
+		return m.invalidateRelFn(ctx, uuid, invalidAt)
+	}
 	return nil
 }
 
@@ -295,6 +307,129 @@ func TestIngestEpisode_DuplicateRelationSkipped(t *testing.T) {
 	}
 	if len(result.EpisodicEdges) != 0 {
 		t.Errorf("relations = %d, want 0 (duplicate skipped)", len(result.EpisodicEdges))
+	}
+}
+
+func TestIngestEpisode_SupersededRelationInvalidated(t *testing.T) {
+	store := newMockStore()
+	prior := types.Relation{
+		UUID:       "prior-rel",
+		SourceUUID: "entity-Alice",
+		TargetUUID: "entity-Acme",
+		Type:       "works_at",
+		Fact:       "Alice works at Acme as an intern",
+		ValidAt:    time.Now().Add(-24 * time.Hour),
+	}
+	store.findRelsBetween = func(_ context.Context, _, _ string) ([]types.Relation, error) {
+		return []types.Relation{prior}, nil
+	}
+
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{
+			{Name: "Alice", Type: "Person", Summary: "A person"},
+			{Name: "Acme", Type: "Organization", Summary: "A company"},
+		},
+		relations: []types.ExtractedRelation{
+			// Same source+target+type but a contradicting fact (not a duplicate).
+			{Source: "Alice", Target: "Acme", Type: "works_at", Fact: "Alice works at Acme as the CEO"},
+		},
+	}
+
+	eng := New(WithStore(store), WithExtractor(ext))
+	result, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The new (contradicting) relation should have been created.
+	if len(result.EpisodicEdges) != 1 {
+		t.Fatalf("relations created = %d, want 1", len(result.EpisodicEdges))
+	}
+	newUUID := result.EpisodicEdges[0].UUID
+
+	// The prior relation should have been invalidated exactly once.
+	if len(store.invalidated) != 1 {
+		t.Fatalf("invalidations = %d, want 1", len(store.invalidated))
+	}
+	if store.invalidated[0].uuid != "prior-rel" {
+		t.Errorf("invalidated uuid = %q, want prior-rel", store.invalidated[0].uuid)
+	}
+	// The new relation must not have been invalidated.
+	if store.invalidated[0].uuid == newUUID {
+		t.Errorf("the newly created relation was invalidated")
+	}
+	// InvalidAt should equal the new relation's ValidAt.
+	if !store.invalidated[0].invalidAt.Equal(result.EpisodicEdges[0].ValidAt) {
+		t.Errorf("invalidAt = %v, want new relation ValidAt %v",
+			store.invalidated[0].invalidAt, result.EpisodicEdges[0].ValidAt)
+	}
+}
+
+func TestIngestEpisode_DifferentTypePriorNotInvalidated(t *testing.T) {
+	store := newMockStore()
+	store.findRelsBetween = func(_ context.Context, _, _ string) ([]types.Relation, error) {
+		return []types.Relation{{
+			UUID:       "other-type-rel",
+			SourceUUID: "entity-Alice",
+			TargetUUID: "entity-Acme",
+			Type:       "founded", // different type
+			Fact:       "Alice founded Acme",
+			ValidAt:    time.Now().Add(-24 * time.Hour),
+		}}, nil
+	}
+
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{
+			{Name: "Alice", Type: "Person", Summary: "A person"},
+			{Name: "Acme", Type: "Organization", Summary: "A company"},
+		},
+		relations: []types.ExtractedRelation{
+			{Source: "Alice", Target: "Acme", Type: "works_at", Fact: "Alice works at Acme"},
+		},
+	}
+
+	eng := New(WithStore(store), WithExtractor(ext))
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "test"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(store.invalidated) != 0 {
+		t.Errorf("invalidations = %d, want 0 (different type must not supersede)", len(store.invalidated))
+	}
+}
+
+func TestIngestEpisode_AlreadyInvalidatedPriorSkipped(t *testing.T) {
+	store := newMockStore()
+	priorInvalidAt := time.Now().Add(-1 * time.Hour)
+	store.findRelsBetween = func(_ context.Context, _, _ string) ([]types.Relation, error) {
+		return []types.Relation{{
+			UUID:       "already-dead",
+			SourceUUID: "entity-Alice",
+			TargetUUID: "entity-Acme",
+			Type:       "works_at",
+			Fact:       "Alice used to work at Acme long ago",
+			ValidAt:    time.Now().Add(-48 * time.Hour),
+			InvalidAt:  &priorInvalidAt, // already invalidated
+		}}, nil
+	}
+
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{
+			{Name: "Alice", Type: "Person", Summary: "A person"},
+			{Name: "Acme", Type: "Organization", Summary: "A company"},
+		},
+		relations: []types.ExtractedRelation{
+			{Source: "Alice", Target: "Acme", Type: "works_at", Fact: "Alice works at Acme today"},
+		},
+	}
+
+	eng := New(WithStore(store), WithExtractor(ext))
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "test"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(store.invalidated) != 0 {
+		t.Errorf("invalidations = %d, want 0 (already-invalidated prior must be skipped)", len(store.invalidated))
 	}
 }
 

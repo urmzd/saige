@@ -140,6 +140,11 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 			continue
 		}
 
+		// Contradiction invalidation: a new relation for an existing
+		// (source, target, type) supersedes any active prior relation(s) of the
+		// same type. Mark those priors invalid as of the new relation's ValidAt.
+		e.invalidateSupersededRelations(ctx, srcUUID, tgtUUID, rel.Type, relUUID, now)
+
 		responseRelations = append(responseRelations, types.Relation{
 			UUID:       relUUID,
 			SourceUUID: srcUUID,
@@ -232,6 +237,36 @@ func (e *GraphEngine) isRelationDuplicate(ctx context.Context, srcUUID, tgtUUID,
 		}
 	}
 	return false, nil
+}
+
+// invalidateSupersededRelations marks any active prior relation between
+// (srcUUID, tgtUUID) of the same relType as invalid as of invalidAt. The newly
+// created relation (newRelUUID) and any already-invalidated relations are left
+// untouched. This is a rule-based supersession: same source+target+type
+// supersedes, no LLM judge involved.
+func (e *GraphEngine) invalidateSupersededRelations(ctx context.Context, srcUUID, tgtUUID, relType, newRelUUID string, invalidAt time.Time) {
+	existing, err := e.store.FindRelationsBetweenEntities(ctx, srcUUID, tgtUUID)
+	if err != nil {
+		e.logger.Warn("supersession lookup failed", "source", srcUUID, "target", tgtUUID, "error", err)
+		return
+	}
+	for _, prior := range existing {
+		if prior.UUID == newRelUUID {
+			continue // never invalidate the relation we just created
+		}
+		if prior.Type != relType {
+			continue // only same-type edges supersede each other
+		}
+		if prior.InvalidAt != nil {
+			continue // already invalidated
+		}
+		if err := e.store.InvalidateRelation(ctx, prior.UUID, invalidAt); err != nil {
+			e.logger.Warn("invalidate superseded relation failed", "relation", prior.UUID, "error", err)
+			continue
+		}
+		e.logger.Info("invalidated superseded relation",
+			"relation", prior.UUID, "type", relType, "superseded_by", newRelUUID)
+	}
 }
 
 // GetEntity retrieves an entity by UUID.

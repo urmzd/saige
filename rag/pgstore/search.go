@@ -28,6 +28,7 @@ func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts
 	query := `SELECT v.uuid, v.content_type, v.mime_type, v.data, v.text, v.embedding, v.metadata,
 	                 s.uuid, s.heading, s.idx,
 	                 d.uuid, d.title, d.source_uri, d.metadata,
+	                 COALESCE(d.updated_at, d.created_at) AS doc_ts,
 	                 1 - (v.embedding <=> $1) AS score
 	          FROM rag_variant v
 	          JOIN rag_section s ON s.id = v.section_id
@@ -76,7 +77,7 @@ func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts
 			&hit.Variant.Data, &hit.Variant.Text, &vEmb, &vMeta,
 			&hit.Provenance.SectionUUID, &hit.Provenance.SectionHeading, &hit.Provenance.SectionIndex,
 			&hit.Provenance.DocumentUUID, &hit.Provenance.DocumentTitle, &hit.Provenance.SourceURI,
-			&dMeta, &hit.Score,
+			&dMeta, &hit.Timestamp, &hit.Score,
 		); err != nil {
 			return nil, err
 		}

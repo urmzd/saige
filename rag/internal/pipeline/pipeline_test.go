@@ -335,6 +335,152 @@ func TestPipelineReconstruct(t *testing.T) {
 	}
 }
 
+// recencyEmbedder returns a fixed embedding regardless of input so that two
+// documents are exactly equally relevant to any query.
+type recencyEmbedder struct{}
+
+func (e *recencyEmbedder) Register(_ types.ContentType, _ types.VariantEmbedder) {}
+func (e *recencyEmbedder) Embed(_ context.Context, variants []types.ContentVariant) ([][]float32, error) {
+	out := make([][]float32, len(variants))
+	for i := range variants {
+		out[i] = []float32{1, 0, 0}
+	}
+	return out, nil
+}
+
+// seedRecencyDocs inserts two documents with identical embeddings (equal
+// relevance) but different UpdatedAt ages: "recent-var" and "old-var".
+func seedRecencyDocs(t *testing.T, store *memstore.Store, now time.Time) {
+	t.Helper()
+	recent := &types.Document{
+		UUID:      "doc-recent",
+		Title:     "Recent",
+		UpdatedAt: now.Add(-1 * time.Hour),
+		CreatedAt: now.Add(-1 * time.Hour),
+		Sections: []types.Section{{
+			UUID: "sec-recent", DocumentUUID: "doc-recent", Index: 0,
+			Variants: []types.ContentVariant{{
+				UUID: "recent-var", SectionUUID: "sec-recent",
+				ContentType: types.ContentText, Text: "answer", Embedding: []float32{1, 0, 0},
+			}},
+		}},
+	}
+	old := &types.Document{
+		UUID:      "doc-old",
+		Title:     "Old",
+		UpdatedAt: now.Add(-365 * 24 * time.Hour),
+		CreatedAt: now.Add(-365 * 24 * time.Hour),
+		Sections: []types.Section{{
+			UUID: "sec-old", DocumentUUID: "doc-old", Index: 0,
+			Variants: []types.ContentVariant{{
+				UUID: "old-var", SectionUUID: "sec-old",
+				ContentType: types.ContentText, Text: "answer", Embedding: []float32{1, 0, 0},
+			}},
+		}},
+	}
+	if err := store.CreateDocument(context.Background(), recent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateDocument(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPipelineRecencyTieBreak(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	store := memstore.New()
+	seedRecencyDocs(t, store, now)
+
+	embedders := &recencyEmbedder{}
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &simpleExtractor{},
+		Embedders:        embedders,
+		Retrievers:       []types.Retriever{vectorretriever.New(store, embedders)},
+	})
+
+	// Baseline: both equally-relevant docs are returned. Their RRF scores are
+	// near-identical (cosine ties; rank order decides the tiny remainder), so
+	// recency is what should decisively reorder them below.
+	base, err := pipe.Search(ctx, "answer", types.WithLimit(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base.Hits) != 2 {
+		t.Fatalf("baseline: expected 2 hits, got %d", len(base.Hits))
+	}
+	baseScores := map[string]float64{}
+	for _, h := range base.Hits {
+		baseScores[h.Variant.UUID] = h.Score
+	}
+	// Sanity: the two scores are within a hair of each other (no recency tilt).
+	if d := baseScores["recent-var"] - baseScores["old-var"]; d > 0.001 || d < -0.001 {
+		t.Fatalf("baseline: expected near-equal scores, got %v vs %v",
+			baseScores["recent-var"], baseScores["old-var"])
+	}
+
+	// With recency, the recent doc must outrank the older one. A 30-day
+	// half-life with weight 1.0 decays the year-old doc by ~exp(-ln2*365/30),
+	// far below the recent (1h-old) doc, dominating the tiny RRF rank gap.
+	withRec, err := pipe.Search(ctx, "answer",
+		types.WithLimit(5),
+		types.WithRecency(30*24*time.Hour, 1.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withRec.Hits) != 2 {
+		t.Fatalf("recency: expected 2 hits, got %d", len(withRec.Hits))
+	}
+	if withRec.Hits[0].Variant.UUID != "recent-var" {
+		t.Errorf("recency: expected recent-var first, got %q", withRec.Hits[0].Variant.UUID)
+	}
+	if withRec.Hits[1].Variant.UUID != "old-var" {
+		t.Errorf("recency: expected old-var second, got %q", withRec.Hits[1].Variant.UUID)
+	}
+	if withRec.Hits[0].Score <= withRec.Hits[1].Score {
+		t.Errorf("recency: recent score %v should exceed old score %v",
+			withRec.Hits[0].Score, withRec.Hits[1].Score)
+	}
+}
+
+func TestPipelineRecencyDisabledByDefault(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	store := memstore.New()
+	seedRecencyDocs(t, store, now)
+
+	embedders := &recencyEmbedder{}
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &simpleExtractor{},
+		Embedders:        embedders,
+		Retrievers:       []types.Retriever{vectorretriever.New(store, embedders)},
+	})
+
+	// A zero/negative half-life is a no-op even if the option is supplied: the
+	// year-old doc must NOT be penalized, so its score stays near the recent
+	// doc's (the only difference being the tiny RRF rank remainder).
+	res, err := pipe.Search(ctx, "answer", types.WithRecency(0, 0.9))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hits) != 2 {
+		t.Fatalf("expected 2 hits, got %d", len(res.Hits))
+	}
+	scores := map[string]float64{}
+	for _, h := range res.Hits {
+		scores[h.Variant.UUID] = h.Score
+	}
+	if d := scores["recent-var"] - scores["old-var"]; d > 0.001 || d < -0.001 {
+		t.Errorf("recency disabled: expected near-equal scores, got %v vs %v",
+			scores["recent-var"], scores["old-var"])
+	}
+}
+
 func TestPipelineReconstructNotFound(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
