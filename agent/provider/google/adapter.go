@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
@@ -145,6 +146,33 @@ func (a *Adapter) ContentSupport() types.ContentSupport {
 
 // ── Conversion helpers ──────────────────────────────────────────────
 
+// appendGeminiToolResult emits a function-response content for a tool result
+// (merging any JSON block payload into the structured response) plus an inline
+// data part for each image/file block carrying bytes.
+func appendGeminiToolResult(contents []*genai.Content, bc types.ToolResultContent) []*genai.Content {
+	resp := map[string]any{"result": bc.Text}
+	if bc.IsError {
+		resp = map[string]any{"error": bc.Text}
+	}
+	for _, b := range bc.Blocks {
+		if b.Kind == types.ToolResultBlockJSON && len(b.JSON) > 0 {
+			var v any
+			if err := json.Unmarshal(b.JSON, &v); err == nil {
+				resp["data"] = v
+			}
+		}
+	}
+	contents = append(contents, genai.NewContentFromFunctionResponse(bc.ToolCallID, resp, "user"))
+
+	for _, b := range bc.Blocks {
+		if (b.Kind == types.ToolResultBlockImage || b.Kind == types.ToolResultBlockFile) && b.Data != nil {
+			contents = append(contents, genai.NewContentFromParts(
+				[]*genai.Part{genai.NewPartFromBytes(b.Data, string(b.MediaType))}, "user"))
+		}
+	}
+	return contents
+}
+
 func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 	var systemParts []*genai.Part
 	var contents []*genai.Content
@@ -157,15 +185,10 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 				case types.TextContent:
 					systemParts = append(systemParts, &genai.Part{Text: bc.Text})
 				case types.ToolResultContent:
-					// Tool results go as function responses from "user" role.
-					resp := map[string]any{"result": bc.Text}
-					if bc.IsError {
-						resp["error"] = bc.Text
-						delete(resp, "result")
-					}
-					contents = append(contents, genai.NewContentFromFunctionResponse(
-						bc.ToolCallID, resp, "user",
-					))
+					// Auto-executed tool results are SystemMessages; route them
+					// through the same helper as the user path so JSON blocks merge
+					// and image/file parts are emitted (not silently dropped).
+					contents = appendGeminiToolResult(contents, bc)
 				}
 			}
 
@@ -176,14 +199,7 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 				case types.TextContent:
 					parts = append(parts, &genai.Part{Text: bc.Text})
 				case types.ToolResultContent:
-					resp := map[string]any{"result": bc.Text}
-					if bc.IsError {
-						resp["error"] = bc.Text
-						delete(resp, "result")
-					}
-					contents = append(contents, genai.NewContentFromFunctionResponse(
-						bc.ToolCallID, resp, "user",
-					))
+					contents = appendGeminiToolResult(contents, bc)
 				case types.FileContent:
 					if bc.Data != nil {
 						parts = append(parts, &genai.Part{

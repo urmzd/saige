@@ -14,6 +14,7 @@ const (
 	contentTypeToolResult = "tool_result"
 	contentTypeConfig     = "config"
 	contentTypeThinking   = "thinking"
+	contentTypeHandoff    = "handoff"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -161,6 +162,8 @@ func systemContentType(c types.SystemContent) string {
 		return contentTypeToolResult
 	case types.ConfigContent:
 		return contentTypeConfig
+	case types.HandoffContent:
+		return contentTypeHandoff
 	default:
 		return contentTypeUnknown
 	}
@@ -174,6 +177,8 @@ func userContentType(c types.UserContent) string {
 		return contentTypeToolResult
 	case types.ConfigContent:
 		return contentTypeConfig
+	case types.HandoffContent:
+		return contentTypeHandoff
 	case types.FileContent:
 		return "file"
 	case types.FeedbackContent:
@@ -207,6 +212,9 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 	case contentTypeConfig:
 		var c types.ConfigContent
 		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeHandoff:
+		var c types.HandoffContent
+		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)
 	}
@@ -222,6 +230,9 @@ func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeConfig:
 		var c types.ConfigContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeHandoff:
+		var c types.HandoffContent
 		return c, json.Unmarshal(ce.Data, &c)
 	case "file":
 		var c types.FileContent

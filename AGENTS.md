@@ -8,10 +8,13 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 |---------|------|
 | `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops) |
 | `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) over stdio JSON-RPC |
-| `agent/` | Streaming agent loop, tool dispatch, sub-agents, provider adapters |
-| `agent/types/` | Sealed types: Message, Delta, Content, Tool, Provider interfaces, FeedbackContent, NodeFeedback |
+| `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
+| `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
 | `agent/provider/` | Ollama, OpenAI, Anthropic, Google adapters |
+| `agent/provider/cache/` | Response-cache decorator: memoizes ChatStream by deterministic request hash |
+| `agent/cache/memcache/` | In-memory LRU `types.Cache[V]` with TTL |
+| `agent/durable/dbos/` | DBOS Transact-backed durable `StepRunner` + workflow engine (resumable runs) |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |
 | `knowledge/` | Knowledge graph public API (NewGraph, query helpers) |

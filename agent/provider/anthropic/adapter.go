@@ -277,8 +277,7 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 				case types.TextContent:
 					system = append(system, anthropic.TextBlockParam{Text: bc.Text})
 				case types.ToolResultContent:
-					block := anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, bc.IsError)
-					out = appendMsg(out, "user", block)
+					out = appendMsg(out, "user", toToolResultBlock(bc))
 				}
 			}
 
@@ -288,7 +287,7 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 				case types.TextContent:
 					out = appendMsg(out, "user", anthropic.NewTextBlock(bc.Text))
 				case types.ToolResultContent:
-					out = appendMsg(out, "user", anthropic.NewToolResultBlock(bc.ToolCallID, bc.Text, bc.IsError))
+					out = appendMsg(out, "user", toToolResultBlock(bc))
 				case types.FileContent:
 					if bc.Data != nil && isImageType(bc.MediaType) {
 						b64 := base64.StdEncoding.EncodeToString(bc.Data)
@@ -335,6 +334,82 @@ func isImageType(mt types.MediaType) bool {
 		return true
 	}
 	return false
+}
+
+// toToolResultBlock converts a ToolResultContent into an Anthropic tool_result
+// block. When the result has no rich Blocks it takes the exact back-compat path
+// (anthropic.NewToolResultBlock). With Blocks it builds a multi-content
+// tool_result carrying text, images (base64), and PDF documents; unsupported
+// media degrades to a text placeholder so the request never errors.
+func toToolResultBlock(c types.ToolResultContent) anthropic.ContentBlockParamUnion {
+	if len(c.Blocks) == 0 {
+		return anthropic.NewToolResultBlock(c.ToolCallID, c.Text, c.IsError)
+	}
+
+	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(c.Blocks))
+	for _, b := range c.Blocks {
+		switch b.Kind {
+		case types.ToolResultBlockText:
+			content = append(content, anthropic.ToolResultBlockParamContentUnion{
+				OfText: &anthropic.TextBlockParam{Text: b.Text},
+			})
+		case types.ToolResultBlockJSON:
+			content = append(content, anthropic.ToolResultBlockParamContentUnion{
+				OfText: &anthropic.TextBlockParam{Text: string(b.JSON)},
+			})
+		case types.ToolResultBlockImage:
+			if b.Data != nil && isImageType(b.MediaType) {
+				b64 := base64.StdEncoding.EncodeToString(b.Data)
+				content = append(content, anthropic.ToolResultBlockParamContentUnion{
+					OfImage: &anthropic.ImageBlockParam{
+						Source: anthropic.ImageBlockParamSourceUnion{
+							OfBase64: &anthropic.Base64ImageSourceParam{
+								Data:      b64,
+								MediaType: anthropic.Base64ImageSourceMediaType(b.MediaType),
+							},
+						},
+					},
+				})
+			} else {
+				content = append(content, anthropic.ToolResultBlockParamContentUnion{
+					OfText: &anthropic.TextBlockParam{Text: "[image: " + b.Filename + "]"},
+				})
+			}
+		case types.ToolResultBlockFile:
+			if b.Data != nil && b.MediaType == types.MediaPDF {
+				content = append(content, anthropic.ToolResultBlockParamContentUnion{
+					OfDocument: documentBlockFromBytes(b.Data),
+				})
+			} else {
+				content = append(content, anthropic.ToolResultBlockParamContentUnion{
+					OfText: &anthropic.TextBlockParam{Text: "[file: " + b.Filename + "]"},
+				})
+			}
+		}
+	}
+
+	// Guarantee non-empty content: if every block was dropped, fall back to text.
+	if len(content) == 0 {
+		return anthropic.NewToolResultBlock(c.ToolCallID, c.Text, c.IsError)
+	}
+	return anthropic.ContentBlockParamUnion{
+		OfToolResult: &anthropic.ToolResultBlockParam{
+			ToolUseID: c.ToolCallID,
+			IsError:   anthropic.Bool(c.IsError),
+			Content:   content,
+		},
+	}
+}
+
+// documentBlockFromBytes builds a base64 PDF document block.
+func documentBlockFromBytes(data []byte) *anthropic.DocumentBlockParam {
+	return &anthropic.DocumentBlockParam{
+		Source: anthropic.DocumentBlockParamSourceUnion{
+			OfBase64: &anthropic.Base64PDFSourceParam{
+				Data: base64.StdEncoding.EncodeToString(data),
+			},
+		},
+	}
 }
 
 func toAnthropicTools(defs []types.ToolDef) []anthropic.ToolUnionParam {
