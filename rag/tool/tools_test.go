@@ -6,9 +6,76 @@ import (
 	"fmt"
 	"testing"
 
+	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/rag/tool"
 	"github.com/urmzd/saige/rag/types"
 )
+
+// markerFor returns the approval markers for the named tool, or nil if the tool
+// is not present or carries no markers.
+func markerFor(tools []agenttypes.Tool, name string) []agenttypes.Marker {
+	for _, tl := range tools {
+		mt, ok := tl.(*agenttypes.MarkedTool)
+		if !ok {
+			continue
+		}
+		if mt.Definition().Name == name {
+			return mt.Markers
+		}
+	}
+	return nil
+}
+
+func hasTool(tools []agenttypes.Tool, name string) bool {
+	for _, tl := range tools {
+		if tl.Definition().Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMutatingToolsCarryApprovalMarker(t *testing.T) {
+	tools := tool.NewTools(&mockPipeline{})
+
+	for _, name := range []string{"rag_update", "rag_delete"} {
+		markers := markerFor(tools, name)
+		if len(markers) == 0 {
+			t.Fatalf("%s: expected at least one marker", name)
+		}
+		found := false
+		for _, m := range markers {
+			if m.Kind == "human_approval" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s: expected a human_approval marker, got %+v", name, markers)
+		}
+	}
+
+	// Read tools must NOT be gated.
+	for _, name := range []string{"rag_search", "rag_lookup", "rag_reconstruct"} {
+		if markerFor(tools, name) != nil {
+			t.Fatalf("%s: read tool should not carry an approval marker", name)
+		}
+	}
+}
+
+func TestReadOnlyOmitsMutatingTools(t *testing.T) {
+	tools := tool.NewTools(&mockPipeline{}, tool.ReadOnly())
+
+	for _, name := range []string{"rag_update", "rag_delete"} {
+		if hasTool(tools, name) {
+			t.Fatalf("read-only mode must omit mutating tool %s", name)
+		}
+	}
+	for _, name := range []string{"rag_search", "rag_lookup", "rag_reconstruct"} {
+		if !hasTool(tools, name) {
+			t.Fatalf("read-only mode must keep read tool %s", name)
+		}
+	}
+}
 
 type mockPipeline struct {
 	searchResult      *types.SearchPipelineResult

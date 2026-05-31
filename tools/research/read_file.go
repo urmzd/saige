@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/urmzd/saige/agent/types"
@@ -28,7 +27,7 @@ func (t *ReadFileTool) Definition() types.ToolDef {
 			Type:     "object",
 			Required: []string{"path"},
 			Properties: map[string]types.PropertyDef{
-				"path":   {Type: "string", Description: "File path to read (absolute or relative to working directory)"},
+				"path":   {Type: "string", Description: "File path to read, relative to the configured root directory. Paths that escape the root are rejected."},
 				"offset": {Type: "number", Description: "Line number to start from (default: 1)"},
 				"limit":  {Type: "number", Description: "Max lines to return (default: 200)"},
 			},
@@ -37,13 +36,16 @@ func (t *ReadFileTool) Definition() types.ToolDef {
 }
 
 func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	path, _ := args["path"].(string)
-	if path == "" {
+	rawPath, _ := args["path"].(string)
+	if rawPath == "" {
 		return "", fmt.Errorf("read_file: path is required")
 	}
 
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(t.root, path)
+	// Confine reads to the configured root. Rejects ../ traversal, absolute
+	// paths outside root, and symlinks whose target escapes root.
+	path, err := resolveWithinRoot(t.root, rawPath, true)
+	if err != nil {
+		return "", fmt.Errorf("read_file: %w", err)
 	}
 
 	offset := 1

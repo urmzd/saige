@@ -103,12 +103,52 @@ func (t *IngestTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 // --- NewTools ---
 
-// NewTools returns KG tools for use with an agent.
-func NewTools(graph kgtypes.Graph) []agenttypes.Tool {
-	return []agenttypes.Tool{
-		&SearchTool{graph: graph},
-		&IngestTool{graph: graph},
+// config controls how NewTools assembles the tool set.
+type config struct {
+	readOnly bool
+}
+
+// Option configures NewTools.
+type Option func(*config)
+
+// ReadOnly omits every mutating tool (kg_ingest) from the returned set,
+// exposing only the safe read tool (kg_search). Use this for untrusted or
+// query-only agents.
+func ReadOnly() Option {
+	return func(c *config) { c.readOnly = true }
+}
+
+// mutatingMarker is the human-approval gate attached to mutating KG tools.
+func mutatingMarker(tool string) agenttypes.Marker {
+	return agenttypes.Marker{
+		Kind:    "human_approval",
+		Message: "Mutating knowledge-graph operation requires human approval: " + tool,
+		Meta:    map[string]any{"tool": tool, "mutating": true},
 	}
+}
+
+// NewTools returns KG tools for use with an agent.
+//
+// By default kg_search is returned as-is and the mutating tool (kg_ingest) is
+// wrapped in a "human_approval" marker so the agent loop pauses for approval
+// before it runs. Pass ReadOnly() to omit kg_ingest entirely instead.
+func NewTools(graph kgtypes.Graph, opts ...Option) []agenttypes.Tool {
+	cfg := config{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	tools := []agenttypes.Tool{
+		&SearchTool{graph: graph},
+	}
+
+	if !cfg.readOnly {
+		tools = append(tools,
+			agenttypes.WithMarkers(&IngestTool{graph: graph}, mutatingMarker("kg_ingest")),
+		)
+	}
+
+	return tools
 }
 
 func toInt(v any) (int, bool) {
