@@ -53,12 +53,22 @@ func (t *FileSearchTool) Execute(ctx context.Context, args map[string]any) (stri
 		return "", fmt.Errorf("file_search: invalid regex: %w", err)
 	}
 
+	// Confine the search root to the configured root. A "path" arg may scope
+	// the search to a subdirectory, but it cannot escape the root via ../ or an
+	// absolute path, and symlinks that escape the root are rejected.
 	root := t.root
 	if p, ok := args["path"].(string); ok && p != "" {
-		root = p
-		if !filepath.IsAbs(root) {
-			root = filepath.Join(t.root, root)
+		resolved, err := resolveWithinRoot(t.root, p, true)
+		if err != nil {
+			return "", fmt.Errorf("file_search: %w", err)
 		}
+		root = resolved
+	} else {
+		resolved, err := resolveWithinRoot(t.root, ".", false)
+		if err != nil {
+			return "", fmt.Errorf("file_search: %w", err)
+		}
+		root = resolved
 	}
 
 	globPattern, _ := args["glob"].(string)
@@ -83,6 +93,15 @@ func (t *FileSearchTool) Execute(ctx context.Context, args map[string]any) (stri
 
 		if globPattern != "" {
 			if ok, _ := filepath.Match(globPattern, d.Name()); !ok {
+				return nil
+			}
+		}
+
+		// Reject files whose real path escapes root (e.g. a symlink inside root
+		// pointing at /etc/passwd). WalkDir does not descend symlinked dirs, but
+		// symlinked files would otherwise be opened.
+		if d.Type()&os.ModeSymlink != 0 {
+			if _, err := resolveWithinRoot(root, path, true); err != nil {
 				return nil
 			}
 		}
