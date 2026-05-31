@@ -617,17 +617,8 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 
 	tr := a.cfg.Tree
 
-	// Append input messages as child nodes on the branch.
-	for _, msg := range input {
-		tip, err := tr.Tip(branch)
-		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
-		}
-		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
-		}
+	if !a.appendInput(ctx, tr, stream, branch, input) {
+		return
 	}
 
 	var handoffCount int
@@ -647,29 +638,10 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			return
 		}
 
-		// Resolve config and strip metadata in a single pass.
+		// Resolve config + active agent (handoff group only). With no group this
+		// is byte-for-byte the non-handoff path.
 		resolved, llmMessages := a.prepareMessages(messages)
-
-		// Resolve the active agent for this iteration (handoff group only). When
-		// there is no group, member is nil and the entry agent's config is used,
-		// making this path byte-for-byte the non-handoff behavior.
-		member := a.activeMember(resolved.activeAgent)
-		provider := a.cfg.Provider
-		toolDefs := a.tools.Definitions()
-		activeTools := a.tools
-		activeName := a.cfg.Name
-		if member != nil {
-			provider = member.provider
-			activeTools = member.tools
-			toolDefs = member.tools.Definitions()
-			activeName = member.name
-			if member.maxIter > 0 && !resolved.maxIterSet {
-				resolved.maxIter = member.maxIter
-			}
-			if member.systemPrompt != "" {
-				llmMessages = overlaySystem(llmMessages, member.systemPrompt)
-			}
-		}
+		active := a.resolveActive(&resolved, llmMessages)
 
 		// Check iteration cap.
 		if iterCount >= resolved.maxIter {
@@ -677,19 +649,17 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		}
 
 		// Resolve file URIs to data.
-		llmMessages = a.resolveFiles(ctx, llmMessages)
+		active.messages = a.resolveFiles(ctx, active.messages)
 
 		// Compact if configured: summarize, fork a new branch off root, continue.
-		if newBranch, compacted := a.tryCompact(ctx, log, resolved, llmMessages, tr); compacted {
+		if newBranch, compacted := a.tryCompact(ctx, log, resolved, active.messages, tr); compacted {
 			branch = newBranch
 			continue // re-flatten from the new branch
 		}
 
 		// Get the assistant message as a durable step (provider call + aggregation).
-		// Under the default NoopStepRunner this streams live exactly as before;
-		// under a durable runner the aggregated message is memoized.
 		stepName := fmt.Sprintf("llm-%s-%d", branch, iterCount)
-		msg, usage, llmErr := a.getAssistantMessage(ctx, stream, provider, llmMessages, toolDefs, stepName)
+		msg, usage, llmErr := a.getAssistantMessage(ctx, stream, active.provider, active.messages, active.toolDefs, stepName)
 		if llmErr != nil {
 			log.Error("provider call failed", "error", llmErr, "iteration", iterCount)
 			stream.send(types.ErrorDelta{Error: llmErr})
@@ -718,86 +688,151 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 			return
 		}
 
-		// Collect tool calls.
-		var toolCalls []types.ToolUseContent
-		for _, block := range msg.Content {
-			if tc, ok := block.(types.ToolUseContent); ok {
-				toolCalls = append(toolCalls, tc)
-			}
-		}
-
+		toolCalls := assistantToolCalls(msg)
 		if len(toolCalls) == 0 {
 			break
 		}
 
-		// Execute all tool calls using the ACTIVE agent's tool registry.
-		results := a.executeToolsConcurrently(ctx, stream, toolCalls, activeTools)
-
-		// Build a single SystemMessage with all tool results and persist. This
-		// runs BEFORE any handoff continue so every tool_use gets a matching
+		// Execute all tool calls using the ACTIVE agent's tool registry, then
+		// persist results BEFORE any handoff so every tool_use gets a matching
 		// tool_result (provider contract) and rich Blocks are persisted.
-		toolResultContents := make([]types.ToolResultContent, len(results))
-		for i, r := range results {
-			trc := types.ToolResultContent{
-				ToolCallID: r.toolCallID,
-				Text:       r.result,
-				Blocks:     r.blocks, // nil for plain tools → identical to today
-			}
-			if r.err != "" {
-				trc.IsError = true
-				if trc.Text == "" {
-					trc.Text = r.err
-				}
-			}
-			toolResultContents[i] = trc
-		}
-
-		toolResultMsg := types.NewToolResultMessage(toolResultContents...)
-		tip, err = tr.Tip(branch)
-		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
-		}
-		if _, err := tr.AddChild(ctx, tip.ID, toolResultMsg); err != nil {
+		results := a.executeToolsConcurrently(ctx, stream, toolCalls, active.tools)
+		if err := a.persistToolResults(ctx, tr, branch, results); err != nil {
 			stream.send(types.ErrorDelta{Error: err})
 			return
 		}
 
-		// Handoff post-check: the first handoff signal wins; the rest are ignored.
-		// Self-handoff is a no-op. A handoff appends a HandoffContent overlay on
-		// the SAME branch and continues so the next iteration resolves the new
-		// active agent while preserving full conversation context.
-		handoffTo := ""
-		for _, r := range results {
-			if r.handoffTo != "" {
-				handoffTo = r.handoffTo
-				break
-			}
-		}
-		if handoffTo != "" && handoffTo != activeName {
-			// Enforce the bound BEFORE any side effect, so the over-limit transfer
-			// is neither streamed nor persisted (which would poison the branch).
-			if handoffCount >= a.cfg.MaxHandoffs {
-				stream.send(types.ErrorDelta{Error: ErrHandoffLimitExceeded})
-				return
-			}
-			handoffCount++
-			stream.send(types.HandoffDelta{From: activeName, To: handoffTo})
-			overlay := types.SystemMessage{Content: []types.SystemContent{
-				types.HandoffContent{From: activeName, To: handoffTo},
-			}}
-			tip, err = tr.Tip(branch)
-			if err != nil {
-				stream.send(types.ErrorDelta{Error: err})
-				return
-			}
-			if _, err := tr.AddChild(ctx, tip.ID, overlay); err != nil {
-				stream.send(types.ErrorDelta{Error: err})
-				return
-			}
-			continue // re-flatten: next iteration resolves the new active agent
+		// Handoff post-check: first signal wins; self-handoff is a no-op. On a
+		// handoff the next iteration re-flattens and resolves the new active
+		// agent; with no handoff it re-flattens to process the tool results — so
+		// both simply fall through to the next iteration.
+		if a.applyHandoff(ctx, tr, stream, branch, results, active.name, &handoffCount) {
+			return
 		}
 	}
+}
+
+// appendInput appends input messages as child nodes on the branch. Returns false
+// (after streaming an ErrorDelta) if a tree write fails.
+func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, input []types.Message) bool {
+	for _, msg := range input {
+		tip, err := tr.Tip(branch)
+		if err != nil {
+			stream.send(types.ErrorDelta{Error: err})
+			return false
+		}
+		if _, err := tr.AddChild(ctx, tip.ID, msg); err != nil {
+			stream.send(types.ErrorDelta{Error: err})
+			return false
+		}
+	}
+	return true
+}
+
+// activeContext is the per-iteration agent selection (provider, tools, persona).
+type activeContext struct {
+	provider types.Provider
+	toolDefs []types.ToolDef
+	tools    *types.ToolRegistry
+	name     string
+	messages []types.Message
+}
+
+// resolveActive selects the active agent for this iteration and overlays its
+// persona. With no handoff group it returns the entry agent's config unchanged.
+func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Message) activeContext {
+	ac := activeContext{
+		provider: a.cfg.Provider,
+		toolDefs: a.tools.Definitions(),
+		tools:    a.tools,
+		name:     a.cfg.Name,
+		messages: llmMessages,
+	}
+	member := a.activeMember(resolved.activeAgent)
+	if member == nil {
+		return ac
+	}
+	ac.provider = member.provider
+	ac.tools = member.tools
+	ac.toolDefs = member.tools.Definitions()
+	ac.name = member.name
+	if member.maxIter > 0 && !resolved.maxIterSet {
+		resolved.maxIter = member.maxIter
+	}
+	if member.systemPrompt != "" {
+		ac.messages = overlaySystem(llmMessages, member.systemPrompt)
+	}
+	return ac
+}
+
+// assistantToolCalls extracts the tool-use blocks from an assistant message.
+func assistantToolCalls(msg *types.AssistantMessage) []types.ToolUseContent {
+	var calls []types.ToolUseContent
+	for _, block := range msg.Content {
+		if tc, ok := block.(types.ToolUseContent); ok {
+			calls = append(calls, tc)
+		}
+	}
+	return calls
+}
+
+// persistToolResults builds and persists the combined tool-result message.
+func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch types.BranchID, results []toolResult) error {
+	contents := make([]types.ToolResultContent, len(results))
+	for i, r := range results {
+		trc := types.ToolResultContent{ToolCallID: r.toolCallID, Text: r.result, Blocks: r.blocks}
+		if r.err != "" {
+			trc.IsError = true
+			if trc.Text == "" {
+				trc.Text = r.err
+			}
+		}
+		contents[i] = trc
+	}
+	tip, err := tr.Tip(branch)
+	if err != nil {
+		return err
+	}
+	_, err = tr.AddChild(ctx, tip.ID, types.NewToolResultMessage(contents...))
+	return err
+}
+
+// applyHandoff applies the first handoff signal in results, if any, appending a
+// HandoffContent overlay on the same branch. It returns fatal=true (after
+// streaming an ErrorDelta) when the caller should return — the handoff limit was
+// exceeded or a tree write failed.
+func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) (fatal bool) {
+	handoffTo := ""
+	for _, r := range results {
+		if r.handoffTo != "" {
+			handoffTo = r.handoffTo
+			break
+		}
+	}
+	if handoffTo == "" || handoffTo == activeName {
+		return false
+	}
+	// Enforce the bound BEFORE any side effect, so the over-limit transfer is
+	// neither streamed nor persisted (which would poison the branch).
+	if *handoffCount >= a.cfg.MaxHandoffs {
+		stream.send(types.ErrorDelta{Error: ErrHandoffLimitExceeded})
+		return true
+	}
+	*handoffCount++
+	stream.send(types.HandoffDelta{From: activeName, To: handoffTo})
+	overlay := types.SystemMessage{Content: []types.SystemContent{
+		types.HandoffContent{From: activeName, To: handoffTo},
+	}}
+	tip, err := tr.Tip(branch)
+	if err != nil {
+		stream.send(types.ErrorDelta{Error: err})
+		return true
+	}
+	if _, err := tr.AddChild(ctx, tip.ID, overlay); err != nil {
+		stream.send(types.ErrorDelta{Error: err})
+		return true
+	}
+	return false
 }
 
 // getAssistantMessage runs the provider call + aggregation as one durable step.
