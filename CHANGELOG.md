@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0 (2026-05-31)
+
+### Features
+
+- **agent**: durable workflows, handoffs, response caching, multimodal tool output (#38) ([6813d99](https://github.com/urmzd/saige/commit/6813d996899e8211a4642c199292aeade4faedaa))
+
+### Misc
+
+- **ci**: bump sr to v8 ([63d8d95](https://github.com/urmzd/saige/commit/63d8d95a5c62b856d5a225f49622a303aafad814))
+- **ci**: remove unused force input from release workflow ([49bd335](https://github.com/urmzd/saige/commit/49bd335124cc04ed82ec5c131e7318d0367e80da))
+- **community**: add GitHub community-health files ([7d9ef30](https://github.com/urmzd/saige/commit/7d9ef30991e7f0d536a4d3ac89bd748fc502e7ba))
+- **fix**: standardize README format ([559bf00](https://github.com/urmzd/saige/commit/559bf0047352973a92c0bc9b1b2b884349e54315))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.11.2...v0.12.0)
+
+
 ## 0.11.2 (2026-04-19)
 
 ### Bug Fixes
