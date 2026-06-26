@@ -52,7 +52,7 @@ body:
       description: OS, runtime version, relevant tool versions.
       placeholder: |
         - OS: macOS 14.5
-        - Runtime: go 1.25.5
+        - Runtime: go 1.25.11
         - Shell: zsh 5.9
     validations:
       required: true

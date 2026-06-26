@@ -1,6 +1,6 @@
 module github.com/urmzd/saige
 
-go 1.25.10
+go 1.25.11
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.30.0
@@ -11,7 +11,7 @@ require (
 	github.com/dbos-inc/dbos-transact-golang v0.15.0
 	github.com/dslipak/pdf v0.0.2
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.30.0
 	github.com/pgvector/pgvector-go v0.3.0
