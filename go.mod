@@ -1,6 +1,6 @@
 module github.com/urmzd/saige
 
-go 1.25.10
+go 1.25.11
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.30.0
