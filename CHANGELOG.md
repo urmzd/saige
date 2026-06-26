@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.1 (2026-06-26)
+
+### Bug Fixes
+
+- **deps**: bump Go to 1.25.11 to clear stdlib vulns (#46) ([8c27bbf](https://github.com/urmzd/saige/commit/8c27bbfe34fe13c05301f68d1133da6cf205bab2))
+
+### Misc
+
+- bump GitHub Actions to Node 24 majors and switch app token to client-id ([d44ab97](https://github.com/urmzd/saige/commit/d44ab972812c251df8371981ab0430cf95da0b55))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.12.0...v0.12.1)
+
+
 ## 0.12.0 (2026-05-31)
 
 ### Features
