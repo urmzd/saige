@@ -37,6 +37,11 @@ func init() {
 	// Message and Content interfaces so they round-trip on replay. gob ignores
 	// json struct tags, so ToolResultBlock.Data and FileContent.Data bytes are
 	// preserved through durable replay (unlike the tree's JSON persistence).
+	// The workflow input/output themselves travel through the serializer as
+	// interface values, so the wrapper types need registration too.
+	gob.Register(RunInput{})
+	gob.Register(RunOutput{})
+	gob.Register(types.StepResult{})
 	gob.Register(types.SystemMessage{})
 	gob.Register(types.UserMessage{})
 	gob.Register(types.AssistantMessage{})

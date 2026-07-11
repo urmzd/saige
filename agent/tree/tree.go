@@ -589,13 +589,16 @@ func (t *Tree) walAddNode(ctx context.Context, node *types.Node) error {
 
 // FromStore reconstructs a Tree from persisted data (e.g. from pgstore.LoadTree).
 // The nodes slice must contain at least the root. The children map and active
-// branch are inferred from the node data and branches map.
+// branch are inferred from the node data and branches map. Options (e.g.
+// WithWAL) apply to the reconstructed tree so recovered sessions keep
+// write-ahead protection for subsequent mutations.
 func FromStore(
 	nodes []*types.Node,
 	branches map[types.BranchID]types.NodeID,
 	checkpoints map[types.CheckpointID]types.Checkpoint,
 	rootID types.NodeID,
 	active types.BranchID,
+	opts ...Option,
 ) (*Tree, error) {
 	if len(nodes) == 0 {
 		return nil, ErrNodeNotFound
@@ -608,6 +611,9 @@ func FromStore(
 		checkpoints: make(map[types.CheckpointID]types.Checkpoint, len(checkpoints)),
 		rootID:      rootID,
 		active:      active,
+	}
+	for _, opt := range opts {
+		opt(t)
 	}
 
 	for _, n := range nodes {

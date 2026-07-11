@@ -692,7 +692,7 @@ func (a *Agent) persistNode(ctx context.Context, node *types.Node) {
 //
 // This is the read counterpart to WithStore's write path. It is a free function
 // (not a method) so a tree can be hydrated before an Agent exists.
-func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.NodeID, active types.BranchID) (*tree.Tree, error) {
+func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.NodeID, active types.BranchID, opts ...tree.Option) (*tree.Tree, error) {
 	if store == nil {
 		return nil, fmt.Errorf("agent: nil store")
 	}
@@ -719,20 +719,23 @@ func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.Node
 	if active == "" {
 		active = types.BranchID("main")
 	}
-	return tree.FromStore(nodes, branches, checkpoints, rootID, active)
+	return tree.FromStore(nodes, branches, checkpoints, rootID, active, opts...)
 }
 
 // RecoverAndLoadTree heals the store from any write-ahead-log transactions
 // that committed but were never applied (e.g. a crash between WAL commit and
 // store write), then hydrates the tree. Call it instead of LoadTreeFromStore
-// on startup when both a WAL and a Store are configured.
+// on startup when both a WAL and a Store are configured. The recovered tree
+// keeps writing to the same WAL for subsequent mutations.
 func RecoverAndLoadTree(ctx context.Context, wal types.WAL, store types.Store, rootID types.NodeID, active types.BranchID) (*tree.Tree, error) {
+	var opts []tree.Option
 	if wal != nil {
 		if _, err := walrecover.RecoverWAL(ctx, wal, store); err != nil {
 			return nil, fmt.Errorf("recover wal: %w", err)
 		}
+		opts = append(opts, tree.WithWAL(wal))
 	}
-	return LoadTreeFromStore(ctx, store, rootID, active)
+	return LoadTreeFromStore(ctx, store, rootID, active, opts...)
 }
 
 // ── Run loop ─────────────────────────────────────────────────────────
