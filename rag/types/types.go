@@ -17,6 +17,20 @@ var (
 	ErrNoStore             = errors.New("store not configured")
 	ErrNoRetriever         = errors.New("no retriever configured")
 	ErrUnsupportedMIMEType = errors.New("unsupported MIME type")
+
+	// ErrPartialSearch is returned (wrapped) by Pipeline.Search alongside a
+	// non-nil result when some, but not all, retrievers failed. Callers that
+	// tolerate partial results should errors.Is-check for it and keep the hits;
+	// callers that treat any error as fatal retain today's fail-fast behavior.
+	ErrPartialSearch = errors.New("partial search failure")
+
+	// ErrPartialIngest is returned (wrapped) by Pipeline.Ingest alongside a
+	// non-nil result when the document was durably written to the RAG store but
+	// a best-effort enrichment stage (knowledge graph ingestion) failed. The
+	// document is committed and retrievable; only derived graph facts may be
+	// missing. Callers can errors.Is-check for it to distinguish this from a
+	// failed write.
+	ErrPartialIngest = errors.New("partial ingest failure")
 )
 
 // --- Content types ---
@@ -149,6 +163,10 @@ type SearchConfig struct {
 	AssembleContext bool
 	MaxTokens       int
 
+	// FusionK is the k constant for Reciprocal Rank Fusion. Zero means the
+	// pipeline default (60).
+	FusionK int
+
 	// Recency time-decay scoring. Enabled only when RecencyHalfLife > 0.
 	RecencyHalfLife time.Duration
 	RecencyWeight   float64
@@ -171,6 +189,19 @@ func WithLimit(n int) SearchOption {
 func WithMetadataFilter(key string, op FilterOp, value string) SearchOption {
 	return func(c *SearchConfig) {
 		c.MetadataFilters = append(c.MetadataFilters, MetadataFilter{Key: key, Op: op, Value: value})
+	}
+}
+
+// WithFusionK sets the k constant used by Reciprocal Rank Fusion when merging
+// results from multiple retrievers (default 60). Smaller values weight
+// top-ranked hits from individual retrievers more heavily; larger values
+// favor hits that appear across many retrievers. Values <= 0 are ignored,
+// keeping the default.
+func WithFusionK(k int) SearchOption {
+	return func(c *SearchConfig) {
+		if k > 0 {
+			c.FusionK = k
+		}
 	}
 }
 
@@ -242,6 +273,27 @@ type Store interface {
 	SearchByEmbedding(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchHit, error)
 
 	Close(ctx context.Context) error
+}
+
+// DocumentReplacer is an optional Store interface for atomically replacing a
+// document. Implementations must remove the document identified by oldUUID and
+// persist doc as a single all-or-nothing operation: if the write fails, the
+// old document must survive untouched. The pipeline uses it for
+// DedupReplace/Update so a mid-write failure never destroys the prior
+// document. Stores that do not implement it fall back to a non-atomic
+// delete-then-create.
+type DocumentReplacer interface {
+	ReplaceDocument(ctx context.Context, oldUUID string, doc *Document) error
+}
+
+// GraphEpisodeDeleter is an optional interface for knowledge graphs that
+// support deleting all episodes (and their derived facts) belonging to a
+// group. The pipeline groups graph episodes by document UUID during ingest and
+// calls DeleteEpisodes with that UUID on document delete/replace so graph
+// facts do not outlive their source document. Graphs that do not implement it
+// leave derived facts behind.
+type GraphEpisodeDeleter interface {
+	DeleteEpisodes(ctx context.Context, groupID string) error
 }
 
 // --- Source interface ---
@@ -326,6 +378,10 @@ const (
 )
 
 // Pipeline orchestrates the full RAG workflow: ingest, search, lookup, update, delete.
+//
+// Ingest and Search may return a non-nil result together with a non-nil error
+// wrapping ErrPartialIngest or ErrPartialSearch respectively; see those
+// sentinels for the exact semantics.
 type Pipeline interface {
 	Ingest(ctx context.Context, raw *RawDocument) (*IngestResult, error)
 	Search(ctx context.Context, query string, opts ...SearchOption) (*SearchPipelineResult, error)

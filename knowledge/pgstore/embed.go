@@ -13,8 +13,14 @@ var entityGetSQL string
 //go:embed sql/entity_find_by_name_type.sql
 var entityFindByNameTypeSQL string
 
+//go:embed sql/entity_find_by_name_type_group.sql
+var entityFindByNameTypeGroupSQL string
+
 //go:embed sql/entity_find_fuzzy.sql
 var entityFindFuzzySQL string
+
+//go:embed sql/entity_find_fuzzy_group.sql
+var entityFindFuzzyGroupSQL string
 
 //go:embed sql/entity_id.sql
 var entityIDSQL string
@@ -48,6 +54,9 @@ var episodeCreateSQL string
 
 //go:embed sql/episode_mention.sql
 var episodeMentionSQL string
+
+//go:embed sql/episode_delete_group.sql
+var episodeDeleteGroupSQL string
 
 // Search queries.
 //

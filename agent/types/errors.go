@@ -84,7 +84,7 @@ type FallbackError struct {
 }
 
 func (e *FallbackError) Error() string {
-	return fmt.Sprintf("all %d providers failed", len(e.Errors))
+	return fmt.Sprintf("all %d providers failed: %v", len(e.Errors), errors.Join(e.Errors...))
 }
 
 // Unwrap returns the list of errors for Go 1.20+ multi-unwrap.

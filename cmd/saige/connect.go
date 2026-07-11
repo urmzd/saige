@@ -17,9 +17,9 @@ import (
 	ragtool "github.com/urmzd/saige/rag/tool"
 	ragtypes "github.com/urmzd/saige/rag/types"
 
+	googleProvider "github.com/urmzd/saige/agent/provider/google"
 	ollamaProvider "github.com/urmzd/saige/agent/provider/ollama"
 	openaiProvider "github.com/urmzd/saige/agent/provider/openai"
-	googleProvider "github.com/urmzd/saige/agent/provider/google"
 )
 
 // connectPostgres creates a pgxpool.Pool from a DSN.
@@ -48,9 +48,11 @@ func (e *textEmbedder) Embed(ctx context.Context, variants []ragtypes.ContentVar
 	return e.embed(ctx, texts)
 }
 
-// resolveEmbedder creates a VariantEmbedder from the resolved provider flags.
+// resolveEmbedder creates a VariantEmbedder from the resolved embed provider
+// flags. The embed provider follows --provider unless --embed-provider (or
+// SAIGE_EMBED_PROVIDER) overrides it.
 func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbedder, kgtypes.Embedder, error) {
-	name := cf.resolvedProvider()
+	name := cf.resolvedEmbedProvider()
 	embedModel := cf.resolvedEmbedModel()
 
 	switch name {
@@ -83,10 +85,10 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		return &textEmbedder{embed: emb.Embed}, emb, nil
 
 	case providerAnthropic:
-		return nil, nil, fmt.Errorf("anthropic does not provide an embedding API; use --embed-model with another provider or use ollama")
+		return nil, nil, fmt.Errorf("anthropic does not provide an embedding API; set --embed-provider to openai, google, or ollama")
 
 	default:
-		return nil, nil, fmt.Errorf("unknown provider for embeddings: %s", name)
+		return nil, nil, fmt.Errorf("unknown embedding provider %q; --embed-provider must be one of openai, google, ollama", name)
 	}
 }
 

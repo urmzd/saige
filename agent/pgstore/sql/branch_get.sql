@@ -1,1 +1,1 @@
-SELECT tip_uuid FROM agent_branch WHERE branch_id = $1
+SELECT tip_uuid FROM agent_branch WHERE conversation_id = $1 AND branch_id = $2

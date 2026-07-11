@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/store/memstore"
+	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -148,6 +149,106 @@ func TestStoreCheckpoints(t *testing.T) {
 	}
 	if _, err := s.LoadCheckpoint(ctx, "missing"); err == nil {
 		t.Fatal("expected error for missing checkpoint")
+	}
+}
+
+func TestStoreListCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	s := memstore.New()
+
+	base := time.Now()
+	cps := []types.Checkpoint{
+		{ID: "cp2", Branch: "main", NodeID: "n2", Name: "second", CreatedAt: base.Add(time.Second)},
+		{ID: "cp1", Branch: "main", NodeID: "n1", Name: "first", CreatedAt: base},
+	}
+	for _, cp := range cps {
+		if err := s.SaveCheckpoint(ctx, cp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.ListCheckpoints(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListCheckpoints returned %d, want 2", len(got))
+	}
+	if got[0].ID != "cp1" || got[1].ID != "cp2" {
+		t.Fatalf("ListCheckpoints order: %+v", got)
+	}
+}
+
+// TestCheckpointRewindRoundTrip drives a live tree through checkpoint → save →
+// load → rewind: everything the tree persists to the store must be enough to
+// rebuild it (via tree.FromStore) and rewind to the checkpoint.
+func TestCheckpointRewindRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := memstore.New()
+
+	tr, err := tree.New(types.NewSystemMessage("system"))
+	if err != nil {
+		t.Fatalf("tree.New: %v", err)
+	}
+	root := tr.Root()
+	user, _ := tr.AddChild(ctx, root.ID, types.NewUserMessage("hello"))
+	asst, _ := tr.AddChild(ctx, user.ID, types.AssistantMessage{
+		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+	})
+	cpID, err := tr.Checkpoint("main", "after-turn-1")
+	if err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	tr.AddChild(ctx, asst.ID, types.NewUserMessage("more"))
+
+	// Persist the full tree state.
+	for _, n := range []*types.Node{root, user, asst} {
+		if err := s.SaveNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tip, _ := tr.Tip("main")
+	if err := s.SaveNode(ctx, tip); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveBranch(ctx, "main", tip.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, cp := range tr.Checkpoints() {
+		if err := s.SaveCheckpoint(ctx, cp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Reload in a "new process".
+	nodes, branches, err := s.LoadTree(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("LoadTree: %v", err)
+	}
+	cps, err := s.ListCheckpoints(ctx)
+	if err != nil {
+		t.Fatalf("ListCheckpoints: %v", err)
+	}
+	cpMap := make(map[types.CheckpointID]types.Checkpoint, len(cps))
+	for _, cp := range cps {
+		cpMap[cp.ID] = cp
+	}
+
+	reloaded, err := tree.FromStore(nodes, branches, cpMap, root.ID, "main")
+	if err != nil {
+		t.Fatalf("FromStore: %v", err)
+	}
+
+	rewindBranch, err := reloaded.Rewind(cpID)
+	if err != nil {
+		t.Fatalf("Rewind after reload: %v", err)
+	}
+	rewindTip, err := reloaded.Tip(rewindBranch)
+	if err != nil {
+		t.Fatalf("Tip: %v", err)
+	}
+	if rewindTip.ID != asst.ID {
+		t.Fatalf("rewind tip = %s, want checkpointed node %s", rewindTip.ID, asst.ID)
 	}
 }
 

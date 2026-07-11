@@ -8,6 +8,9 @@ import "context"
 // If the scorer is not applicable to a given observation (e.g., a RAG scorer
 // given an agent observation with no RAG annotations), it should return a
 // zero-value [Score] with an empty Name. The framework will skip it.
+//
+// A returned error is recorded on that observation's result as an errored
+// [Score] (excluded from aggregates); it does not abort the suite.
 type Scorer interface {
 	Name() string
 	Score(ctx context.Context, obs Observation) (Score, error)
@@ -31,13 +34,14 @@ func (s *ScorerFunc) Score(ctx context.Context, obs Observation) (Score, error) 
 }
 
 // Aggregate computes the mean of each unique score name across results.
+// Errored scores are excluded rather than counted as zero.
 func Aggregate(results []ObservationResult) map[string]float64 {
 	sums := make(map[string]float64)
 	counts := make(map[string]int)
 
 	for _, r := range results {
 		for _, s := range r.Scores {
-			if s.Name == "" {
+			if s.Name == "" || s.Error != "" {
 				continue
 			}
 			sums[s.Name] += s.Value

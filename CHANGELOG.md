@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.2 (2026-07-11)
+
+### Bug Fixes
+
+- resolve 18 correctness, durability, and honesty gaps (#47) ([63cc20b](https://github.com/urmzd/saige/commit/63cc20b9ff1d60849a715ebc0d98e0dc3bdf852a))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.12.1...v0.12.2)
+
+
 ## 0.12.1 (2026-06-26)
 
 ### Bug Fixes

@@ -5,10 +5,16 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	pgvector "github.com/pgvector/pgvector-go"
 
 	"github.com/urmzd/saige/rag/types"
 )
+
+// execer abstracts pgxpool.Pool and pgx.Tx for shared insert helpers.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
 
 // CreateVariant inserts a new content variant for a section.
 func (s *Store) CreateVariant(ctx context.Context, variant *types.ContentVariant) error {
@@ -16,15 +22,19 @@ func (s *Store) CreateVariant(ctx context.Context, variant *types.ContentVariant
 	if err != nil {
 		return err
 	}
+	return insertVariant(ctx, s.pool, secID, variant)
+}
 
+// insertVariant writes a single variant row using the given executor.
+func insertVariant(ctx context.Context, db execer, sectionID int64, variant *types.ContentVariant) error {
 	var emb *pgvector.Vector
 	if variant.Embedding != nil {
 		v := pgvector.NewVector(variant.Embedding)
 		emb = &v
 	}
 
-	_, err = s.pool.Exec(ctx, variantCreateSQL,
-		variant.UUID, secID, string(variant.ContentType), variant.MIMEType,
+	_, err := db.Exec(ctx, variantCreateSQL,
+		variant.UUID, sectionID, string(variant.ContentType), variant.MIMEType,
 		variant.Data, variant.Text, emb, encodeMetadata(variant.Metadata),
 	)
 	if err != nil {
@@ -49,10 +59,10 @@ func (s *Store) UpdateVariantEmbedding(ctx context.Context, variantUUID string, 
 // GetVariant retrieves a variant with its provenance information.
 func (s *Store) GetVariant(ctx context.Context, variantUUID string) (*types.ContentVariant, *types.Provenance, error) {
 	var (
-		v    types.ContentVariant
-		prov types.Provenance
-		ct   string
-		emb  *pgvector.Vector
+		v     types.ContentVariant
+		prov  types.Provenance
+		ct    string
+		emb   *pgvector.Vector
 		vMeta []byte
 	)
 	err := s.pool.QueryRow(ctx, variantGetSQL, variantUUID).Scan(

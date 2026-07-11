@@ -9,11 +9,12 @@ import (
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/chunker"
 	"github.com/urmzd/saige/rag/contextassembler"
+	"github.com/urmzd/saige/rag/graphretriever"
 	"github.com/urmzd/saige/rag/hyde"
 	"github.com/urmzd/saige/rag/internal/pipeline"
 	"github.com/urmzd/saige/rag/parentretriever"
-	ragtypes "github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/reranker"
+	ragtypes "github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/vectorretriever"
 )
 
@@ -23,7 +24,7 @@ type Config struct {
 	ContentExtractor ragtypes.ContentExtractor
 	Chunker          ragtypes.Chunker
 	Embedders        ragtypes.EmbedderRegistry
-	Graph          knowledgetypes.Graph
+	Graph            knowledgetypes.Graph
 	DedupBehavior    ragtypes.DedupBehavior
 	StoreOriginals   bool
 	Logger           *slog.Logger
@@ -71,7 +72,11 @@ func WithEmbedders(reg ragtypes.EmbedderRegistry) Option {
 	return func(c *Config) { c.Embedders = reg }
 }
 
-// WithGraph sets the knowledge graph for entity extraction.
+// WithGraph sets the knowledge graph. Ingested documents are enriched into
+// the graph, a graph retriever is registered into the search fusion set, and
+// document deletes remove the graph episodes derived from the document (when
+// the graph implements ragtypes.GraphEpisodeDeleter). Do not also pass a
+// graphretriever via WithRetrievers, or graph results will be fused twice.
 func WithGraph(g knowledgetypes.Graph) Option {
 	return func(c *Config) { c.Graph = g }
 }
@@ -232,6 +237,12 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 		retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
 	}
 
+	// Add a graph retriever so WithGraph contributes to search fusion, not
+	// just ingest-time enrichment.
+	if cfg.Graph != nil {
+		retrievers = append(retrievers, graphretriever.New(cfg.Graph, cfg.Store))
+	}
+
 	// Wrap retrievers with parent context if enabled.
 	if cfg.parentContext {
 		wrapped := make([]ragtypes.Retriever, len(retrievers))
@@ -246,7 +257,7 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 		ContentExtractor: cfg.ContentExtractor,
 		Chunker:          cfg.Chunker,
 		Embedders:        cfg.Embedders,
-		Graph:          cfg.Graph,
+		Graph:            cfg.Graph,
 		DedupBehavior:    cfg.DedupBehavior,
 		StoreOriginals:   cfg.StoreOriginals,
 		Logger:           cfg.Logger,

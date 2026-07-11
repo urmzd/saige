@@ -175,11 +175,6 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 		SummaryOf: nodeIDs,
 	}
 
-	t.nodes[requestNode.ID] = requestNode
-	t.nodes[summaryNode.ID] = summaryNode
-	t.children[first.node.ParentID] = append(t.children[first.node.ParentID], requestNode.ID)
-	t.children[requestNode.ID] = append(t.children[requestNode.ID], summaryNode.ID)
-
 	// Re-link remaining (non-compacted) nodes after the compacted prefix onto the new branch.
 	var remaining []types.NodeID
 	pastCompacted := false
@@ -193,30 +188,42 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 		}
 	}
 
-	// Clone remaining nodes onto the new branch.
+	// Build the new branch's nodes up front (summary pair + clones of the
+	// remaining suffix) so the whole compaction lands in ONE WAL transaction
+	// before the in-memory tree changes.
+	newNodes := []*types.Node{requestNode, summaryNode}
 	prevID := summaryNode.ID
-	var newTipID types.NodeID
-	if len(remaining) == 0 {
-		newTipID = summaryNode.ID
-	} else {
-		for _, nid := range remaining {
-			orig := t.nodes[nid]
-			cloned := &types.Node{
-				ID:        types.NodeID(types.NewID()),
-				ParentID:  prevID,
-				Message:   orig.Message,
-				State:     types.NodeActive,
-				Version:   1,
-				Depth:     orig.Depth,
-				BranchID:  newBranchID,
-				CreatedAt: orig.CreatedAt,
-				UpdatedAt: now,
-			}
-			t.nodes[cloned.ID] = cloned
-			t.children[prevID] = append(t.children[prevID], cloned.ID)
-			prevID = cloned.ID
-			newTipID = cloned.ID
+	newTipID := summaryNode.ID
+	for _, nid := range remaining {
+		orig := t.nodes[nid]
+		cloned := &types.Node{
+			ID:        types.NodeID(types.NewID()),
+			ParentID:  prevID,
+			Message:   orig.Message,
+			State:     types.NodeActive,
+			Version:   1,
+			Depth:     orig.Depth,
+			BranchID:  newBranchID,
+			CreatedAt: orig.CreatedAt,
+			UpdatedAt: now,
 		}
+		newNodes = append(newNodes, cloned)
+		prevID = cloned.ID
+		newTipID = cloned.ID
+	}
+
+	ops := make([]types.TxOp, 0, len(newNodes)+1)
+	for _, n := range newNodes {
+		ops = append(ops, types.TxOp{Kind: types.TxOpAddNode, NodeID: n.ID, ParentID: n.ParentID, Node: n})
+	}
+	ops = append(ops, types.TxOp{Kind: types.TxOpSetBranch, BranchID: newBranchID, TipID: newTipID})
+	if err := t.walTx(ctx, ops...); err != nil {
+		return "", err
+	}
+
+	for _, n := range newNodes {
+		t.nodes[n.ID] = n
+		t.children[n.ParentID] = append(t.children[n.ParentID], n.ID)
 	}
 
 	t.branches[newBranchID] = newTipID

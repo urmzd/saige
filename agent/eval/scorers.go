@@ -10,8 +10,8 @@ import (
 // Annotation keys used by agent subjects.
 const (
 	AnnotationStreamTiming = "agent.stream_timing" // StreamTiming
-	AnnotationToolCalls    = "agent.tool_calls"     // []ToolCallRecord
-	AnnotationTurnCount    = "agent.turn_count"     // int
+	AnnotationToolCalls    = "agent.tool_calls"    // []ToolCallRecord
+	AnnotationTurnCount    = "agent.turn_count"    // int
 )
 
 // ToolCallRecord captures a tool invocation for evaluation.

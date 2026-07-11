@@ -60,6 +60,23 @@ validate:
 fuzz PACKAGE FUNC DURATION="30s":
     go test -fuzz={{FUNC}} -fuzztime={{DURATION}} {{PACKAGE}}
 
+# docker compose plugin or standalone docker-compose, whichever is installed
+compose := `docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose"`
+
+# Start local integration infra (pgvector Postgres on :5433)
+integration-up:
+    {{compose}} -f integration/docker-compose.yml up -d --wait postgres
+
+# Stop integration infra and delete its data
+integration-down:
+    {{compose}} -f integration/docker-compose.yml down -v
+
+# Run end-to-end integration tests (Ollama + Postgres + DBOS); see integration/README.md
+test-integration:
+    SAIGE_TEST_OLLAMA_HOST="${SAIGE_TEST_OLLAMA_HOST:-http://localhost:11434}" \
+    SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
+    go test ./integration/ -v -count=1 -timeout 30m
+
 # Build docker image
 docker-build:
     docker build -t saige .

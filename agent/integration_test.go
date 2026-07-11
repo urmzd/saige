@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/store/memwal"
 	"github.com/urmzd/saige/agent/tree"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // ===================================================================
@@ -827,10 +827,11 @@ func TestSubAgentBlockingExecute(t *testing.T) {
 
 	sat := &subAgentTool{
 		def: types.ToolDef{Name: "test_sub", Description: "test"},
-		factory: func() *Agent {
+		factory: func(runner types.StepRunner) *Agent {
 			return NewAgent(AgentConfig{
 				Provider:     childProvider,
 				SystemPrompt: "child",
+				StepRunner:   runner,
 			})
 		},
 	}
@@ -1866,9 +1867,9 @@ func TestTreeBranchWithWAL(t *testing.T) {
 	tr.Branch(context.Background(), user.ID, "alt", types.NewUserMessage("branch msg"))
 
 	committed, _ := wal.Recover(context.Background())
-	// AddChild(hello) + Branch(branch msg) = 2 transactions
-	if len(committed) != 2 {
-		t.Errorf("committed = %d, want 2", len(committed))
+	// New(root) + AddChild(hello) + Branch(branch msg) = 3 transactions
+	if len(committed) != 3 {
+		t.Errorf("committed = %d, want 3", len(committed))
 	}
 }
 
@@ -1881,9 +1882,9 @@ func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 	tr.UpdateUserMessage(context.Background(), user.ID, types.NewUserMessage("edited"))
 
 	committed, _ := wal.Recover(context.Background())
-	// AddChild + UpdateUserMessage = 2 transactions
-	if len(committed) != 2 {
-		t.Errorf("committed = %d, want 2", len(committed))
+	// New(root) + AddChild + UpdateUserMessage = 3 transactions
+	if len(committed) != 3 {
+		t.Errorf("committed = %d, want 3", len(committed))
 	}
 }
 

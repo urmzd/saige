@@ -173,6 +173,23 @@ func (s *Store) LoadCheckpoint(_ context.Context, id types.CheckpointID) (types.
 	return cp, nil
 }
 
+// ListCheckpoints returns all checkpoints ordered by creation time, then ID.
+func (s *Store) ListCheckpoints(_ context.Context) ([]types.Checkpoint, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]types.Checkpoint, 0, len(s.checkpoints))
+	for _, cp := range s.checkpoints {
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
 // LoadTree returns every node reachable from rootID plus all branch tips.
 // Nodes are ordered root-first (ascending depth), matching pgstore semantics
 // closely enough for tree.FromStore, which rebuilds the child map from parent

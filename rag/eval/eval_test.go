@@ -2,10 +2,12 @@ package eval_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
 
+	topeval "github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/rag/eval"
 	"github.com/urmzd/saige/rag/types"
 )
@@ -57,7 +59,7 @@ func (m *mockPipeline) Lookup(_ context.Context, _ string) (*types.SearchHit, er
 func (m *mockPipeline) Update(_ context.Context, _ string, _ *types.RawDocument) (*types.IngestResult, error) {
 	return nil, nil
 }
-func (m *mockPipeline) Delete(_ context.Context, _ string) error            { return nil }
+func (m *mockPipeline) Delete(_ context.Context, _ string) error { return nil }
 func (m *mockPipeline) Reconstruct(_ context.Context, _ string) (*types.Document, error) {
 	return nil, nil
 }
@@ -196,7 +198,7 @@ func TestHitRateKZero(t *testing.T) {
 
 func TestFaithfulnessAllSupported(t *testing.T) {
 	llm := &mockLLM{responses: []string{
-		"The sky is blue.\nWater is wet.", // decompose
+		"The sky is blue.\nWater is wet.",                      // decompose
 		"supported|matches context\nsupported|matches context", // verify
 	}}
 
@@ -450,4 +452,124 @@ func TestEvaluateNoLLMSkipsGeneration(t *testing.T) {
 	// Generation metrics should be zero.
 	assertClose(t, "faithfulness", r.Faithfulness, 0, 0.001)
 	assertClose(t, "relevancy", r.AnswerRelevancy, 0, 0.001)
+}
+
+func TestEvaluateGenerationMetricErrorRecorded(t *testing.T) {
+	pipe := &mockPipeline{
+		searchResult: &types.SearchPipelineResult{
+			Hits: []types.SearchHit{
+				{Variant: types.ContentVariant{UUID: "a", Text: "chunk"}},
+			},
+		},
+	}
+
+	// No responses configured → every Generate call fails.
+	llm := &mockLLM{}
+	emb := &mockEmbedderRegistry{embeddings: [][]float32{{1, 0}}}
+
+	results, err := eval.Evaluate(context.Background(),
+		[]eval.EvalCase{{
+			Query:         "q",
+			GroundTruth:   "gt",
+			RelevantUUIDs: []string{"a"},
+			Response:      "resp",
+		}},
+		pipe,
+		eval.WithLLM(llm),
+		eval.WithEmbedders(emb),
+		eval.WithJudgeRubric("rubric"),
+	)
+	if err != nil {
+		t.Fatalf("metric errors must not abort the run, got %v", err)
+	}
+
+	r := results[0]
+	// Retrieval metrics still computed.
+	assertClose(t, "mrr", r.MRR, 1.0, 0.001)
+
+	// Each failed generation metric is recorded, not a silent zero.
+	for _, metric := range []string{"faithfulness", "answer_relevancy", "answer_correctness", "llm_judge"} {
+		if r.MetricErrors[metric] == "" {
+			t.Errorf("expected recorded error for %s, got none (errors: %v)", metric, r.MetricErrors)
+		}
+	}
+}
+
+func TestEvaluateNoMetricErrorsOnSuccess(t *testing.T) {
+	pipe := &mockPipeline{
+		searchResult: &types.SearchPipelineResult{
+			Hits: []types.SearchHit{
+				{Variant: types.ContentVariant{UUID: "a", Text: "chunk"}},
+			},
+		},
+	}
+	llm := &mockLLM{responses: []string{
+		"Claim A.",
+		"supported|ok",
+		"REASON: good\nSCORE: 0.8",
+	}}
+
+	results, err := eval.Evaluate(context.Background(),
+		[]eval.EvalCase{{
+			Query:         "q",
+			GroundTruth:   "gt",
+			RelevantUUIDs: []string{"a"},
+			Response:      "resp",
+		}},
+		pipe,
+		eval.WithLLM(llm),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results[0].MetricErrors) != 0 {
+		t.Errorf("expected no metric errors, got %v", results[0].MetricErrors)
+	}
+}
+
+func TestFaithfulnessScorerErrorRecordedInSuite(t *testing.T) {
+	llm := &mockLLM{} // every Generate call fails
+
+	hitsJSON, err := json.Marshal(hits("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuidsJSON, err := json.Marshal([]string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obs := []topeval.Observation{{
+		ID:     "c1",
+		Input:  json.RawMessage(`"q"`),
+		Output: json.RawMessage(`"resp"`),
+		Annotations: map[string]json.RawMessage{
+			eval.AnnotationHits:          hitsJSON,
+			eval.AnnotationRelevantUUIDs: uuidsJSON,
+			eval.AnnotationContextText:   json.RawMessage(`"ctx"`),
+		},
+	}}
+
+	suite, err := topeval.Run(context.Background(), "rag-suite", obs,
+		[]topeval.Scorer{eval.FaithfulnessScorer(llm), eval.MRRScorer()})
+	if err != nil {
+		t.Fatalf("suite should complete when only one scorer errors, got %v", err)
+	}
+
+	if suite.ErroredCases != 1 {
+		t.Errorf("expected 1 errored case, got %d", suite.ErroredCases)
+	}
+	var faithErr string
+	for _, s := range suite.Results[0].Scores {
+		if s.Name == "faithfulness" {
+			faithErr = s.Error
+		}
+	}
+	if faithErr == "" {
+		t.Error("expected faithfulness error recorded on the case")
+	}
+	if _, ok := suite.Aggregate["faithfulness"]; ok {
+		t.Error("errored faithfulness must not appear in the aggregate")
+	}
+	assertClose(t, "mrr aggregate", suite.Aggregate["mrr"], 1.0, 0.001)
 }

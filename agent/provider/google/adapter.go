@@ -40,6 +40,21 @@ func (a *Adapter) Name() string { return "google" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.model }
 
+// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
+// targeting the given model, sharing the underlying client.
+func (a *Adapter) WithModel(model string) types.Provider {
+	c := *a
+	c.model = model
+	return &c
+}
+
+// Generate sends a single-turn user prompt with no tools and returns the
+// response text. It is the simple generation seam used by eval judges, HyDE,
+// context compression, and KG extraction.
+func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
+	return types.GenerateText(ctx, a, prompt)
+}
+
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	systemInst, contents := toGeminiContents(messages)
