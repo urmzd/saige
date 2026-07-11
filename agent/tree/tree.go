@@ -24,7 +24,7 @@ type Tree struct {
 	children    map[types.NodeID][]types.NodeID // parent -> ordered children
 	rootID      types.NodeID
 	branches    map[types.BranchID]types.NodeID // branch -> tip node
-	active      types.BranchID                 // the branch Invoke reads from
+	active      types.BranchID                  // the branch Invoke reads from
 	checkpoints map[types.CheckpointID]types.Checkpoint
 	wal         types.WAL
 }
@@ -56,6 +56,10 @@ func New(systemMsg types.SystemMessage, opts ...Option) (*Tree, error) {
 		UpdatedAt: now,
 	}
 
+	if err := t.walAddNode(context.Background(), root); err != nil {
+		return nil, err
+	}
+
 	t.nodes[rootID] = root
 	t.rootID = rootID
 	t.branches[mainBranch] = rootID
@@ -75,8 +79,16 @@ func (t *Tree) Active() types.BranchID {
 func (t *Tree) SetActive(branch types.BranchID) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.branches[branch]; !ok {
+	tip, ok := t.branches[branch]
+	if !ok {
 		return fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
+	}
+	// Re-record the branch tip so WAL replay recreates the branch being
+	// switched to even if its creating tx was already applied and pruned.
+	if err := t.walTx(context.Background(), types.TxOp{
+		Kind: types.TxOpSetBranch, BranchID: branch, TipID: tip,
+	}); err != nil {
+		return err
 	}
 	t.active = branch
 	return nil
@@ -367,29 +379,14 @@ func (t *Tree) Archive(nodeID types.NodeID, archivedBy string, recursive bool) e
 		return fmt.Errorf("%w: cannot archive root", ErrRootImmutable)
 	}
 
-	return t.archiveNode(node, archivedBy, recursive)
-}
-
-func (t *Tree) archiveNode(node *types.Node, archivedBy string, recursive bool) error {
 	now := time.Now()
-	node.State = types.NodeArchived
-	node.ArchivedAt = &now
-	node.ArchivedBy = archivedBy
-	node.Version++
-	node.UpdatedAt = now
-
-	if recursive {
-		for _, childID := range t.children[node.ID] {
-			child, err := t.getNode(childID)
-			if err != nil {
-				return err
-			}
-			if err := t.archiveNode(child, archivedBy, true); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return t.mutateSubtree(node, recursive, func(mutated *types.Node) {
+		mutated.State = types.NodeArchived
+		mutated.ArchivedAt = &now
+		mutated.ArchivedBy = archivedBy
+		mutated.Version++
+		mutated.UpdatedAt = now
+	})
 }
 
 // Restore un-archives a node. If recursive is true, all descendants are also restored.
@@ -402,27 +399,55 @@ func (t *Tree) Restore(nodeID types.NodeID, recursive bool) error {
 		return err
 	}
 
-	return t.restoreNode(node, recursive)
+	now := time.Now()
+	return t.mutateSubtree(node, recursive, func(mutated *types.Node) {
+		mutated.State = types.NodeActive
+		mutated.ArchivedAt = nil
+		mutated.ArchivedBy = ""
+		mutated.Version++
+		mutated.UpdatedAt = now
+	})
 }
 
-func (t *Tree) restoreNode(node *types.Node, recursive bool) error {
-	now := time.Now()
-	node.State = types.NodeActive
-	node.ArchivedAt = nil
-	node.ArchivedBy = ""
-	node.Version++
-	node.UpdatedAt = now
-
+// collectSubtree returns node and (when recursive) all its descendants,
+// depth-first. Caller must hold the lock.
+func (t *Tree) collectSubtree(node *types.Node, recursive bool) []*types.Node {
+	nodes := []*types.Node{node}
 	if recursive {
 		for _, childID := range t.children[node.ID] {
-			child, err := t.getNode(childID)
-			if err != nil {
-				return err
-			}
-			if err := t.restoreNode(child, true); err != nil {
-				return err
+			if child, ok := t.nodes[childID]; ok {
+				nodes = append(nodes, t.collectSubtree(child, true)...)
 			}
 		}
+	}
+	return nodes
+}
+
+// mutateSubtree applies mutate to node (and its descendants when recursive),
+// writing all resulting states as TxOpUpdateNode ops in a single WAL
+// transaction BEFORE the in-memory tree is touched, so the log never lags a
+// partially applied multi-node mutation. Caller must hold the lock.
+func (t *Tree) mutateSubtree(node *types.Node, recursive bool, mutate func(*types.Node)) error {
+	targets := t.collectSubtree(node, recursive)
+
+	ops := make([]types.TxOp, 0, len(targets))
+	clones := make([]*types.Node, 0, len(targets))
+	for _, n := range targets {
+		clone := *n
+		mutate(&clone)
+		c := clone
+		clones = append(clones, &c)
+		ops = append(ops, types.TxOp{Kind: types.TxOpUpdateNode, NodeID: n.ID, Node: &c})
+	}
+
+	if err := t.walTx(context.Background(), ops...); err != nil {
+		return err
+	}
+
+	// Copy the mutated state back through the original pointers so nodes held
+	// by callers (and the tree's own maps) observe the update.
+	for i, n := range targets {
+		*n = *clones[i]
 	}
 	return nil
 }
@@ -445,9 +470,28 @@ func (t *Tree) Checkpoint(branch types.BranchID, name string) (types.CheckpointI
 		Name:      name,
 		CreatedAt: time.Now(),
 	}
+
+	if err := t.walTx(context.Background(), types.TxOp{
+		Kind: types.TxOpAddCheckpoint, Checkpoint: &cp,
+	}); err != nil {
+		return "", err
+	}
+
 	t.checkpoints[cpID] = cp
 
 	return cpID, nil
+}
+
+// Checkpoints returns a copy of all checkpoints in the tree.
+func (t *Tree) Checkpoints() map[types.CheckpointID]types.Checkpoint {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	result := make(map[types.CheckpointID]types.Checkpoint, len(t.checkpoints))
+	for k, v := range t.checkpoints {
+		result[k] = v
+	}
+	return result
 }
 
 // Rewind creates a new branch starting from the checkpoint's node.
@@ -465,6 +509,13 @@ func (t *Tree) Rewind(cp types.CheckpointID) (types.BranchID, error) {
 	}
 
 	branchID := types.BranchID(fmt.Sprintf("rewind-%s-%s", checkpoint.Name, types.NewID()[:8]))
+
+	if err := t.walTx(context.Background(), types.TxOp{
+		Kind: types.TxOpSetBranch, BranchID: branchID, TipID: checkpoint.NodeID,
+	}); err != nil {
+		return "", err
+	}
+
 	t.branches[branchID] = checkpoint.NodeID
 
 	return branchID, nil
@@ -506,20 +557,34 @@ func (t *Tree) nodePathUnlocked(nodeID types.NodeID) (types.TreePath, error) {
 	return treePath, nil
 }
 
-// walAddNode writes a node addition to the WAL if configured.
-func (t *Tree) walAddNode(ctx context.Context, node *types.Node) error {
-	if t.wal == nil {
+// walTx writes ops as a single WAL transaction if a WAL is configured.
+// Multi-node mutations (recursive archive, compaction) pass all their ops in
+// one call so replay applies them atomically.
+func (t *Tree) walTx(ctx context.Context, ops ...types.TxOp) error {
+	if t.wal == nil || len(ops) == 0 {
 		return nil
 	}
 	txID, err := t.wal.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if err := t.wal.Append(ctx, txID, types.TxOp{Kind: types.TxOpAddNode, Node: node}); err != nil {
-		_ = t.wal.Abort(ctx, txID)
-		return err
+	for _, op := range ops {
+		if err := t.wal.Append(ctx, txID, op); err != nil {
+			_ = t.wal.Abort(ctx, txID)
+			return err
+		}
 	}
 	return t.wal.Commit(ctx, txID)
+}
+
+// walAddNode writes a node addition and its branch-tip move as one WAL
+// transaction. Every node insertion also moves (or creates) the tip of the
+// node's branch, so the two ops are inseparable for replay.
+func (t *Tree) walAddNode(ctx context.Context, node *types.Node) error {
+	return t.walTx(ctx,
+		types.TxOp{Kind: types.TxOpAddNode, NodeID: node.ID, ParentID: node.ParentID, Node: node},
+		types.TxOp{Kind: types.TxOpSetBranch, BranchID: node.BranchID, TipID: node.ID},
+	)
 }
 
 // FromStore reconstructs a Tree from persisted data (e.g. from pgstore.LoadTree).

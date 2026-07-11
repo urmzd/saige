@@ -2,6 +2,8 @@ package tool_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	agenttypes "github.com/urmzd/saige/agent/types"
@@ -26,6 +28,17 @@ func (stubGraph) GetFactProvenance(context.Context, string) ([]kgtypes.Episode, 
 	return nil, nil
 }
 func (stubGraph) Close(context.Context) error { return nil }
+
+// searchErrGraph returns configurable results and error from SearchFacts.
+type searchErrGraph struct {
+	stubGraph
+	result *kgtypes.SearchFactsResult
+	err    error
+}
+
+func (g searchErrGraph) SearchFacts(context.Context, string, ...kgtypes.SearchOption) (*kgtypes.SearchFactsResult, error) {
+	return g.result, g.err
+}
 
 func markerFor(tools []agenttypes.Tool, name string) []agenttypes.Marker {
 	for _, tl := range tools {
@@ -81,6 +94,43 @@ func TestReadOnlyOmitsIngest(t *testing.T) {
 	if !hasTool(tools, "kg_search") {
 		t.Fatal("read-only mode must keep kg_search")
 	}
+}
+
+func TestSearchToolPropagatesBackendError(t *testing.T) {
+	tools := tool.NewTools(searchErrGraph{err: errors.New("store down")})
+	search := searchToolFrom(t, tools)
+
+	if _, err := search.Execute(context.Background(), map[string]any{"query": "q"}); err == nil {
+		t.Fatal("expected backend error to propagate")
+	}
+}
+
+func TestSearchToolToleratesPartialSearch(t *testing.T) {
+	partial := fmt.Errorf("%w: vector search down", kgtypes.ErrPartialSearch)
+	tools := tool.NewTools(searchErrGraph{
+		result: &kgtypes.SearchFactsResult{Facts: []kgtypes.Fact{{UUID: "f1", FactText: "fact"}}},
+		err:    partial,
+	})
+	search := searchToolFrom(t, tools)
+
+	out, err := search.Execute(context.Background(), map[string]any{"query": "q"})
+	if err != nil {
+		t.Fatalf("partial search should not fail the tool: %v", err)
+	}
+	if out == "" {
+		t.Fatal("expected partial results in output")
+	}
+}
+
+func searchToolFrom(t *testing.T, tools []agenttypes.Tool) agenttypes.Tool {
+	t.Helper()
+	for _, tl := range tools {
+		if tl.Definition().Name == "kg_search" {
+			return tl
+		}
+	}
+	t.Fatal("kg_search not found")
+	return nil
 }
 
 // TestMarkedToolDelegates verifies the gate is transparent to execution: the

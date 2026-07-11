@@ -8,13 +8,19 @@ CREATE TABLE IF NOT EXISTS kg_entity (
     name       TEXT NOT NULL,
     type       TEXT NOT NULL,
     summary    TEXT NOT NULL DEFAULT '',
+    group_id   TEXT NOT NULL DEFAULT '',
     embedding  vector({{.KGEmbeddingDim}}),
     search_vec tsvector GENERATED ALWAYS AS (
         to_tsvector('english', coalesce(name,'') || ' ' || coalesce(summary,''))
     ) STORED,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (name, type)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
+---
+ALTER TABLE kg_entity ADD COLUMN IF NOT EXISTS group_id TEXT NOT NULL DEFAULT ''
+---
+ALTER TABLE kg_entity DROP CONSTRAINT IF EXISTS kg_entity_name_type_key
+---
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_entity_group_name_type ON kg_entity(group_id, name, type)
 ---
 CREATE INDEX IF NOT EXISTS idx_kg_entity_embedding ON kg_entity USING hnsw (embedding vector_cosine_ops)
 ---
@@ -29,10 +35,15 @@ CREATE TABLE IF NOT EXISTS kg_relation (
     target_id  BIGINT NOT NULL REFERENCES kg_entity(id) ON DELETE CASCADE,
     type       TEXT NOT NULL,
     fact       TEXT NOT NULL,
+    group_id   TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     valid_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     invalid_at TIMESTAMPTZ
 )
+---
+ALTER TABLE kg_relation ADD COLUMN IF NOT EXISTS group_id TEXT NOT NULL DEFAULT ''
+---
+CREATE INDEX IF NOT EXISTS idx_kg_relation_group ON kg_relation(group_id)
 ---
 CREATE INDEX IF NOT EXISTS idx_kg_relation_source ON kg_relation(source_id)
 ---
@@ -47,8 +58,11 @@ CREATE TABLE IF NOT EXISTS kg_episode (
     body       TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT '',
     group_id   TEXT NOT NULL DEFAULT '',
+    metadata   JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
+---
+ALTER TABLE kg_episode ADD COLUMN IF NOT EXISTS metadata JSONB
 ---
 CREATE INDEX IF NOT EXISTS idx_kg_episode_group ON kg_episode(group_id)
 ---
@@ -127,18 +141,28 @@ CREATE INDEX IF NOT EXISTS idx_agent_node_parent ON agent_node(parent_uuid)
 CREATE INDEX IF NOT EXISTS idx_agent_node_branch ON agent_node(branch_id)
 ---
 CREATE TABLE IF NOT EXISTS agent_branch (
-    id        BIGSERIAL PRIMARY KEY,
-    branch_id TEXT NOT NULL UNIQUE,
-    tip_uuid  TEXT NOT NULL
+    id              BIGSERIAL PRIMARY KEY,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    branch_id       TEXT NOT NULL,
+    tip_uuid        TEXT NOT NULL
 )
+---
+ALTER TABLE agent_branch ADD COLUMN IF NOT EXISTS conversation_id TEXT NOT NULL DEFAULT ''
+---
+ALTER TABLE agent_branch DROP CONSTRAINT IF EXISTS agent_branch_branch_id_key
+---
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_branch_conv_branch ON agent_branch(conversation_id, branch_id)
 ---
 CREATE TABLE IF NOT EXISTS agent_checkpoint (
-    id         BIGSERIAL PRIMARY KEY,
-    uuid       TEXT NOT NULL UNIQUE,
-    branch_id  TEXT NOT NULL,
-    node_uuid  TEXT NOT NULL,
-    name       TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id              BIGSERIAL PRIMARY KEY,
+    uuid            TEXT NOT NULL UNIQUE,
+    conversation_id TEXT NOT NULL DEFAULT '',
+    branch_id       TEXT NOT NULL,
+    node_uuid       TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 ---
-CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_branch ON agent_checkpoint(branch_id)
+ALTER TABLE agent_checkpoint ADD COLUMN IF NOT EXISTS conversation_id TEXT NOT NULL DEFAULT ''
+---
+CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_conv_branch ON agent_checkpoint(conversation_id, branch_id)

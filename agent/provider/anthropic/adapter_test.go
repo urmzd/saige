@@ -7,6 +7,50 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+func TestToAnthropicParamsPDFIsNativeDocument(t *testing.T) {
+	pdf := []byte("%PDF-1.4 fake")
+	msgs := []types.Message{types.NewUserMessageWithFiles("summarize this",
+		types.FileContent{MediaType: types.MediaPDF, Data: pdf, Filename: "paper.pdf"})}
+
+	_, out := toAnthropicParams(msgs)
+	if len(out) != 1 || len(out[0].Content) != 2 {
+		t.Fatalf("messages = %+v, want one user message with 2 blocks", out)
+	}
+	doc := out[0].Content[1].OfDocument
+	if doc == nil {
+		t.Fatal("PDF FileContent must map to a native document block, not text")
+	}
+	if doc.Source.OfBase64 == nil || doc.Source.OfBase64.Data != base64.StdEncoding.EncodeToString(pdf) {
+		t.Errorf("document source = %+v, want base64 PDF bytes", doc.Source)
+	}
+}
+
+func TestToAnthropicParamsNonNativeFileFallsBackToText(t *testing.T) {
+	msgs := []types.Message{types.NewUserMessageWithFiles("",
+		types.FileContent{MediaType: types.MediaCSV, Data: []byte("a,b"), Filename: "data.csv"})}
+
+	_, out := toAnthropicParams(msgs)
+	if len(out) != 1 || len(out[0].Content) != 1 {
+		t.Fatalf("messages = %+v, want one user message with 1 block", out)
+	}
+	if out[0].Content[0].OfText == nil {
+		t.Fatalf("non-native file should degrade to text, got %+v", out[0].Content[0])
+	}
+}
+
+func TestContentSupportClaimsMatchMapping(t *testing.T) {
+	// ContentSupport must only claim types the adapter maps natively.
+	support := (&Adapter{}).ContentSupport()
+	for _, mt := range []types.MediaType{types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP, types.MediaPDF} {
+		if !support.Supports(mt) {
+			t.Errorf("expected native support for %s", mt)
+		}
+	}
+	if support.Supports(types.MediaCSV) {
+		t.Error("CSV must not be claimed native")
+	}
+}
+
 func TestToToolResultBlockBackCompat(t *testing.T) {
 	// No rich Blocks → take the plain NewToolResultBlock path.
 	got := toToolResultBlock(types.ToolResultContent{ToolCallID: "t1", Text: "plain", IsError: false})

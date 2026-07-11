@@ -32,6 +32,12 @@ type EvalResult struct {
 	// Debuggability detail for faithfulness.
 	FaithfulnessDetail *FaithfulnessDetail `json:"faithfulness_detail,omitempty"`
 
+	// MetricErrors records generation-metric failures by metric name
+	// ("faithfulness", "answer_relevancy", "answer_correctness", "llm_judge").
+	// An errored metric's score field stays at its zero value and must not be
+	// interpreted as a computed score.
+	MetricErrors map[string]string `json:"metric_errors,omitempty"`
+
 	// Latency tracking.
 	RetrievalMs int64 `json:"retrieval_ms"`
 	TotalMs     int64 `json:"total_ms"`
@@ -47,6 +53,13 @@ type ClaimVerdict struct {
 // FaithfulnessDetail contains per-claim verdicts.
 type FaithfulnessDetail struct {
 	Claims []ClaimVerdict `json:"claims"`
+}
+
+func (r *EvalResult) recordMetricError(metric string, err error) {
+	if r.MetricErrors == nil {
+		r.MetricErrors = make(map[string]string)
+	}
+	r.MetricErrors[metric] = err.Error()
 }
 
 // EvalCase defines a single evaluation case with ground truth.
@@ -356,33 +369,42 @@ func Evaluate(ctx context.Context, cases []EvalCase, pipe types.Pipeline, opts .
 		results[i].MRR = MRR(sr.Hits, tc.RelevantUUIDs)
 		results[i].HitRate = HitRate(sr.Hits, tc.RelevantUUIDs, o.K)
 
-		// Generation metrics.
+		// Generation metrics. A metric error is recorded per case rather
+		// than aborting the run or silently leaving a zero score.
 		if o.LLM != nil && tc.Response != "" {
 			contextText := buildContextText(sr.Hits)
 
 			faith, detail, err := Faithfulness(ctx, tc.Response, contextText, o.LLM)
-			if err == nil {
+			if err != nil {
+				results[i].recordMetricError("faithfulness", err)
+			} else {
 				results[i].Faithfulness = faith
 				results[i].FaithfulnessDetail = detail
 			}
 
 			if o.Embedders != nil {
 				rel, err := AnswerRelevancy(ctx, tc.Query, tc.Response, o.LLM, o.Embedders, o.RelevancySampleCount)
-				if err == nil {
+				if err != nil {
+					results[i].recordMetricError("answer_relevancy", err)
+				} else {
 					results[i].AnswerRelevancy = rel
 				}
 			}
 
 			if tc.GroundTruth != "" {
 				correctness, err := AnswerCorrectness(ctx, tc.Response, tc.GroundTruth, o.LLM)
-				if err == nil {
+				if err != nil {
+					results[i].recordMetricError("answer_correctness", err)
+				} else {
 					results[i].AnswerCorrectness = correctness
 				}
 			}
 
 			if o.JudgeRubric != "" {
 				score, reason, err := LLMJudge(ctx, tc.Query, tc.Response, contextText, o.JudgeRubric, o.LLM)
-				if err == nil {
+				if err != nil {
+					results[i].recordMetricError("llm_judge", err)
+				} else {
 					results[i].JudgeScore = score
 					results[i].JudgeReason = reason
 				}

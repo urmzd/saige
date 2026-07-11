@@ -120,9 +120,11 @@ func (s *Store) GetFactProvenance(ctx context.Context, factUUID string) ([]types
 	var episodes []types.Episode
 	for rows.Next() {
 		var e types.Episode
-		if err := rows.Scan(&e.UUID, &e.Name, &e.Body, &e.Source, &e.GroupID, &e.CreatedAt); err != nil {
+		var metadata []byte
+		if err := rows.Scan(&e.UUID, &e.Name, &e.Body, &e.Source, &e.GroupID, &metadata, &e.CreatedAt); err != nil {
 			return nil, err
 		}
+		e.Metadata = decodeEpisodeMetadata(metadata)
 		episodes = append(episodes, e)
 	}
 	return episodes, rows.Err()

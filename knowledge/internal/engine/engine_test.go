@@ -145,6 +145,58 @@ func (m *mockStore) Close(_ context.Context) error {
 	return nil
 }
 
+// groupScopedMockStore extends mockStore with types.GroupScopedStore, keeping
+// per-group entity maps so cross-group dedup leakage is observable.
+type groupScopedMockStore struct {
+	*mockStore
+	byGroup map[string]map[string]types.Entity // groupID -> name|type -> entity
+	upserts []upsertCall
+}
+
+// upsertCall records the group and name an UpsertEntity call carried.
+type upsertCall struct {
+	groupID string
+	name    string
+}
+
+func newGroupScopedMockStore() *groupScopedMockStore {
+	return &groupScopedMockStore{
+		mockStore: newMockStore(),
+		byGroup:   make(map[string]map[string]types.Entity),
+	}
+}
+
+func (m *groupScopedMockStore) UpsertEntity(_ context.Context, entity *types.ExtractedEntity, _ []float32) (string, error) {
+	m.upserts = append(m.upserts, upsertCall{groupID: entity.GroupID, name: entity.Name})
+	key := entity.Name + "|" + entity.Type
+	group, ok := m.byGroup[entity.GroupID]
+	if !ok {
+		group = make(map[string]types.Entity)
+		m.byGroup[entity.GroupID] = group
+	}
+	if existing, ok := group[key]; ok {
+		return existing.UUID, nil
+	}
+	uuid := "entity-" + entity.GroupID + "-" + entity.Name
+	group[key] = types.Entity{UUID: uuid, Name: entity.Name, Type: entity.Type, Summary: entity.Summary}
+	return uuid, nil
+}
+
+func (m *groupScopedMockStore) FindEntitiesByNameTypeInGroup(_ context.Context, groupID, name, entityType string) ([]types.Entity, error) {
+	if e, ok := m.byGroup[groupID][name+"|"+entityType]; ok {
+		return []types.Entity{e}, nil
+	}
+	return nil, nil
+}
+
+func (m *groupScopedMockStore) FindEntitiesByFuzzyNameInGroup(_ context.Context, groupID, _ string, _ int) ([]types.Entity, error) {
+	var out []types.Entity
+	for _, e := range m.byGroup[groupID] {
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 type mockExtractor struct {
 	entities  []types.ExtractedEntity
 	relations []types.ExtractedRelation
@@ -433,6 +485,151 @@ func TestIngestEpisode_AlreadyInvalidatedPriorSkipped(t *testing.T) {
 	}
 }
 
+func TestIngestEpisode_GroupScopedDedup_SeparateEntitiesPerGroup(t *testing.T) {
+	store := newGroupScopedMockStore()
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "Alice", Type: "Person", Summary: "A person"}},
+	}
+	eng := New(WithStore(store), WithExtractor(ext))
+
+	resA, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resB, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(resA.EntityNodes) != 1 || len(resB.EntityNodes) != 1 {
+		t.Fatalf("entities = %d/%d, want 1/1", len(resA.EntityNodes), len(resB.EntityNodes))
+	}
+	if resA.EntityNodes[0].UUID == resB.EntityNodes[0].UUID {
+		t.Errorf("same entity UUID %q across groups, want separate entities per group", resA.EntityNodes[0].UUID)
+	}
+	if len(store.upserts) != 2 {
+		t.Fatalf("upserts = %d, want 2", len(store.upserts))
+	}
+	if store.upserts[0].groupID != "tenant-a" || store.upserts[1].groupID != "tenant-b" {
+		t.Errorf("upsert groups = %q/%q, want tenant-a/tenant-b",
+			store.upserts[0].groupID, store.upserts[1].groupID)
+	}
+}
+
+func TestIngestEpisode_GroupScopedDedup_SameGroupMerges(t *testing.T) {
+	store := newGroupScopedMockStore()
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "Alice", Type: "Person", Summary: "A person"}},
+	}
+	eng := New(WithStore(store), WithExtractor(ext))
+
+	res1, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res2, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if res1.EntityNodes[0].UUID != res2.EntityNodes[0].UUID {
+		t.Errorf("UUIDs %q vs %q, want same entity within one group",
+			res1.EntityNodes[0].UUID, res2.EntityNodes[0].UUID)
+	}
+}
+
+func TestIngestEpisode_GroupScopedDedup_FuzzyNeverMatchesAcrossGroups(t *testing.T) {
+	store := newGroupScopedMockStore()
+	eng := New(WithStore(store), WithExtractor(&mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "Alice Smith", Type: "Person", Summary: "A person"}},
+	}))
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// "alice smith" would fuzzy-merge with "Alice Smith" inside tenant-a, but
+	// tenant-b must get its own entity.
+	eng2 := New(WithStore(store), WithExtractor(&mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "alice smith", Type: "Person", Summary: "A person"}},
+	}))
+	res, err := eng2.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := res.EntityNodes[0].UUID; got == "entity-tenant-a-Alice Smith" {
+		t.Errorf("entity merged across groups into %q", got)
+	}
+	if len(store.byGroup["tenant-b"]) != 1 {
+		t.Errorf("tenant-b entities = %d, want 1", len(store.byGroup["tenant-b"]))
+	}
+}
+
+func TestIngestEpisode_LegacyStoreKeepsGlobalDedup(t *testing.T) {
+	// A store without GroupScopedStore must keep the old global lookups.
+	store := newMockStore()
+	var lookedUp bool
+	store.findByNameType = func(_ context.Context, name, entityType string) ([]types.Entity, error) {
+		lookedUp = true
+		return nil, nil
+	}
+
+	eng := New(WithStore(store), WithExtractor(&mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "Alice", Type: "Person"}},
+	}))
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !lookedUp {
+		t.Error("legacy FindEntitiesByNameType was not used as fallback")
+	}
+}
+
+func TestIngestEpisode_RelationCarriesGroupID(t *testing.T) {
+	store := newMockStore()
+	var gotGroup string
+	store.createRelationFn = func(_ context.Context, rel *types.RelationInput) (string, error) {
+		gotGroup = rel.GroupID
+		return "rel-1", nil
+	}
+
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{
+			{Name: "Alice", Type: "Person"},
+			{Name: "Acme", Type: "Organization"},
+		},
+		relations: []types.ExtractedRelation{
+			{Source: "Alice", Target: "Acme", Type: "works_at", Fact: "Alice works at Acme"},
+		},
+	}
+
+	eng := New(WithStore(store), WithExtractor(ext))
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "tenant-a"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotGroup != "tenant-a" {
+		t.Errorf("relation GroupID = %q, want tenant-a", gotGroup)
+	}
+}
+
+func TestIngestEpisode_MetadataReachesStore(t *testing.T) {
+	store := newMockStore()
+	var gotMeta map[string]string
+	store.createEpisodeFn = func(_ context.Context, input *types.EpisodeInput, _ []string) (string, error) {
+		gotMeta = input.Metadata
+		return "episode-1", nil
+	}
+
+	eng := New(WithStore(store), WithExtractor(&mockExtractor{}))
+	meta := map[string]string{"channel": "slack"}
+	if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", Metadata: meta}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMeta["channel"] != "slack" {
+		t.Errorf("metadata = %v, want channel=slack", gotMeta)
+	}
+}
+
 func TestSearchFacts_BM25Only(t *testing.T) {
 	store := newMockStore()
 	store.searchTextFn = func(_ context.Context, _ string, _ *types.SearchOptions) ([]types.ScoredFact, error) {
@@ -500,6 +697,96 @@ func TestSearchFacts_WithLimit(t *testing.T) {
 	}
 	if len(result.Facts) != 2 {
 		t.Errorf("facts = %d, want 2 (limited)", len(result.Facts))
+	}
+}
+
+func TestSearchFacts_SingleBackendErrorPropagated(t *testing.T) {
+	// No embedder: text search is the only backend, so its failure must
+	// surface instead of an empty success.
+	store := newMockStore()
+	storeErr := errors.New("connection refused")
+	store.searchTextFn = func(_ context.Context, _ string, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return nil, storeErr
+	}
+
+	eng := New(WithStore(store))
+	result, err := eng.SearchFacts(context.Background(), "test")
+
+	if err == nil {
+		t.Fatal("expected error, got empty success")
+	}
+	if !errors.Is(err, storeErr) {
+		t.Errorf("error = %v, want wrapped %v", err, storeErr)
+	}
+	if errors.Is(err, types.ErrPartialSearch) {
+		t.Error("total failure must not be reported as partial")
+	}
+	if result != nil {
+		t.Errorf("result = %v, want nil", result)
+	}
+}
+
+func TestSearchFacts_AllBackendsFailReturnsError(t *testing.T) {
+	store := newMockStore()
+	store.searchEmbeddingFn = func(_ context.Context, _ []float32, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return nil, errors.New("vector down")
+	}
+	store.searchTextFn = func(_ context.Context, _ string, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return nil, errors.New("text down")
+	}
+
+	eng := New(WithStore(store), WithEmbedder(&mockEmbedder{}))
+	result, err := eng.SearchFacts(context.Background(), "test")
+
+	if err == nil {
+		t.Fatal("expected error, got empty success")
+	}
+	if errors.Is(err, types.ErrPartialSearch) {
+		t.Error("total failure must not be reported as partial")
+	}
+	if result != nil {
+		t.Errorf("result = %v, want nil", result)
+	}
+}
+
+func TestSearchFacts_PartialFailureReturnsResultsAndSentinel(t *testing.T) {
+	store := newMockStore()
+	store.searchEmbeddingFn = func(_ context.Context, _ []float32, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return nil, errors.New("vector down")
+	}
+	store.searchTextFn = func(_ context.Context, _ string, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return []types.ScoredFact{
+			{Fact: types.Fact{UUID: "f1", FactText: "Alice works at Acme"}, Score: 1.0},
+		}, nil
+	}
+
+	eng := New(WithStore(store), WithEmbedder(&mockEmbedder{}))
+	result, err := eng.SearchFacts(context.Background(), "test")
+
+	if !errors.Is(err, types.ErrPartialSearch) {
+		t.Fatalf("error = %v, want ErrPartialSearch", err)
+	}
+	if result == nil || len(result.Facts) != 1 {
+		t.Fatalf("result = %v, want 1 fact alongside the partial error", result)
+	}
+}
+
+func TestSearchFacts_EmbedFailureIsPartial(t *testing.T) {
+	store := newMockStore()
+	store.searchTextFn = func(_ context.Context, _ string, _ *types.SearchOptions) ([]types.ScoredFact, error) {
+		return []types.ScoredFact{
+			{Fact: types.Fact{UUID: "f1"}, Score: 1.0},
+		}, nil
+	}
+
+	eng := New(WithStore(store), WithEmbedder(&mockEmbedder{err: errors.New("embedder down")}))
+	result, err := eng.SearchFacts(context.Background(), "test")
+
+	if !errors.Is(err, types.ErrPartialSearch) {
+		t.Fatalf("error = %v, want ErrPartialSearch", err)
+	}
+	if result == nil || len(result.Facts) != 1 {
+		t.Fatalf("result = %v, want 1 fact", result)
 	}
 }
 

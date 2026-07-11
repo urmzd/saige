@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -74,10 +75,14 @@ func newKgSearchCmd(ctx context.Context) *cobra.Command {
 			graph, cleanup := kgGraph_(ctx, db)
 			defer cleanup()
 
+			// Partial failures still carry usable results: warn and print them.
 			result, err := graph.SearchFacts(ctx, query, kgtypes.WithLimit(limit))
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				if !errors.Is(err, kgtypes.ErrPartialSearch) {
+					out.Error(err)
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
 
 			if err := out.Result(result); err != nil {

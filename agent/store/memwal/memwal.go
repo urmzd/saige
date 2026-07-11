@@ -1,8 +1,14 @@
+// Package memwal implements agent/types.WAL with in-memory maps. It is
+// intended for tests and offers no crash durability; production deployments
+// should use agent/store/filewal instead.
 package memwal
 
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/urmzd/saige/agent/types"
@@ -13,10 +19,13 @@ type txState struct {
 	ops       []types.TxOp
 	committed bool
 	aborted   bool
+	applied   bool
 }
 
 // WAL is a WAL implementation backed by an in-memory map.
-// Suitable for testing; offers no crash durability.
+// Suitable for testing; offers no crash durability. For production use a
+// durable implementation such as agent/store/filewal (append-only JSONL,
+// fsync on commit).
 type WAL struct {
 	mu     sync.Mutex
 	txns   map[types.TxID]*txState
@@ -78,16 +87,44 @@ func (w *WAL) Abort(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Recover returns committed transactions that have not been marked applied,
+// in commit order.
 func (w *WAL) Recover(_ context.Context) ([]types.TxID, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var committed []types.TxID
 	for id, tx := range w.txns {
-		if tx.committed {
+		if tx.committed && !tx.applied {
 			committed = append(committed, id)
 		}
 	}
+	// Map iteration order is random; tx IDs are sequential ("tx-N"), so sort
+	// numerically to replay in commit order.
+	sort.Slice(committed, func(i, j int) bool {
+		return txSeq(committed[i]) < txSeq(committed[j])
+	})
 	return committed, nil
+}
+
+func txSeq(id types.TxID) uint64 {
+	n, _ := strconv.ParseUint(strings.TrimPrefix(string(id), "tx-"), 10, 64)
+	return n
+}
+
+// MarkApplied records that a committed transaction's ops were applied to the
+// store, excluding it from future Recover results.
+func (w *WAL) MarkApplied(_ context.Context, txID types.TxID) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	tx, ok := w.txns[txID]
+	if !ok {
+		return fmt.Errorf("unknown transaction: %s", txID)
+	}
+	if !tx.committed {
+		return fmt.Errorf("transaction %s is not committed", txID)
+	}
+	tx.applied = true
+	return nil
 }
 
 func (w *WAL) Replay(_ context.Context, txID types.TxID) ([]types.TxOp, error) {

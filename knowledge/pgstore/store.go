@@ -8,7 +8,11 @@ import (
 	"github.com/urmzd/saige/knowledge/types"
 )
 
-var _ types.Store = (*Store)(nil)
+var (
+	_ types.Store            = (*Store)(nil)
+	_ types.GroupScopedStore = (*Store)(nil)
+	_ types.EpisodeDeleter   = (*Store)(nil)
+)
 
 // Store implements types.Store backed by PostgreSQL with pgvector.
 type Store struct {

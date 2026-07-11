@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -78,6 +79,95 @@ func TestRunSkipsEmptyScores(t *testing.T) {
 
 	if len(result.Results[0].Scores) != 0 {
 		t.Errorf("expected 0 scores, got %d", len(result.Results[0].Scores))
+	}
+}
+
+func TestRunScorerErrorDoesNotAbort(t *testing.T) {
+	obs := []Observation{
+		{ID: "good-1"},
+		{ID: "bad"},
+		{ID: "good-2"},
+	}
+
+	flaky := NewScorerFunc("flaky", func(_ context.Context, o Observation) (Score, error) {
+		if o.ID == "bad" {
+			return Score{}, errors.New("judge unavailable")
+		}
+		return Score{Name: "flaky", Value: 1.0}, nil
+	})
+	steady := NewScorerFunc("steady", func(_ context.Context, _ Observation) (Score, error) {
+		return Score{Name: "steady", Value: 0.5}, nil
+	})
+
+	result, err := Run(context.Background(), "partial", obs, []Scorer{flaky, steady}, WithConcurrency(1))
+	if err != nil {
+		t.Fatalf("suite should complete despite scorer error, got %v", err)
+	}
+
+	if len(result.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(result.Results))
+	}
+
+	// Errored case records the failure and keeps the other scorer's score.
+	bad := result.Results[1]
+	var errored *Score
+	for i := range bad.Scores {
+		if bad.Scores[i].Name == "flaky" {
+			errored = &bad.Scores[i]
+		}
+	}
+	if errored == nil {
+		t.Fatal("expected errored flaky score on bad case")
+	}
+	if errored.Error != "judge unavailable" {
+		t.Errorf("expected recorded error, got %q", errored.Error)
+	}
+	steadyScored := false
+	for _, s := range bad.Scores {
+		if s.Name == "steady" && s.Error == "" {
+			steadyScored = true
+		}
+	}
+	if !steadyScored {
+		t.Error("expected steady scorer to still score the errored case")
+	}
+
+	// Aggregate excludes the errored score instead of counting it as zero.
+	if result.Aggregate["flaky"] != 1.0 {
+		t.Errorf("expected flaky aggregate 1.0 (errored case excluded), got %f", result.Aggregate["flaky"])
+	}
+	if result.Aggregate["steady"] != 0.5 {
+		t.Errorf("expected steady aggregate 0.5, got %f", result.Aggregate["steady"])
+	}
+	if result.ErroredCases != 1 {
+		t.Errorf("expected 1 errored case, got %d", result.ErroredCases)
+	}
+}
+
+func TestRunAllScoresErrored(t *testing.T) {
+	obs := []Observation{{ID: "a"}, {ID: "b"}}
+
+	broken := NewScorerFunc("broken", func(_ context.Context, _ Observation) (Score, error) {
+		return Score{}, errors.New("boom")
+	})
+
+	result, err := Run(context.Background(), "all-error", obs, []Scorer{broken})
+	if err == nil {
+		t.Fatal("expected suite-level error when every score errors")
+	}
+	if result == nil {
+		t.Fatal("expected suite result with per-case errors alongside the error")
+	}
+	if result.ErroredCases != 2 {
+		t.Errorf("expected 2 errored cases, got %d", result.ErroredCases)
+	}
+	if _, ok := result.Aggregate["broken"]; ok {
+		t.Error("errored scores must not appear in the aggregate")
+	}
+	for _, r := range result.Results {
+		if len(r.Scores) != 1 || r.Scores[0].Error == "" {
+			t.Errorf("observation %q: expected one errored score, got %+v", r.Observation.ID, r.Scores)
+		}
 	}
 }
 

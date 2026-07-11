@@ -10,12 +10,13 @@
 // on the tiny types.StepRunner seam, for which this package supplies a
 // DBOS-backed implementation.
 //
-// Known limitation: the agent loop executes parallel tool calls in separate
-// goroutines, so tool steps are recorded from those goroutines rather than the
-// workflow goroutine. LLM steps (the dominant cost) run synchronously in the
-// workflow goroutine via Agent.RunDurable. For runs with many concurrent tools,
-// prefer a single tool per turn or await the follow-up that serializes tool
-// steps via dbos.Go/dbos.Select.
+// Durable runs execute tool calls SEQUENTIALLY, unlike the non-durable path,
+// which fans tools out across goroutines. This is deliberate: DBOS correlates
+// each RunStep with the workflow's calling context and replays steps in
+// recorded order, so deterministic step ordering in the workflow goroutine is
+// what makes crash recovery exact. The trade-off is latency on turns with many
+// tool calls — a durable run pays the sum of its tools' latencies rather than
+// the max.
 package dbos
 
 import (

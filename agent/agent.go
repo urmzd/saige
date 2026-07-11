@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/agent/store/walrecover"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -247,7 +248,7 @@ func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
 				},
 			},
 		},
-		factory: func() *Agent {
+		factory: func(runner types.StepRunner) *Agent {
 			return NewAgent(AgentConfig{
 				Name:         sa.Name,
 				SystemPrompt: sa.SystemPrompt,
@@ -255,6 +256,7 @@ func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
 				Tools:        sa.Tools,
 				SubAgents:    sa.SubAgents,
 				MaxIter:      sa.MaxIter,
+				StepRunner:   runner,
 			})
 		},
 	})
@@ -698,10 +700,39 @@ func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.Node
 	if err != nil {
 		return nil, fmt.Errorf("load tree: %w", err)
 	}
+	cps, err := store.ListCheckpoints(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load checkpoints: %w", err)
+	}
+	// Keep only checkpoints whose node belongs to this tree — ListCheckpoints
+	// is store-wide, but a tree only rewinds to nodes it contains.
+	inTree := make(map[types.NodeID]bool, len(nodes))
+	for _, n := range nodes {
+		inTree[n.ID] = true
+	}
+	checkpoints := make(map[types.CheckpointID]types.Checkpoint, len(cps))
+	for _, cp := range cps {
+		if inTree[cp.NodeID] {
+			checkpoints[cp.ID] = cp
+		}
+	}
 	if active == "" {
 		active = types.BranchID("main")
 	}
-	return tree.FromStore(nodes, branches, nil, rootID, active)
+	return tree.FromStore(nodes, branches, checkpoints, rootID, active)
+}
+
+// RecoverAndLoadTree heals the store from any write-ahead-log transactions
+// that committed but were never applied (e.g. a crash between WAL commit and
+// store write), then hydrates the tree. Call it instead of LoadTreeFromStore
+// on startup when both a WAL and a Store are configured.
+func RecoverAndLoadTree(ctx context.Context, wal types.WAL, store types.Store, rootID types.NodeID, active types.BranchID) (*tree.Tree, error) {
+	if wal != nil {
+		if _, err := walrecover.RecoverWAL(ctx, wal, store); err != nil {
+			return nil, fmt.Errorf("recover wal: %w", err)
+		}
+	}
+	return LoadTreeFromStore(ctx, store, rootID, active)
 }
 
 // ── Run loop ─────────────────────────────────────────────────────────
@@ -711,17 +742,31 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 	start := time.Now()
 	log.Debug("agent loop started", "agent", a.cfg.Name, "branch", branch)
 
+	var loopErr error
 	defer func() {
+		// A terminal error is delivered on both channels on purpose: as an
+		// ErrorDelta so channel consumers see it in-band, and as the stream's
+		// close error so Wait() reports the same failure.
+		if loopErr != nil {
+			stream.send(types.ErrorDelta{Error: loopErr})
+		}
 		stream.send(types.DoneDelta{})
-		stream.close(nil)
+		stream.close(loopErr)
 		a.cfg.Metrics.RecordAgentInvocation(ctx, a.cfg.Name, time.Since(start))
 		log.Debug("agent loop finished", "agent", a.cfg.Name, "elapsed", time.Since(start))
 	}()
 
+	loopErr = a.run(ctx, stream, input, branch)
+}
+
+// run executes the agent loop and returns its terminal error (nil on a clean
+// finish). runLoop turns that error into the stream's ErrorDelta + close error.
+func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Message, branch types.BranchID) error {
+	log := a.cfg.Logger
 	tr := a.cfg.Tree
 
-	if !a.appendInput(ctx, tr, stream, branch, input) {
-		return
+	if err := a.appendInput(ctx, tr, branch, input); err != nil {
+		return err
 	}
 
 	var handoffCount int
@@ -735,22 +780,20 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 	for iterCount := 0; ; iterCount++ {
 		select {
 		case <-ctx.Done():
-			stream.send(types.ErrorDelta{Error: types.ErrStreamCanceled})
-			return
+			return types.ErrStreamCanceled
 		default:
 		}
 
 		// Flatten the branch to get current message history.
 		messages, err := tr.FlattenBranch(branch)
 		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
+			return err
 		}
 
 		// Resolve config + active agent (handoff group only). With no group this
 		// is byte-for-byte the non-handoff path.
 		resolved, llmMessages := a.prepareMessages(messages)
-		active := a.resolveActive(&resolved, llmMessages)
+		active := applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
 
 		// Check iteration cap. If we break here while the last assistant turn left
 		// tool calls pending (pendingWork), the run was truncated, not finished —
@@ -759,7 +802,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		// does NOT emit it.
 		if iterCount >= resolved.maxIter {
 			if pendingWork {
-				stream.send(types.ErrorDelta{Error: types.ErrMaxIterations})
+				return types.ErrMaxIterations
 			}
 			break
 		}
@@ -778,8 +821,7 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		msg, usage, llmErr := a.getAssistantMessage(ctx, stream, active.provider, active.messages, active.toolDefs, stepName)
 		if llmErr != nil {
 			log.Error("provider call failed", "error", llmErr, "iteration", iterCount)
-			stream.send(types.ErrorDelta{Error: llmErr})
-			return
+			return llmErr
 		}
 
 		// Emit enriched usage delta (carries CacheHit + response metadata + latency).
@@ -796,13 +838,11 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		// Persist assistant message to tree.
 		tip, err := tr.Tip(branch)
 		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
+			return err
 		}
 		assistantNode, err := tr.AddChild(ctx, tip.ID, *msg)
 		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
+			return err
 		}
 		a.persistNode(ctx, assistantNode)
 
@@ -819,37 +859,35 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		results := a.executeToolsConcurrently(ctx, stream, toolCalls, active.tools)
 		pendingWork = true
 		if err := a.persistToolResults(ctx, tr, branch, results); err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return
+			return err
 		}
 
 		// Handoff post-check: first signal wins; self-handoff is a no-op. On a
 		// handoff the next iteration re-flattens and resolves the new active
 		// agent; with no handoff it re-flattens to process the tool results — so
 		// both simply fall through to the next iteration.
-		if a.applyHandoff(ctx, tr, stream, branch, results, active.name, &handoffCount) {
-			return
+		if err := a.applyHandoff(ctx, tr, stream, branch, results, active.name, &handoffCount); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
-// appendInput appends input messages as child nodes on the branch. Returns false
-// (after streaming an ErrorDelta) if a tree write fails.
-func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, input []types.Message) bool {
+// appendInput appends input messages as child nodes on the branch. Returns the
+// first tree-write error, which terminates the run.
+func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, branch types.BranchID, input []types.Message) error {
 	for _, msg := range input {
 		tip, err := tr.Tip(branch)
 		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return false
+			return err
 		}
 		node, err := tr.AddChild(ctx, tip.ID, msg)
 		if err != nil {
-			stream.send(types.ErrorDelta{Error: err})
-			return false
+			return err
 		}
 		a.persistNode(ctx, node)
 	}
-	return true
+	return nil
 }
 
 // activeContext is the per-iteration agent selection (provider, tools, persona).
@@ -885,6 +923,13 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 	if member.systemPrompt != "" {
 		ac.messages = overlaySystem(llmMessages, member.systemPrompt)
 	}
+	return ac
+}
+
+// applyModel re-targets the active provider when a ConfigContent block set a
+// model. Providers that don't implement types.ModelSwitcher are unchanged.
+func applyModel(ac activeContext, model string) activeContext {
+	ac.provider = types.ProviderWithModel(ac.provider, model)
 	return ac
 }
 
@@ -925,10 +970,10 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 }
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
-// HandoffContent overlay on the same branch. It returns fatal=true (after
-// streaming an ErrorDelta) when the caller should return — the handoff limit was
-// exceeded or a tree write failed.
-func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) (fatal bool) {
+// HandoffContent overlay on the same branch. It returns a non-nil error when the
+// caller should terminate the run — the handoff limit was exceeded or a tree
+// write failed.
+func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) error {
 	handoffTo := ""
 	for _, r := range results {
 		if r.handoffTo != "" {
@@ -937,13 +982,12 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 		}
 	}
 	if handoffTo == "" || handoffTo == activeName {
-		return false
+		return nil
 	}
 	// Enforce the bound BEFORE any side effect, so the over-limit transfer is
 	// neither streamed nor persisted (which would poison the branch).
 	if *handoffCount >= a.cfg.MaxHandoffs {
-		stream.send(types.ErrorDelta{Error: ErrHandoffLimitExceeded})
-		return true
+		return ErrHandoffLimitExceeded
 	}
 	*handoffCount++
 	stream.send(types.HandoffDelta{From: activeName, To: handoffTo})
@@ -952,16 +996,14 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 	}}
 	tip, err := tr.Tip(branch)
 	if err != nil {
-		stream.send(types.ErrorDelta{Error: err})
-		return true
+		return err
 	}
 	node, err := tr.AddChild(ctx, tip.ID, overlay)
 	if err != nil {
-		stream.send(types.ErrorDelta{Error: err})
-		return true
+		return err
 	}
 	a.persistNode(ctx, node)
-	return false
+	return nil
 }
 
 // getAssistantMessage runs the provider call + aggregation as one durable step.
@@ -1179,21 +1221,39 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return toolResult{toolCallID: tc.ID, result: out, handoffTo: target}
 	}
 
-	// Sub-agent: forward child deltas (kept inline, not a durable step).
+	// Sub-agent: forward child deltas (the delegation itself is not a durable
+	// step — the child inherits the parent's StepRunner so its own LLM/tool
+	// steps are the durable units).
 	if invoker, ok := tool.(SubAgentInvoker); ok {
 		task, _ := tc.Arguments["task"].(string)
-		childStream := invoker.InvokeAgent(ctx, task)
+		var childStream *EventStream
+		if st, ok := tool.(*subAgentTool); ok {
+			childStream = st.invokeWithRunner(ctx, task, a.childStepRunner(tc.ID))
+		} else {
+			childStream = invoker.InvokeAgent(ctx, task)
+		}
 
+		// A child failure must fail the delegation: partial text plus success
+		// would let the parent LLM treat a crashed child as a completed task.
+		// The ErrorDelta scan covers custom SubAgentInvoker streams that may
+		// not close with the error they emitted.
+		var childErr error
 		var resultBuf strings.Builder
 		for d := range childStream.Deltas() {
 			stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
-			if tcd, ok := d.(types.TextContentDelta); ok {
-				resultBuf.WriteString(tcd.Content)
+			switch v := d.(type) {
+			case types.TextContentDelta:
+				resultBuf.WriteString(v.Content)
+			case types.ErrorDelta:
+				childErr = v.Error
 			}
 		}
-		res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
 		if err := childStream.Wait(); err != nil {
-			res.err = err.Error()
+			childErr = err
+		}
+		res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
+		if childErr != nil {
+			res.err = childErr.Error()
 		}
 		stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Result: res.result, Error: res.err})
 		return res

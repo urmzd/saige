@@ -5,13 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/rag/types"
 )
 
-var _ types.Store = (*Store)(nil)
+var (
+	_ types.Store            = (*Store)(nil)
+	_ types.DocumentReplacer = (*Store)(nil)
+)
 
 // Store implements types.Store backed by PostgreSQL with pgvector.
 type Store struct {
@@ -49,38 +51,4 @@ func decodeMetadata(b []byte) map[string]string {
 	var m map[string]string
 	_ = json.Unmarshal(b, &m)
 	return m
-}
-
-// mergeMetadata merges document and variant metadata.
-func mergeMetadata(docMeta, variantMeta map[string]string) map[string]string {
-	merged := make(map[string]string)
-	for k, v := range docMeta {
-		merged[k] = v
-	}
-	for k, v := range variantMeta {
-		merged[k] = v
-	}
-	return merged
-}
-
-// matchFilters checks if metadata matches all filters.
-func matchFilters(meta map[string]string, filters []types.MetadataFilter) bool {
-	for _, f := range filters {
-		val, ok := meta[f.Key]
-		switch f.Op {
-		case types.FilterEq:
-			if !ok || val != f.Value {
-				return false
-			}
-		case types.FilterNeq:
-			if ok && val == f.Value {
-				return false
-			}
-		case types.FilterContains:
-			if !ok || !strings.Contains(val, f.Value) {
-				return false
-			}
-		}
-	}
-	return true
 }

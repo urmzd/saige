@@ -4,6 +4,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -93,7 +94,7 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 	responseEntities := make([]types.Entity, 0, len(extractedEntities))
 
 	for _, ent := range extractedEntities {
-		resolvedUUID, err := e.deduplicateAndUpsertEntity(ctx, &ent)
+		resolvedUUID, err := e.deduplicateAndUpsertEntity(ctx, input.GroupID, &ent)
 		if err != nil {
 			e.logger.Warn("upsert entity failed", "entity", ent.Name, "error", err)
 			continue
@@ -134,6 +135,7 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 			Type:       rel.Type,
 			Fact:       rel.Fact,
 			ValidAt:    now,
+			GroupID:    input.GroupID,
 		})
 		if err != nil {
 			e.logger.Warn("create relation failed", "type", rel.Type, "error", err)
@@ -176,7 +178,11 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 }
 
 // deduplicateAndUpsertEntity performs fuzzy entity deduplication then upserts.
-func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, ent *types.ExtractedEntity) (string, error) {
+// Dedup candidates are scoped to groupID when the store supports it, so
+// entities never merge across tenant groups.
+func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID string, ent *types.ExtractedEntity) (string, error) {
+	ent.GroupID = groupID
+
 	// Generate embedding
 	var embedding []float32
 	if e.embedder != nil {
@@ -189,7 +195,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, ent *types
 	}
 
 	// Try exact match first (handled by UpsertEntity's name+type check)
-	existing, err := e.store.FindEntitiesByNameType(ctx, ent.Name, ent.Type)
+	existing, err := e.findEntitiesByNameType(ctx, groupID, ent.Name, ent.Type)
 	if err == nil && len(existing) > 0 {
 		// Exact match — upsert will update summary/embedding
 		uuid, err := e.store.UpsertEntity(ctx, ent, embedding)
@@ -197,7 +203,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, ent *types
 	}
 
 	// Try fuzzy match: find candidates with similar names
-	candidates, err := e.store.FindEntitiesByFuzzyName(ctx, ent.Name, 10)
+	candidates, err := e.findEntitiesByFuzzyName(ctx, groupID, ent.Name, 10)
 	if err == nil {
 		for _, candidate := range candidates {
 			if fuzzy.IsFuzzyMatch(ent.Name, candidate.Name, FuzzyMatchThreshold) {
@@ -209,6 +215,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, ent *types
 					Name:    candidate.Name, // keep the canonical name
 					Type:    ent.Type,
 					Summary: ent.Summary, // use newer summary
+					GroupID: groupID,
 				}
 				uuid, err := e.store.UpsertEntity(ctx, merged, embedding)
 				return uuid, err
@@ -218,6 +225,24 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, ent *types
 
 	// No match — create new entity
 	return e.store.UpsertEntity(ctx, ent, embedding)
+}
+
+// findEntitiesByNameType uses group-scoped lookup when the store supports it,
+// falling back to the legacy global lookup otherwise.
+func (e *GraphEngine) findEntitiesByNameType(ctx context.Context, groupID, name, entityType string) ([]types.Entity, error) {
+	if gs, ok := e.store.(types.GroupScopedStore); ok {
+		return gs.FindEntitiesByNameTypeInGroup(ctx, groupID, name, entityType)
+	}
+	return e.store.FindEntitiesByNameType(ctx, name, entityType)
+}
+
+// findEntitiesByFuzzyName uses group-scoped lookup when the store supports it,
+// falling back to the legacy global lookup otherwise.
+func (e *GraphEngine) findEntitiesByFuzzyName(ctx context.Context, groupID, name string, limit int) ([]types.Entity, error) {
+	if gs, ok := e.store.(types.GroupScopedStore); ok {
+		return gs.FindEntitiesByFuzzyNameInGroup(ctx, groupID, name, limit)
+	}
+	return e.store.FindEntitiesByFuzzyName(ctx, name, limit)
 }
 
 // isRelationDuplicate checks if a similar relation already exists between entities.
@@ -274,7 +299,24 @@ func (e *GraphEngine) GetEntity(ctx context.Context, id string) (*types.Entity, 
 	return e.store.GetEntity(ctx, id)
 }
 
+// DeleteEpisodes implements types.EpisodeDeleter by delegating to the store.
+// It errors when the configured store cannot delete episodes, so callers
+// never mistake a no-op for a completed cleanup.
+func (e *GraphEngine) DeleteEpisodes(ctx context.Context, groupID string) error {
+	if e.store == nil {
+		return types.ErrStoreNotReady
+	}
+	ed, ok := e.store.(types.EpisodeDeleter)
+	if !ok {
+		return fmt.Errorf("store %T does not support episode deletion", e.store)
+	}
+	return ed.DeleteEpisodes(ctx, groupID)
+}
+
 // SearchFacts combines vector and BM25 search using Reciprocal Rank Fusion.
+// If every attempted backend fails the error is returned. If only some fail,
+// the surviving results are returned together with an error wrapping
+// types.ErrPartialSearch so callers can detect degraded results.
 func (e *GraphEngine) SearchFacts(ctx context.Context, query string, opts ...types.SearchOption) (*types.SearchFactsResult, error) {
 	o := &types.SearchOptions{}
 	for _, opt := range opts {
@@ -289,22 +331,46 @@ func (e *GraphEngine) SearchFacts(ctx context.Context, query string, opts ...typ
 	// Run vector search and BM25 search
 	var vectorResults []types.ScoredFact
 	var bm25Results []types.ScoredFact
+	var searchErrs []error
+	attempted := 0
 
 	// Vector search (requires embedder)
 	if e.embedder != nil {
+		attempted++
 		embeddings, err := e.embedder.Embed(ctx, []string{query})
-		if err == nil && len(embeddings) > 0 {
-			vectorResults, _ = e.store.SearchByEmbedding(ctx, embeddings[0], o)
+		switch {
+		case err != nil:
+			searchErrs = append(searchErrs, fmt.Errorf("embed query: %w", err))
+		case len(embeddings) == 0:
+			searchErrs = append(searchErrs, fmt.Errorf("embed query: no embedding returned"))
+		default:
+			vectorResults, err = e.store.SearchByEmbedding(ctx, embeddings[0], o)
+			if err != nil {
+				searchErrs = append(searchErrs, fmt.Errorf("vector search: %w", err))
+			}
 		}
 	}
 
 	// BM25 text search
-	bm25Results, _ = e.store.SearchByText(ctx, query, o)
+	attempted++
+	var err error
+	bm25Results, err = e.store.SearchByText(ctx, query, o)
+	if err != nil {
+		searchErrs = append(searchErrs, fmt.Errorf("text search: %w", err))
+	}
+
+	if len(searchErrs) == attempted {
+		return nil, errors.Join(searchErrs...)
+	}
 
 	// Combine via RRF
 	facts := reciprocalRankFusion(vectorResults, bm25Results, limit)
 
-	return &types.SearchFactsResult{Facts: facts}, nil
+	result := &types.SearchFactsResult{Facts: facts}
+	if len(searchErrs) > 0 {
+		return result, fmt.Errorf("%w: %w", types.ErrPartialSearch, errors.Join(searchErrs...))
+	}
+	return result, nil
 }
 
 // reciprocalRankFusion combines two ranked lists using RRF scoring.

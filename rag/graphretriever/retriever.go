@@ -3,6 +3,7 @@ package graphretriever
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	knowledgetypes "github.com/urmzd/saige/knowledge/types"
@@ -33,7 +34,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts *ragtypes.S
 
 	var searchOpts []knowledgetypes.SearchOption
 	result, err := r.graph.SearchFacts(ctx, query, searchOpts...)
-	if err != nil {
+	if err != nil && !errors.Is(err, knowledgetypes.ErrPartialSearch) {
 		return nil, fmt.Errorf("search facts: %w", err)
 	}
 

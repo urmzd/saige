@@ -4,6 +4,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	agenttypes "github.com/urmzd/saige/agent/types"
@@ -50,7 +51,9 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 	}
 
 	result, err := t.graph.SearchFacts(ctx, query, opts...)
-	if err != nil {
+	// A partial failure still returns usable results; only fail hard when
+	// the search produced nothing at all.
+	if err != nil && !errors.Is(err, kgtypes.ErrPartialSearch) {
 		return "", fmt.Errorf("kg search: %w", err)
 	}
 
