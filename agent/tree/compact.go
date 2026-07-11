@@ -120,12 +120,25 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	}
 
 	var summaryBuf strings.Builder
+	var streamErr error
 	for delta := range rx {
-		if tc, ok := delta.(types.TextContentDelta); ok {
-			summaryBuf.WriteString(tc.Content)
+		switch d := delta.(type) {
+		case types.TextContentDelta:
+			summaryBuf.WriteString(d.Content)
+		case types.ErrorDelta:
+			// Mid-stream failures (e.g. rate limits after the stream opened)
+			// arrive as ErrorDelta, not as the ChatStream return error.
+			streamErr = d.Error
 		}
 	}
+	if streamErr != nil {
+		return "", fmt.Errorf("summarization: %w", streamErr)
+	}
 	summary := summaryBuf.String()
+	if strings.TrimSpace(summary) == "" {
+		// An empty summary would silently drop the compacted messages.
+		return "", fmt.Errorf("summarization produced an empty summary")
+	}
 
 	// Create a new branch forking from the parent of the first compacted node.
 	first := toCompact[0]
@@ -133,22 +146,39 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 
 	newBranchID := types.BranchID(fmt.Sprintf("compact-%s-%s", branch, types.NewID()[:8]))
 
+	// The summary is stored as a user+assistant pair: the summary text is
+	// model-generated, so it belongs on an assistant turn, but some providers
+	// reject histories whose first non-system message is from the assistant,
+	// so a synthetic user request precedes it.
 	now := time.Now()
-	summaryNode := &types.Node{
+	requestNode := &types.Node{
 		ID:        types.NodeID(types.NewID()),
 		ParentID:  first.node.ParentID,
-		Message:   types.NewUserMessage("Summary of previous conversation: " + summary),
+		Message:   types.NewUserMessage(types.SummaryRequestText),
 		State:     types.NodeCompacted,
 		Version:   1,
 		Depth:     first.node.Depth,
 		BranchID:  newBranchID,
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	summaryNode := &types.Node{
+		ID:        types.NodeID(types.NewID()),
+		ParentID:  requestNode.ID,
+		Message:   types.NewAssistantMessage(summary),
+		State:     types.NodeCompacted,
+		Version:   1,
+		Depth:     first.node.Depth + 1,
+		BranchID:  newBranchID,
+		CreatedAt: now,
+		UpdatedAt: now,
 		SummaryOf: nodeIDs,
 	}
 
+	t.nodes[requestNode.ID] = requestNode
 	t.nodes[summaryNode.ID] = summaryNode
-	t.children[first.node.ParentID] = append(t.children[first.node.ParentID], summaryNode.ID)
+	t.children[first.node.ParentID] = append(t.children[first.node.ParentID], requestNode.ID)
+	t.children[requestNode.ID] = append(t.children[requestNode.ID], summaryNode.ID)
 
 	// Re-link remaining (non-compacted) nodes after the compacted prefix onto the new branch.
 	var remaining []types.NodeID

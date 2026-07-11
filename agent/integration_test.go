@@ -1007,6 +1007,8 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 		types.NewUserMessage("three"),
 		types.NewUserMessage("four"),
 		types.NewUserMessage("five"),
+		types.NewUserMessage("six"),
+		types.NewUserMessage("seven"),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -1014,21 +1016,25 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	// Should be: system + summary + last 4 = 6
-	if len(result) != 6 {
-		t.Errorf("compacted length = %d, want 6", len(result))
+	// Should be: system + summary request + assistant summary + last 4 = 7
+	if len(result) != 7 {
+		t.Errorf("compacted length = %d, want 7", len(result))
 	}
 
 	// First should be system
 	if result[0].Role() != types.RoleSystem {
 		t.Error("first message should be system")
 	}
-	// Second should be summary
-	um, ok := result[1].(types.UserMessage)
-	if !ok {
-		t.Fatal("second message should be UserMessage (summary)")
+	// Second should be the synthetic user request.
+	if _, ok := result[1].(types.UserMessage); !ok {
+		t.Fatal("second message should be UserMessage (summary request)")
 	}
-	tc, ok := um.Content[0].(types.TextContent)
+	// Third should be the model-generated summary on an assistant turn.
+	am, ok := result[2].(types.AssistantMessage)
+	if !ok {
+		t.Fatal("third message should be AssistantMessage (summary)")
+	}
+	tc, ok := am.Content[0].(types.TextContent)
 	if !ok {
 		t.Fatal("summary content should be TextContent")
 	}
@@ -1041,11 +1047,17 @@ func TestSummarizeCompactorProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("provider down")}
 	compactor := types.NewSummarizeCompactor(2, 0)
 
+	// Enough messages that the compactor actually reaches the provider
+	// (default KeepLast is 4, and at least 3 must be summarizable).
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
 		types.NewUserMessage("one"),
 		types.NewUserMessage("two"),
 		types.NewUserMessage("three"),
+		types.NewUserMessage("four"),
+		types.NewUserMessage("five"),
+		types.NewUserMessage("six"),
+		types.NewUserMessage("seven"),
 	}
 
 	// Provider error should cause fallback to original messages
@@ -1053,8 +1065,8 @@ func TestSummarizeCompactorProviderError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
-	if len(result) != 4 {
-		t.Errorf("messages = %d, want 4 (fallback)", len(result))
+	if len(result) != 8 {
+		t.Errorf("messages = %d, want 8 (fallback)", len(result))
 	}
 }
 
@@ -3023,6 +3035,114 @@ func TestSummarizeCompactorFewMessages(t *testing.T) {
 	}
 }
 
+func TestSummarizeCompactorSkipsPreviousSummaryPair(t *testing.T) {
+	provider := &recordingProvider{response: "should not be called"}
+	compactor := types.NewSummarizeCompactor(4, 2)
+
+	// History right after a compaction: the summary pair + a few real turns.
+	// Without pair exclusion, len=6 > threshold=4 would re-fire an LLM call
+	// on every turn; the pair must not count toward the threshold.
+	msgs := []types.Message{
+		types.NewSystemMessage("sys"),
+		types.NewUserMessage(types.SummaryRequestText),
+		types.NewAssistantMessage("earlier summary"),
+		types.NewUserMessage("turn-1"),
+		types.NewAssistantMessage("reply-1"),
+		types.NewUserMessage("turn-2"),
+	}
+
+	result, err := compactor.Compact(context.Background(), msgs, provider)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if len(result) != 6 {
+		t.Errorf("messages = %d, want 6 (unchanged)", len(result))
+	}
+	if calls := len(provider.calls); calls != 0 {
+		t.Errorf("provider calls = %d, want 0 (no LLM call below effective threshold)", calls)
+	}
+}
+
+func TestSummarizeCompactorSkipsUnprofitableSummary(t *testing.T) {
+	provider := &recordingProvider{response: "should not be called"}
+	compactor := types.NewSummarizeCompactor(3, 2)
+
+	// Over threshold, but only 2 messages are summarizable — the summary
+	// pair would replace them one-for-one, so no LLM call should be made.
+	msgs := []types.Message{
+		types.NewSystemMessage("sys"),
+		types.NewUserMessage("old-1"),
+		types.NewUserMessage("old-2"),
+		types.NewUserMessage("recent-1"),
+		types.NewUserMessage("recent-2"),
+	}
+
+	result, err := compactor.Compact(context.Background(), msgs, provider)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if len(result) != 5 {
+		t.Errorf("messages = %d, want 5 (unchanged)", len(result))
+	}
+	if calls := len(provider.calls); calls != 0 {
+		t.Errorf("provider calls = %d, want 0 (summary cannot shrink history)", calls)
+	}
+}
+
+func TestSummarizeCompactorMidStreamErrorFallsBack(t *testing.T) {
+	// Provider opens the stream fine, emits partial text, then fails
+	// mid-stream (e.g. a rate limit). The partial summary must not replace
+	// real history.
+	provider := &sequenceProvider{responses: []func(ch chan<- types.Delta){
+		func(ch chan<- types.Delta) {
+			ch <- types.TextStartDelta{}
+			ch <- types.TextContentDelta{Content: "partial sum"}
+			ch <- types.ErrorDelta{Error: errors.New("rate limited mid-stream")}
+		},
+	}}
+	compactor := types.NewSummarizeCompactor(2, 2)
+
+	msgs := []types.Message{
+		types.NewSystemMessage("sys"),
+		types.NewUserMessage("one"),
+		types.NewUserMessage("two"),
+		types.NewUserMessage("three"),
+		types.NewUserMessage("four"),
+		types.NewUserMessage("five"),
+	}
+
+	result, err := compactor.Compact(context.Background(), msgs, provider)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if len(result) != 6 {
+		t.Errorf("messages = %d, want 6 (fallback on mid-stream error)", len(result))
+	}
+}
+
+func TestSummarizeCompactorEmptySummaryFallsBack(t *testing.T) {
+	// Provider produces no text at all — an empty summary must not replace
+	// real history.
+	compactor := types.NewSummarizeCompactor(2, 2)
+
+	msgs := []types.Message{
+		types.NewSystemMessage("sys"),
+		types.NewUserMessage("one"),
+		types.NewUserMessage("two"),
+		types.NewUserMessage("three"),
+		types.NewUserMessage("four"),
+		types.NewUserMessage("five"),
+	}
+
+	result, err := compactor.Compact(context.Background(), msgs, &emptyProvider{})
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if len(result) != 6 {
+		t.Errorf("messages = %d, want 6 (fallback on empty summary)", len(result))
+	}
+}
+
 // ===================================================================
 // Delta type verification
 // ===================================================================
@@ -3550,6 +3670,7 @@ func TestSummarizeCompactorCustomKeepLast(t *testing.T) {
 		types.NewSystemMessage("sys"),
 		types.NewUserMessage("old-1"),
 		types.NewUserMessage("old-2"),
+		types.NewUserMessage("old-3"),
 		types.NewUserMessage("recent-1"),
 		types.NewUserMessage("recent-2"),
 	}
@@ -3559,9 +3680,9 @@ func TestSummarizeCompactorCustomKeepLast(t *testing.T) {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	// sys + summary + 2 recent = 4
-	if len(result) != 4 {
-		t.Errorf("messages = %d, want 4", len(result))
+	// sys + summary request + assistant summary + 2 recent = 5
+	if len(result) != 5 {
+		t.Errorf("messages = %d, want 5", len(result))
 	}
 }
 

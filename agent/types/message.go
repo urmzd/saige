@@ -52,6 +52,11 @@ func NewUserMessage(text string) UserMessage {
 	return UserMessage{Content: []UserContent{TextContent{Text: text}}}
 }
 
+// NewAssistantMessage creates an AssistantMessage with a single text block.
+func NewAssistantMessage(text string) AssistantMessage {
+	return AssistantMessage{Content: []AssistantContent{TextContent{Text: text}}}
+}
+
 // NewToolResultMessage creates a SystemMessage containing tool results.
 // Tool results from automatic execution are system messages — the SDK
 // executed the tools, not the user.

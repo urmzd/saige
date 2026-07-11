@@ -510,7 +510,8 @@ func (a *Agent) persistCompacted(ctx context.Context, tr *tree.Tree, compacted [
 	}
 
 	// First compacted message is the system prompt (same as root) — skip it.
-	// Branch from root with the second message (the summary).
+	// Branch from root with the second message (the summary request); the rest
+	// (assistant summary + preserved recent context) are appended below.
 	branchID, _, err := tr.Branch(ctx, root.ID, "compact", compacted[1])
 	if err != nil {
 		return "", fmt.Errorf("branch from root: %w", err)
