@@ -12,6 +12,11 @@ import (
 	"github.com/urmzd/saige/rag/types"
 )
 
+var (
+	_ types.Store            = (*Store)(nil)
+	_ types.DocumentReplacer = (*Store)(nil)
+)
+
 // Store is a thread-safe in-memory document store with brute-force cosine similarity search.
 type Store struct {
 	mu           sync.RWMutex
@@ -57,6 +62,24 @@ func (s *Store) FindByFingerprint(_ context.Context, fingerprint string) (*types
 		return nil, types.ErrDocumentNotFound
 	}
 	return s.docs[uuid], nil
+}
+
+// ReplaceDocument atomically swaps the document identified by oldUUID for doc
+// under a single lock, implementing types.DocumentReplacer: readers never
+// observe a state where the old document is gone but the new one is absent.
+func (s *Store) ReplaceDocument(_ context.Context, oldUUID string, doc *types.Document) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, ok := s.docs[oldUUID]; ok {
+		delete(s.fingerprints, old.Fingerprint)
+		delete(s.docs, oldUUID)
+		delete(s.originals, oldUUID)
+	}
+	s.docs[doc.UUID] = doc
+	if doc.Fingerprint != "" {
+		s.fingerprints[doc.Fingerprint] = doc.UUID
+	}
+	return nil
 }
 
 func (s *Store) DeleteDocument(_ context.Context, uuid string) error {

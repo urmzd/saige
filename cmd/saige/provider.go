@@ -31,28 +31,30 @@ var defaultEmbedModels = map[string]string{
 
 // commonFlags holds flags shared by chat and ask commands.
 type commonFlags struct {
-	provider   *string
-	model      *string
-	system     *string
-	ollamaHost *string
-	baseURL    *string
-	embedModel *string
-	ragDB      *string
-	kgDB       *string
-	format     *string
+	provider      *string
+	model         *string
+	system        *string
+	ollamaHost    *string
+	baseURL       *string
+	embedProvider *string
+	embedModel    *string
+	ragDB         *string
+	kgDB          *string
+	format        *string
 }
 
 // persistentFlagVars holds the package-level vars bound to PersistentFlags on the root command.
 var persistentFlagVars = &commonFlags{
-	provider:   new(string),
-	model:      new(string),
-	system:     new(string),
-	ollamaHost: new(string),
-	baseURL:    new(string),
-	embedModel: new(string),
-	ragDB:      new(string),
-	kgDB:       new(string),
-	format:     new(string),
+	provider:      new(string),
+	model:         new(string),
+	system:        new(string),
+	ollamaHost:    new(string),
+	baseURL:       new(string),
+	embedProvider: new(string),
+	embedModel:    new(string),
+	ragDB:         new(string),
+	kgDB:          new(string),
+	format:        new(string),
 }
 
 // addPersistentFlags registers provider and connection flags on the root command's PersistentFlags.
@@ -63,7 +65,8 @@ func addPersistentFlags(cmd *cobra.Command) {
 	pf.StringVar(persistentFlagVars.system, "system", "You are a helpful assistant.", "System prompt")
 	pf.StringVar(persistentFlagVars.ollamaHost, "ollama-host", envOr("OLLAMA_HOST", "http://localhost:11434"), "Ollama host URL")
 	pf.StringVar(persistentFlagVars.baseURL, "base-url", "", "Custom API base URL (OpenAI-compatible)")
-	pf.StringVar(persistentFlagVars.embedModel, "embed-model", "", "Embedding model name (provider-specific default)")
+	pf.StringVar(persistentFlagVars.embedProvider, "embed-provider", envOr("SAIGE_EMBED_PROVIDER", ""), "Embedding provider (openai|google|ollama); defaults to the LLM provider")
+	pf.StringVar(persistentFlagVars.embedModel, "embed-model", "", "Embedding model name (embed-provider-specific default)")
 	pf.StringVar(persistentFlagVars.ragDB, "rag-db", envOr("SAIGE_RAG_DB", ""), "Postgres DSN for RAG tools")
 	pf.StringVar(persistentFlagVars.kgDB, "kg-db", envOr("SAIGE_KG_DB", ""), "Postgres DSN for KG tools")
 	pf.StringVar(persistentFlagVars.format, "format", "human", "Output format: json|human")
@@ -99,12 +102,21 @@ func (cf *commonFlags) resolvedModel() string {
 	return defaultModels[cf.resolvedProvider()]
 }
 
-// resolvedEmbedModel returns the embed model name, falling back to provider default.
+// resolvedEmbedProvider returns the embedding provider name, falling back to
+// the LLM provider when --embed-provider (or SAIGE_EMBED_PROVIDER) is unset.
+func (cf *commonFlags) resolvedEmbedProvider() string {
+	if *cf.embedProvider != "" {
+		return *cf.embedProvider
+	}
+	return cf.resolvedProvider()
+}
+
+// resolvedEmbedModel returns the embed model name, falling back to the embed provider default.
 func (cf *commonFlags) resolvedEmbedModel() string {
 	if *cf.embedModel != "" {
 		return *cf.embedModel
 	}
-	return defaultEmbedModels[cf.resolvedProvider()]
+	return defaultEmbedModels[cf.resolvedEmbedProvider()]
 }
 
 // resolveProvider creates a types.Provider from the resolved flags.
@@ -116,7 +128,13 @@ func resolveProvider(ctx context.Context, cf *commonFlags, verbose bool) (types.
 
 	switch name {
 	case providerOllama:
-		client := ollama.NewClient(*cf.ollamaHost, model, cf.resolvedEmbedModel())
+		// Only pass the resolved embed model when embeddings also come from
+		// ollama; otherwise the embed model belongs to a different provider.
+		embedModel := defaultEmbedModels[providerOllama]
+		if cf.resolvedEmbedProvider() == providerOllama {
+			embedModel = cf.resolvedEmbedModel()
+		}
+		client := ollama.NewClient(*cf.ollamaHost, model, embedModel)
 		if !verbose {
 			client.Logger = log.New(io.Discard, "", 0)
 		}

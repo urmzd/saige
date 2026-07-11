@@ -28,7 +28,7 @@ func (s *Store) CreateRelation(ctx context.Context, rel *types.RelationInput) (s
 	}
 
 	_, err = s.pool.Exec(ctx, relationCreateSQL,
-		relUUID, srcID, tgtID, rel.Type, rel.Fact, validAt,
+		relUUID, srcID, tgtID, rel.Type, rel.Fact, validAt, rel.GroupID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("create relation: %w", err)
@@ -90,11 +90,11 @@ func (s *Store) getNeighbors(ctx context.Context, nodeUUID string) ([]types.Grap
 
 	for rows.Next() {
 		var (
-			rUUID, rType, rFact         string
-			rCreatedAt, rValidAt        time.Time
-			rInvalidAt                  *time.Time
-			nUUID, nName, nType, nSumm  string
-			isOutgoing                  bool
+			rUUID, rType, rFact        string
+			rCreatedAt, rValidAt       time.Time
+			rInvalidAt                 *time.Time
+			nUUID, nName, nType, nSumm string
+			isOutgoing                 bool
 		)
 		if err := rows.Scan(&rUUID, &rType, &rFact, &rCreatedAt, &rValidAt, &rInvalidAt,
 			&nUUID, &nName, &nType, &nSumm, &isOutgoing); err != nil {

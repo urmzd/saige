@@ -130,3 +130,41 @@ func TestRunDurableDistinctStepNames(t *testing.T) {
 		}
 	}
 }
+
+// A cancelled durable run must return the terminal error, never a stale
+// success: the in-band ErrorDelta can be dropped once the context is done, so
+// RunDurable relies on the stream's close error.
+func TestRunDurableCancelledReturnsError(t *testing.T) {
+	blocking := &blockingProvider{started: make(chan struct{})}
+	ag := NewAgent(AgentConfig{
+		Name:         "durable-cancel",
+		SystemPrompt: "sys",
+		Provider:     blocking,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-blocking.started
+		cancel()
+	}()
+
+	msg, err := ag.RunDurable(ctx, nil, []types.Message{types.NewUserMessage("hi")}, "")
+	if err == nil {
+		t.Fatalf("RunDurable after cancellation = (%v, nil), want error", msg)
+	}
+}
+
+// blockingProvider signals when called, then blocks until the context dies.
+type blockingProvider struct {
+	started chan struct{}
+}
+
+func (p *blockingProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	close(p.started)
+	ch := make(chan types.Delta)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}

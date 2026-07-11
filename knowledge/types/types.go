@@ -14,6 +14,11 @@ var (
 	ErrStoreNotReady = errors.New("store not ready")
 	ErrNoEmbedder    = errors.New("embedder not configured")
 	ErrNoExtractor   = errors.New("extractor not configured")
+
+	// ErrPartialSearch indicates a search succeeded on at least one backend
+	// but failed on another. The returned results are usable; callers can
+	// detect degraded results with errors.Is(err, ErrPartialSearch).
+	ErrPartialSearch = errors.New("partial search failure")
 )
 
 // --- Graph interface (high-level, orchestrated) ---
@@ -63,6 +68,25 @@ type Store interface {
 
 	// Lifecycle
 	Close(ctx context.Context) error
+}
+
+// EpisodeDeleter is an optional Graph/Store extension for removing all data
+// derived from a group: its episodes, mentions, relations, and entities.
+// The rag pipeline ingests each document under GroupID = document UUID and
+// calls DeleteEpisodes on document delete/replace so graph facts don't
+// outlive their source. The groupID must be non-empty — the default group
+// ("") holds all legacy single-tenant data and cannot be bulk-deleted.
+type EpisodeDeleter interface {
+	DeleteEpisodes(ctx context.Context, groupID string) error
+}
+
+// GroupScopedStore is an optional Store extension for tenant isolation.
+// Stores that implement it scope entity lookups to a group, so the engine
+// deduplicates entities only within the episode's GroupID. Stores that do
+// not implement it keep the legacy global (single-tenant) behavior.
+type GroupScopedStore interface {
+	FindEntitiesByNameTypeInGroup(ctx context.Context, groupID, name, entityType string) ([]Entity, error)
+	FindEntitiesByFuzzyNameInGroup(ctx context.Context, groupID, name string, limit int) ([]Entity, error)
 }
 
 // --- Search options ---
@@ -115,6 +139,9 @@ type RelationInput struct {
 	Type       string
 	Fact       string
 	ValidAt    time.Time
+	// GroupID scopes the relation to a tenant group. Empty means the
+	// default (single-tenant) group.
+	GroupID string
 }
 
 // Fact is a relation with resolved source and target entities.
@@ -137,12 +164,13 @@ type ScoredFact struct {
 
 // Episode represents an ingested text episode.
 type Episode struct {
-	UUID      string    `json:"uuid"`
-	Name      string    `json:"name"`
-	Body      string    `json:"body"`
-	Source    string    `json:"source"`
-	GroupID   string    `json:"group_id"`
-	CreatedAt time.Time `json:"created_at"`
+	UUID      string            `json:"uuid"`
+	Name      string            `json:"name"`
+	Body      string            `json:"body"`
+	Source    string            `json:"source"`
+	GroupID   string            `json:"group_id"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
 }
 
 // GraphData holds nodes and edges for visualization.
@@ -163,7 +191,7 @@ type GraphNode struct {
 type GraphEdge struct {
 	ID        string     `json:"id"`
 	Source    string     `json:"source"`
-	Target   string     `json:"target"`
+	Target    string     `json:"target"`
 	Type      string     `json:"type"`
 	Fact      string     `json:"fact,omitempty"`
 	Weight    float64    `json:"weight"`
@@ -237,6 +265,10 @@ type ExtractedEntity struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Summary string `json:"summary"`
+	// GroupID scopes the entity to a tenant group. It is set by the engine
+	// from the episode's GroupID, not by extractors. Empty means the
+	// default (single-tenant) group.
+	GroupID string `json:"-"`
 }
 
 // ExtractedRelation is a relation extracted from text.

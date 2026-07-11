@@ -62,6 +62,21 @@ func (a *Adapter) Name() string { return "openai" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
 
+// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
+// targeting the given model, sharing the underlying client.
+func (a *Adapter) WithModel(model string) types.Provider {
+	c := *a
+	c.model = openai.ChatModel(model)
+	return &c
+}
+
+// Generate sends a single-turn user prompt with no tools and returns the
+// response text. It is the simple generation seam used by eval judges, HyDE,
+// context compression, and KG extraction.
+func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
+	return types.GenerateText(ctx, a, prompt)
+}
+
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return a.chatStream(ctx, messages, tools, nil)
@@ -352,6 +367,18 @@ func fileContentToPart(fc types.FileContent) openai.ChatCompletionContentPartUni
 	if fc.URI != "" && isImageType(fc.MediaType) {
 		return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
 			URL: fc.URI,
+		})
+	}
+	if fc.Data != nil && fc.MediaType == types.MediaPDF {
+		// Native PDF pass-through, matching the ContentSupport claim. OpenAI
+		// requires a filename alongside inline file_data.
+		name := fc.Filename
+		if name == "" {
+			name = "document.pdf"
+		}
+		return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
+			FileData: openai.String(fmt.Sprintf("data:%s;base64,%s", fc.MediaType, base64.StdEncoding.EncodeToString(fc.Data))),
+			Filename: openai.String(name),
 		})
 	}
 	desc := fmt.Sprintf("[File: %s, type: %s]", fc.Filename, fc.MediaType)

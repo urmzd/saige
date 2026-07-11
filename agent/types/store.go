@@ -13,6 +13,9 @@ type Store interface {
 	ListBranches(ctx context.Context) (map[BranchID]NodeID, error)
 	SaveCheckpoint(ctx context.Context, cp Checkpoint) error
 	LoadCheckpoint(ctx context.Context, id CheckpointID) (Checkpoint, error)
+	// ListCheckpoints returns every persisted checkpoint so a reloaded tree can
+	// round-trip Checkpoint/Rewind (tree.FromStore takes a checkpoints map).
+	ListCheckpoints(ctx context.Context) ([]Checkpoint, error)
 	LoadTree(ctx context.Context, rootID NodeID) ([]*Node, map[BranchID]NodeID, error)
 	Tx(ctx context.Context, fn func(StoreTx) error) error
 }

@@ -91,3 +91,28 @@ func TestRunInputGobRoundTrip(t *testing.T) {
 		t.Fatalf("decoded = %+v", back)
 	}
 }
+
+// TestPayloadsGobEncodeAsInterface guards the wrapper-type registrations. The
+// DBOS gob serializer encodes workflow inputs/outputs and step results as
+// interface values, and gob only requires Register for the interface path —
+// encoding the concrete type directly (the tests above) would not catch a
+// missing registration.
+func TestPayloadsGobEncodeAsInterface(t *testing.T) {
+	payloads := []any{
+		RunInput{Messages: []types.Message{types.NewUserMessage("hi")}, Branch: "main"},
+		RunOutput{Final: &types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "ok"}}}},
+		types.StepResult{Kind: types.StepKindLLM},
+	}
+	for _, p := range payloads {
+		var buf bytes.Buffer
+		v := p
+		if err := gob.NewEncoder(&buf).Encode(&v); err != nil {
+			t.Errorf("encode %T as interface: %v", p, err)
+			continue
+		}
+		var back any
+		if err := gob.NewDecoder(&buf).Decode(&back); err != nil {
+			t.Errorf("decode %T as interface: %v", p, err)
+		}
+	}
+}

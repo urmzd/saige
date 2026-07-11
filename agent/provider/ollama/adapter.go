@@ -21,6 +21,14 @@ func (a *Adapter) Name() string { return "ollama" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.Client.Model }
 
+// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
+// (and its client) targeting the given model, sharing the HTTP client.
+func (a *Adapter) WithModel(model string) types.Provider {
+	client := *a.Client
+	client.Model = model
+	return &Adapter{Client: &client}
+}
+
 // Adapter wraps the Ollama Client and implements types.Provider.
 type Adapter struct {
 	Client *Client

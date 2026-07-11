@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/store/memwal"
+	"github.com/urmzd/saige/agent/types"
 )
 
 func TestNewTree(t *testing.T) {
@@ -367,18 +367,25 @@ func TestTreeWithWAL(t *testing.T) {
 
 	tree.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
 
-	// Verify WAL recorded transactions
+	// Verify WAL recorded transactions: one for the root, one for the child.
 	committed, _ := wal.Recover(context.Background())
-	if len(committed) != 1 {
-		t.Errorf("committed txns = %d, want 1", len(committed))
+	if len(committed) != 2 {
+		t.Fatalf("committed txns = %d, want 2", len(committed))
 	}
 
-	ops, _ := wal.Replay(context.Background(), committed[0])
-	if len(ops) != 1 {
-		t.Errorf("ops = %d, want 1", len(ops))
+	// Each node insertion writes the node plus its branch-tip move.
+	ops, _ := wal.Replay(context.Background(), committed[1])
+	if len(ops) != 2 {
+		t.Fatalf("ops = %d, want 2", len(ops))
 	}
 	if ops[0].Kind != types.TxOpAddNode {
-		t.Errorf("op kind = %s, want %s", ops[0].Kind, types.TxOpAddNode)
+		t.Errorf("op[0] kind = %s, want %s", ops[0].Kind, types.TxOpAddNode)
+	}
+	if ops[1].Kind != types.TxOpSetBranch {
+		t.Errorf("op[1] kind = %s, want %s", ops[1].Kind, types.TxOpSetBranch)
+	}
+	if ops[1].BranchID != "main" || ops[1].TipID != ops[0].Node.ID {
+		t.Errorf("set_branch op = %+v, want main -> new node", ops[1])
 	}
 }
 
@@ -664,11 +671,11 @@ func TestTreePathIsAncestorOf(t *testing.T) {
 	}{
 		{types.TreePath{0}, types.TreePath{0, 1}, true},
 		{types.TreePath{0, 1}, types.TreePath{0, 1, 2}, true},
-		{types.TreePath{0, 1, 2}, types.TreePath{0, 1}, false},     // not strict prefix
-		{types.TreePath{0, 1}, types.TreePath{0, 1}, false},         // equal, not strict
-		{types.TreePath{0, 2}, types.TreePath{0, 1, 2}, false},      // divergent
-		{types.TreePath{}, types.TreePath{0}, true},                  // root is ancestor of everything
-		{types.TreePath{}, types.TreePath{}, false},                  // empty not ancestor of itself
+		{types.TreePath{0, 1, 2}, types.TreePath{0, 1}, false}, // not strict prefix
+		{types.TreePath{0, 1}, types.TreePath{0, 1}, false},    // equal, not strict
+		{types.TreePath{0, 2}, types.TreePath{0, 1, 2}, false}, // divergent
+		{types.TreePath{}, types.TreePath{0}, true},            // root is ancestor of everything
+		{types.TreePath{}, types.TreePath{}, false},            // empty not ancestor of itself
 	}
 	for _, tt := range tests {
 		got := tt.a.IsAncestorOf(tt.b)

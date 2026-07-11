@@ -37,3 +37,6 @@ var checkpointUpsertSQL string
 
 //go:embed sql/checkpoint_get.sql
 var checkpointGetSQL string
+
+//go:embed sql/checkpoint_list.sql
+var checkpointListSQL string

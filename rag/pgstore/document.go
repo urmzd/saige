@@ -9,14 +9,55 @@ import (
 	"github.com/urmzd/saige/rag/types"
 )
 
-// CreateDocument inserts a new document record.
+// CreateDocument inserts a document together with all its sections and
+// variants in a single transaction: a mid-write failure rolls back the entire
+// document, never leaving partial state behind.
 func (s *Store) CreateDocument(ctx context.Context, doc *types.Document) error {
-	_, err := s.pool.Exec(ctx, documentCreateSQL,
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return insertDocumentTree(ctx, tx, doc)
+	})
+}
+
+// ReplaceDocument atomically deletes the document identified by oldUUID and
+// inserts doc in the same transaction, implementing types.DocumentReplacer.
+// If any stage fails, the old document survives untouched. The delete runs
+// first inside the transaction so re-ingesting content with the same
+// fingerprint does not trip the unique fingerprint index.
+func (s *Store) ReplaceDocument(ctx context.Context, oldUUID string, doc *types.Document) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, documentDeleteSQL, oldUUID); err != nil {
+			return fmt.Errorf("delete old document: %w", err)
+		}
+		return insertDocumentTree(ctx, tx, doc)
+	})
+}
+
+// insertDocumentTree writes the document row plus all sections and variants
+// using the given transaction.
+func insertDocumentTree(ctx context.Context, tx pgx.Tx, doc *types.Document) error {
+	var docID int64
+	err := tx.QueryRow(ctx, documentCreateSQL,
 		doc.UUID, doc.SourceURI, doc.Fingerprint, doc.Title,
 		encodeMetadata(doc.Metadata), doc.CreatedAt, doc.UpdatedAt,
-	)
+	).Scan(&docID)
 	if err != nil {
 		return fmt.Errorf("create document: %w", err)
+	}
+
+	for i := range doc.Sections {
+		sec := &doc.Sections[i]
+		var secID int64
+		err := tx.QueryRow(ctx, sectionCreateSQL,
+			sec.UUID, docID, sec.Index, sec.Heading,
+		).Scan(&secID)
+		if err != nil {
+			return fmt.Errorf("create section: %w", err)
+		}
+		for j := range sec.Variants {
+			if err := insertVariant(ctx, tx, secID, &sec.Variants[j]); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

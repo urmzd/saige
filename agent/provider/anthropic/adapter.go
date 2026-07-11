@@ -62,6 +62,21 @@ func (a *Adapter) Name() string { return "anthropic" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
 
+// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
+// targeting the given model, sharing the underlying client.
+func (a *Adapter) WithModel(model string) types.Provider {
+	c := *a
+	c.model = anthropic.Model(model)
+	return &c
+}
+
+// Generate sends a single-turn user prompt with no tools and returns the
+// response text. It is the simple generation seam used by eval judges, HyDE,
+// context compression, and KG extraction.
+func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
+	return types.GenerateText(ctx, a, prompt)
+}
+
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	systemBlocks, aMsgs := toAnthropicParams(messages)
@@ -292,6 +307,11 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 					if bc.Data != nil && isImageType(bc.MediaType) {
 						b64 := base64.StdEncoding.EncodeToString(bc.Data)
 						out = appendMsg(out, "user", anthropic.NewImageBlockBase64(string(bc.MediaType), b64))
+					} else if bc.Data != nil && bc.MediaType == types.MediaPDF {
+						// Native PDF pass-through, matching the ContentSupport claim.
+						out = appendMsg(out, "user", anthropic.ContentBlockParamUnion{
+							OfDocument: documentBlockFromBytes(bc.Data),
+						})
 					} else if bc.Data != nil {
 						out = appendMsg(out, "user", anthropic.NewTextBlock("[File: "+bc.Filename+"] "+string(bc.Data)))
 					}

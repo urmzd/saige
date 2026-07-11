@@ -196,3 +196,74 @@ func TestSearchByEmbeddingMetadataFilter(t *testing.T) {
 		t.Errorf("expected v1, got %q", hits[0].Variant.UUID)
 	}
 }
+
+func TestReplaceDocument(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+
+	old := &types.Document{
+		UUID:        "doc-old",
+		Fingerprint: "fp-1",
+		Sections: []types.Section{{
+			UUID: "sec-old", DocumentUUID: "doc-old", Index: 0,
+			Variants: []types.ContentVariant{{
+				UUID: "var-old", SectionUUID: "sec-old",
+				ContentType: types.ContentText, Text: "old",
+			}},
+		}},
+	}
+	if err := store.CreateDocument(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreOriginal(ctx, "doc-old", []byte("old bytes")); err != nil {
+		t.Fatal(err)
+	}
+
+	repl := &types.Document{
+		UUID:        "doc-new",
+		Fingerprint: "fp-1",
+		Sections: []types.Section{{
+			UUID: "sec-new", DocumentUUID: "doc-new", Index: 0,
+			Variants: []types.ContentVariant{{
+				UUID: "var-new", SectionUUID: "sec-new",
+				ContentType: types.ContentText, Text: "new",
+			}},
+		}},
+	}
+	if err := store.ReplaceDocument(ctx, "doc-old", repl); err != nil {
+		t.Fatal(err)
+	}
+
+	// Old document, its original bytes, and its fingerprint mapping are gone.
+	if _, err := store.GetDocument(ctx, "doc-old"); err != types.ErrDocumentNotFound {
+		t.Errorf("old document should be gone, got err: %v", err)
+	}
+	if _, err := store.GetOriginal(ctx, "doc-old"); err != types.ErrDocumentNotFound {
+		t.Errorf("old original should be gone, got err: %v", err)
+	}
+
+	// New document is present and reachable by the shared fingerprint.
+	if _, err := store.GetDocument(ctx, "doc-new"); err != nil {
+		t.Fatalf("new document should exist: %v", err)
+	}
+	byFP, err := store.FindByFingerprint(ctx, "fp-1")
+	if err != nil {
+		t.Fatalf("fingerprint should map to new document: %v", err)
+	}
+	if byFP.UUID != "doc-new" {
+		t.Errorf("fingerprint maps to %q, want doc-new", byFP.UUID)
+	}
+}
+
+func TestReplaceDocumentMissingOld(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+
+	doc := &types.Document{UUID: "doc-1", Fingerprint: "fp-x"}
+	if err := store.ReplaceDocument(ctx, "nonexistent", doc); err != nil {
+		t.Fatalf("replace with missing old doc should still insert: %v", err)
+	}
+	if _, err := store.GetDocument(ctx, "doc-1"); err != nil {
+		t.Errorf("new document should exist: %v", err)
+	}
+}

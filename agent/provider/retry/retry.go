@@ -55,6 +55,15 @@ func (r *Provider) Name() string {
 	return "retry(" + types.ProviderName(r.Inner) + ")"
 }
 
+// Model implements types.ModelProvider by delegating to the inner provider.
+func (r *Provider) Model() string { return types.ProviderModel(r.Inner) }
+
+// WithModel implements types.ModelSwitcher: it re-targets the inner provider
+// when it supports model switching, keeping the same retry config.
+func (r *Provider) WithModel(model string) types.Provider {
+	return &Provider{Inner: types.ProviderWithModel(r.Inner, model), Config: r.Config}
+}
+
 func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
 		return r.Inner.ChatStream(ctx, messages, tools)

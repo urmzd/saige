@@ -40,6 +40,11 @@ type ExperimentResult struct {
 	BaseAggregate map[string]float64  `json:"base_aggregate"`
 	ExpAggregate  map[string]float64  `json:"exp_aggregate"`
 	Deltas        map[string]float64  `json:"deltas"`
+	// BaseErroredCases and ExpErroredCases count observations with at least
+	// one errored score on each side; errored scores are excluded from the
+	// aggregates and deltas.
+	BaseErroredCases int `json:"base_errored_cases,omitempty"`
+	ExpErroredCases  int `json:"exp_errored_cases,omitempty"`
 }
 
 // RunExperiment runs both subjects on the same inputs, scores them, and
@@ -87,13 +92,15 @@ func RunExperiment(ctx context.Context, inputs []Observation, base, exp Subject,
 	}
 
 	result := &ExperimentResult{
-		Name:          cfg.Name,
-		CreatedAt:     time.Now(),
-		BaseResults:   baseSuite.Results,
-		ExpResults:    expSuite.Results,
-		BaseAggregate: baseSuite.Aggregate,
-		ExpAggregate:  expSuite.Aggregate,
-		Deltas:        deltas,
+		Name:             cfg.Name,
+		CreatedAt:        time.Now(),
+		BaseResults:      baseSuite.Results,
+		ExpResults:       expSuite.Results,
+		BaseAggregate:    baseSuite.Aggregate,
+		ExpAggregate:     expSuite.Aggregate,
+		Deltas:           deltas,
+		BaseErroredCases: baseSuite.ErroredCases,
+		ExpErroredCases:  expSuite.ErroredCases,
 	}
 
 	// Persist if output dir is set.

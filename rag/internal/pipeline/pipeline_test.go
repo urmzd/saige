@@ -2,11 +2,13 @@ package pipeline_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/internal/pipeline"
 	"github.com/urmzd/saige/rag/memstore"
@@ -478,6 +480,364 @@ func TestPipelineRecencyDisabledByDefault(t *testing.T) {
 	if d := scores["recent-var"] - scores["old-var"]; d > 0.001 || d < -0.001 {
 		t.Errorf("recency disabled: expected near-equal scores, got %v vs %v",
 			scores["recent-var"], scores["old-var"])
+	}
+}
+
+// failingEmbedder fails after allowing failAfter successful Embed calls.
+type failingEmbedder struct {
+	calls     atomic.Int32
+	failAfter int32
+}
+
+func (e *failingEmbedder) Register(_ types.ContentType, _ types.VariantEmbedder) {}
+func (e *failingEmbedder) Embed(_ context.Context, variants []types.ContentVariant) ([][]float32, error) {
+	if e.calls.Add(1) > e.failAfter {
+		return nil, errors.New("embedder unavailable")
+	}
+	out := make([][]float32, len(variants))
+	for i := range variants {
+		out[i] = []float32{1, 0, 0}
+	}
+	return out, nil
+}
+
+// TestPipelineReplaceFailureKeepsPriorDocument verifies that with
+// DedupReplace, a mid-ingest failure (embedder) leaves the previously
+// committed document fully retrievable: the delete no longer happens before
+// the fallible stages.
+func TestPipelineReplaceFailureKeepsPriorDocument(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	embedders := &failingEmbedder{failAfter: 1}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &uniqueExtractor{},
+		Embedders:        embedders,
+		DedupBehavior:    types.DedupReplace,
+	})
+
+	raw := &types.RawDocument{
+		SourceURI: "test://replace-fail",
+		Data:      []byte("content that will be re-ingested"),
+	}
+
+	r1, err := pipe.Ingest(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second ingest of identical content: the embedder now fails.
+	if _, err := pipe.Ingest(ctx, raw); err == nil {
+		t.Fatal("expected ingest error from failing embedder")
+	}
+
+	// The prior document must still be retrievable, including by fingerprint.
+	doc, err := store.GetDocument(ctx, r1.DocumentUUID)
+	if err != nil {
+		t.Fatalf("prior document should survive failed replace: %v", err)
+	}
+	if len(doc.Sections) == 0 || len(doc.Sections[0].Variants) == 0 {
+		t.Fatal("prior document lost its sections/variants")
+	}
+	if _, err := store.FindByFingerprint(ctx, doc.Fingerprint); err != nil {
+		t.Errorf("prior document should still be findable by fingerprint: %v", err)
+	}
+}
+
+// nonReplacerStore hides memstore's ReplaceDocument so the pipeline exercises
+// the delete-then-create fallback path.
+type nonReplacerStore struct {
+	types.Store
+}
+
+func TestPipelineReplaceFallbackWithoutReplacer(t *testing.T) {
+	ctx := context.Background()
+	mem := memstore.New()
+	store := &nonReplacerStore{Store: mem}
+	embedders := &failingEmbedder{failAfter: 1}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &uniqueExtractor{},
+		Embedders:        embedders,
+		DedupBehavior:    types.DedupReplace,
+	})
+
+	raw := &types.RawDocument{
+		SourceURI: "test://replace-fallback",
+		Data:      []byte("fallback content"),
+	}
+
+	r1, err := pipe.Ingest(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Failure happens before any store mutation, so even without atomic
+	// replace the prior document survives.
+	if _, err := pipe.Ingest(ctx, raw); err == nil {
+		t.Fatal("expected ingest error from failing embedder")
+	}
+	if _, err := mem.GetDocument(ctx, r1.DocumentUUID); err != nil {
+		t.Fatalf("prior document should survive failed replace: %v", err)
+	}
+
+	// A successful re-ingest still replaces via the fallback path.
+	embedders.failAfter = 100
+	r2, err := pipe.Ingest(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.GetDocument(ctx, r1.DocumentUUID); err != types.ErrDocumentNotFound {
+		t.Errorf("old document should be deleted after replace, got err: %v", err)
+	}
+	if _, err := mem.GetDocument(ctx, r2.DocumentUUID); err != nil {
+		t.Errorf("new document should exist: %v", err)
+	}
+}
+
+// scriptedRetriever returns fixed hits or a fixed error.
+type scriptedRetriever struct {
+	hits []types.SearchHit
+	err  error
+}
+
+func (r *scriptedRetriever) Retrieve(_ context.Context, _ string, _ *types.SearchOptions) ([]types.SearchHit, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.hits, nil
+}
+
+func textHit(uuid string) types.SearchHit {
+	return types.SearchHit{
+		Variant: types.ContentVariant{UUID: uuid, ContentType: types.ContentText, Text: uuid},
+		Score:   1.0,
+	}
+}
+
+func TestPipelinePartialSearch(t *testing.T) {
+	ctx := context.Background()
+
+	good := &scriptedRetriever{hits: []types.SearchHit{textHit("x")}}
+	bad := &scriptedRetriever{err: errors.New("backend down")}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers:       []types.Retriever{good, bad},
+	})
+
+	result, err := pipe.Search(ctx, "query")
+	if !errors.Is(err, types.ErrPartialSearch) {
+		t.Fatalf("expected ErrPartialSearch, got %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected results alongside partial error")
+	}
+	if len(result.Hits) != 1 || result.Hits[0].Variant.UUID != "x" {
+		t.Errorf("expected hit from surviving retriever, got %+v", result.Hits)
+	}
+}
+
+func TestPipelineSearchAllRetrieversFail(t *testing.T) {
+	ctx := context.Background()
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers: []types.Retriever{
+			&scriptedRetriever{err: errors.New("down 1")},
+			&scriptedRetriever{err: errors.New("down 2")},
+		},
+	})
+
+	result, err := pipe.Search(ctx, "query")
+	if err == nil {
+		t.Fatal("expected error when all retrievers fail")
+	}
+	if errors.Is(err, types.ErrPartialSearch) {
+		t.Error("total failure must not be reported as partial")
+	}
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
+}
+
+func TestPipelineFusionK(t *testing.T) {
+	ctx := context.Background()
+
+	// x is ranked first by one retriever only; y is ranked fourth by both.
+	// RRF scores: x = 1/(k+1), y = 2/(k+4). With the default k=60 the
+	// cross-retriever consensus wins (y outranks x); with k=1 the single top
+	// rank wins (x outranks y). x ties exactly with b's rank-0 hit f3 at any
+	// k, so assertions compare x against y, never against f3.
+	a := &scriptedRetriever{hits: []types.SearchHit{textHit("x"), textHit("f1"), textHit("f2"), textHit("y")}}
+	b := &scriptedRetriever{hits: []types.SearchHit{textHit("f3"), textHit("f4"), textHit("f5"), textHit("y")}}
+
+	rankOf := func(hits []types.SearchHit, uuid string) int {
+		for i, h := range hits {
+			if h.Variant.UUID == uuid {
+				return i
+			}
+		}
+		return -1
+	}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers:       []types.Retriever{a, b},
+	})
+
+	def, err := pipe.Search(ctx, "query", types.WithLimit(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Hits[0].Variant.UUID != "y" {
+		t.Errorf("default k=60: expected y first, got %q", def.Hits[0].Variant.UUID)
+	}
+
+	lowK, err := pipe.Search(ctx, "query", types.WithLimit(10), types.WithFusionK(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if xi, yi := rankOf(lowK.Hits, "x"), rankOf(lowK.Hits, "y"); xi < 0 || yi < 0 || xi > yi {
+		t.Errorf("k=1: expected x to outrank y, got x at %d, y at %d", xi, yi)
+	}
+
+	// Invalid k values fall back to the default.
+	invalid, err := pipe.Search(ctx, "query", types.WithLimit(10), types.WithFusionK(-5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid.Hits[0].Variant.UUID != "y" {
+		t.Errorf("k<=0 should keep default ranking, got %q first", invalid.Hits[0].Variant.UUID)
+	}
+}
+
+// mockGraph is a fake knowledge graph that can fail episode ingestion and
+// records episode deletions (implementing types.GraphEpisodeDeleter).
+type mockGraph struct {
+	failIngest    bool
+	ingested      []string // GroupIDs of ingested episodes
+	deletedGroups []string
+}
+
+func (m *mockGraph) ApplyOntology(_ context.Context, _ *knowledgetypes.Ontology) error { return nil }
+func (m *mockGraph) IngestEpisode(_ context.Context, in *knowledgetypes.EpisodeInput) (*knowledgetypes.IngestResult, error) {
+	if m.failIngest {
+		return nil, errors.New("graph unavailable")
+	}
+	m.ingested = append(m.ingested, in.GroupID)
+	return &knowledgetypes.IngestResult{}, nil
+}
+func (m *mockGraph) GetEntity(_ context.Context, _ string) (*knowledgetypes.Entity, error) {
+	return nil, nil
+}
+func (m *mockGraph) SearchFacts(_ context.Context, _ string, _ ...knowledgetypes.SearchOption) (*knowledgetypes.SearchFactsResult, error) {
+	return &knowledgetypes.SearchFactsResult{}, nil
+}
+func (m *mockGraph) GetGraph(_ context.Context, _ int64) (*knowledgetypes.GraphData, error) {
+	return nil, nil
+}
+func (m *mockGraph) GetNode(_ context.Context, _ string, _ int) (*knowledgetypes.NodeDetail, error) {
+	return nil, nil
+}
+func (m *mockGraph) GetFactProvenance(_ context.Context, _ string) ([]knowledgetypes.Episode, error) {
+	return nil, nil
+}
+func (m *mockGraph) Close(_ context.Context) error { return nil }
+
+func (m *mockGraph) DeleteEpisodes(_ context.Context, groupID string) error {
+	m.deletedGroups = append(m.deletedGroups, groupID)
+	return nil
+}
+
+func TestPipelineIngestGraphFailureIsPartial(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	graph := &mockGraph{failIngest: true}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &simpleExtractor{},
+		Graph:            graph,
+	})
+
+	result, err := pipe.Ingest(ctx, &types.RawDocument{
+		SourceURI: "test://graph-fail",
+		Data:      []byte("graph enrichment will fail"),
+	})
+	if !errors.Is(err, types.ErrPartialIngest) {
+		t.Fatalf("expected ErrPartialIngest, got %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected ingest result alongside partial error")
+	}
+
+	// The RAG write committed before the graph stage: the doc is retrievable.
+	if _, err := store.GetDocument(ctx, result.DocumentUUID); err != nil {
+		t.Errorf("document should be committed despite graph failure: %v", err)
+	}
+}
+
+func TestPipelineDeleteRemovesGraphEpisodes(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	graph := &mockGraph{}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &simpleExtractor{},
+		Graph:            graph,
+	})
+
+	result, err := pipe.Ingest(ctx, &types.RawDocument{
+		SourceURI: "test://graph-delete",
+		Data:      []byte("document with graph facts"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipe.Delete(ctx, result.DocumentUUID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.deletedGroups) != 1 || graph.deletedGroups[0] != result.DocumentUUID {
+		t.Errorf("expected DeleteEpisodes(%q), got %v", result.DocumentUUID, graph.deletedGroups)
+	}
+}
+
+func TestPipelineReplaceRemovesStaleGraphEpisodes(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	graph := &mockGraph{}
+
+	pipe := pipeline.New(pipeline.Config{
+		Store:            store,
+		ContentExtractor: &uniqueExtractor{},
+		Graph:            graph,
+		DedupBehavior:    types.DedupReplace,
+	})
+
+	raw := &types.RawDocument{
+		SourceURI: "test://graph-replace",
+		Data:      []byte("content enriched into the graph"),
+	}
+
+	r1, err := pipe.Ingest(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pipe.Ingest(ctx, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.deletedGroups) != 1 || graph.deletedGroups[0] != r1.DocumentUUID {
+		t.Errorf("expected stale episodes of %q deleted, got %v", r1.DocumentUUID, graph.deletedGroups)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/urmzd/saige/knowledge/types"
 )
 
-// UpsertEntity creates or updates an entity by (name, type), returning its UUID.
+// UpsertEntity creates or updates an entity by (group_id, name, type), returning its UUID.
 func (s *Store) UpsertEntity(ctx context.Context, entity *types.ExtractedEntity, embedding []float32) (string, error) {
 	entUUID := uuid.New().String()
 
@@ -23,7 +23,7 @@ func (s *Store) UpsertEntity(ctx context.Context, entity *types.ExtractedEntity,
 
 	var resultUUID string
 	err := s.pool.QueryRow(ctx, entityUpsertSQL,
-		entUUID, entity.Name, entity.Type, entity.Summary, emb,
+		entUUID, entity.Name, entity.Type, entity.Summary, emb, entity.GroupID,
 	).Scan(&resultUUID)
 	if err != nil {
 		return "", fmt.Errorf("upsert entity %s: %w", entity.Name, err)
@@ -62,6 +62,32 @@ func (s *Store) FindEntitiesByFuzzyName(ctx context.Context, name string, limit 
 		limit = 10
 	}
 	rows, err := s.pool.Query(ctx, entityFindFuzzySQL, name, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanEntities(rows)
+}
+
+// FindEntitiesByNameTypeInGroup finds entities with exact name+type match within a group.
+func (s *Store) FindEntitiesByNameTypeInGroup(ctx context.Context, groupID, name, entityType string) ([]types.Entity, error) {
+	rows, err := s.pool.Query(ctx, entityFindByNameTypeGroupSQL, groupID, name, entityType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanEntities(rows)
+}
+
+// FindEntitiesByFuzzyNameInGroup returns entities within a group whose names
+// approximately match, using trigram similarity.
+func (s *Store) FindEntitiesByFuzzyNameInGroup(ctx context.Context, groupID, name string, limit int) ([]types.Entity, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, entityFindFuzzyGroupSQL, groupID, name, limit)
 	if err != nil {
 		return nil, err
 	}

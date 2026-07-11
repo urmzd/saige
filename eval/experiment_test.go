@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 )
@@ -54,5 +55,42 @@ func TestRunExperiment(t *testing.T) {
 	}
 	if math.Abs(result.Deltas["latency_ms"]-(-50)) > 0.001 {
 		t.Errorf("delta: got %f, want -50", result.Deltas["latency_ms"])
+	}
+}
+
+func TestRunExperimentScorerErrorContinues(t *testing.T) {
+	inputs := []Observation{
+		{ID: "e1", Input: json.RawMessage(`"query1"`)},
+		{ID: "e2", Input: json.RawMessage(`"query2"`)},
+	}
+
+	subject := Subject(func(_ context.Context, obs *Observation) error {
+		obs.Output = json.RawMessage(`"response"`)
+		return nil
+	})
+
+	// Errors on e1, scores 1.0 on e2.
+	flaky := NewScorerFunc("flaky", func(_ context.Context, obs Observation) (Score, error) {
+		if obs.ID == "e1" {
+			return Score{}, errors.New("boom")
+		}
+		return Score{Name: "flaky", Value: 1.0}, nil
+	})
+
+	result, err := RunExperiment(context.Background(), inputs, subject, subject, []Scorer{flaky})
+	if err != nil {
+		t.Fatalf("experiment should complete despite scorer error, got %v", err)
+	}
+
+	if result.BaseErroredCases != 1 || result.ExpErroredCases != 1 {
+		t.Errorf("expected 1 errored case per side, got base=%d exp=%d",
+			result.BaseErroredCases, result.ExpErroredCases)
+	}
+	// Aggregates exclude the errored case: mean over e2 only.
+	if math.Abs(result.BaseAggregate["flaky"]-1.0) > 0.001 {
+		t.Errorf("base aggregate: got %f, want 1.0", result.BaseAggregate["flaky"])
+	}
+	if math.Abs(result.Deltas["flaky"]) > 0.001 {
+		t.Errorf("delta: got %f, want 0", result.Deltas["flaky"])
 	}
 }
