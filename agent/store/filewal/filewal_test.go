@@ -255,3 +255,119 @@ func TestFileWALMarkApplied(t *testing.T) {
 		t.Fatalf("Recover after reopen = %v, want only %s", committed, tx2)
 	}
 }
+
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Size()
+}
+
+// TestFileWALCompact proves compaction shrinks the log while preserving
+// exactly the committed-but-unapplied transactions, across a reopen.
+func TestFileWALCompact(t *testing.T) {
+	ctx := context.Background()
+	w, path := newWAL(t)
+
+	tx1 := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n1"})
+	tx2 := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n2"})
+	node := sampleNode()
+	tx3 := commitTx(t, w, types.TxOp{Kind: types.TxOpAddNode, NodeID: node.ID, ParentID: node.ParentID, Node: node})
+	if err := w.MarkApplied(ctx, tx1); err != nil {
+		t.Fatalf("MarkApplied: %v", err)
+	}
+	if err := w.MarkApplied(ctx, tx2); err != nil {
+		t.Fatalf("MarkApplied: %v", err)
+	}
+
+	before := fileSize(t, path)
+	if err := w.Compact(ctx); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	after := fileSize(t, path)
+	if after >= before {
+		t.Errorf("Compact did not shrink log: before=%d after=%d", before, after)
+	}
+
+	// Only the unapplied tx survives, and the swapped append handle still
+	// works: a post-compact commit lands in the new file.
+	tx4 := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n4"})
+
+	w.Close()
+	reopened, err := filewal.New(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+
+	committed, err := reopened.Recover(ctx)
+	if err != nil {
+		t.Fatalf("Recover after compact: %v", err)
+	}
+	if len(committed) != 2 || committed[0] != tx3 || committed[1] != tx4 {
+		t.Fatalf("Recover after compact = %v, want [%s %s]", committed, tx3, tx4)
+	}
+	ops, err := reopened.Replay(ctx, tx3)
+	if err != nil {
+		t.Fatalf("Replay surviving tx: %v", err)
+	}
+	if len(ops) != 1 || ops[0].Node == nil || ops[0].Node.ID != node.ID {
+		t.Fatalf("Replay ops after compact = %+v, want node op for %s", ops, node.ID)
+	}
+}
+
+// TestFileWALCompactAllApplied is the post-recovery steady state: everything
+// applied, so compaction empties the log.
+func TestFileWALCompactAllApplied(t *testing.T) {
+	ctx := context.Background()
+	w, path := newWAL(t)
+
+	tx1 := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n1"})
+	if err := w.MarkApplied(ctx, tx1); err != nil {
+		t.Fatalf("MarkApplied: %v", err)
+	}
+	if err := w.Compact(ctx); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if got := fileSize(t, path); got != 0 {
+		t.Errorf("log size after full compact = %d, want 0", got)
+	}
+	committed, err := w.Recover(ctx)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(committed) != 0 {
+		t.Fatalf("Recover after full compact = %v, want empty", committed)
+	}
+}
+
+// TestFileWALCompactCrashLeftoverTempIgnored simulates a crash mid-Compact
+// that leaves a temp file behind: New must open the WAL normally and the
+// stray file must not affect reads.
+func TestFileWALCompactCrashLeftoverTempIgnored(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wal.jsonl")
+
+	stray := filepath.Join(dir, "wal.jsonl.compact-12345")
+	if err := os.WriteFile(stray, []byte(`{"kind":"commit","tx":"half-writ`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := filewal.New(path)
+	if err != nil {
+		t.Fatalf("New with stray compact temp: %v", err)
+	}
+	defer w.Close()
+
+	txID := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n1"})
+	committed, err := w.Recover(ctx)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(committed) != 1 || committed[0] != txID {
+		t.Fatalf("Recover = %v, want [%s]", committed, txID)
+	}
+}

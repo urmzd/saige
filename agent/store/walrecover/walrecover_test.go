@@ -2,6 +2,7 @@ package walrecover_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -159,4 +160,69 @@ func TestRecoverWALFromFileWAL(t *testing.T) {
 	if applied != 0 {
 		t.Errorf("second pass applied = %d, want 0", applied)
 	}
+}
+
+// TestRecoverWALCompactsFileWAL proves the growth contract: a session's WAL
+// accumulates the full history, and a recovery pass applies it, marks it, and
+// compacts the log down to (here) nothing — without losing store content.
+func TestRecoverWALCompactsFileWAL(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "wal.jsonl")
+	wal, err := filewal.New(path)
+	if err != nil {
+		t.Fatalf("filewal.New: %v", err)
+	}
+	tr, cpID := buildTree(t, wal)
+	wal.Close()
+
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat before recovery: %v", err)
+	}
+	if before.Size() == 0 {
+		t.Fatal("session left an empty WAL; test cannot observe compaction")
+	}
+
+	reopened, err := filewal.New(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+
+	s := memstore.New()
+	if _, err := walrecover.RecoverWAL(ctx, reopened, s); err != nil {
+		t.Fatalf("RecoverWAL: %v", err)
+	}
+
+	// Recovery ends with Compact: every tx was applied and marked, so the log
+	// shrinks to empty instead of replaying O(history) on every startup.
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after recovery: %v", err)
+	}
+	if after.Size() != 0 {
+		t.Errorf("log size after recovery = %d, want 0 (before recovery: %d)", after.Size(), before.Size())
+	}
+
+	// Store content is unaffected by compaction.
+	verifyStore(t, s, tr, cpID)
+
+	// A fresh open of the compacted log recovers nothing.
+	reopened.Close()
+	final, err := filewal.New(path)
+	if err != nil {
+		t.Fatalf("open compacted log: %v", err)
+	}
+	defer final.Close()
+	txIDs, err := final.Recover(ctx)
+	if err != nil {
+		t.Fatalf("Recover on compacted log: %v", err)
+	}
+	if len(txIDs) != 0 {
+		t.Errorf("Recover on compacted log = %v, want empty", txIDs)
+	}
+	if applied, err := walrecover.RecoverWAL(ctx, final, s); err != nil || applied != 0 {
+		t.Errorf("RecoverWAL on compacted log = (%d, %v), want (0, nil)", applied, err)
+	}
+	verifyStore(t, s, tr, cpID)
 }

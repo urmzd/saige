@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -197,6 +198,47 @@ func TestFallbackProvider_MidStreamErrorBeforeContent(t *testing.T) {
 	}
 }
 
+// A UsageDelta before content (Anthropic emits usage at message_start) must
+// not latch the no-fallback gate: an ErrorDelta after usage but before any
+// content still falls back transparently.
+func TestFallbackProvider_MidStreamErrorAfterUsageStillFallsBack(t *testing.T) {
+	failing := &scriptProvider{deltas: []types.Delta{
+		types.UsageDelta{PromptTokens: 7, TotalTokens: 7},
+		types.ErrorDelta{Error: &types.ProviderError{Provider: "bad", Kind: types.ErrorKindTransient, Err: errors.New("died before content")}},
+	}}
+	good := &mockProvider{response: "from-backup"}
+
+	fb := New(failing, good)
+	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var text string
+	var errDeltas, usageDeltas int
+	for d := range ch {
+		switch v := d.(type) {
+		case types.TextContentDelta:
+			text += v.Content
+		case types.ErrorDelta:
+			errDeltas++
+		case types.UsageDelta:
+			usageDeltas++
+		}
+	}
+	if text != "from-backup" {
+		t.Errorf("text = %q, want %q (usage-only preamble must not block fallback)", text, "from-backup")
+	}
+	if errDeltas != 0 {
+		t.Errorf("ErrorDelta count = %d, want 0 (fallback should be transparent)", errDeltas)
+	}
+	// The failed provider's usage was already forwarded; the aggregator merges
+	// it with the successor's usage, so it is expected downstream.
+	if usageDeltas != 1 {
+		t.Errorf("UsageDelta count = %d, want 1 (forwarded from the failed provider)", usageDeltas)
+	}
+}
+
 func TestFallbackProvider_MidStreamErrorAfterContent(t *testing.T) {
 	streamErr := &types.ProviderError{Provider: "flaky", Kind: types.ErrorKindTransient, Err: errors.New("dropped")}
 	flaky := &scriptProvider{deltas: []types.Delta{
@@ -328,6 +370,104 @@ type funcProvider struct {
 
 func (p *funcProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
 	return p.fn()
+}
+
+// Cancelling the consumer context while the provider goroutine is blocked on
+// an unbuffered send must not leak that goroutine: every relay return path
+// that abandons a live src drains it.
+func TestFallbackProvider_CancelDrainsBlockedProducer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	producerDone := make(chan struct{})
+	producing := make(chan struct{})
+	p := &funcProvider{fn: func() (<-chan types.Delta, error) {
+		src := make(chan types.Delta) // unbuffered: every send blocks on the relay
+		go func() {
+			defer close(producerDone)
+			defer close(src)
+			src <- types.TextStartDelta{}
+			close(producing)
+			src <- types.TextContentDelta{Content: "in-flight"}
+			src <- types.TextEndDelta{}
+		}()
+		return src, nil
+	}}
+
+	fb := New(p)
+	ch, err := fb.ChatStream(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	<-ch // consume the first delta so the producer is mid-stream
+	<-producing
+	cancel()
+	// Abandon the stream like a cancelled consumer: just wait for the relay to
+	// close its output channel.
+	for range ch {
+	}
+
+	select {
+	case <-producerDone:
+		// Producer unblocked: the relay drained src on its way out.
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider goroutine leaked: relay abandoned src without draining it")
+	}
+}
+
+// switchableProvider implements types.ModelSwitcher for WithModel tests.
+type switchableProvider struct {
+	model string
+}
+
+func (p *switchableProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	ch := make(chan types.Delta)
+	close(ch)
+	return ch, nil
+}
+
+func (p *switchableProvider) Model() string { return p.model }
+
+func (p *switchableProvider) WithModel(model string) types.Provider {
+	return &switchableProvider{model: model}
+}
+
+func TestFallbackProvider_WithModel(t *testing.T) {
+	s1 := &switchableProvider{model: "model-a"}
+	s2 := &switchableProvider{model: "model-a"}
+	plain := &mockProvider{response: "no-switch"} // does not implement ModelSwitcher
+
+	fb := &Provider{
+		Providers:  []types.Provider{s1, s2, plain},
+		FallbackOn: types.IsTransient,
+	}
+
+	switched, ok := fb.WithModel("model-b").(*Provider)
+	if !ok {
+		t.Fatalf("WithModel returned %T, want *Provider", fb.WithModel("model-b"))
+	}
+	if len(switched.Providers) != 3 {
+		t.Fatalf("Providers = %d, want 3", len(switched.Providers))
+	}
+	for i, p := range switched.Providers[:2] {
+		if got := types.ProviderModel(p); got != "model-b" {
+			t.Errorf("provider %d model = %q, want %q", i, got, "model-b")
+		}
+	}
+	if switched.Providers[2] != types.Provider(plain) {
+		t.Errorf("non-switcher child should pass through unchanged")
+	}
+	if switched.FallbackOn == nil {
+		t.Error("FallbackOn should be preserved")
+	}
+	// Originals are untouched.
+	if s1.model != "model-a" || s2.model != "model-a" {
+		t.Errorf("original providers mutated: %q, %q", s1.model, s2.model)
+	}
+
+	// Compile-time-style assertion that *Provider satisfies ModelSwitcher.
+	var _ types.ModelSwitcher = fb
 }
 
 func TestFallbackProvider_Name(t *testing.T) {

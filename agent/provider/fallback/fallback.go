@@ -11,9 +11,10 @@ import (
 // which errors trigger fallback (e.g. types.IsTransient for transient-only).
 //
 // Fallback covers both an immediate ChatStream error and a mid-stream error
-// (an ErrorDelta) that arrives before any delta has been delivered downstream.
-// Once output has been forwarded, falling back would duplicate partial content,
-// so the error delta is propagated as-is instead.
+// (an ErrorDelta) that arrives before any content-bearing delta has been
+// delivered downstream (see isContentDelta). Once content has been forwarded,
+// falling back would duplicate partial output, so the error delta is
+// propagated as-is instead.
 type Provider struct {
 	Providers  []types.Provider
 	FallbackOn func(error) bool // nil = fallback on any error
@@ -25,6 +26,18 @@ func New(providers ...types.Provider) *Provider {
 }
 
 func (f *Provider) Name() string { return "fallback" }
+
+// WithModel implements types.ModelSwitcher. It returns a new fallback provider
+// whose children each target the given model (children that do not implement
+// types.ModelSwitcher are kept as-is). This lets ConfigContent.Model switching
+// propagate through fallback-wrapped deployments.
+func (f *Provider) WithModel(model string) types.Provider {
+	providers := make([]types.Provider, len(f.Providers))
+	for i, p := range f.Providers {
+		providers[i] = types.ProviderWithModel(p, model)
+	}
+	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}
+}
 
 func (f *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return f.stream(ctx, func(p types.Provider) (<-chan types.Delta, error) {
@@ -72,11 +85,45 @@ func (f *Provider) stream(ctx context.Context, call func(types.Provider) (<-chan
 	return nil, &types.FallbackError{Errors: errs}
 }
 
+// isContentDelta reports whether d carries output the consumer has visibly
+// received — anything that would duplicate on a retry with another provider.
+// Only content-bearing deltas latch relay's no-fallback gate:
+//
+//   - UsageDelta does NOT latch. Anthropic's adapter emits a UsageDelta at
+//     message_start, before any content block, so if it latched, a stream that
+//     died in the most common failure window (request accepted, connection
+//     dropped before content) could never fall back. The other adapters
+//     (openai, google, ollama) emit usage only at stream end, after content.
+//     If a UsageDelta was forwarded and we then fall back, the consumer sees
+//     the failed provider's usage followed by the next provider's full stream;
+//     that is acceptable — the aggregator merges usage (UsageDelta.Merge), and
+//     the failed request's tokens were genuinely consumed.
+//   - DoneDelta and ErrorDelta do NOT latch: terminal markers, not content.
+//   - Everything else latches: Text*/Thinking*/ToolCall* start/content/end,
+//     ToolExec*, MarkerDelta, HandoffDelta, and any future delta type
+//     (defaulting to latching is the safe direction — worst case we propagate
+//     an error instead of silently duplicating output).
+//
+// This mirrors the retry package's isContentDelta.
+func isContentDelta(d types.Delta) bool {
+	switch d.(type) {
+	case types.UsageDelta, types.DoneDelta, types.ErrorDelta:
+		return false
+	default:
+		return true
+	}
+}
+
 // relay forwards deltas from src to out. An ErrorDelta that arrives before any
-// delta has been forwarded downstream discards the failed stream and retries
-// with the remaining providers; anything later is propagated as-is. When the
-// remaining providers are exhausted, the accumulated FallbackError is emitted
-// as an ErrorDelta (the channel was already handed to the consumer).
+// content-bearing delta has been forwarded downstream discards the failed
+// stream and retries with the remaining providers; anything later is
+// propagated as-is. When the remaining providers are exhausted, the
+// accumulated FallbackError is emitted as an ErrorDelta (the channel was
+// already handed to the consumer).
+//
+// Every return path that abandons a live src must `go drain(src)` first:
+// provider adapters may send on unbuffered channels, and a producer blocked on
+// a send to an abandoned channel leaks forever.
 func (f *Provider) relay(ctx context.Context, out chan<- types.Delta, src <-chan types.Delta, rest []types.Provider, call func(types.Provider) (<-chan types.Delta, error), shouldFallback func(error) bool, errs []error) {
 	defer close(out)
 
@@ -96,20 +143,21 @@ func (f *Provider) relay(ctx context.Context, out chan<- types.Delta, src <-chan
 		for {
 			select {
 			case <-ctx.Done():
+				go drain(src) // abandoning a live src: unblock its producer
 				return
 			case d, ok := <-src:
 				if !ok {
 					return // stream finished (cleanly, or after a propagated error)
 				}
-				ed, isErr := d.(types.ErrorDelta)
-				if isErr && !forwarded && ctx.Err() == nil && shouldFallback(ed.Error) {
+				if ed, isErr := d.(types.ErrorDelta); isErr && !forwarded && ctx.Err() == nil && shouldFallback(ed.Error) {
 					fbErr = ed.Error
 					break read
 				}
 				if !send(d) {
+					go drain(src) // send failed on ctx.Done: src is still live
 					return
 				}
-				if !isErr {
+				if isContentDelta(d) {
 					forwarded = true
 				}
 			}

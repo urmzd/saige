@@ -391,21 +391,20 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 	// Drain deltas in a separate goroutine so the loop's RunStep calls execute
 	// synchronously in THIS goroutine — important for durable engines that
 	// correlate steps to the workflow's calling context.
-	var runErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for d := range stream.Deltas() {
-			if ed, ok := d.(types.ErrorDelta); ok {
-				runErr = ed.Error
-			}
+		for range stream.Deltas() {
 		}
 	}()
 
 	clone.runLoop(loopCtx, stream, input, branch) // synchronous; closes stream
 	<-done
 
-	if runErr != nil {
+	// The stream's close error is the authoritative terminal signal: in-band
+	// ErrorDeltas can be dropped when the context is already done (send races
+	// against ctx.Done), so a cancelled run must not be reported as success.
+	if runErr := stream.Wait(); runErr != nil {
 		return nil, runErr
 	}
 
@@ -685,6 +684,33 @@ func (a *Agent) persistNode(ctx context.Context, node *types.Node) {
 	}
 }
 
+// Checkpoint creates a named checkpoint at the tip of branch (the active
+// branch when empty) and persists it to the configured Store, so it survives
+// LoadTreeFromStore round trips without WAL recovery. Callers that call
+// Tree.Checkpoint directly get WAL coverage only — this is the durable path.
+// The checkpoint always exists in the tree on return; a non-nil error means
+// only the store write failed.
+func (a *Agent) Checkpoint(ctx context.Context, branch types.BranchID, name string) (types.CheckpointID, error) {
+	tr := a.cfg.Tree
+	if branch == "" {
+		branch = tr.Active()
+	}
+	cpID, err := tr.Checkpoint(branch, name)
+	if err != nil {
+		return "", err
+	}
+	if a.cfg.Store != nil {
+		cp, ok := tr.Checkpoints()[cpID]
+		if !ok {
+			return cpID, fmt.Errorf("checkpoint %s missing after creation", cpID)
+		}
+		if err := a.cfg.Store.SaveCheckpoint(ctx, cp); err != nil {
+			return cpID, fmt.Errorf("persist checkpoint: %w", err)
+		}
+	}
+	return cpID, nil
+}
+
 // LoadTreeFromStore reconstructs a conversation tree from a Store by loading the
 // subtree rooted at rootID and rebuilding it via tree.FromStore. The returned
 // tree can be passed to NewAgent via WithTree to resume a persisted session. The
@@ -796,7 +822,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// Resolve config + active agent (handoff group only). With no group this
 		// is byte-for-byte the non-handoff path.
 		resolved, llmMessages := a.prepareMessages(messages)
-		active := applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
+		active := a.applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
 
 		// Check iteration cap. If we break here while the last assistant turn left
 		// tool calls pending (pendingWork), the run was truncated, not finished —
@@ -835,6 +861,11 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		stream.send(enriched)
 
 		if msg == nil {
+			// An empty response with a dead context is a truncated stream (the
+			// provider's channel closed on cancellation), not a finished turn.
+			if ctx.Err() != nil {
+				return types.ErrStreamCanceled
+			}
 			break // empty response: a clean (if degenerate) finish
 		}
 
@@ -930,9 +961,18 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 }
 
 // applyModel re-targets the active provider when a ConfigContent block set a
-// model. Providers that don't implement types.ModelSwitcher are unchanged.
-func applyModel(ac activeContext, model string) activeContext {
-	ac.provider = types.ProviderWithModel(ac.provider, model)
+// model. A provider that cannot switch (no types.ModelSwitcher) is used
+// unchanged, with a warning so a requested model is never dropped silently.
+func (a *Agent) applyModel(ac activeContext, model string) activeContext {
+	if model == "" {
+		return ac
+	}
+	switched := types.ProviderWithModel(ac.provider, model)
+	if switched == ac.provider && types.ProviderModel(ac.provider) != model {
+		a.cfg.Logger.Warn("config requested a model but the provider cannot switch models",
+			"agent", a.cfg.Name, "requested_model", model, "provider", types.ProviderName(ac.provider))
+	}
+	ac.provider = switched
 	return ac
 }
 

@@ -24,6 +24,17 @@
 //
 // Node messages are serialized with the same envelope mechanism the tree and
 // pgstore use (tree.MarshalMessage / tree.UnmarshalMessage).
+//
+// # Growth and compaction
+//
+// The log grows for the lifetime of a session: the tree's normal-path writes
+// append commit records but never remove them or mark them applied, so the
+// file accumulates the full mutation history. Compact rewrites the log in
+// place (temp file + fsync + rename), keeping only committed transactions
+// that have not been marked applied. agent/store/walrecover.RecoverWAL calls
+// Compact (via its optional Compactor interface) after a successful recovery
+// pass, so each startup shrinks the log back to the transactions still
+// awaiting application — typically none.
 package filewal
 
 import (
@@ -34,6 +45,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -181,13 +193,29 @@ func decodeOp(in walOp) (types.TxOp, error) {
 	return out, nil
 }
 
+// walFile is the subset of *os.File the WAL uses for its append handle. It
+// exists as a seam so tests can inject write failures; production code always
+// uses an *os.File.
+type walFile interface {
+	io.Writer
+	Sync() error
+	Truncate(size int64) error
+	Stat() (os.FileInfo, error)
+	Close() error
+}
+
 // WAL is a file-backed write-ahead log. Safe for concurrent use within one
 // process; the file must not be shared across processes concurrently.
 type WAL struct {
 	mu      sync.Mutex
 	path    string
-	f       *os.File
+	f       walFile
 	pending map[types.TxID][]types.TxOp
+	// failed is set when the log could not be rolled back to a clean record
+	// boundary (a partial record is stuck at EOF). Once set, every write
+	// errors: appending after the corruption would poison the whole log,
+	// because readRecords rejects bad lines anywhere but the tail.
+	failed error
 }
 
 // New opens (creating if necessary) the JSONL WAL at path. A torn final line
@@ -301,19 +329,126 @@ func (w *WAL) MarkApplied(_ context.Context, txID types.TxID) error {
 	return w.writeRecord(record{Kind: recordApplied, Tx: string(txID)})
 }
 
-// writeRecord appends one JSONL record and fsyncs. Caller must hold the lock.
+// writeRecord appends one JSONL record and fsyncs. A short or failed write is
+// rolled back by truncating to the pre-write size, so the log always ends at
+// a record boundary; without the rollback the next successful append would
+// land after the partial record, corrupting the log mid-file where neither
+// repairTail nor readRecords can heal it. If the rollback truncate itself
+// fails, the WAL is marked failed and refuses all further writes. Caller must
+// hold the lock.
 func (w *WAL) writeRecord(rec record) error {
+	if w.failed != nil {
+		return fmt.Errorf("filewal: wal disabled by unrecoverable write failure: %w", w.failed)
+	}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("filewal: marshal record: %w", err)
 	}
 	line = append(line, '\n')
-	if _, err := w.f.Write(line); err != nil {
-		return fmt.Errorf("filewal: write: %w", err)
+
+	info, err := w.f.Stat()
+	if err != nil {
+		return fmt.Errorf("filewal: stat before write: %w", err)
+	}
+	goodSize := info.Size()
+
+	n, werr := w.f.Write(line)
+	if werr == nil && n < len(line) {
+		werr = io.ErrShortWrite
+	}
+	if werr != nil {
+		if terr := w.f.Truncate(goodSize); terr != nil {
+			w.failed = fmt.Errorf("write: %v; rollback truncate to %d: %v", werr, goodSize, terr)
+			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %v; wal disabled)", werr, terr)
+		}
+		// The handle is O_APPEND, so the next write lands at the restored end
+		// of file — no seek needed.
+		return fmt.Errorf("filewal: write: %w", werr)
 	}
 	if err := w.f.Sync(); err != nil {
 		return fmt.Errorf("filewal: fsync: %w", err)
 	}
+	return nil
+}
+
+// Compact atomically rewrites the log, keeping only commit records for
+// transactions that have not been marked applied; applied markers and the
+// commit records they cover are dropped. After a successful
+// walrecover.RecoverWAL every committed transaction has been applied, so
+// compaction typically shrinks the log to empty.
+//
+// The rewrite goes to a temp file in the log's directory, which is fsynced
+// and renamed over the log, so a crash during Compact leaves either the old
+// or the new log — never a mix. A stray temp file left by such a crash is
+// inert: New only ever opens the exact WAL path.
+func (w *WAL) Compact(_ context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failed != nil {
+		return fmt.Errorf("filewal: wal disabled by unrecoverable write failure: %w", w.failed)
+	}
+
+	recs, err := w.readRecords()
+	if err != nil {
+		return err
+	}
+	applied := make(map[string]bool)
+	for _, r := range recs {
+		if r.Kind == recordApplied {
+			applied[r.Tx] = true
+		}
+	}
+
+	dir := filepath.Dir(w.path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(w.path)+".compact-*")
+	if err != nil {
+		return fmt.Errorf("filewal: create compact temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	fail := func(step string, err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("filewal: %s: %w", step, err)
+	}
+	for _, r := range recs {
+		if r.Kind != recordCommit || applied[r.Tx] {
+			continue
+		}
+		line, err := json.Marshal(r)
+		if err != nil {
+			return fail("marshal record", err)
+		}
+		line = append(line, '\n')
+		if _, err := tmp.Write(line); err != nil {
+			return fail("write compact temp", err)
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail("fsync compact temp", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("filewal: close compact temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, w.path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("filewal: rename compact temp: %w", err)
+	}
+	// Best-effort directory sync so the rename itself is durable.
+	if d, err := os.Open(dir); err == nil { //nolint:gosec // dir derives from the caller-chosen WAL location
+		_ = d.Sync()
+		_ = d.Close()
+	}
+
+	// Swap the append handle onto the new file: the old handle points at the
+	// now-unlinked inode, so writes through it would be lost.
+	_ = w.f.Close()
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path is the caller-chosen WAL location
+	if err != nil {
+		w.failed = fmt.Errorf("reopen after compact: %v", err)
+		return fmt.Errorf("filewal: reopen after compact: %w (wal disabled)", err)
+	}
+	w.f = f
 	return nil
 }
 

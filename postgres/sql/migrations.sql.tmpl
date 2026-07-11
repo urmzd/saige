@@ -74,6 +74,32 @@ CREATE TABLE IF NOT EXISTS kg_mention (
 ---
 CREATE INDEX IF NOT EXISTS idx_kg_mention_entity ON kg_mention(entity_id)
 ---
+UPDATE kg_entity e
+SET group_id = grp.group_id
+FROM (
+    SELECT m.entity_id, min(ep.group_id) AS group_id
+    FROM kg_mention m
+    JOIN kg_episode ep ON ep.id = m.episode_id
+    WHERE ep.group_id != ''
+    GROUP BY m.entity_id
+    HAVING count(DISTINCT ep.group_id) = 1
+) grp
+WHERE e.id = grp.entity_id
+  AND e.group_id = ''
+  AND NOT EXISTS (
+      SELECT 1 FROM kg_entity dup
+      WHERE dup.group_id = grp.group_id AND dup.name = e.name AND dup.type = e.type
+  )
+---
+UPDATE kg_relation r
+SET group_id = src.group_id
+FROM kg_entity src, kg_entity tgt
+WHERE r.group_id = ''
+  AND src.id = r.source_id
+  AND tgt.id = r.target_id
+  AND src.group_id != ''
+  AND src.group_id = tgt.group_id
+---
 CREATE TABLE IF NOT EXISTS rag_document (
     id          BIGSERIAL PRIMARY KEY,
     uuid        TEXT NOT NULL UNIQUE,
@@ -166,3 +192,37 @@ CREATE TABLE IF NOT EXISTS agent_checkpoint (
 ALTER TABLE agent_checkpoint ADD COLUMN IF NOT EXISTS conversation_id TEXT NOT NULL DEFAULT ''
 ---
 CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_conv_branch ON agent_checkpoint(conversation_id, branch_id)
+---
+WITH RECURSIVE node_root AS (
+    SELECT uuid, uuid AS root_uuid
+    FROM agent_node
+    WHERE parent_uuid IS NULL OR parent_uuid = ''
+    UNION ALL
+    SELECT n.uuid, r.root_uuid
+    FROM agent_node n
+    JOIN node_root r ON n.parent_uuid = r.uuid
+)
+UPDATE agent_branch b
+SET conversation_id = nr.root_uuid
+FROM node_root nr
+WHERE b.conversation_id = ''
+  AND b.tip_uuid = nr.uuid
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_branch dup
+      WHERE dup.conversation_id = nr.root_uuid AND dup.branch_id = b.branch_id
+  )
+---
+WITH RECURSIVE node_root AS (
+    SELECT uuid, uuid AS root_uuid
+    FROM agent_node
+    WHERE parent_uuid IS NULL OR parent_uuid = ''
+    UNION ALL
+    SELECT n.uuid, r.root_uuid
+    FROM agent_node n
+    JOIN node_root r ON n.parent_uuid = r.uuid
+)
+UPDATE agent_checkpoint c
+SET conversation_id = nr.root_uuid
+FROM node_root nr
+WHERE c.conversation_id = ''
+  AND c.node_uuid = nr.uuid

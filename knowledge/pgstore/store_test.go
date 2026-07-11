@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/postgres"
 )
@@ -435,6 +436,32 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 			FROM kg_entity s, kg_entity t
 			WHERE s.uuid = 'legacy-src' AND t.uuid = 'legacy-tgt'`,
 		`INSERT INTO kg_episode (uuid, name, body) VALUES ('legacy-ep', 'legacy episode', 'legacy body')`,
+		// Group-scoped legacy data: before group_id existed on entities and
+		// relations, tenancy lived only on episodes. g1-alpha and g1-beta are
+		// mentioned solely from group g1 episodes; 'ambig' is mentioned from
+		// both g1 and g2 (the old cross-tenant merge bug) and cannot be
+		// cleanly assigned.
+		`INSERT INTO kg_entity (uuid, name, type, summary) VALUES
+			('g1-alpha', 'Grace Hopper', 'person', 'expert in quantum computing'),
+			('g1-beta', 'Alan Turing', 'person', 'studies quantum computing'),
+			('ambig', 'Shared Entity', 'person', 'mentioned by two groups')`,
+		`INSERT INTO kg_relation (uuid, source_id, target_id, type, fact)
+			SELECT 'g1-rel', s.id, t.id, 'MENTORS', 'Grace mentors Alan in quantum computing'
+			FROM kg_entity s, kg_entity t
+			WHERE s.uuid = 'g1-alpha' AND t.uuid = 'g1-beta'`,
+		`INSERT INTO kg_relation (uuid, source_id, target_id, type, fact)
+			SELECT 'ambig-rel', s.id, t.id, 'KNOWS', 'cross-group fact'
+			FROM kg_entity s, kg_entity t
+			WHERE s.uuid = 'g1-alpha' AND t.uuid = 'ambig'`,
+		`INSERT INTO kg_episode (uuid, name, body, group_id) VALUES
+			('ep-g1', 'episode g1', 'body g1', 'g1'),
+			('ep-g2', 'episode g2', 'body g2', 'g2')`,
+		`INSERT INTO kg_mention (episode_id, entity_id)
+			SELECT ep.id, e.id
+			FROM kg_episode ep, kg_entity e
+			WHERE (ep.uuid, e.uuid) IN
+				(('ep-g1', 'g1-alpha'), ('ep-g1', 'g1-beta'),
+				 ('ep-g1', 'ambig'), ('ep-g2', 'ambig'))`,
 	}
 	for _, stmt := range stmts {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
@@ -480,7 +507,59 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 		}
 	}
 
+	// Backfill: entities mentioned from exactly one non-empty group got that
+	// group; the entity mentioned from two groups stays in "" (it cannot be
+	// cleanly assigned to either tenant). Relations follow their endpoints
+	// when both agree on a non-empty group.
+	groupOf := func(table, uuid string) string {
+		t.Helper()
+		var g string
+		if err := pool.QueryRow(ctx,
+			`SELECT group_id FROM `+table+` WHERE uuid = $1`, uuid).Scan(&g); err != nil {
+			t.Fatalf("group of %s %s: %v", table, uuid, err)
+		}
+		return g
+	}
+	for _, tc := range []struct{ table, uuid, want string }{
+		{"kg_entity", "g1-alpha", "g1"},
+		{"kg_entity", "g1-beta", "g1"},
+		{"kg_entity", "ambig", ""},
+		{"kg_entity", "legacy-src", ""},
+		{"kg_entity", "legacy-tgt", ""},
+		{"kg_relation", "g1-rel", "g1"},
+		{"kg_relation", "ambig-rel", ""},
+		{"kg_relation", "legacy-rel", ""},
+	} {
+		if got := groupOf(tc.table, tc.uuid); got != tc.want {
+			t.Errorf("%s %s group_id = %q, want %q", tc.table, tc.uuid, got, tc.want)
+		}
+	}
+
 	store := NewStore(pool, nil)
+
+	// Backfilled rows are visible to group-scoped search. Text search matches
+	// the g1 entities' summaries; embedding search needs a vector, which the
+	// legacy rows lack, so give g1-alpha one first (the migration never
+	// touches embeddings).
+	byText, err := store.SearchByText(ctx, "quantum computing", &types.SearchOptions{GroupID: "g1"})
+	if err != nil {
+		t.Fatalf("group-scoped text search after upgrade: %v", err)
+	}
+	if got := factUUIDs(byText); !got["g1-rel"] || got["ambig-rel"] || got["legacy-rel"] {
+		t.Errorf("g1 text search = %v, want g1-rel only (no ambig-rel/legacy-rel)", got)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE kg_entity SET embedding = $1 WHERE uuid = 'g1-alpha'`,
+		pgvector.NewVector(testVec(1))); err != nil {
+		t.Fatalf("set embedding on backfilled entity: %v", err)
+	}
+	byEmb, err := store.SearchByEmbedding(ctx, testVec(1), &types.SearchOptions{GroupID: "g1"})
+	if err != nil {
+		t.Fatalf("group-scoped embedding search after upgrade: %v", err)
+	}
+	if got := factUUIDs(byEmb); !got["g1-rel"] || got["ambig-rel"] {
+		t.Errorf("g1 embedding search = %v, want g1-rel only (no ambig-rel)", got)
+	}
 
 	// Legacy entity is findable both globally and via the "" group.
 	global, err := store.FindEntitiesByNameType(ctx, "Ada Lovelace", "person")
@@ -505,5 +584,39 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 	}
 	if n := countRows(t, pool, `SELECT count(*) FROM kg_entity WHERE name = 'Ada Lovelace'`); n != 2 {
 		t.Errorf("Ada Lovelace rows after scoped upsert = %d, want 2", n)
+	}
+
+	// Re-running migrations is a no-op: the backfill must not move any row a
+	// second time (guarded by group_id = ''), including the deliberately
+	// unassigned ambiguous rows.
+	snapshot := func() map[string]string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT 'e:' || uuid, group_id FROM kg_entity
+			UNION ALL
+			SELECT 'r:' || uuid, group_id FROM kg_relation`)
+		if err != nil {
+			t.Fatalf("snapshot query: %v", err)
+		}
+		defer rows.Close()
+		snap := make(map[string]string)
+		for rows.Next() {
+			var key, group string
+			if err := rows.Scan(&key, &group); err != nil {
+				t.Fatalf("snapshot scan: %v", err)
+			}
+			snap[key] = group
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("snapshot rows: %v", err)
+		}
+		return snap
+	}
+	before := snapshot()
+	if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{}); err != nil {
+		t.Fatalf("re-run migrations: %v", err)
+	}
+	if after := snapshot(); !maps.Equal(before, after) {
+		t.Errorf("re-running migrations changed rows:\nbefore %v\nafter  %v", before, after)
 	}
 }

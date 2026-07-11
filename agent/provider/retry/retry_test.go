@@ -388,3 +388,37 @@ func (p *countingProvider) ChatStream(_ context.Context, _ []types.Message, _ []
 	close(ch)
 	return ch, nil
 }
+
+// switchableProvider is a minimal types.ModelSwitcher fake.
+type switchableProvider struct {
+	model string
+}
+
+func (p *switchableProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+	ch := make(chan types.Delta)
+	close(ch)
+	return ch, nil
+}
+
+func (p *switchableProvider) Model() string { return p.model }
+
+func (p *switchableProvider) WithModel(m string) types.Provider {
+	return &switchableProvider{model: m}
+}
+
+// WithModel must re-target the inner provider so ConfigContent.Model works
+// through retry-wrapped deployments.
+func TestWithModelRetargetsInner(t *testing.T) {
+	r := New(&switchableProvider{model: "base"}, DefaultConfig())
+
+	switched := r.WithModel("fast")
+	if got := types.ProviderModel(switched); got != "fast" {
+		t.Errorf("switched model = %q, want fast", got)
+	}
+	if got := types.ProviderModel(r); got != "base" {
+		t.Errorf("original model = %q, want base unchanged", got)
+	}
+	if _, ok := switched.(*Provider); !ok {
+		t.Errorf("switched provider is %T, want *retry.Provider (retry preserved)", switched)
+	}
+}

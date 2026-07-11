@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"maps"
 	"os"
 	"testing"
 	"time"
@@ -214,7 +215,18 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 			branch_id TEXT NOT NULL UNIQUE,
 			tip_uuid  TEXT NOT NULL
 		)`,
-		`INSERT INTO agent_branch (branch_id, tip_uuid) VALUES ('main', 'legacy-tip')`,
+		// Two pre-namespacing conversations: their node trees exist, and the
+		// global branch_id UNIQUE forced distinct branch names. 'main' points
+		// at a tip with no agent_node row (orphan) and cannot be backfilled.
+		`INSERT INTO agent_node (uuid, parent_uuid, role, message, branch_id) VALUES
+			('root-1', '', 'user', '{}'::jsonb, 'conv1-main'),
+			('child-1', 'root-1', 'assistant', '{}'::jsonb, 'conv1-main'),
+			('root-2', '', 'user', '{}'::jsonb, 'conv2-main'),
+			('child-2', 'root-2', 'assistant', '{}'::jsonb, 'conv2-main')`,
+		`INSERT INTO agent_branch (branch_id, tip_uuid) VALUES
+			('main', 'legacy-tip'),
+			('conv1-main', 'child-1'),
+			('conv2-main', 'child-2')`,
 		`DROP TABLE IF EXISTS agent_checkpoint`,
 		`CREATE TABLE agent_checkpoint (
 			id         BIGSERIAL PRIMARY KEY,
@@ -224,6 +236,10 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 			name       TEXT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		`INSERT INTO agent_checkpoint (uuid, branch_id, node_uuid, name) VALUES
+			('cp-1', 'conv1-main', 'child-1', 'first'),
+			('cp-2', 'conv2-main', 'root-2', 'second'),
+			('cp-orphan', 'main', 'legacy-tip', 'orphan')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
@@ -235,7 +251,8 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 		t.Fatalf("migrations on legacy schema: %v", err)
 	}
 
-	// The legacy row is preserved in the "" namespace.
+	// The orphan legacy row (tip has no agent_node) is preserved in the ""
+	// namespace: with no ancestry to walk, there is no root to assign.
 	legacy := NewStore(pool, "", nil)
 	tip, err := legacy.LoadBranch(ctx, "main")
 	if err != nil {
@@ -243,6 +260,86 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 	}
 	if tip != "legacy-tip" {
 		t.Errorf("legacy tip = %s, want legacy-tip", tip)
+	}
+	legacyBranches, err := legacy.ListBranches(ctx)
+	if err != nil {
+		t.Fatalf("list legacy branches: %v", err)
+	}
+	if len(legacyBranches) != 1 {
+		t.Errorf("legacy namespace branches = %v, want only the orphan 'main'", legacyBranches)
+	}
+	legacyCPs, err := legacy.ListCheckpoints(ctx)
+	if err != nil {
+		t.Fatalf("list legacy checkpoints: %v", err)
+	}
+	if len(legacyCPs) != 1 || legacyCPs[0].ID != "cp-orphan" {
+		t.Errorf("legacy namespace checkpoints = %v, want only cp-orphan", legacyCPs)
+	}
+
+	// Backfilled rows carry their tree's root node ID as conversation_id, so
+	// a Store created per NewStore's recommendation (conversation ID = root
+	// node ID) sees them.
+	for _, conv := range []struct {
+		root, branch, tip, cp, cpNode string
+	}{
+		{"root-1", "conv1-main", "child-1", "cp-1", "child-1"},
+		{"root-2", "conv2-main", "child-2", "cp-2", "root-2"},
+	} {
+		store := NewStore(pool, conv.root, nil)
+		tip, err := store.LoadBranch(ctx, types.BranchID(conv.branch))
+		if err != nil {
+			t.Fatalf("load backfilled branch %s in %s: %v", conv.branch, conv.root, err)
+		}
+		if string(tip) != conv.tip {
+			t.Errorf("%s %s tip = %s, want %s", conv.root, conv.branch, tip, conv.tip)
+		}
+		branches, err := store.ListBranches(ctx)
+		if err != nil {
+			t.Fatalf("list branches in %s: %v", conv.root, err)
+		}
+		if len(branches) != 1 || branches[types.BranchID(conv.branch)] != types.NodeID(conv.tip) {
+			t.Errorf("%s branches = %v, want map[%s:%s]", conv.root, branches, conv.branch, conv.tip)
+		}
+		cps, err := store.ListCheckpoints(ctx)
+		if err != nil {
+			t.Fatalf("list checkpoints in %s: %v", conv.root, err)
+		}
+		if len(cps) != 1 || cps[0].ID != types.CheckpointID(conv.cp) || cps[0].NodeID != types.NodeID(conv.cpNode) {
+			t.Errorf("%s checkpoints = %v, want only %s at node %s", conv.root, cps, conv.cp, conv.cpNode)
+		}
+	}
+
+	// Re-running migrations is a no-op: backfilled rows keep their
+	// conversation_id and the orphans stay in "".
+	snapshot := func() map[string]string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT 'b:' || branch_id || ':' || tip_uuid, conversation_id FROM agent_branch
+			UNION ALL
+			SELECT 'c:' || uuid, conversation_id FROM agent_checkpoint`)
+		if err != nil {
+			t.Fatalf("snapshot query: %v", err)
+		}
+		defer rows.Close()
+		snap := make(map[string]string)
+		for rows.Next() {
+			var key, conv string
+			if err := rows.Scan(&key, &conv); err != nil {
+				t.Fatalf("snapshot scan: %v", err)
+			}
+			snap[key] = conv
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("snapshot rows: %v", err)
+		}
+		return snap
+	}
+	before := snapshot()
+	if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{}); err != nil {
+		t.Fatalf("re-run migrations: %v", err)
+	}
+	if after := snapshot(); !maps.Equal(before, after) {
+		t.Errorf("re-running migrations changed rows:\nbefore %v\nafter  %v", before, after)
 	}
 
 	// Post-upgrade, two conversations can both use "main".

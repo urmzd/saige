@@ -483,10 +483,14 @@ func (p *pipelineImpl) Delete(ctx context.Context, documentUUID string) error {
 		}
 	}
 
-	// Remove graph episodes derived from this document (grouped by its UUID).
+	// Delete the document first: if the store delete fails, the derived graph
+	// facts must survive with it. Graph episodes may briefly outlive the
+	// document (see package doc), never the reverse.
+	if err := p.cfg.Store.DeleteDocument(ctx, documentUUID); err != nil {
+		return err
+	}
 	p.deleteGraphEpisodes(ctx, documentUUID)
-
-	return p.cfg.Store.DeleteDocument(ctx, documentUUID)
+	return nil
 }
 
 func (p *pipelineImpl) Reconstruct(ctx context.Context, documentUUID string) (*ragtypes.Document, error) {
