@@ -55,18 +55,7 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	// Identify nodes shared across other branches if PreserveShared.
 	shared := make(map[types.NodeID]bool)
 	if opts.PreserveShared {
-		for brID, brTip := range t.branches {
-			if brID == branch {
-				continue
-			}
-			brPath, err := t.pathUnlocked(brTip)
-			if err != nil {
-				continue
-			}
-			for _, nid := range brPath {
-				shared[nid] = true
-			}
-		}
+		shared = t.sharedNodesUnlocked(branch)
 	}
 
 	// Build list of active, non-root, non-shared node IDs on the path.
@@ -108,36 +97,9 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 		nodeIDs = append(nodeIDs, c.id)
 	}
 
-	summaryText := types.MessagesToText(msgs)
-	summaryReq := []types.Message{
-		types.NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		types.NewUserMessage(summaryText),
-	}
-
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	summary, err := summarizeMessages(ctx, provider, msgs)
 	if err != nil {
-		return "", fmt.Errorf("summarization: %w", err)
-	}
-
-	var summaryBuf strings.Builder
-	var streamErr error
-	for delta := range rx {
-		switch d := delta.(type) {
-		case types.TextContentDelta:
-			summaryBuf.WriteString(d.Content)
-		case types.ErrorDelta:
-			// Mid-stream failures (e.g. rate limits after the stream opened)
-			// arrive as ErrorDelta, not as the ChatStream return error.
-			streamErr = d.Error
-		}
-	}
-	if streamErr != nil {
-		return "", fmt.Errorf("summarization: %w", streamErr)
-	}
-	summary := summaryBuf.String()
-	if strings.TrimSpace(summary) == "" {
-		// An empty summary would silently drop the compacted messages.
-		return "", fmt.Errorf("summarization produced an empty summary")
+		return "", err
 	}
 
 	// Create a new branch forking from the parent of the first compacted node.
@@ -230,4 +192,59 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	t.active = newBranchID
 
 	return newBranchID, nil
+}
+
+// sharedNodesUnlocked returns the set of node IDs reachable from any branch
+// other than the given one. Caller must hold t.mu.
+func (t *Tree) sharedNodesUnlocked(branch types.BranchID) map[types.NodeID]bool {
+	shared := make(map[types.NodeID]bool)
+	for brID, brTip := range t.branches {
+		if brID == branch {
+			continue
+		}
+		brPath, err := t.pathUnlocked(brTip)
+		if err != nil {
+			continue
+		}
+		for _, nid := range brPath {
+			shared[nid] = true
+		}
+	}
+	return shared
+}
+
+// summarizeMessages asks the provider to summarize msgs and returns the
+// summary text, failing on stream errors or an empty result.
+func summarizeMessages(ctx context.Context, provider types.Provider, msgs []types.Message) (string, error) {
+	summaryReq := []types.Message{
+		types.NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
+		types.NewUserMessage(types.MessagesToText(msgs)),
+	}
+
+	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	if err != nil {
+		return "", fmt.Errorf("summarization: %w", err)
+	}
+
+	var summaryBuf strings.Builder
+	var streamErr error
+	for delta := range rx {
+		switch d := delta.(type) {
+		case types.TextContentDelta:
+			summaryBuf.WriteString(d.Content)
+		case types.ErrorDelta:
+			// Mid-stream failures (e.g. rate limits after the stream opened)
+			// arrive as ErrorDelta, not as the ChatStream return error.
+			streamErr = d.Error
+		}
+	}
+	if streamErr != nil {
+		return "", fmt.Errorf("summarization: %w", streamErr)
+	}
+	summary := summaryBuf.String()
+	if strings.TrimSpace(summary) == "" {
+		// An empty summary would silently drop the compacted messages.
+		return "", fmt.Errorf("summarization produced an empty summary")
+	}
+	return summary, nil
 }
