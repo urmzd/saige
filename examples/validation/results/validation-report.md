@@ -1,6 +1,6 @@
 # SAIGE Live Validation Report
 
-Model: `gpt-4o-mini` (OpenAI) — real end-to-end runs of the agent SDK.
+Model: `gpt-4o-mini` (OpenAI): real end-to-end runs of the agent SDK.
 
 **8 passed, 0 failed, 0 skipped** of 8 feature checks.
 

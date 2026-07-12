@@ -129,7 +129,7 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 
 	toSummarize := messages[1 : len(messages)-keepLast]
 	// The summary itself costs a user+assistant pair, so summarizing fewer
-	// than 3 messages cannot shrink history — skip before paying an LLM call.
+	// than 3 messages cannot shrink history: skip before paying an LLM call.
 	if len(toSummarize) < 3 {
 		return messages, nil
 	}

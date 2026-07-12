@@ -21,7 +21,7 @@ import (
 //
 // The checkpoint is the critical cross-layer artifact: tree.Checkpoint only
 // reaches the WAL, so it can only appear in the recovered tree if WAL
-// recovery replayed it into the pg store — exactly the crash window
+// recovery replayed it into the pg store: exactly the crash window
 // RecoverAndLoadTree exists to heal.
 func TestAgentDurabilityRoundTrip(t *testing.T) {
 	pool := requirePostgres(t)
@@ -111,7 +111,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 		t.Fatalf("recovered branches %v missing main", branches)
 	}
 
-	// The checkpoint survived — it only reaches the store via WAL recovery.
+	// The checkpoint survived: it only reaches the store via WAL recovery.
 	cps := recovered.Checkpoints()
 	cp, ok := cps[cpID]
 	if !ok {

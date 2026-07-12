@@ -1,4 +1,4 @@
-# saige — Super Artificial Intelligence Graph Environment
+# saige: Super Artificial Intelligence Graph Environment
 
 > A unified Go SDK and CLI for streaming AI agents, knowledge graphs, and RAG pipelines.
 
@@ -6,7 +6,15 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 
 ## Docs
 
-- [README](README.md): Overview, CLI usage, installation, quick start
+- [README](README.md): Overview, installation, quick start
+- [agent/README.md](agent/README.md): Agent framework: providers, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing
+- [knowledge/README.md](knowledge/README.md): Knowledge graph SDK: graph interface, hybrid search, deduplication, PostgreSQL backend
+- [rag/README.md](rag/README.md): RAG pipelines: data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings
+- [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
+- [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, rag, kg
+- [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
+- [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
+- [examples/README.md](examples/README.md): Runnable example index
 - [AGENTS.md](AGENTS.md): Architecture, packages, CLI, commands, code style
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development setup, commit conventions
 

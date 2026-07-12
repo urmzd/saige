@@ -164,7 +164,7 @@ func TestRecoverWALFromFileWAL(t *testing.T) {
 
 // TestRecoverWALCompactsFileWAL proves the growth contract: a session's WAL
 // accumulates the full history, and a recovery pass applies it, marks it, and
-// compacts the log down to (here) nothing — without losing store content.
+// compacts the log down to (here) nothing: without losing store content.
 func TestRecoverWALCompactsFileWAL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "wal.jsonl")

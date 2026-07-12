@@ -6,13 +6,13 @@
 //
 // One JSON record per line. Two record kinds are written:
 //
-//	{"kind":"commit","tx":"<id>","ops":[<op>...]}  — a committed transaction
-//	{"kind":"applied","tx":"<id>"}                 — the tx was applied to a Store
+//	{"kind":"commit","tx":"<id>","ops":[<op>...]} : a committed transaction
+//	{"kind":"applied","tx":"<id>"}                : the tx was applied to a Store
 //
 // Ops buffer in memory between Begin and Commit; Commit writes the whole
 // transaction as a single line and fsyncs before returning, so a record on
 // disk is always a fully committed transaction. Abort simply drops the
-// buffer — uncommitted transactions never touch the file. A crash mid-Commit
+// buffer: uncommitted transactions never touch the file. A crash mid-Commit
 // leaves at most one truncated final line, which readers tolerate by ignoring
 // an unparsable record at EOF.
 //
@@ -34,7 +34,7 @@
 // that have not been marked applied. agent/store/walrecover.RecoverWAL calls
 // Compact (via its optional Compactor interface) after a successful recovery
 // pass, so each startup shrinks the log back to the transactions still
-// awaiting application — typically none.
+// awaiting application: typically none.
 package filewal
 
 import (
@@ -362,7 +362,7 @@ func (w *WAL) writeRecord(rec record) error {
 			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %v; wal disabled)", werr, terr)
 		}
 		// The handle is O_APPEND, so the next write lands at the restored end
-		// of file — no seek needed.
+		// of file: no seek needed.
 		return fmt.Errorf("filewal: write: %w", werr)
 	}
 	if err := w.f.Sync(); err != nil {
@@ -379,7 +379,7 @@ func (w *WAL) writeRecord(rec record) error {
 //
 // The rewrite goes to a temp file in the log's directory, which is fsynced
 // and renamed over the log, so a crash during Compact leaves either the old
-// or the new log — never a mix. A stray temp file left by such a crash is
+// or the new log: never a mix. A stray temp file left by such a crash is
 // inert: New only ever opens the exact WAL path.
 func (w *WAL) Compact(_ context.Context) error {
 	w.mu.Lock()

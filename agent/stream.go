@@ -104,7 +104,7 @@ func (s *EventStream) awaitResolution(toolCallID string) <-chan Resolution {
 // Replay converts stored messages into a stream of deltas, enabling
 // session restoration. Clients receive the same delta types as if the
 // conversation happened live. Only assistant messages and tool results
-// produce deltas — system and user text messages are context, not events.
+// produce deltas: system and user text messages are context, not events.
 func Replay(messages []types.Message) *EventStream {
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newEventStream(ctx, cancel)

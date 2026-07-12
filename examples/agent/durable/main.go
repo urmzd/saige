@@ -35,7 +35,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Build the agent normally — the core package never imports dbos.
+	// Build the agent normally: the core package never imports dbos.
 	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
 		Name:         "researcher",
 		SystemPrompt: "You research questions and summarize concisely.",
@@ -56,7 +56,7 @@ func main() {
 		log.Fatalf("launch: %v", err)
 	}
 
-	// Run durably. The workflow ID is the idempotency key — a second call with
+	// Run durably. The workflow ID is the idempotency key: a second call with
 	// the same ID returns a handle to the existing run instead of re-executing.
 	handle, err := engine.Run(wf, durabledbos.RunInput{
 		Messages: []types.Message{types.NewUserMessage("Summarize the benefits of durable workflows.")},

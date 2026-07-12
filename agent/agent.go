@@ -127,7 +127,7 @@ func WithStepRunner(r types.StepRunner) AgentOption {
 }
 
 // WithStore configures a types.Store so the conversation tree is persisted.
-// With no Store (the default) the tree is in-memory only — fully backward
+// With no Store (the default) the tree is in-memory only: fully backward
 // compatible. When a Store is set, each node added during a run is written
 // best-effort; loading a previously-persisted tree is done explicitly via
 // LoadTreeFromStore before NewAgent (pass the rebuilt tree with WithTree).
@@ -233,7 +233,7 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 }
 
 // registerSubAgent registers a SubAgentDef as a delegate tool. Each invocation
-// constructs a fresh Agent — the sub-agent's conversation history is intentionally
+// constructs a fresh Agent: the sub-agent's conversation history is intentionally
 // discarded between delegations, so sub-agents are stateless across calls.
 func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
 	registry.Register(&subAgentTool{
@@ -279,7 +279,7 @@ func (a *Agent) Info() AgentInfo {
 	}
 
 	for _, td := range a.tools.Definitions() {
-		// Skip internal delegate/handoff tools — they show as sub-agents/handoffs.
+		// Skip internal delegate/handoff tools: they show as sub-agents/handoffs.
 		if strings.HasPrefix(td.Name, "delegate_to_") || strings.HasPrefix(td.Name, "handoff_to_") {
 			continue
 		}
@@ -300,7 +300,7 @@ func (a *Agent) Tree() *tree.Tree {
 
 // Feedback records a rating and optional comment on a node in the conversation
 // tree. The feedback is attached as a permanent leaf branching off the target
-// node — it lives on its own dead-end branch, is never flattened into LLM
+// node: it lives on its own dead-end branch, is never flattened into LLM
 // messages, and cannot have children.
 func (a *Agent) Feedback(ctx context.Context, targetNodeID types.NodeID, rating types.Rating, comment string) (*types.Node, error) {
 	msg := types.UserMessage{Content: []types.UserContent{
@@ -389,7 +389,7 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 	stream := newEventStream(loopCtx, cancel)
 
 	// Drain deltas in a separate goroutine so the loop's RunStep calls execute
-	// synchronously in THIS goroutine — important for durable engines that
+	// synchronously in THIS goroutine: important for durable engines that
 	// correlate steps to the workflow's calling context.
 	done := make(chan struct{})
 	go func() {
@@ -510,7 +510,7 @@ func (a *Agent) persistCompacted(ctx context.Context, tr *tree.Tree, compacted [
 		return "", fmt.Errorf("compacted history too short to branch")
 	}
 
-	// First compacted message is the system prompt (same as root) — skip it.
+	// First compacted message is the system prompt (same as root): skip it.
 	// Branch from root with the second message (the summary request); the rest
 	// (assistant summary + preserved recent context) are appended below.
 	branchID, _, err := tr.Branch(ctx, root.ID, "compact", compacted[1])
@@ -581,7 +581,7 @@ func (a *Agent) callProvider(ctx context.Context, provider types.Provider, messa
 
 // resolveFiles walks messages and resolves FileContent blocks with empty Data.
 // For each FileContent, it resolves the URI via scheme-matched Resolver, then
-// checks the provider's ContentNegotiator — if the media type is native, the
+// checks the provider's ContentNegotiator: if the media type is native, the
 // FileContent is kept; otherwise, it is converted via an Extractor.
 func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []types.Message {
 	if len(a.cfg.Resolvers) == 0 {
@@ -688,7 +688,7 @@ func (a *Agent) persistNode(ctx context.Context, node *types.Node) {
 // Checkpoint creates a named checkpoint at the tip of branch (the active
 // branch when empty) and persists it to the configured Store, so it survives
 // LoadTreeFromStore round trips without WAL recovery. Callers that call
-// Tree.Checkpoint directly get WAL coverage only — this is the durable path.
+// Tree.Checkpoint directly get WAL coverage only: this is the durable path.
 // The checkpoint always exists in the tree on return; a non-nil error means
 // only the store write failed.
 func (a *Agent) Checkpoint(ctx context.Context, branch types.BranchID, name string) (types.CheckpointID, error) {
@@ -731,7 +731,7 @@ func LoadTreeFromStore(ctx context.Context, store types.Store, rootID types.Node
 	if err != nil {
 		return nil, fmt.Errorf("load checkpoints: %w", err)
 	}
-	// Keep only checkpoints whose node belongs to this tree — ListCheckpoints
+	// Keep only checkpoints whose node belongs to this tree: ListCheckpoints
 	// is store-wide, but a tree only rewinds to nodes it contains.
 	inTree := make(map[types.NodeID]bool, len(nodes))
 	for _, n := range nodes {
@@ -826,7 +826,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		active := a.applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
 
 		// Check iteration cap. If we break here while the last assistant turn left
-		// tool calls pending (pendingWork), the run was truncated, not finished —
+		// tool calls pending (pendingWork), the run was truncated, not finished:
 		// emit ErrMaxIterations so consumers can distinguish the two. A clean
 		// natural finish (text-only turn, empty response) clears pendingWork and
 		// does NOT emit it.
@@ -899,7 +899,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 
 		// Handoff post-check: first signal wins; self-handoff is a no-op. On a
 		// handoff the next iteration re-flattens and resolves the new active
-		// agent; with no handoff it re-flattens to process the tool results — so
+		// agent; with no handoff it re-flattens to process the tool results: so
 		// both simply fall through to the next iteration.
 		if err := a.applyHandoff(ctx, tr, stream, branch, results, active.name, &handoffCount); err != nil {
 			return err
@@ -1015,7 +1015,7 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
 // HandoffContent overlay on the same branch. It returns a non-nil error when the
-// caller should terminate the run — the handoff limit was exceeded or a tree
+// caller should terminate the run: the handoff limit was exceeded or a tree
 // write failed.
 func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) error {
 	handoffTo := ""
@@ -1223,7 +1223,7 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return res
 	}
 
-	// Markers — emit MarkerDelta and wait for human resolution.
+	// Markers: emit MarkerDelta and wait for human resolution.
 	if mt, ok := tool.(*types.MarkedTool); ok && len(mt.Markers) > 0 {
 		stream.send(types.MarkerDelta{
 			ToolCallID: tc.ID,
@@ -1266,7 +1266,7 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	}
 
 	// Sub-agent: forward child deltas (the delegation itself is not a durable
-	// step — the child inherits the parent's StepRunner so its own LLM/tool
+	// step: the child inherits the parent's StepRunner so its own LLM/tool
 	// steps are the durable units).
 	if invoker, ok := tool.(SubAgentInvoker); ok {
 		task, _ := tc.Arguments["task"].(string)
@@ -1350,7 +1350,7 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	var res toolResult
 	if stepErr != nil {
 		// Infrastructure failure from the runner itself (e.g. durable engine
-		// error) — surface it as a tool error rather than dropping it.
+		// error): surface it as a tool error rather than dropping it.
 		res = toolResult{toolCallID: tc.ID, err: stepErr.Error()}
 	} else {
 		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, blocks: sr.ToolBlocks, err: sr.ToolError}

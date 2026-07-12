@@ -325,7 +325,7 @@ func TestReplaceDocumentFailureKeepsOldDocument(t *testing.T) {
 	}
 
 	// The new document's second variant carries a 3-dim embedding, which the
-	// vector(768) column rejects — after the document row and first variant
+	// vector(768) column rejects: after the document row and first variant
 	// were already written inside the transaction.
 	bad := singleSectionDoc("doc-bad", "fp-bad", nil,
 		types.ContentVariant{

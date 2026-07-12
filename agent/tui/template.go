@@ -35,7 +35,7 @@ var (
 		RenderMarkdown: true,
 	}
 
-	// TemplateMinimal strips all chrome — just the response text and
+	// TemplateMinimal strips all chrome: just the response text and
 	// approval prompts. Good for quick validation or piping.
 	TemplateMinimal = Template{
 		Name:           "minimal",

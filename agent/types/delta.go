@@ -78,7 +78,7 @@ func (ToolExecDelta) isDelta() {}
 // Blocks carries optional rich output for consumers (e.g. TUIs) that render images.
 type ToolExecEndDelta struct {
 	ToolCallID string
-	Result     string // text projection — UNCHANGED meaning
+	Result     string // text projection: UNCHANGED meaning
 	Error      string
 	Blocks     []ToolResultBlock // optional; nil for plain-text results
 }
@@ -124,7 +124,7 @@ func (MarkerDelta) isDelta() {}
 // ── Handoff deltas ──────────────────────────────────────────────────
 
 // HandoffDelta signals that control transferred from one agent to another
-// mid-stream. The EventStream does not close — subsequent deltas come from the
+// mid-stream. The EventStream does not close: subsequent deltas come from the
 // new active agent. Consumers use this to re-render headers / attribution.
 type HandoffDelta struct {
 	From   string // previously active agent ("" if entry agent)

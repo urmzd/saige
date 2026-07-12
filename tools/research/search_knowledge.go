@@ -49,7 +49,7 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args map[string]any) 
 		opts = append(opts, kgtypes.WithGroupID(t.groupID))
 	}
 
-	// A partial failure still carries usable results — surface them rather
+	// A partial failure still carries usable results: surface them rather
 	// than failing the tool call.
 	resp, err := t.graph.SearchFacts(ctx, query, opts...)
 	if err != nil && !errors.Is(err, kgtypes.ErrPartialSearch) {

@@ -99,7 +99,7 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 	ctx := testContext(t, 2*time.Minute)
 
 	// Knowledge side: public constructor with an injected fake extractor and
-	// no embedder — SearchFacts degrades to fulltext-only, no LLM required.
+	// no embedder: SearchFacts degrades to fulltext-only, no LLM required.
 	kgStore := kgpgstore.NewStore(pool, nil)
 	graph, err := knowledge.NewGraph(ctx,
 		knowledge.WithStore(kgStore),

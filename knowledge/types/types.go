@@ -74,7 +74,7 @@ type Store interface {
 // derived from a group: its episodes, mentions, relations, and entities.
 // The rag pipeline ingests each document under GroupID = document UUID and
 // calls DeleteEpisodes on document delete/replace so graph facts don't
-// outlive their source. The groupID must be non-empty — the default group
+// outlive their source. The groupID must be non-empty: the default group
 // ("") holds all legacy single-tenant data and cannot be bulk-deleted.
 type EpisodeDeleter interface {
 	DeleteEpisodes(ctx context.Context, groupID string) error

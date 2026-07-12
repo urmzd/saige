@@ -5,7 +5,7 @@
 // (and re-billing) the work.
 //
 // This is an optional, heavy, Postgres-coupled integration kept out of the core
-// agent package — the same isolation pattern as agent/pgstore and
+// agent package: the same isolation pattern as agent/pgstore and
 // agent/provider/*. The core agent package never imports dbos; it depends only
 // on the tiny types.StepRunner seam, for which this package supplies a
 // DBOS-backed implementation.
@@ -15,7 +15,7 @@
 // each RunStep with the workflow's calling context and replays steps in
 // recorded order, so deterministic step ordering in the workflow goroutine is
 // what makes crash recovery exact. The trade-off is latency on turns with many
-// tool calls — a durable run pays the sum of its tools' latencies rather than
+// tool calls: a durable run pays the sum of its tools' latencies rather than
 // the max.
 package dbos
 

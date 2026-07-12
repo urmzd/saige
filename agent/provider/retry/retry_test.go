@@ -342,7 +342,7 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 
 // TestRetryProvider_ChannelErrorExhausted verifies that when every attempt
 // emits a transient ErrorDelta before any content, the retry loop exhausts its
-// attempts and reports a synchronous RetryError — matching the existing
+// attempts and reports a synchronous RetryError: matching the existing
 // synchronous-error exhaustion contract.
 func TestRetryProvider_ChannelErrorExhausted(t *testing.T) {
 	inner := &scriptedStreamProvider{Scripts: [][]types.Delta{

@@ -453,7 +453,7 @@ func (t *Tree) mutateSubtree(node *types.Node, recursive bool, mutate func(*type
 }
 
 // Checkpoint creates a named checkpoint at the current tip of a branch. It is
-// covered by the WAL when one is configured, but is NOT written to a Store —
+// covered by the WAL when one is configured, but is NOT written to a Store:
 // use Agent.Checkpoint (or call Store.SaveCheckpoint yourself) when the
 // checkpoint must survive a store-only reload.
 func (t *Tree) Checkpoint(branch types.BranchID, name string) (types.CheckpointID, error) {

@@ -321,7 +321,7 @@ func TestEpisodeMetadataProvenanceRoundTrip(t *testing.T) {
 }
 
 // TestDeleteEpisodesGroup verifies DeleteEpisodes removes every trace of one
-// group — episodes, relations, entities, and (via FK cascade) mentions —
+// group: episodes, relations, entities, and (via FK cascade) mentions:
 // while leaving the other group fully intact, and rejects the empty group.
 func TestDeleteEpisodesGroup(t *testing.T) {
 	pool := testPool(t)

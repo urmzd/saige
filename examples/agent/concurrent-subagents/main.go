@@ -1,6 +1,6 @@
 // Package main demonstrates concurrent sub-agent execution. A parent
-// "coordinator" agent delegates to two specialist sub-agents — a researcher
-// and a fact-checker — in parallel. When the LLM returns multiple
+// "coordinator" agent delegates to two specialist sub-agents: a researcher
+// and a fact-checker: in parallel. When the LLM returns multiple
 // delegate_to_ tool calls in one response, the SDK executes them
 // concurrently via goroutines.
 package main

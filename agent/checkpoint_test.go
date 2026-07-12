@@ -10,7 +10,7 @@ import (
 )
 
 // Agent.Checkpoint must persist through the Store so a store-only reload can
-// rewind — no WAL required.
+// rewind: no WAL required.
 func TestAgentCheckpointRoundTripsThroughStore(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

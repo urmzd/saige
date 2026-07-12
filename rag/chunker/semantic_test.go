@@ -18,7 +18,7 @@ func (m *mockEmbedder) Embed(_ context.Context, variants []types.ContentVariant)
 	embeddings := make([][]float32, len(variants))
 	for i := range variants {
 		vec := make([]float32, 4)
-		// Even indices get [1,0,0,0], odd get [0,1,0,0] — creating low similarity boundaries.
+		// Even indices get [1,0,0,0], odd get [0,1,0,0]: creating low similarity boundaries.
 		if i%2 == 0 {
 			vec[0] = 1.0
 		} else {

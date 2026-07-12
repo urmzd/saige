@@ -25,7 +25,7 @@ broken (unreachable host, missing model), tests fail loudly on purpose.
 ## Quick start
 
 ```sh
-# 1. Ollama (native install) — pull the models once:
+# 1. Ollama (native install): pull the models once:
 ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
 
@@ -58,7 +58,7 @@ docker compose -f integration/docker-compose.yml exec ollama ollama pull nomic-e
 
 ## AlloyDB
 
-The same suite runs against AlloyDB — it is pgvector-compatible and the tests
+The same suite runs against AlloyDB: it is pgvector-compatible and the tests
 create the `vector` extension themselves. Point the DSN at your instance
 (via the AlloyDB Auth Proxy or a private IP):
 
@@ -76,7 +76,7 @@ DBOS and the app share the one DSN.
 
 - **Embedding dimensions.** Migrations create `vector(768)` columns by
   default, matching `nomic-embed-text`. If you switch to a model with a
-  different width, the RAG/KG tests skip with instructions — re-run
+  different width, the RAG/KG tests skip with instructions: re-run
   migrations on a fresh database with matching `MigrationOptions` dims.
 - **Model strength.** Tool calling, handoffs, and entity extraction depend on
   model quality. The defaults are chosen to pass with a small local model; if

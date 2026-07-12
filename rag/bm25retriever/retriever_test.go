@@ -65,13 +65,13 @@ func TestBM25IndexAndSearch(t *testing.T) {
 	if len(hits) < 2 {
 		t.Fatalf("expected at least 2 hits, got %d", len(hits))
 	}
-	// Both doc1 and doc3 contain "brown fox" — they should be top results.
+	// Both doc1 and doc3 contain "brown fox": they should be top results.
 	topUUIDs := map[string]bool{hits[0].Variant.UUID: true, hits[1].Variant.UUID: true}
 	if !topUUIDs["var1"] || !topUUIDs["var3"] {
 		t.Errorf("expected var1 and var3 in top results, got %v", topUUIDs)
 	}
 
-	// Search for "lazy" — should match doc1 and doc2.
+	// Search for "lazy": should match doc1 and doc2.
 	hits, err = r.Retrieve(ctx, "lazy", nil)
 	if err != nil {
 		t.Fatal(err)

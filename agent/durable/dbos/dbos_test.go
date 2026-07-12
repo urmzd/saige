@@ -45,7 +45,7 @@ func TestStepResultGobRoundTrip(t *testing.T) {
 
 // TestNestedToolArgsGobRoundTrip guards that tool arguments containing JSON
 // arrays and nested objects (decoded as []interface{} / map[string]interface{})
-// survive gob — a common real-world tool schema shape.
+// survive gob: a common real-world tool schema shape.
 func TestNestedToolArgsGobRoundTrip(t *testing.T) {
 	msg := types.AssistantMessage{Content: []types.AssistantContent{
 		types.ToolUseContent{ID: "1", Name: "f", Arguments: map[string]any{
@@ -94,7 +94,7 @@ func TestRunInputGobRoundTrip(t *testing.T) {
 
 // TestPayloadsGobEncodeAsInterface guards the wrapper-type registrations. The
 // DBOS gob serializer encodes workflow inputs/outputs and step results as
-// interface values, and gob only requires Register for the interface path —
+// interface values, and gob only requires Register for the interface path:
 // encoding the concrete type directly (the tests above) would not catch a
 // missing registration.
 func TestPayloadsGobEncodeAsInterface(t *testing.T) {

@@ -90,7 +90,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 
 		go r.resolveMarkersVerbose(ctx, stream, scanner, w)
 
-		// Pass empty header — already printed above via Output.Header
+		// Pass empty header: already printed above via Output.Header
 		result := r.Output.StreamDeltas(AgentHeader{}, stream.Deltas())
 		if result.Err != nil {
 			r.Output.Error(result.Err)

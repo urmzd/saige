@@ -20,8 +20,8 @@ type applier interface {
 
 // Compactor is optionally implemented by WALs (agent/store/filewal) that can
 // rewrite their log to drop applied transactions. RecoverWAL invokes it after
-// a successful recovery pass so the log — which grows unboundedly during a
-// session because normal-path writes never mark transactions applied — is
+// a successful recovery pass so the log, which grows unboundedly during a
+// session because normal-path writes never mark transactions applied, is
 // shrunk back to only the transactions still awaiting application. Unrelated
 // to agent/types.Compactor, which compacts message history.
 type Compactor interface {
@@ -31,7 +31,7 @@ type Compactor interface {
 // RecoverWAL replays every committed-but-unapplied WAL transaction into store,
 // each inside one store transaction, and returns the number of WAL
 // transactions applied. Ops map to store writes by kind: node ops call
-// SaveNode, branch ops call SaveBranch, checkpoint ops call SaveCheckpoint —
+// SaveNode, branch ops call SaveBranch, checkpoint ops call SaveCheckpoint:
 // all idempotent upserts, so re-running recovery is safe. When the WAL
 // supports it, applied transactions are marked so they are skipped next time,
 // and the log is compacted afterwards so recovery leaves a minimal log.

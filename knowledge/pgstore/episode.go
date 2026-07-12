@@ -39,7 +39,7 @@ func (s *Store) CreateEpisode(ctx context.Context, input *types.EpisodeInput, en
 
 // DeleteEpisodes implements types.EpisodeDeleter: it removes a group's
 // episodes, relations, and entities in one transaction. Mentions cascade via
-// FK. The default group ("") is rejected — it holds all legacy single-tenant
+// FK. The default group ("") is rejected: it holds all legacy single-tenant
 // data.
 func (s *Store) DeleteEpisodes(ctx context.Context, groupID string) error {
 	if groupID == "" {

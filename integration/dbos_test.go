@@ -123,7 +123,7 @@ func TestDBOSIdempotentReplay(t *testing.T) {
 }
 
 // TestDBOSFullStack wires every layer together: Ollama inference, a DBOS
-// durable workflow, and Postgres persistence of the conversation tree — then
+// durable workflow, and Postgres persistence of the conversation tree: then
 // proves the turn survived by rehydrating it from the database.
 func TestDBOSFullStack(t *testing.T) {
 	pool := requirePostgres(t)

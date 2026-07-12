@@ -1,9 +1,9 @@
 // Package eval provides a universal evaluation framework for SAIGE subsystems.
 //
 // The framework is built on three abstractions:
-//   - [Observation] — a universal eval case carrying typed I/O as JSON
-//   - [Scorer] — an interface for computing a named metric from an Observation
-//   - [Subject] — a function that populates an Observation's output and annotations
+//   - [Observation]: a universal eval case carrying typed I/O as JSON
+//   - [Scorer]: an interface for computing a named metric from an Observation
+//   - [Subject]: a function that populates an Observation's output and annotations
 //
 // Subsystem-specific scorers live in sub-packages (ragscore, agentscore, kgscore)
 // and operate on well-known annotation keys set by their respective subjects.
