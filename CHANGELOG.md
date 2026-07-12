@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.3 (2026-07-12)
+
+### Bug Fixes
+
+- **agent**: assistant-attributed compaction summaries + hardened failure paths (#48) ([820bc8a](https://github.com/urmzd/saige/commit/820bc8a3b5f2b923b298853fcde917b060564bd6))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.12.2...v0.12.3)
+
+
 ## 0.12.2 (2026-07-11)
 
 ### Bug Fixes
