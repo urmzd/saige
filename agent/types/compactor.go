@@ -25,7 +25,7 @@ const (
 type CompactConfig struct {
 	Strategy   CompactStrategy
 	WindowSize int // for sliding_window
-	Threshold  int // for summarize
+	Threshold  int // for summarize: message count excluding a previous summary pair
 	KeepLast   int // recent messages to preserve during summarize (default 4)
 }
 
@@ -94,6 +94,12 @@ func hasToolResult(msg Message) bool {
 	return false
 }
 
+// SummaryRequestText is the synthetic user turn injected ahead of a summary.
+// The summary itself is model-generated, so it lives on an assistant turn;
+// this user turn exists because some providers reject histories whose first
+// non-system message is from the assistant (no prefill support).
+const SummaryRequestText = "Summarize the conversation so far, preserving key facts and decisions."
+
 // SummarizeCompactor summarizes older messages when history exceeds a threshold.
 type SummarizeCompactor struct {
 	Threshold int
@@ -108,14 +114,23 @@ func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
 }
 
 func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
-	if len(messages) <= c.Threshold {
+	// A previous compaction's summary pair doesn't count toward the threshold:
+	// otherwise a compacted history (1 + 2 + KeepLast messages) sits just below
+	// the trigger and every subsequent turn re-fires a summarization LLM call.
+	effective := len(messages)
+	if len(messages) >= 3 && isSummaryPair(messages[1], messages[2]) {
+		effective -= 2
+	}
+	if effective <= c.Threshold {
 		return messages, nil
 	}
 
 	keepLast := min(c.KeepLast, len(messages)-1)
 
 	toSummarize := messages[1 : len(messages)-keepLast]
-	if len(toSummarize) == 0 {
+	// The summary itself costs a user+assistant pair, so summarizing fewer
+	// than 3 messages cannot shrink history — skip before paying an LLM call.
+	if len(toSummarize) < 3 {
 		return messages, nil
 	}
 
@@ -131,18 +146,44 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 	}
 
 	var sb strings.Builder
+	var streamErr error
 	for delta := range rx {
-		if tc, ok := delta.(TextContentDelta); ok {
-			sb.WriteString(tc.Content)
+		switch d := delta.(type) {
+		case TextContentDelta:
+			sb.WriteString(d.Content)
+		case ErrorDelta:
+			// Providers surface mid-stream failures (e.g. rate limits after the
+			// stream opened) as ErrorDelta, not as the ChatStream return error.
+			streamErr = d.Error
 		}
 	}
 	summary := sb.String()
+	if streamErr != nil || strings.TrimSpace(summary) == "" {
+		// A failed or empty summary must not replace real history.
+		return messages, nil
+	}
 
-	result := make([]Message, 0, keepLast+2)
+	result := make([]Message, 0, keepLast+3)
 	result = append(result, messages[0]) // system
-	result = append(result, NewUserMessage("Previous conversation summary: "+summary))
+	result = append(result, NewUserMessage(SummaryRequestText))
+	result = append(result, NewAssistantMessage(summary))
 	result = append(result, messages[len(messages)-keepLast:]...)
 	return result, nil
+}
+
+// isSummaryPair reports whether a, b are the synthetic summary-request user
+// turn and assistant summary produced by a previous compaction.
+func isSummaryPair(a, b Message) bool {
+	um, ok := a.(UserMessage)
+	if !ok || len(um.Content) != 1 {
+		return false
+	}
+	tc, ok := um.Content[0].(TextContent)
+	if !ok || tc.Text != SummaryRequestText {
+		return false
+	}
+	_, ok = b.(AssistantMessage)
+	return ok
 }
 
 // MessagesToText converts messages to a plain-text representation.

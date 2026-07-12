@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -425,6 +426,79 @@ type mockTokenizer struct {
 
 func (m *mockTokenizer) CountTokens(_ context.Context, messages []types.Message) (int, error) {
 	return len(messages) * m.tokensPerMessage, nil
+}
+
+// errDeltaProvider opens the stream successfully but fails mid-stream,
+// the way providers surface rate limits after the stream has started.
+type errDeltaProvider struct{}
+
+func (errDeltaProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	ch := make(chan types.Delta, 3)
+	ch <- types.TextStartDelta{}
+	ch <- types.TextContentDelta{Content: "partial"}
+	ch <- types.ErrorDelta{Error: fmt.Errorf("rate limited mid-stream")}
+	close(ch)
+	return ch, nil
+}
+
+func TestCompactionMidStreamErrorFails(t *testing.T) {
+	tree, _ := New(types.NewSystemMessage("system"))
+	current := tree.Root()
+	for i := range 6 {
+		msg := types.Message(types.NewUserMessage("user message"))
+		if i%2 == 1 {
+			msg = types.NewAssistantMessage("assistant reply")
+		}
+		node, err := tree.AddChild(context.Background(), current.ID, msg)
+		if err != nil {
+			t.Fatalf("AddChild %d: %v", i, err)
+		}
+		current = node
+	}
+
+	tokenizer := &mockTokenizer{tokensPerMessage: 100}
+	_, err := tree.Compact(context.Background(), "main", errDeltaProvider{}, tokenizer, CompactOpts{
+		MaxTokens: 500,
+	})
+	if err == nil {
+		t.Fatal("expected error when summarization fails mid-stream")
+	}
+
+	// The original branch must be untouched and still active.
+	if tree.Active() != "main" {
+		t.Errorf("active = %s, want main", tree.Active())
+	}
+	msgs, err := tree.FlattenBranch("main")
+	if err != nil {
+		t.Fatalf("FlattenBranch: %v", err)
+	}
+	if len(msgs) != 7 {
+		t.Errorf("main branch messages = %d, want 7", len(msgs))
+	}
+}
+
+func TestCompactionEmptySummaryFails(t *testing.T) {
+	tree, _ := New(types.NewSystemMessage("system"))
+	current := tree.Root()
+	for range 6 {
+		node, err := tree.AddChild(context.Background(), current.ID, types.NewUserMessage("user message"))
+		if err != nil {
+			t.Fatalf("AddChild: %v", err)
+		}
+		current = node
+	}
+
+	provider := &mockProvider{response: "   "}
+	tokenizer := &mockTokenizer{tokensPerMessage: 100}
+	_, err := tree.Compact(context.Background(), "main", provider, tokenizer, CompactOpts{
+		MaxTokens: 500,
+	})
+	if err == nil {
+		t.Fatal("expected error when summarization produces an empty summary")
+	}
+	if tree.Active() != "main" {
+		t.Errorf("active = %s, want main", tree.Active())
+	}
 }
 
 func TestCompaction(t *testing.T) {
