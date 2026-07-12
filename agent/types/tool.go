@@ -78,7 +78,7 @@ type ToolResult struct {
 // RichTool is an OPTIONAL extension interface. A tool that implements it can
 // return structured multi-modal output. The agent loop prefers ExecuteRich when
 // a tool implements RichTool; otherwise it calls Execute and wraps the string.
-// RichTool embeds Tool, so a RichTool is always a valid Tool — Execute remains
+// RichTool embeds Tool, so a RichTool is always a valid Tool: Execute remains
 // the text-only fallback (typically `r, err := ExecuteRich(...); return r.Text, err`).
 type RichTool interface {
 	Tool

@@ -9,7 +9,7 @@ const (
 	RoleAssistant Role = "assistant"
 )
 
-// Message is a sealed interface — one of SystemMessage, UserMessage,
+// Message is a sealed interface: one of SystemMessage, UserMessage,
 // or AssistantMessage.
 type Message interface {
 	Role() Role
@@ -58,7 +58,7 @@ func NewAssistantMessage(text string) AssistantMessage {
 }
 
 // NewToolResultMessage creates a SystemMessage containing tool results.
-// Tool results from automatic execution are system messages — the SDK
+// Tool results from automatic execution are system messages: the SDK
 // executed the tools, not the user.
 func NewToolResultMessage(results ...ToolResultContent) SystemMessage {
 	content := make([]SystemContent, len(results))

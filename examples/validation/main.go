@@ -48,7 +48,7 @@ type result struct {
 func main() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		fmt.Println("OPENAI_API_KEY not set — skipping live validation.")
+		fmt.Println("OPENAI_API_KEY not set, skipping live validation.")
 		return
 	}
 	newProvider := func() types.Provider { return openai.NewAdapter(apiKey, model()) }
@@ -413,7 +413,7 @@ func buildReport(results []result) string {
 		}
 	}
 	b.WriteString("# SAIGE Live Validation Report\n\n")
-	fmt.Fprintf(&b, "Model: `%s` (OpenAI) — real end-to-end runs of the agent SDK.\n\n", model())
+	fmt.Fprintf(&b, "Model: `%s` (OpenAI): real end-to-end runs of the agent SDK.\n\n", model())
 	fmt.Fprintf(&b, "**%d passed, %d failed, %d skipped** of %d feature checks.\n\n", pass, fail, skip, len(results))
 	b.WriteString("| Feature | Result | Detail | Time |\n|---|---|---|---|\n")
 	for _, r := range results {

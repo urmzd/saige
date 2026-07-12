@@ -27,7 +27,7 @@ type SubAgentInvoker interface {
 // subAgentTool wraps a sub-agent as a tool. It implements both types.Tool and
 // SubAgentInvoker so the agent loop can forward child deltas. The factory takes
 // the StepRunner the child should inherit (nil = inline execution) because the
-// parent's effective runner is only known at invocation time — RunDurable
+// parent's effective runner is only known at invocation time: RunDurable
 // injects a runner into a shallow clone after the tool was registered.
 type subAgentTool struct {
 	def     types.ToolDef
@@ -36,7 +36,7 @@ type subAgentTool struct {
 
 func (t *subAgentTool) Definition() types.ToolDef { return t.def }
 
-// Execute provides a blocking fallback — runs the child agent and returns
+// Execute provides a blocking fallback: runs the child agent and returns
 // the concatenated text. The agent loop prefers InvokeAgent for streaming.
 func (t *subAgentTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	task, _ := args["task"].(string)

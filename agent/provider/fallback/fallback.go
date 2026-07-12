@@ -86,7 +86,7 @@ func (f *Provider) stream(ctx context.Context, call func(types.Provider) (<-chan
 }
 
 // isContentDelta reports whether d carries output the consumer has visibly
-// received — anything that would duplicate on a retry with another provider.
+// received: anything that would duplicate on a retry with another provider.
 // Only content-bearing deltas latch relay's no-fallback gate:
 //
 //   - UsageDelta does NOT latch. Anthropic's adapter emits a UsageDelta at
@@ -96,12 +96,12 @@ func (f *Provider) stream(ctx context.Context, call func(types.Provider) (<-chan
 //     (openai, google, ollama) emit usage only at stream end, after content.
 //     If a UsageDelta was forwarded and we then fall back, the consumer sees
 //     the failed provider's usage followed by the next provider's full stream;
-//     that is acceptable — the aggregator merges usage (UsageDelta.Merge), and
+//     that is acceptable: the aggregator merges usage (UsageDelta.Merge), and
 //     the failed request's tokens were genuinely consumed.
 //   - DoneDelta and ErrorDelta do NOT latch: terminal markers, not content.
 //   - Everything else latches: Text*/Thinking*/ToolCall* start/content/end,
 //     ToolExec*, MarkerDelta, HandoffDelta, and any future delta type
-//     (defaulting to latching is the safe direction — worst case we propagate
+//     (defaulting to latching is the safe direction: worst case we propagate
 //     an error instead of silently duplicating output).
 //
 // This mirrors the retry package's isContentDelta.

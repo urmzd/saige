@@ -58,7 +58,7 @@ func (ToolUseContent) isAssistantContent() {}
 // Valid in SystemMessage (automatic execution) or UserMessage (human-in-the-loop).
 type ToolResultContent struct {
 	ToolCallID string
-	Text       string // ALWAYS the text projection — providers that ignore Blocks use this
+	Text       string // ALWAYS the text projection: providers that ignore Blocks use this
 	IsError    bool   // true when Text represents an error, not a successful result
 	// Blocks carries optional rich multi-modal output. nil for plain-text results.
 	// Blocks with Kind image|file hold bytes in Data (json:"-", not persisted);
@@ -71,7 +71,7 @@ func (ToolResultContent) isUserContent()   {}
 
 // ConfigContent carries agent configuration. Persisted to the tree so
 // that serialise/restore round-trips include the full agent config.
-// Zero-valued fields mean "no change" — only non-zero fields override.
+// Zero-valued fields mean "no change": only non-zero fields override.
 type ConfigContent struct {
 	Model      string         // model name passed to Provider (empty = use default)
 	MaxIter    int            // max loop iterations (0 = use previous/default)
@@ -85,7 +85,7 @@ func (ConfigContent) isUserContent()   {}
 // HandoffContent marks a transfer of control to another agent in the same
 // handoff group. It is an agent-scoped overlay: it does not mutate the immutable
 // root, but selects which agent is active for subsequent iterations. Like
-// ConfigContent, it is stripped from the message stream before the LLM sees it —
+// ConfigContent, it is stripped from the message stream before the LLM sees it:
 // its effect is resolved by the agent loop, not sent as text.
 type HandoffContent struct {
 	To     string `json:"to"`               // target agent name in the group
@@ -96,7 +96,7 @@ type HandoffContent struct {
 func (HandoffContent) isSystemContent() {}
 func (HandoffContent) isUserContent()   {} // allow human-forced handoffs too
 
-// FileContent represents a file attachment. Only valid in UserMessages —
+// FileContent represents a file attachment. Only valid in UserMessages:
 // users attach files, the system/assistant do not.
 // Data is tagged json:"-" so tree serialization stores only the URI, not raw bytes.
 type FileContent struct {
@@ -129,7 +129,7 @@ const (
 )
 
 // FeedbackContent captures a user's quality rating and optional comment
-// on a prior assistant response. Stored in the tree as metadata — stripped
+// on a prior assistant response. Stored in the tree as metadata: stripped
 // before messages reach the LLM.
 type FeedbackContent struct {
 	TargetNodeID string `json:"target_node_id"` // the node being rated (typically an AssistantMessage)

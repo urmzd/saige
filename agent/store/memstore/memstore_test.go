@@ -276,7 +276,7 @@ func TestStoreLoadTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only root, a, b are reachable from root — orphan is excluded.
+	// Only root, a, b are reachable from root: orphan is excluded.
 	if len(got) != 3 {
 		t.Fatalf("LoadTree returned %d nodes, want 3: %+v", len(got), got)
 	}

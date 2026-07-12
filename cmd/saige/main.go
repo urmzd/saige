@@ -27,7 +27,7 @@ func main() {
 
 	rootCmd := &cobra.Command{
 		Use:     "saige",
-		Short:   "AI SDK CLI — chat, ask, RAG, knowledge graph",
+		Short:   "AI SDK CLI: chat, ask, RAG, knowledge graph",
 		Version: version,
 	}
 

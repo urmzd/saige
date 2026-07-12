@@ -1,4 +1,4 @@
-// Example: arxiv — Fetches an arXiv paper abstract, ingests it through the saige
+// Example: arxiv: Fetches an arXiv paper abstract, ingests it through the saige
 // RAG pipeline, and demonstrates the full search pipeline with chunking, hybrid search
 // (BM25 + vector), MMR reranking, citations, lookup, update, evaluation metrics,
 // and agent tool registration.
@@ -203,7 +203,7 @@ func main() {
 	fmt.Printf("Ingested: doc=%s sections=%d variants=%d\n\n",
 		result.DocumentUUID, result.Sections, result.Variants)
 
-	// 4. Hybrid search with context assembly — vector + BM25 via RRF.
+	// 4. Hybrid search with context assembly: vector + BM25 via RRF.
 	fmt.Println("=== Hybrid Search (Vector + BM25) with Citations ===")
 	sr, err := pipe.Search(ctx, "attention mechanism self-attention",
 		types.WithLimit(3),
@@ -250,7 +250,7 @@ func main() {
 	}
 	fmt.Println()
 
-	// 6. Lookup by variant UUID — show dereference pattern.
+	// 6. Lookup by variant UUID: show dereference pattern.
 	if len(sr.Hits) > 0 {
 		variantUUID := sr.Hits[0].Variant.UUID
 		fmt.Printf("=== Lookup variant %s ===\n", variantUUID)
@@ -267,7 +267,7 @@ func main() {
 		fmt.Printf("Text: %s\n\n", text)
 	}
 
-	// 7. Update document — re-ingest.
+	// 7. Update document: re-ingest.
 	fmt.Println("=== Update Document ===")
 	updatedRaw := &types.RawDocument{
 		SourceURI: raw.SourceURI,

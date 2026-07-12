@@ -9,7 +9,7 @@ import "context"
 // workflow engine (e.g. DBOS) without the core package depending on it.
 //
 // The default behavior is provided by NoopStepRunner, which simply calls fn
-// inline — preserving non-durable, streaming behavior exactly.
+// inline: preserving non-durable, streaming behavior exactly.
 type StepRunner interface {
 	// RunStep executes (or replays) a named step returning a serializable
 	// result. name must be stable and unique within a single loop run so the

@@ -16,7 +16,7 @@ func benchMessages() []types.Message {
 	}
 }
 
-// BenchmarkKey measures the deterministic cache-key computation — the cost paid
+// BenchmarkKey measures the deterministic cache-key computation: the cost paid
 // on every request (hit or miss) to look up the cache.
 func BenchmarkKey(b *testing.B) {
 	msgs := benchMessages()
@@ -28,7 +28,7 @@ func BenchmarkKey(b *testing.B) {
 	}
 }
 
-// BenchmarkCacheHit measures replaying a recorded response from the cache — the
+// BenchmarkCacheHit measures replaying a recorded response from the cache: the
 // hot path that avoids an upstream provider call entirely.
 func BenchmarkCacheHit(b *testing.B) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{

@@ -210,7 +210,7 @@ func TestFileWALMidLogCorruptionErrors(t *testing.T) {
 
 	commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n1"})
 
-	// Corrupt line followed by a valid record — not a torn tail.
+	// Corrupt line followed by a valid record: not a torn tail.
 	f, _ := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 	f.WriteString("garbage not json\n")
 	f.Close()

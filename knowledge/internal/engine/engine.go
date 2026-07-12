@@ -197,7 +197,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID st
 	// Try exact match first (handled by UpsertEntity's name+type check)
 	existing, err := e.findEntitiesByNameType(ctx, groupID, ent.Name, ent.Type)
 	if err == nil && len(existing) > 0 {
-		// Exact match — upsert will update summary/embedding
+		// Exact match: upsert will update summary/embedding
 		uuid, err := e.store.UpsertEntity(ctx, ent, embedding)
 		return uuid, err
 	}
@@ -207,7 +207,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID st
 	if err == nil {
 		for _, candidate := range candidates {
 			if fuzzy.IsFuzzyMatch(ent.Name, candidate.Name, FuzzyMatchThreshold) {
-				// Fuzzy match found — update the existing entity with new data
+				// Fuzzy match found: update the existing entity with new data
 				e.logger.Info("fuzzy entity merge",
 					"new", ent.Name, "existing", candidate.Name,
 					"similarity", fuzzy.Similarity(ent.Name, candidate.Name))
@@ -223,7 +223,7 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID st
 		}
 	}
 
-	// No match — create new entity
+	// No match: create new entity
 	return e.store.UpsertEntity(ctx, ent, embedding)
 }
 

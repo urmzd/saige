@@ -129,7 +129,7 @@ func TestStoreMultiTurnRoundTrip(t *testing.T) {
 }
 
 // TestStoreNilIsBackwardCompatible verifies that with no Store configured the
-// agent behaves exactly as before — Invoke works and the tree is populated.
+// agent behaves exactly as before: Invoke works and the tree is populated.
 func TestStoreNilIsBackwardCompatible(t *testing.T) {
 	ctx := context.Background()
 	provider := &agenttest.ScriptedProvider{

@@ -14,7 +14,7 @@ import (
 var errInjectedWrite = errors.New("injected write failure")
 
 // flakyFile wraps the WAL's real append handle and can fail one write after
-// letting half the record's bytes reach the file — the mid-log-corruption
+// letting half the record's bytes reach the file: the mid-log-corruption
 // hazard writeRecord's rollback exists to prevent.
 type flakyFile struct {
 	*os.File
@@ -126,7 +126,7 @@ func TestWriteRecordRollsBackPartialWrite(t *testing.T) {
 }
 
 // TestWriteRecordFailedTruncateDisablesWAL proves that when the rollback
-// truncate fails — leaving a partial record stuck at EOF — the WAL refuses
+// truncate fails, leaving a partial record stuck at EOF, the WAL refuses
 // further writes instead of appending after the corruption.
 func TestWriteRecordFailedTruncateDisablesWAL(t *testing.T) {
 	ctx := context.Background()

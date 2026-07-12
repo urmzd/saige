@@ -1,8 +1,8 @@
 // Package memstore implements agent/types.Store using in-memory maps.
 //
 // It is a drop-in, dependency-free Store suitable for tests and single-process
-// use. Unlike pgstore it offers no crash durability — data lives only for the
-// lifetime of the process — but it mirrors the full types.Store contract so
+// use. Unlike pgstore it offers no crash durability (data lives only for the
+// lifetime of the process), but it mirrors the full types.Store contract so
 // persistence and tree-reconstruction paths can be exercised without Postgres.
 package memstore
 

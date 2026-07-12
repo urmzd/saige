@@ -50,12 +50,12 @@ for delta := range stream.Deltas() {
 | **Sub-agents** | Delegate tasks to child agents with their own providers and tools |
 | **File Upload** | Attach files via `types.NewFileMessage(uri)` or `types.NewUserMessageWithFiles(text, files...)`; URIs are resolved by `Resolvers` and extracted by `Extractors` in `AgentConfig` |
 | **Embeddings** | `types.Embedder` interface; `ollama.NewEmbedder(client)` for Ollama-backed vector embeddings |
-| **Feedback** | `a.Feedback(nodeID, types.RatingPositive, "comment")` — attach RLHF ratings as permanent leaf nodes |
+| **Feedback** | `a.Feedback(nodeID, types.RatingPositive, "comment")`: attach RLHF ratings as permanent leaf nodes |
 
 ## Feedback (RLHF)
 
 ```go
-// Rate an assistant response — creates a dead-end branch off the target node.
+// Rate an assistant response: creates a dead-end branch off the target node.
 tip, _ := a.Tree().Tip(a.Tree().Active())
 a.Feedback(tip.ID, types.RatingPositive, "Clear and helpful")
 

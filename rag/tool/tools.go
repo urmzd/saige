@@ -48,7 +48,7 @@ type SearchTool struct {
 func (t *SearchTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_search",
-		Description: "Search the knowledge base. Returns scored hits with provenance metadata (no full content — use rag_lookup to dereference).",
+		Description: "Search the knowledge base. Returns scored hits with provenance metadata (no full content; use rag_lookup to dereference).",
 		Parameters:  agenttypes.SchemaFrom[searchParams](),
 	}
 }

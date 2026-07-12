@@ -1,5 +1,5 @@
 // Package otel provides OpenTelemetry tracing integration for SAIGE agents.
-// Import this package only if you want tracing — it is fully opt-in.
+// Import this package only if you want tracing: it is fully opt-in.
 package otel
 
 import (

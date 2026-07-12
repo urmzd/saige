@@ -18,7 +18,7 @@ import (
 //
 //  1. a mid-stream provider ErrorDelta fails the turn (it is not swallowed
 //     into a "successful" empty response);
-//  2. a failed sub-agent fails the delegation — the parent tool result
+//  2. a failed sub-agent fails the delegation: the parent tool result
 //     records the error instead of presenting partial output as success;
 //  3. fallback.Provider retries the next provider on a mid-stream error that
 //     arrives before any content was forwarded.
@@ -83,7 +83,7 @@ func composedContext(t *testing.T) context.Context {
 
 // TestSubAgentFallbackRecoversMidStreamError: the sub-agent's first provider
 // dies mid-stream, the fallback's second provider succeeds, and the parent
-// run completes cleanly — Wait() is nil and the delegation result carries the
+// run completes cleanly: Wait() is nil and the delegation result carries the
 // recovered text.
 func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 	ctx := composedContext(t)
@@ -115,7 +115,7 @@ func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 		t.Fatalf("persisted tool results = %d, want 1", len(results))
 	}
 	if results[0].IsError {
-		t.Errorf("delegation recorded as error: %q — fallback recovery did not compose", results[0].Text)
+		t.Errorf("delegation recorded as error: %q; fallback recovery did not compose", results[0].Text)
 	}
 	if !strings.Contains(results[0].Text, "recovered: sub-agent result") {
 		t.Errorf("delegation result = %q, want recovered sub-agent text", results[0].Text)

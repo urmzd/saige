@@ -1,6 +1,6 @@
 ---
 name: knowledge-graph
-description: Build and query knowledge graphs with PostgreSQL + pgvector — ingest episodes, extract entities/relations via LLM, and search facts by semantic similarity or keyword. Use when working with knowledge graphs, entity extraction, or graph storage.
+description: Build and query knowledge graphs with PostgreSQL + pgvector. Ingest episodes, extract entities/relations via LLM, and search facts by semantic similarity or keyword. Use when working with knowledge graphs, entity extraction, or graph storage.
 metadata:
   argument-hint: [query]
 ---

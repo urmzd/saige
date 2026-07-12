@@ -710,9 +710,9 @@ func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.W
 		case types.ToolCallStartDelta:
 			vs.handleToolCallStart(d)
 		case types.ToolCallArgumentDelta:
-			// argument JSON fragments — skip in verbose mode
+			// argument JSON fragments: skip in verbose mode
 		case types.ToolCallEndDelta:
-			// tool call fully parsed — logged at exec start
+			// tool call fully parsed: logged at exec start
 		case types.ToolExecStartDelta:
 			vs.handleToolExecStart(d)
 		case types.ToolExecDelta:

@@ -33,12 +33,12 @@ Override the model with `SAIGE_VALIDATION_MODEL=gpt-4o-mini`. With no
 
 ## Sample outputs (committed)
 
-- [`results/validation-report.md`](results/validation-report.md) — last live run (8/8 passing on `gpt-4o-mini`).
-- [`results/benchmarks.txt`](results/benchmarks.txt) — `go test -bench` numbers for the agent loop, durable path, and cache.
+- [`results/validation-report.md`](results/validation-report.md): last live run (8/8 passing on `gpt-4o-mini`).
+- [`results/benchmarks.txt`](results/benchmarks.txt): `go test -bench` numbers for the agent loop, durable path, and cache.
 
 ## Benchmarks
 
-Deterministic, mock-based (no network) — defined in `agent/bench_test.go` and
+Deterministic, mock-based (no network): defined in `agent/bench_test.go` and
 `agent/provider/cache/bench_test.go`:
 
 | Benchmark | Measures |

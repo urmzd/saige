@@ -7,7 +7,7 @@ import (
 
 // Provider is the narrow LLM interface the agent loop needs.
 // Model selection is handled via ConfigContent in the message tree,
-// not as a parameter — providers that implement ModelSwitcher are
+// not as a parameter: providers that implement ModelSwitcher are
 // re-targeted by the agent loop when a ConfigContent sets a model;
 // others use their own configured default.
 type Provider interface {
@@ -89,7 +89,7 @@ func CloseProvider(p Provider) error {
 
 // GenerateText sends a single-turn user prompt with no tools and returns the
 // concatenated text of the response. It is the plumbing behind each adapter's
-// Generate method — the minimal seam used by eval judges, HyDE expansion,
+// Generate method: the minimal seam used by eval judges, HyDE expansion,
 // context compression, and KG extraction. The stream is always drained fully
 // (so the producing goroutine never blocks); the first ErrorDelta wins.
 func GenerateText(ctx context.Context, p Provider, prompt string) (string, error) {

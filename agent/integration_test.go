@@ -2812,7 +2812,7 @@ func TestAgentWithSummarizeCompactor(t *testing.T) {
 		Tree:       tr,
 	})
 
-	// Multiple turns — each Invoke uses tr.Active(), which may change after compaction.
+	// Multiple turns: each Invoke uses tr.Active(), which may change after compaction.
 	for i := 0; i < 4; i++ {
 		stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage(fmt.Sprintf("turn-%d", i))})
 		collectDeltas(stream)
@@ -3068,7 +3068,7 @@ func TestSummarizeCompactorSkipsUnprofitableSummary(t *testing.T) {
 	provider := &recordingProvider{response: "should not be called"}
 	compactor := types.NewSummarizeCompactor(3, 2)
 
-	// Over threshold, but only 2 messages are summarizable — the summary
+	// Over threshold, but only 2 messages are summarizable: the summary
 	// pair would replace them one-for-one, so no LLM call should be made.
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
@@ -3122,7 +3122,7 @@ func TestSummarizeCompactorMidStreamErrorFallsBack(t *testing.T) {
 }
 
 func TestSummarizeCompactorEmptySummaryFallsBack(t *testing.T) {
-	// Provider produces no text at all — an empty summary must not replace
+	// Provider produces no text at all: an empty summary must not replace
 	// real history.
 	compactor := types.NewSummarizeCompactor(2, 2)
 
@@ -3329,7 +3329,7 @@ func TestFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Leave positive feedback — creates a dead-end branch off the tip.
+	// Leave positive feedback: creates a dead-end branch off the tip.
 	fbNode, err := agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "Great response!")
 	if err != nil {
 		t.Fatal(err)
@@ -3341,13 +3341,13 @@ func TestFeedback(t *testing.T) {
 		t.Errorf("expected NodeFeedback state, got %d", fbNode.State)
 	}
 
-	// Leave a second feedback on the same node — both are siblings.
+	// Leave a second feedback on the same node: both are siblings.
 	_, err = agent.Feedback(context.Background(), tip.ID, types.RatingNegative, "Actually, not helpful")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Collect feedback summary — scans the whole tree.
+	// Collect feedback summary: scans the whole tree.
 	entries := agent.FeedbackSummary()
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 feedback entries, got %d", len(entries))
@@ -3414,7 +3414,7 @@ func TestFeedbackNotInFlatten(t *testing.T) {
 	tip, _ := agent.Tree().Tip(agent.Tree().Active())
 	agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "nice")
 
-	// Feedback is on a dead-end branch — should NOT appear in the main branch flatten.
+	// Feedback is on a dead-end branch: should NOT appear in the main branch flatten.
 	messages, err := agent.Tree().FlattenBranch(agent.Tree().Active())
 	if err != nil {
 		t.Fatal(err)
@@ -3514,7 +3514,7 @@ func TestPersistCompactedTooShortReturnsError(t *testing.T) {
 		Tree:         tr,
 	})
 
-	// Only one message — too short to branch.
+	// Only one message: too short to branch.
 	_, err := agent.persistCompacted(context.Background(), tr, []types.Message{
 		types.NewSystemMessage("sys"),
 	})
@@ -3548,7 +3548,7 @@ func TestTryCompactBelowThresholdNoOp(t *testing.T) {
 		SystemPrompt: "sys",
 	})
 
-	// Compactor with high threshold — won't trigger.
+	// Compactor with high threshold: won't trigger.
 	rc := resolvedConfig{
 		maxIter:   10,
 		compactor: types.NewSummarizeCompactor(100, 4),
@@ -3609,7 +3609,7 @@ func TestTryCompactSuccessReturnsTrueAndNewBranch(t *testing.T) {
 func TestSlidingWindowPreservesToolPair(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(2)
 
-	// The cut point would land on a tool result — compactor should back up one.
+	// The cut point would land on a tool result: compactor should back up one.
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
 		types.NewUserMessage("old"),
@@ -3640,7 +3640,7 @@ func TestSlidingWindowPreservesToolPair(t *testing.T) {
 func TestSlidingWindowNoCutWhenToolPairAtStart(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(2)
 
-	// Tool result is right after system — backing up would make cut <= 0.
+	// Tool result is right after system: backing up would make cut <= 0.
 	msgs := []types.Message{
 		types.NewSystemMessage("sys"),
 		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "result"}),
