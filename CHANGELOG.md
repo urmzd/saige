@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.4 (2026-07-15)
+
+### Bug Fixes
+
+- **rag**: harden recursive chunker bounds (#50) ([a04d984](https://github.com/urmzd/saige/commit/a04d9840705058a4084c173c750274e8cffd4328))
+
+### Misc
+
+- restructure READMEs into per-package entrypoints (#49) ([125f4c9](https://github.com/urmzd/saige/commit/125f4c9cae9ab9df7d712bc2c96e35fa7090048f))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.12.3...v0.12.4)
+
+
 ## 0.12.3 (2026-07-12)
 
 ### Bug Fixes
