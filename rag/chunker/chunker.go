@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/tokenizer"
+	"github.com/urmzd/saige/rag/types"
 )
 
 // Config holds recursive chunker parameters.
@@ -37,7 +37,21 @@ func NewRecursive(cfg *Config) *RecursiveChunker {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	return &RecursiveChunker{cfg: *cfg}
+
+	normalized := *cfg
+	if normalized.MaxTokens <= 0 {
+		normalized.MaxTokens = DefaultConfig().MaxTokens
+	}
+	if normalized.Overlap < 0 {
+		normalized.Overlap = 0
+	}
+	if normalized.Separators == nil {
+		normalized.Separators = DefaultConfig().Separators
+	} else {
+		normalized.Separators = append([]string(nil), normalized.Separators...)
+	}
+
+	return &RecursiveChunker{cfg: normalized}
 }
 
 func estimateTokens(text string) int {
@@ -98,7 +112,7 @@ func (c *RecursiveChunker) splitRecursive(text string, sepIdx int) []string {
 	}
 
 	if sepIdx >= len(c.cfg.Separators) {
-		// Leaf: hard split at MaxTokens character boundaries.
+		// Leaf: hard split at MaxTokens without cutting through UTF-8 runes.
 		return c.hardSplit(text)
 	}
 
@@ -146,21 +160,23 @@ func (c *RecursiveChunker) splitRecursive(text string, sepIdx int) []string {
 func (c *RecursiveChunker) hardSplit(text string) []string {
 	var chunks []string
 	for estimateTokens(text) > c.cfg.MaxTokens {
-		// Binary search for the split point that yields MaxTokens tokens.
-		lo, hi := 0, len(text)
+		boundaries := runeBoundaries(text)
+		// Binary search for the largest rune-boundary split point under MaxTokens.
+		lo, hi := 0, len(boundaries)-1
 		for lo < hi {
 			mid := (lo + hi + 1) / 2
-			if estimateTokens(text[:mid]) <= c.cfg.MaxTokens {
+			if estimateTokens(text[:boundaries[mid]]) <= c.cfg.MaxTokens {
 				lo = mid
 			} else {
 				hi = mid - 1
 			}
 		}
-		if lo == 0 {
-			lo = 1 // ensure progress
+		split := boundaries[lo]
+		if split == 0 {
+			split = boundaries[1] // ensure progress, even for a single oversized rune
 		}
-		chunks = append(chunks, text[:lo])
-		text = text[lo:]
+		chunks = append(chunks, text[:split])
+		text = text[split:]
 	}
 	if text != "" {
 		chunks = append(chunks, text)
@@ -181,20 +197,38 @@ func (c *RecursiveChunker) applyOverlap(chunks []string) []string {
 		// Find the suffix of prev that is approximately Overlap tokens.
 		overlapText := prev
 		if estimateTokens(prev) > c.cfg.Overlap {
-			// Binary search for start position yielding Overlap tokens from suffix.
-			lo, hi := 0, len(prev)
+			boundaries := runeBoundaries(prev)
+			// Binary search for a rune-boundary start yielding Overlap tokens from suffix.
+			lo, hi := 0, len(boundaries)-1
 			for lo < hi {
 				mid := (lo + hi) / 2
-				if estimateTokens(prev[mid:]) > c.cfg.Overlap {
+				if estimateTokens(prev[boundaries[mid]:]) > c.cfg.Overlap {
 					lo = mid + 1
 				} else {
 					hi = mid
 				}
 			}
-			overlapText = prev[lo:]
+			start := boundaries[lo]
+			if start == len(prev) && len(boundaries) > 1 {
+				start = boundaries[len(boundaries)-2]
+			}
+			overlapText = prev[start:]
 		}
 		result[i] = overlapText + chunks[i]
 	}
 
 	return result
+}
+
+func runeBoundaries(text string) []int {
+	boundaries := []int{0}
+	for i := range text {
+		if i != 0 {
+			boundaries = append(boundaries, i)
+		}
+	}
+	if boundaries[len(boundaries)-1] != len(text) {
+		boundaries = append(boundaries, len(text))
+	}
+	return boundaries
 }

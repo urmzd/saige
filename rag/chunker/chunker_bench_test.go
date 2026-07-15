@@ -10,7 +10,8 @@ import (
 )
 
 func makeTestSection(size int) types.Section {
-	words := strings.Repeat("The quick brown fox jumps over the lazy dog. ", size/46+1)
+	seed := "The quick brown fox jumps over the lazy dog. "
+	words := strings.Repeat(seed, size/len(seed)+1)
 	return types.Section{
 		UUID: "bench-section",
 		Variants: []types.ContentVariant{{
