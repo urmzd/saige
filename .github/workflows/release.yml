@@ -35,54 +35,42 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: urmzd/sr@v8
-        id: sr
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-
-    outputs:
-      released: ${{ steps.sr.outputs.released }}
-      tag: ${{ steps.sr.outputs.tag }}
-      version: ${{ steps.sr.outputs.version }}
-
-  build:
-    needs: release
-    if: needs.release.outputs.released == 'true'
-    name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
-            artifact: saige-linux
-          - os: macos-latest
-            platform: darwin
-            artifact: saige-darwin
-          - os: windows-latest
-            platform: windows
-            artifact: saige.exe
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.release.outputs.tag }}
-
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Build static CLI binary
-        shell: bash
-        run: |
-          CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ needs.release.outputs.version }} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o build/bin/${{ matrix.artifact }} ./cmd/saige
+      # Plan first so the binaries can embed the version that release will cut.
+      - name: Plan release
+        id: plan
+        uses: urmzd/sr@v8
+        with:
+          mode: plan
+          github-token: ${{ steps.app-token.outputs.token }}
 
-      - name: Upload to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Cross-compile every target on one runner (CGO disabled), so the binaries
+      # exist before the release is created and can be attached atomically. This
+      # avoids uploading to an already-published release, which immutable
+      # releases reject.
+      - name: Build static CLI binaries
         shell: bash
-        run: gh release upload "${{ needs.release.outputs.tag }}" "build/bin/${{ matrix.artifact }}" --clobber
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          mkdir -p build/bin
+          build() {
+            CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "build/bin/$3" ./cmd/saige
+          }
+          build linux   amd64 saige-linux
+          build darwin  arm64 saige-darwin
+          build windows amd64 saige.exe
+
+      # release mode tags, creates the release, and uploads the artifacts as one
+      # step, so assets are present when the release is published.
+      - name: Release
+        uses: urmzd/sr@v8
+        with:
+          mode: release
+          github-token: ${{ steps.app-token.outputs.token }}
+          artifacts: build/bin/saige-linux build/bin/saige-darwin build/bin/saige.exe
