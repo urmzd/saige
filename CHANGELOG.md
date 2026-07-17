@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.1 (2026-07-17)
+
+### Bug Fixes
+
+- **release**: attach binaries when cutting the release ([7867d6a](https://github.com/urmzd/saige/commit/7867d6a232c3117954d04f97a7f70732a1e817c3))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.13.0...v0.13.1)
+
+
 ## 0.13.0 (2026-07-17)
 
 ### Features
