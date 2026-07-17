@@ -109,8 +109,8 @@ Each subsystem has its own README as the entrypoint for further information:
 | `agent` | [agent/README.md](agent/README.md) | Providers, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing |
 | `knowledge` | [knowledge/README.md](knowledge/README.md) | Graph interface, hybrid search, deduplication, PostgreSQL backend, formatting |
 | `rag` | [rag/README.md](rag/README.md) | Data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings |
-| `eval` | [eval/README.md](eval/README.md) | Scorers, A/B experiments, LLM-as-judge, stream timing |
-| `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, rag, kg |
+| `eval` | [eval/README.md](eval/README.md) | Scorers, A/B experiments, LLM-as-judge, stream timing, live eval harness (`saige eval`) |
+| `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, rag, kg, eval |
 | `cmd/saige-mcp` | [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md) | MCP server setup for Claude Code, Codex, Gemini CLI |
 | `tools/research` | [tools/research/README.md](tools/research/README.md) | Web search, file, and knowledge graph tools |
 | `examples` | [examples/README.md](examples/README.md) | Runnable example index |
