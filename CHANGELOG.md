@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0 (2026-07-17)
+
+### Features
+
+- **eval**: add generic live-eval harness and saige eval CLI (#51) ([f855df0](https://github.com/urmzd/saige/commit/f855df0ee2faf3b093de4cc50a03c36125bf4759))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.12.4...v0.13.0)
+
+
 ## 0.12.4 (2026-07-15)
 
 ### Bug Fixes
