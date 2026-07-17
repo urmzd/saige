@@ -37,6 +37,7 @@ func main() {
 		newAskCmd(ctx),
 		newRagCmd(ctx),
 		newKgCmd(ctx),
+		newEvalCmd(ctx),
 		newUpdateCmd(),
 		newVersionCmd(),
 	)

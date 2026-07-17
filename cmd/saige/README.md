@@ -1,6 +1,6 @@
 # saige CLI
 
-Interactive chat, single-shot queries, and standalone RAG/KG operations from the terminal.
+Interactive chat, single-shot queries, standalone RAG/KG operations, and live evals from the terminal.
 
 ```bash
 go install github.com/urmzd/saige/cmd/saige@latest
@@ -44,6 +44,18 @@ saige kg search --db "$SAIGE_KG_DB" --query "Who presented?"
 saige kg graph  --db "$SAIGE_KG_DB" --limit 50
 saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
 ```
+
+## Live Evals
+
+Run a multi-turn eval corpus against any OpenAI-compatible API (see [eval/harness](../../eval/harness/README.md)):
+
+```bash
+saige eval init evals                          # scaffold a sample corpus
+saige eval run --experiments-dir evals         # run base + stateless flows
+saige eval run --experiments-dir evals --model gpt-4o --flows base --force
+```
+
+The API key comes from `--api-key` or the first of `SAIGE_EVAL_API_KEY`, `OPENAI_API_KEY`, and other common provider keys; the base URL from `--api-base`, `SAIGE_EVAL_API_BASE`, or `OPENAI_BASE_URL`. Each experiment gets an `outputs/` directory and a `metrics.json`.
 
 ## Provider Auto-Detection
 

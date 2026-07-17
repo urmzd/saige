@@ -123,4 +123,5 @@ experiments/bm25-vs-hyde/
 
 ## Related
 
+- [`eval/harness`](harness/README.md): live eval harness for multi-turn corpora against OpenAI-compatible APIs (`saige eval`)
 - [Root README](../README.md): project overview and installation
