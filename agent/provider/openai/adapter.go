@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -19,6 +20,9 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
+	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.CapabilityReporter       = (*Adapter)(nil)
+	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
 
 // Option configures the OpenAI adapter.
@@ -26,11 +30,85 @@ type Option func(*config)
 
 type config struct {
 	baseURL string
+	params  genParams
 }
 
-// WithBaseURL overrides the default OpenAI API base URL.
+// genParams holds the generation knobs. Every field is a pointer or a slice so
+// "unset" is distinguishable from "set to zero": temperature 0 is a meaningful
+// value, and sending it when the caller never asked would change behaviour.
+type genParams struct {
+	maxTokens        *int64
+	temperature      *float64
+	topP             *float64
+	seed             *int64
+	frequencyPenalty *float64
+	presencePenalty  *float64
+	stop             []string
+	reasoningEffort  string
+	parallelTools    *bool
+}
+
+// WithBaseURL overrides the default OpenAI API base URL. This is also how an
+// OpenAI-compatible endpoint (vLLM, Together, Groq, an Azure gateway) is
+// targeted, which is worth knowing before reading the capability table: those
+// endpoints serve models this catalog has never heard of, so their
+// capabilities resolve to the conservative baseline.
 func WithBaseURL(url string) Option {
 	return func(c *config) { c.baseURL = url }
+}
+
+// WithMaxTokens caps generated tokens. It is sent as max_completion_tokens,
+// the field the reasoning models require; the deprecated max_tokens is never
+// used.
+func WithMaxTokens(n int64) Option {
+	return func(c *config) { c.params.maxTokens = &n }
+}
+
+// WithTemperature sets sampling temperature. Ignored on models that do not
+// declare CapTemperature (the reasoning families), which reject it outright
+// rather than ignoring it.
+func WithTemperature(t float64) Option {
+	return func(c *config) { c.params.temperature = &t }
+}
+
+// WithTopP sets nucleus sampling. Subject to the same reasoning-model caveat
+// as WithTemperature.
+func WithTopP(p float64) Option {
+	return func(c *config) { c.params.topP = &p }
+}
+
+// WithSeed requests reproducible sampling.
+func WithSeed(seed int64) Option {
+	return func(c *config) { c.params.seed = &seed }
+}
+
+// WithStopSequences sets sequences that end generation.
+func WithStopSequences(stop ...string) Option {
+	return func(c *config) { c.params.stop = stop }
+}
+
+// WithFrequencyPenalty and WithPresencePenalty set the repetition penalties.
+func WithFrequencyPenalty(p float64) Option {
+	return func(c *config) { c.params.frequencyPenalty = &p }
+}
+
+func WithPresencePenalty(p float64) Option {
+	return func(c *config) { c.params.presencePenalty = &p }
+}
+
+// WithParallelToolCalls turns parallel tool calling on or off. Turning it off
+// matters when the tools are not safe to run concurrently: the model can
+// otherwise emit two writes to the same resource in one turn, and the agent
+// loop will happily fan them out.
+func WithParallelToolCalls(enabled bool) Option {
+	return func(c *config) { c.params.parallelTools = &enabled }
+}
+
+// WithReasoningEffort sizes reasoning on the models that support it. Legal
+// values are in ModelCapabilities.ReasoningEfforts; the flag is dropped for
+// models that do not declare CapReasoningEffort.
+func WithReasoningEffort(effort string) Option {
+	return func(c *config) { c.params.reasoningEffort = effort }
 }
 
 // Adapter wraps the official OpenAI SDK client and implements types.Provider,
@@ -38,6 +116,7 @@ func WithBaseURL(url string) Option {
 type Adapter struct {
 	client openai.Client
 	model  openai.ChatModel
+	params genParams
 }
 
 // NewAdapter creates a new OpenAI provider adapter using the official SDK.
@@ -53,6 +132,46 @@ func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	return &Adapter{
 		client: openai.NewClient(clientOpts...),
 		model:  openai.ChatModel(model),
+		params: cfg.params,
+	}
+}
+
+// applyParams copies the configured knobs onto a request, dropping any the
+// target model does not declare.
+//
+// Dropping rather than sending is deliberate. The reasoning families return a
+// 400 for temperature, top_p and the repetition penalties, so a config shared
+// across a fallback chain of gpt-4o and o3 would fail on half the chain. The
+// capability table is what makes "which of these may I send" answerable
+// without a per-model switch here.
+func (a *Adapter) applyParams(p *openai.ChatCompletionNewParams) {
+	caps := a.Capabilities()
+	if a.params.maxTokens != nil && caps.Supports(types.CapMaxOutputTokens) {
+		p.MaxCompletionTokens = openai.Int(*a.params.maxTokens)
+	}
+	if a.params.temperature != nil && caps.Supports(types.CapTemperature) {
+		p.Temperature = openai.Float(*a.params.temperature)
+	}
+	if a.params.topP != nil && caps.Supports(types.CapTopP) {
+		p.TopP = openai.Float(*a.params.topP)
+	}
+	if a.params.seed != nil && caps.Supports(types.CapSeed) {
+		p.Seed = openai.Int(*a.params.seed)
+	}
+	if a.params.frequencyPenalty != nil && caps.Supports(types.CapFrequencyPenalty) {
+		p.FrequencyPenalty = openai.Float(*a.params.frequencyPenalty)
+	}
+	if a.params.presencePenalty != nil && caps.Supports(types.CapPresencePenalty) {
+		p.PresencePenalty = openai.Float(*a.params.presencePenalty)
+	}
+	if len(a.params.stop) > 0 && caps.Supports(types.CapStopSequences) {
+		p.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: a.params.stop}
+	}
+	if a.params.reasoningEffort != "" && caps.Supports(types.CapReasoningEffort) {
+		p.ReasoningEffort = shared.ReasoningEffort(a.params.reasoningEffort)
+	}
+	if a.params.parallelTools != nil && caps.Supports(types.CapParallelToolControl) {
+		p.ParallelToolCalls = openai.Bool(*a.params.parallelTools)
 	}
 }
 
@@ -100,6 +219,13 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	return a.chatStream(ctx, messages, tools, rf)
 }
 
+// Capabilities implements types.CapabilityReporter: it resolves the target
+// model against the shared catalog so callers can check whether a flag (e.g.
+// reasoning) is supported before building a request that would be rejected.
+func (a *Adapter) Capabilities() types.ModelCapabilities {
+	return catalog.MustLookup("openai", string(a.model))
+}
+
 // ContentSupport implements types.ContentNegotiator.
 func (a *Adapter) ContentSupport() types.ContentSupport {
 	return types.ContentSupport{
@@ -121,6 +247,8 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 			IncludeUsage: openai.Bool(true),
 		},
 	}
+
+	a.applyParams(&params)
 
 	oTools := toOpenAITools(tools)
 	if len(oTools) > 0 {
