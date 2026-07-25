@@ -82,6 +82,32 @@ type Provider interface {
 > (e.g. `OPENAI_API_KEY`). In Go code: construct the Anthropic adapter for `Provider`
 > and a separate OpenAI/Google/Ollama adapter for the `Embedder`.
 
+### Ollama generation options
+
+Ollama applies the daemon's own defaults unless a request says otherwise, and
+the default context window is small enough that long prompts are truncated
+silently. Set it explicitly when prompts are large:
+
+```go
+client := ollama.NewClient("http://localhost:11434", "qwen3.5:9b", "",
+    ollama.WithChatOptions(ollama.Options{NumCtx: 16384, Temperature: 0.4}),
+)
+```
+
+| Option | Effect |
+|--------|--------|
+| `WithChatOptions(any)` | Sets the `options` object on chat requests (`num_ctx`, `temperature`, `num_predict`, `top_p`, `seed`, `stop`). Accepts `ollama.Options` or any value that marshals to ollama's shape. |
+| `WithThink(bool)` | Turns a reasoning model's thinking phase on or off. Unset leaves the model's own default. |
+| `WithHTTPClient(*http.Client)` | Replaces the transport, for custom timeouts or proxies. |
+
+`ChatStreamWithFormat` disables thinking automatically unless `WithThink` says
+otherwise. The format grammar constrains every token the model emits, so a
+reasoning model left to think produces grammar-shaped reasoning and returns no
+usable content.
+
+Reasoning content arrives as `ThinkingStartDelta`, `ThinkingContentDelta`, and
+`ThinkingEndDelta`, always closed before any text or tool-call delta opens.
+
 ## Messages
 
 Three roles. Tool results are content blocks, not a separate role.

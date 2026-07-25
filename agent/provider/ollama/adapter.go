@@ -87,8 +87,14 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 		defer close(out)
 
 		textStarted := false
+		thinkStarted := false
 		for chunk := range rx {
 			if chunk.Done {
+				if thinkStarted {
+					// Ollama has no signature token to round-trip.
+					out <- types.ThinkingEndDelta{}
+					thinkStarted = false
+				}
 				if textStarted {
 					out <- types.TextEndDelta{}
 					textStarted = false
@@ -109,8 +115,21 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 				continue
 			}
 
+			// Handle reasoning content from thinking models.
+			if chunk.Message.Thinking != "" {
+				if !thinkStarted {
+					out <- types.ThinkingStartDelta{}
+					thinkStarted = true
+				}
+				out <- types.ThinkingContentDelta{Content: chunk.Message.Thinking}
+			}
+
 			// Handle text content
 			if chunk.Message.Content != "" {
+				if thinkStarted {
+					out <- types.ThinkingEndDelta{}
+					thinkStarted = false
+				}
 				if !textStarted {
 					out <- types.TextStartDelta{}
 					textStarted = true
@@ -120,6 +139,10 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 
 			// Handle tool calls
 			if len(chunk.Message.ToolCalls) > 0 {
+				if thinkStarted {
+					out <- types.ThinkingEndDelta{}
+					thinkStarted = false
+				}
 				if textStarted {
 					out <- types.TextEndDelta{}
 					textStarted = false
@@ -132,6 +155,9 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 			}
 		}
 
+		if thinkStarted {
+			out <- types.ThinkingEndDelta{}
+		}
 		if textStarted {
 			out <- types.TextEndDelta{}
 		}
