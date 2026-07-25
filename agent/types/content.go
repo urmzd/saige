@@ -64,6 +64,10 @@ type ToolResultContent struct {
 	// Blocks with Kind image|file hold bytes in Data (json:"-", not persisted);
 	// only the URI/metadata round-trips through tree serialization.
 	Blocks []ToolResultBlock `json:"blocks,omitempty"`
+	// Citations attributes this result to its sources, carrying the ordinals
+	// the run's CitationRegistry assigned. Persisted, so a restored
+	// conversation keeps the numbering its earlier answers referenced.
+	Citations []Citation `json:"citations,omitempty"`
 }
 
 func (ToolResultContent) isSystemContent() {}
@@ -117,6 +121,16 @@ type ThinkingContent struct {
 }
 
 func (ThinkingContent) isAssistantContent() {}
+
+// CitationContent carries the attributions for the assistant turn it belongs
+// to. It is persisted with the message so a restored conversation still knows
+// what its claims were sourced from: citations dropped on reload turn a
+// grounded answer into an unsourced one.
+type CitationContent struct {
+	Citations []Citation `json:"citations"`
+}
+
+func (CitationContent) isAssistantContent() {}
 
 // ── Feedback ──────────────────────────────────────────────────────────
 

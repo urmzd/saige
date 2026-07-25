@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -73,6 +74,11 @@ type ToolResult struct {
 	Text    string            // required human/LLM text projection (never empty for a successful result)
 	Blocks  []ToolResultBlock // optional rich content
 	IsError bool              // true when this result represents a tool error
+	// Citations attributes this result to its sources. A search or retrieval
+	// tool fills it so its sources land in the same run-wide registry, and get
+	// the same numbering, as sources the provider found through its own
+	// server-side search. Producers leave Ordinal zero; the agent assigns it.
+	Citations []Citation
 }
 
 // RichTool is an OPTIONAL extension interface. A tool that implements it can
@@ -152,6 +158,23 @@ func (r *ToolRegistry) Definitions() []ToolDef {
 		defs = append(defs, t.Definition())
 	}
 	return defs
+}
+
+// All returns every registered tool, sorted by name so callers that rebuild a
+// registry (Configure, snapshotting) produce a deterministic order.
+func (r *ToolRegistry) All() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.tools))
+	for n := range r.tools {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]Tool, 0, len(names))
+	for _, n := range names {
+		out = append(out, r.tools[n])
+	}
+	return out
 }
 
 // Execute runs a tool by name.

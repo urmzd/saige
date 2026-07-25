@@ -136,6 +136,23 @@ func (HandoffDelta) isDelta() {}
 
 // ── Terminal deltas ─────────────────────────────────────────────────
 
+// CitationDelta carries one attribution as it is produced. Providers that
+// return citation metadata (Anthropic document citations, Gemini grounding,
+// OpenAI search annotations) emit these from their adapter; locally-executed
+// tools emit them via ToolResult.Citations. Either way the consumer sees one
+// delta type and the agent's CitationRegistry assigns the number.
+//
+// The Ordinal is already assigned by the time a consumer sees it, so a UI can
+// render the marker immediately without holding its own numbering state.
+type CitationDelta struct {
+	Citation Citation
+	// ToolCallID is set when the citation came from a tool result rather than
+	// directly from the model, so a consumer can attribute it to the tool.
+	ToolCallID string
+}
+
+func (CitationDelta) isDelta() {}
+
 // ErrorDelta carries an error from the stream.
 type ErrorDelta struct {
 	Error error
