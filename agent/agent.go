@@ -63,6 +63,30 @@ type AgentConfig struct {
 	// Structured output: if set, constrains final LLM output to this JSON schema.
 	ResponseSchema *types.ParameterSchema
 
+	// ToolGate decides whether each tool call may proceed, before it runs. It
+	// sees the resolved definition and the model's actual arguments, so it can
+	// allow a read and stop a write on the same tool. Defaults to
+	// types.AllowAllGate. The pre-existing MarkedTool mechanism still applies
+	// and runs after the gate.
+	ToolGate types.ToolGate
+
+	// ToolContext carries the configurable knobs tools read (see
+	// types.ToolContext). It is attached to every tool call's context, so a
+	// tool reads per-deployment configuration without its signature changing.
+	ToolContext types.ToolContext
+
+	// Budget caps what a run may spend. Checked on every usage report rather
+	// than once per iteration, because one long-context call can cost more than
+	// the whole allowance. nil means unlimited.
+	Budget *types.Budget
+
+	// ServerTools requests tools the PROVIDER executes (web search, code
+	// execution, remote MCP). Validated against the provider's declared
+	// capabilities at construction, so an unsupported request fails at startup
+	// rather than mid-stream. Adapters read these from their own options; this
+	// field is the declaration the agent validates and reports.
+	ServerTools []types.ServerTool
+
 	// Logger for agent events. Defaults to slog.Default() if nil.
 	Logger *slog.Logger
 
@@ -113,6 +137,29 @@ func WithMetrics(metrics types.Metrics) AgentOption {
 	return func(c *AgentConfig) { c.Metrics = metrics }
 }
 
+// WithToolGate sets the pre-execution gate for tool calls. Compose several
+// with types.Gates; the most restrictive verdict wins.
+func WithToolGate(g types.ToolGate) AgentOption {
+	return func(c *AgentConfig) { c.ToolGate = g }
+}
+
+// WithToolContext sets the knobs tools read at call time.
+func WithToolContext(tc types.ToolContext) AgentOption {
+	return func(c *AgentConfig) { c.ToolContext = tc }
+}
+
+// WithBudget caps what the run may spend. Share one budget across an agent and
+// its sub-agents to cap the whole run; give a sub-agent its own to cap that
+// delegation separately.
+func WithBudget(b *types.Budget) AgentOption {
+	return func(c *AgentConfig) { c.Budget = b }
+}
+
+// WithServerTools declares provider-executed tools for this agent.
+func WithServerTools(tools ...types.ServerTool) AgentOption {
+	return func(c *AgentConfig) { c.ServerTools = append(c.ServerTools, tools...) }
+}
+
 // WithMaxIter overrides the maximum agent loop iterations.
 func WithMaxIter(n int) AgentOption {
 	return func(c *AgentConfig) { c.MaxIter = n }
@@ -161,6 +208,10 @@ type Agent struct {
 	cfg      AgentConfig
 	tools    *types.ToolRegistry
 	handoffs *handoffGroup // nil unless WithHandoffs configured an entry group
+	// citations numbers every source cited during this agent's life, so a
+	// provider's server-side search and a local retrieval tool citing the same
+	// page produce one footnote rather than two.
+	citations *types.CitationRegistry
 }
 
 // NewAgent creates a new Agent. If no Tree is provided, one is created
@@ -186,6 +237,9 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	if cfg.StepRunner == nil {
 		cfg.StepRunner = types.NoopStepRunner{}
 	}
+	if cfg.ToolGate == nil {
+		cfg.ToolGate = types.AllowAllGate{}
+	}
 	tools := cfg.Tools
 	if tools == nil {
 		tools = types.NewToolRegistry()
@@ -196,12 +250,14 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 		cfg.Tree = t
 	}
 
-	// Register sub-agents as delegate tools.
+	// Register sub-agents as delegate tools. They inherit this agent's
+	// operational config, so the defaults applied above (MaxIter, Logger,
+	// Metrics, StepRunner) are already in place and propagate downward.
 	for _, sa := range cfg.SubAgents {
-		registerSubAgent(tools, sa)
+		registerSubAgent(tools, sa, cfg)
 	}
 
-	a := &Agent{cfg: cfg, tools: tools}
+	a := &Agent{cfg: cfg, tools: tools, citations: types.NewCitationRegistry()}
 
 	// When a Store is configured, persist the tree's root node + main branch tip
 	// up front so a later LoadTreeFromStore has an anchor even before the first
@@ -235,7 +291,11 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 // registerSubAgent registers a SubAgentDef as a delegate tool. Each invocation
 // constructs a fresh Agent: the sub-agent's conversation history is intentionally
 // discarded between delegations, so sub-agents are stateless across calls.
-func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
+//
+// parent is the delegating agent's config; the child inherits its operational
+// settings (see inheritConfig) so a delegated run carries the same timeouts,
+// logging, metrics, compaction and file pipeline as the run that spawned it.
+func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent AgentConfig) {
 	registry.Register(&subAgentTool{
 		def: types.ToolDef{
 			Name:        "delegate_to_" + sa.Name,
@@ -249,15 +309,7 @@ func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef) {
 			},
 		},
 		factory: func(runner types.StepRunner) *Agent {
-			return NewAgent(AgentConfig{
-				Name:         sa.Name,
-				SystemPrompt: sa.SystemPrompt,
-				Provider:     sa.Provider,
-				Tools:        sa.Tools,
-				SubAgents:    sa.SubAgents,
-				MaxIter:      sa.MaxIter,
-				StepRunner:   runner,
-			})
+			return NewAgent(inheritConfig(parent, sa, runner), sa.Options...)
 		},
 	})
 }
@@ -588,11 +640,11 @@ func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []ty
 		return messages
 	}
 
-	// Determine native content support from the provider.
-	var support types.ContentSupport
-	if cn, ok := a.cfg.Provider.(types.ContentNegotiator); ok {
-		support = cn.ContentSupport()
-	}
+	// Determine native content support from the provider. This prefers the
+	// model-level capability declaration over the adapter-level negotiator: an
+	// adapter knows how to encode an image, but only the model decides whether
+	// it can read one.
+	support := types.ProviderContentSupport(a.cfg.Provider)
 
 	out := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
@@ -860,6 +912,13 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			enriched = *usage
 		}
 		stream.send(enriched)
+
+		// Enforce the budget on every usage report, not once per iteration: a
+		// single long-context call can cost more than the whole allowance, so a
+		// per-iteration check overshoots by an unbounded amount.
+		if err := a.chargeBudget(ctx, stream, active.provider, enriched); err != nil {
+			return err
+		}
 
 		if msg == nil {
 			// An empty response with a dead context is a truncated stream (the
@@ -1208,6 +1267,83 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 	return results
 }
 
+// chargeBudget records this call's usage and enforces the policy.
+//
+// Under BudgetStop the run ends with ErrBudgetExceeded. Under
+// BudgetRequireApproval it escalates to the same human-in-the-loop path tool
+// approvals use, so a deployment implements one resolution protocol rather than
+// two; approving buys a bounded grant rather than removing the ceiling.
+func (a *Agent) chargeBudget(ctx context.Context, stream *EventStream, provider types.Provider, usage types.UsageDelta) error {
+	if a.cfg.Budget == nil {
+		return nil
+	}
+	model := types.ProviderModel(provider)
+	caps, _ := types.ProviderCapabilities(provider)
+
+	status, err := a.cfg.Budget.Record(model, caps.Pricing, types.UsageFromDelta(usage))
+	if err != nil {
+		return err // unpriced model under an enforcing policy
+	}
+
+	switch status {
+	case types.BudgetStatusWarn:
+		a.cfg.Logger.Warn("budget nearing its limit",
+			"spent", a.cfg.Budget.Spent().String(),
+			"remaining", a.cfg.Budget.Remaining().String())
+		return nil
+	case types.BudgetStatusExceeded:
+		if a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
+			marker := a.cfg.Budget.ApprovalMarker()
+			pending := types.ToolUseContent{ID: types.NewID(), Name: "budget"}
+			msg, _, approved := a.awaitApproval(ctx, stream, pending, []types.Marker{marker})
+			if !approved {
+				return fmt.Errorf("%w: %s", types.ErrBudgetExceeded, msg)
+			}
+			a.cfg.Budget.Grant(0)
+			return nil
+		}
+		return a.cfg.Budget.Err()
+	}
+	return nil
+}
+
+// Citations returns the run's citation registry: every source the provider or
+// a tool attributed a claim to, numbered once across the whole conversation.
+func (a *Agent) Citations() *types.CitationRegistry { return a.citations }
+
+// Budget returns the configured budget, or nil.
+func (a *Agent) Budget() *types.Budget { return a.cfg.Budget }
+
+// awaitApproval emits a MarkerDelta and blocks for a human decision. It is the
+// single human-in-the-loop primitive: the pre-gate, the pre-existing
+// MarkedTool mechanism, and the budget escalation all route through it, so a
+// consumer only ever implements one resolution protocol.
+//
+// It returns (message, modifiedArgs, approved). On refusal or cancellation the
+// message is the tool error to report.
+func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker) (string, map[string]any, bool) {
+	stream.send(types.MarkerDelta{
+		ToolCallID: tc.ID,
+		ToolName:   tc.Name,
+		Arguments:  tc.Arguments,
+		Markers:    markers,
+	})
+
+	select {
+	case r := <-stream.awaitResolution(tc.ID):
+		if !r.Approved {
+			msg := "rejected"
+			if r.Message != "" {
+				msg = "rejected: " + r.Message
+			}
+			return msg, nil, false
+		}
+		return "", r.ModifiedArgs, true
+	case <-ctx.Done():
+		return "context cancelled", nil, false
+	}
+}
+
 // executeOneTool runs a single tool call to completion, emitting the start/end
 // deltas and returning its result. Every exit path sets the result's ToolCallID
 // and emits a terminal ToolExecEndDelta, so a cancelled or rejected call never
@@ -1221,6 +1357,49 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		res := toolResult{toolCallID: tc.ID, err: fmt.Sprintf("tool not found: %s", tc.Name)}
 		stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
 		return res
+	}
+
+	// Pre-gate: decide on the resolved definition and the model's actual
+	// arguments, before anything runs. A denial is reported to the model as a
+	// tool error so it can adapt, rather than failing the turn.
+	def := tool.Definition()
+	if decision := a.cfg.ToolGate.Check(ctx, def, tc.Arguments); decision.Outcome != types.GateAllow {
+		if decision.ModifiedArgs != nil {
+			tc.Arguments = decision.ModifiedArgs
+		}
+		switch decision.Outcome {
+		case types.GateDeny:
+			reason := decision.Reason
+			if reason == "" {
+				reason = "denied by policy"
+			}
+			res := toolResult{toolCallID: tc.ID, err: "refused: " + reason}
+			stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
+			return res
+		case types.GateRequireApproval:
+			marker := types.Marker{Kind: "gate_approval", Message: decision.Reason}
+			if decision.Marker != nil {
+				marker = *decision.Marker
+			}
+			approved, args, ok := a.awaitApproval(ctx, stream, tc, []types.Marker{marker})
+			if !ok {
+				res := toolResult{toolCallID: tc.ID, err: approved}
+				stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
+				return res
+			}
+			if args != nil {
+				tc.Arguments = args
+			}
+		}
+	} else if decision.ModifiedArgs != nil {
+		// An allowing gate may still narrow the call, e.g. clamping a limit.
+		tc.Arguments = decision.ModifiedArgs
+	}
+
+	// Attach the deployment's tool knobs so a Configurable tool can read them
+	// without its signature changing.
+	if a.cfg.ToolContext.Len() > 0 {
+		ctx = types.WithToolContext(ctx, a.cfg.ToolContext)
 	}
 
 	// Markers: emit MarkerDelta and wait for human resolution.
@@ -1288,6 +1467,11 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 			switch v := d.(type) {
 			case types.TextContentDelta:
 				resultBuf.WriteString(v.Content)
+			case types.CitationDelta:
+				// A source the child cited is a source the whole answer rests
+				// on, so it is registered here too and gets one number across
+				// parent and child rather than one per agent.
+				a.citations.Add(v.Citation)
 			case types.ErrorDelta:
 				childErr = v.Error
 			}
@@ -1326,6 +1510,12 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 			var tr types.ToolResult
 			tr, execErr = rt.ExecuteRich(stepCtx, tc.Arguments)
 			text, blocks = tr.Text, tr.Blocks
+			// Register the tool's sources in the run-wide registry so a page
+			// found by a local search tool and the same page found by the
+			// provider's server-side search share one footnote number.
+			for _, c := range a.citations.AddAll(tr.Citations) {
+				stream.send(types.CitationDelta{Citation: c, ToolCallID: tc.ID})
+			}
 			if execErr == nil && tr.IsError {
 				execErr = errors.New(tr.Text) // tool-signalled error without a Go error
 			}
