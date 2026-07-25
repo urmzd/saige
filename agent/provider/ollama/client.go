@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,11 +20,67 @@ type Client struct {
 	EmbeddingModel string
 	HTTP           *http.Client
 	Logger         *log.Logger
+
+	// ChatOptions is sent as the `options` object on every chat request. It is
+	// how callers set num_ctx, temperature, num_predict, and the rest. Nil
+	// sends no options object at all, so the daemon's defaults apply.
+	//
+	// num_ctx is worth setting explicitly: ollama defaults to a small context
+	// window and silently truncates anything longer, which turns an oversized
+	// prompt into a confidently wrong answer rather than an error.
+	ChatOptions any
+
+	// Think toggles the thinking phase on reasoning models for chat requests.
+	// Nil leaves the model's default in place.
+	Think *bool
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithChatOptions sets the `options` object sent on chat requests. Pass an
+// Options value, or any struct or map that marshals to the shape ollama
+// expects.
+func WithChatOptions(opts any) Option {
+	return func(c *Client) { c.ChatOptions = opts }
+}
+
+// WithThink enables or disables the thinking phase on reasoning models.
+//
+// Disabling it matters for schema-constrained output: the format grammar
+// applies to everything the model emits, thinking included, so a reasoning
+// model asked for JSON can spend its whole budget producing grammar-shaped
+// reasoning and return empty content.
+func WithThink(think bool) Option {
+	return func(c *Client) { c.Think = &think }
+}
+
+// WithHTTPClient replaces the underlying HTTP client, for callers that need a
+// custom transport or timeout.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) { c.HTTP = h }
+}
+
+// Options is the subset of ollama generation parameters callers most often
+// set. Fields left at zero are omitted, so the daemon's default applies.
+type Options struct {
+	// NumCtx is the context window in tokens.
+	NumCtx int `json:"num_ctx,omitempty"`
+	// NumPredict caps generated tokens. -1 means unlimited.
+	NumPredict int `json:"num_predict,omitempty"`
+	// Temperature controls sampling randomness.
+	Temperature float64 `json:"temperature,omitempty"`
+	// TopP is nucleus sampling.
+	TopP float64 `json:"top_p,omitempty"`
+	// Seed makes sampling reproducible when set.
+	Seed int `json:"seed,omitempty"`
+	// Stop are sequences that end generation.
+	Stop []string `json:"stop,omitempty"`
 }
 
 // NewClient creates a new Ollama client.
-func NewClient(host, model, embeddingModel string) *Client {
-	return &Client{
+func NewClient(host, model, embeddingModel string, opts ...Option) *Client {
+	c := &Client{
 		Host:           host,
 		Model:          model,
 		EmbeddingModel: embeddingModel,
@@ -32,6 +89,10 @@ func NewClient(host, model, embeddingModel string) *Client {
 		},
 		Logger: log.Default(),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Generate sends a non-streaming generate request.
@@ -200,18 +261,32 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, tools [
 		Messages: messages,
 		Tools:    tools,
 		Stream:   true,
+		Options:  c.ChatOptions,
+		Think:    c.Think,
 	}
 	return c.doChatStream(ctx, req)
 }
 
 // ChatStreamWithFormat sends a streaming chat request with a format constraint.
+//
+// When the caller has not set Think explicitly, thinking is disabled for these
+// requests: the format grammar constrains every token the model emits, so a
+// reasoning model left to think will produce grammar-shaped reasoning and
+// return no usable content. Set WithThink(true) to override.
 func (c *Client) ChatStreamWithFormat(ctx context.Context, messages []ChatMessage, tools []Tool, format any) (<-chan ChatChunk, error) {
+	think := c.Think
+	if think == nil && format != nil {
+		off := false
+		think = &off
+	}
 	req := ChatRequest{
 		Model:    c.Model,
 		Messages: messages,
 		Tools:    tools,
 		Stream:   true,
 		Format:   format,
+		Options:  c.ChatOptions,
+		Think:    think,
 	}
 	return c.doChatStream(ctx, req)
 }
@@ -242,10 +317,17 @@ func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan Chat
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// The body carries the actionable part ("model not found, try pulling
+		// it"); dropping it leaves the caller with a bare status code.
+		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		close(ch)
-		c.Logger.Printf("[ollama] chat_stream failed: %d", resp.StatusCode)
-		return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
+		detail := strings.TrimSpace(string(respBody))
+		c.Logger.Printf("[ollama] chat_stream failed: %d %s", resp.StatusCode, detail)
+		if detail == "" {
+			return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
+		}
+		return ch, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, detail)
 	}
 
 	go func() {

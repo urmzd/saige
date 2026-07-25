@@ -5,6 +5,7 @@ package ollama
 type ChatMessage struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
+	Thinking  string     `json:"thinking,omitempty"`
 	Images    []string   `json:"images,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
@@ -51,6 +52,12 @@ type ChatRequest struct {
 	Tools    []Tool        `json:"tools,omitempty"`
 	Stream   bool          `json:"stream"`
 	Format   any           `json:"format,omitempty"`
+	// Options carries generation parameters such as num_ctx, temperature, and
+	// num_predict. Omitted entirely when nil, so the daemon's defaults apply.
+	Options any `json:"options,omitempty"`
+	// Think toggles a reasoning model's thinking phase. Nil leaves the model's
+	// own default in place.
+	Think *bool `json:"think,omitempty"`
 }
 
 type ChatChunk struct {
