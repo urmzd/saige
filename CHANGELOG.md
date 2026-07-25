@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0 (2026-07-25)
+
+### Features
+
+- **ollama**: expose chat generation options and thinking control (#52) ([3e45ae5](https://github.com/urmzd/saige/commit/3e45ae568e25bedd60af52934d4b62566e7b061f))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.13.1...v0.14.0)
+
+
 ## 0.13.1 (2026-07-17)
 
 ### Bug Fixes
