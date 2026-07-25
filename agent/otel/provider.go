@@ -102,12 +102,25 @@ func (p *TracedProvider) ChatStreamWithSchema(ctx context.Context, messages []ty
 	return wrapDeltaChannel(ch, span), nil
 }
 
-// ContentSupport delegates to the inner provider if it implements ContentNegotiator.
+// WithModel implements types.ModelSwitcher: it re-targets the inner provider
+// and keeps tracing attached. Without it a ConfigContent model switch was
+// dropped whenever tracing was enabled, so traced runs silently ignored the
+// requested model.
+func (p *TracedProvider) WithModel(model string) types.Provider {
+	return &TracedProvider{Inner: types.ProviderWithModel(p.Inner, model), tracer: p.tracer}
+}
+
+// ContentSupport delegates to the inner provider, preferring its model-level
+// capability declaration over the adapter-level negotiator.
 func (p *TracedProvider) ContentSupport() types.ContentSupport {
-	if cn, ok := p.Inner.(types.ContentNegotiator); ok {
-		return cn.ContentSupport()
-	}
-	return types.ContentSupport{}
+	return types.ProviderContentSupport(p.Inner)
+}
+
+// Capabilities implements types.CapabilityReporter by delegating to the inner
+// provider. Tracing changes observability, not what the model accepts.
+func (p *TracedProvider) Capabilities() types.ModelCapabilities {
+	caps, _ := types.ProviderCapabilities(p.Inner)
+	return caps
 }
 
 // wrapDeltaChannel reads from the inner channel, records usage events,
