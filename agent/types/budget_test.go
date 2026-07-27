@@ -231,10 +231,10 @@ func TestBreakdownNamesTheCurrencyItCounted(t *testing.T) {
 	}
 
 	// A priced model names its unit: a bare number is not a spend report.
-	if got["gpt-4o"] != "USD" {
+	if got["gpt-4o"] != DefaultCurrency {
 		t.Errorf("gpt-4o currency = %q, want USD", got["gpt-4o"])
 	}
-	if got["local"] != "USD" {
+	if got["local"] != DefaultCurrency {
 		t.Errorf("free model currency = %q, want USD: free is priced at zero, not unpriced", got["local"])
 	}
 	// An unpriced model has no unit, and an empty string is how a report says

@@ -71,7 +71,7 @@ func TestFreeAndPaidTakesThePaidRates(t *testing.T) {
 }
 
 func TestMixedCurrenciesAreNotComparable(t *testing.T) {
-	usd := Pricing{Currency: "USD", InputPerMTok: 3}
+	usd := Pricing{Currency: DefaultCurrency, InputPerMTok: 3}
 	eur := Pricing{Currency: "EUR", InputPerMTok: 4}
 
 	got := worsePricing(usd, eur)
@@ -83,7 +83,7 @@ func TestMixedCurrenciesAreNotComparable(t *testing.T) {
 func TestEmptyCurrencyIsTreatedAsUSD(t *testing.T) {
 	// Pricing.currency() defaults empty to USD, so an unset Currency must not
 	// look like a different one and silently unprice the chain.
-	got := worsePricing(Pricing{InputPerMTok: 3}, Pricing{Currency: "USD", InputPerMTok: 4})
+	got := worsePricing(Pricing{InputPerMTok: 3}, Pricing{Currency: DefaultCurrency, InputPerMTok: 4})
 	if got.IsZero() {
 		t.Fatal("empty Currency treated as incomparable with USD")
 	}

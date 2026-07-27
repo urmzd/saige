@@ -93,9 +93,13 @@ func (p Pricing) IsZero() bool {
 		p.CachedInputPerMTok == 0 && p.CacheWritePerMTok == 0 && p.PerRequest == 0
 }
 
+// DefaultCurrency is assumed when a Pricing leaves Currency unset, which is the
+// common case: every vendor in the catalog publishes in it.
+const DefaultCurrency = "USD"
+
 func (p Pricing) currency() string {
 	if p.Currency == "" {
-		return "USD"
+		return DefaultCurrency
 	}
 	return p.Currency
 }
