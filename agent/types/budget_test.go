@@ -218,3 +218,28 @@ func TestConcurrentRecordsAllCount(t *testing.T) {
 		t.Errorf("requests = %d, want %d: parallel tool and sub-agent calls must all count", got, n)
 	}
 }
+
+func TestBreakdownNamesTheCurrencyItCounted(t *testing.T) {
+	b := NewBudget(BudgetPolicy{})
+	_, _ = b.Record("gpt-4o", gpt4oPricing(), TokenUsage{InputTokens: 10_000, Requests: 1})
+	_, _ = b.Record("local", Pricing{Free: true}, TokenUsage{InputTokens: 10_000, Requests: 1})
+	_, _ = b.Record("mystery", Pricing{}, TokenUsage{InputTokens: 10_000, Requests: 1})
+
+	got := map[string]string{}
+	for _, r := range b.Breakdown() {
+		got[r.Model] = r.Currency
+	}
+
+	// A priced model names its unit: a bare number is not a spend report.
+	if got["gpt-4o"] != "USD" {
+		t.Errorf("gpt-4o currency = %q, want USD", got["gpt-4o"])
+	}
+	if got["local"] != "USD" {
+		t.Errorf("free model currency = %q, want USD: free is priced at zero, not unpriced", got["local"])
+	}
+	// An unpriced model has no unit, and an empty string is how a report says
+	// "this zero means unknown" rather than "this zero means nothing was spent".
+	if got["mystery"] != "" {
+		t.Errorf("unpriced model currency = %q, want empty", got["mystery"])
+	}
+}

@@ -331,13 +331,34 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 
 // worsePricing returns the more expensive rate for each line item, so a
 // fallback chain is costed against its worst case.
+// worsePricing returns the rate card a budget must assume when either a or b
+// might serve the request. "Worse" means the one that cannot under-count:
+// unpriced beats everything, and among priced members each rate takes the
+// higher of the two.
 func worsePricing(a, b Pricing) Pricing {
-	if a.IsZero() {
-		return b
+	// Unpriced wins. It is the one state a budget cannot enforce against, so
+	// reporting the other member's rates would let a run be costed at rates
+	// that do not apply to the member actually serving it. This is the same
+	// fail-closed direction as Known, which is only true when both are known.
+	if a.IsZero() || b.IsZero() {
+		return Pricing{}
 	}
-	if b.IsZero() {
-		return a
+
+	// Two genuinely free members stay free. Falling through would drop the Free
+	// flag and produce all-zero rates, which reads back as unpriced and would
+	// refuse a run that costs nothing at all.
+	if a.Free && b.Free {
+		return Pricing{Free: true, Currency: a.Currency, AsOf: worseAsOf(a, b), Source: joinSource(a, b)}
 	}
+
+	// Rates in different currencies cannot be compared, let alone maxed, and
+	// there is no conversion here. Report unpriced rather than invent a number:
+	// a budget that refuses to run is recoverable, one that silently sums EUR
+	// into USD is not.
+	if a.currency() != b.currency() {
+		return Pricing{}
+	}
+
 	return Pricing{
 		Currency:           a.Currency,
 		InputPerMTok:       maxFloat(a.InputPerMTok, b.InputPerMTok),
@@ -345,8 +366,37 @@ func worsePricing(a, b Pricing) Pricing {
 		CachedInputPerMTok: maxFloat(a.CachedInputPerMTok, b.CachedInputPerMTok),
 		CacheWritePerMTok:  maxFloat(a.CacheWritePerMTok, b.CacheWritePerMTok),
 		PerRequest:         maxFloat(a.PerRequest, b.PerRequest),
-		AsOf:               a.AsOf,
-		Source:             a.Source,
+		AsOf:               worseAsOf(a, b),
+		Source:             joinSource(a, b),
+	}
+}
+
+// worseAsOf returns the less trustworthy of two recording dates: an unknown
+// date beats any known one, and otherwise the older wins. Keeping the first
+// operand's date would date the merged card by whichever member happened to be
+// primary rather than by the staler number in it.
+func worseAsOf(a, b Pricing) string {
+	if a.AsOf == "" || b.AsOf == "" {
+		return ""
+	}
+	if a.AsOf < b.AsOf { // ISO dates sort lexicographically
+		return a.AsOf
+	}
+	return b.AsOf
+}
+
+// joinSource names every provenance that fed the merged card, so a rate that
+// came from the secondary is not attributed to the primary's pricing page.
+func joinSource(a, b Pricing) string {
+	switch {
+	case a.Source == b.Source:
+		return a.Source
+	case a.Source == "":
+		return b.Source
+	case b.Source == "":
+		return a.Source
+	default:
+		return a.Source + " + " + b.Source
 	}
 }
 

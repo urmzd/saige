@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -101,6 +102,15 @@ var (
 // New wraps a tool with caching. It returns the tool unchanged when the
 // resolved policy is disabled, so wiring code can wrap unconditionally.
 func New(inner types.Tool, cfg Config) (types.Tool, error) {
+	// A cache wrapped OUTSIDE markers hides them: the agent loop finds markers
+	// with a *types.MarkedTool type assertion, and a decorator in front of one
+	// makes that assertion fail, so the human-approval prompt is silently
+	// skipped. The composition that works is markers outside, cache inside;
+	// WrapAll does that rewrap automatically.
+	if _, ok := inner.(*types.MarkedTool); ok {
+		return nil, fmt.Errorf("toolcache: tool %q is marked for human approval; wrap the cache INSIDE the markers (types.WithMarkers(cached, markers...)), not around them, or the approval prompt is skipped", inner.Definition().Name)
+	}
+
 	policy := types.PolicyFor(inner)
 	if cfg.Policy != nil {
 		policy = *cfg.Policy
@@ -169,7 +179,11 @@ func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.Tool
 			t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_hit", 0, nil)
 			return t.replay(entry)
 		}
-		// An expired entry is kept in hand: if the refresh fails and the policy
+		// An expired entry still counts as a miss: the round trip it exists to
+		// save was made anyway, and a hit rate that counted it would hide a TTL
+		// set too short to ever serve anything.
+		t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_miss", 0, nil)
+		// The expired entry is kept in hand: if the refresh fails and the policy
 		// allows stale reads, it is better than an error.
 		res, err := t.refresh(ctx, key, args, now)
 		if err != nil && entry.Servable(now, t.policy) {
@@ -195,29 +209,46 @@ func (t *Tool) replay(e Entry) (types.ToolResult, error) {
 // refresh executes the tool, collapsing concurrent identical calls, and stores
 // the outcome when the policy permits.
 func (t *Tool) refresh(ctx context.Context, key string, args map[string]any, now time.Time) (types.ToolResult, error) {
-	t.mu.Lock()
-	if c, ok := t.inflight[key]; ok {
-		t.mu.Unlock()
-		select {
-		case <-c.done:
-			return c.res, c.err
-		case <-ctx.Done():
-			return types.ToolResult{}, ctx.Err()
+	for {
+		t.mu.Lock()
+		if c, ok := t.inflight[key]; ok {
+			t.mu.Unlock()
+			select {
+			case <-c.done:
+				// The leader's cancellation is the leader's alone. Adopting it
+				// would fail a follower whose own context is still live, which
+				// turns one cancelled call into several, so retry instead: the
+				// next pass either leads the execution or joins a new leader.
+				if isContextErr(c.err) && ctx.Err() == nil {
+					continue
+				}
+				return c.res, c.err
+			case <-ctx.Done():
+				return types.ToolResult{}, ctx.Err()
+			}
 		}
+		c := &call{done: make(chan struct{})}
+		t.inflight[key] = c
+		t.mu.Unlock()
+
+		c.res, c.err = t.execute(ctx, args)
+
+		// Deregister before waking followers, so a follower that retries a
+		// cancelled execution finds no stale leader to attach to.
+		t.mu.Lock()
+		delete(t.inflight, key)
+		t.mu.Unlock()
+		close(c.done)
+
+		t.store(ctx, key, c.res, c.err, now)
+		return c.res, c.err
 	}
-	c := &call{done: make(chan struct{})}
-	t.inflight[key] = c
-	t.mu.Unlock()
+}
 
-	c.res, c.err = t.execute(ctx, args)
-	close(c.done)
-
-	t.mu.Lock()
-	delete(t.inflight, key)
-	t.mu.Unlock()
-
-	t.store(ctx, key, c.res, c.err, now)
-	return c.res, c.err
+// isContextErr reports whether an error came from a context ending rather than
+// from the tool itself.
+func isContextErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (t *Tool) execute(ctx context.Context, args map[string]any) (types.ToolResult, error) {
@@ -299,9 +330,21 @@ func sortStrings(s []string) {
 // WrapAll wraps every tool in a registry that declares a cache policy, and
 // returns a new registry. Tools with no policy pass through untouched, so this
 // is safe to call on a mixed set.
+//
+// A marked tool is unwrapped, cached, and re-marked, so the human-approval
+// prompt still fires on every call and only the underlying work is memoized.
+// Caching outside the markers would skip the prompt entirely.
 func WrapAll(src *types.ToolRegistry, cfg Config) (*types.ToolRegistry, error) {
 	out := types.NewToolRegistry()
 	for _, tool := range src.All() {
+		if mt, ok := tool.(*types.MarkedTool); ok {
+			cached, err := New(mt.Inner, cfg)
+			if err != nil {
+				return nil, err
+			}
+			out.Register(types.WithMarkers(cached, mt.Markers...))
+			continue
+		}
 		wrapped, err := New(tool, cfg)
 		if err != nil {
 			return nil, err

@@ -1277,7 +1277,25 @@ func (a *Agent) chargeBudget(ctx context.Context, stream *EventStream, provider 
 	if a.cfg.Budget == nil {
 		return nil
 	}
-	model := types.ProviderModel(provider)
+
+	// A response cache replays the recorded token counts so observability keeps
+	// the original numbers, but no provider call was made and nothing was
+	// billed. Charging it would make a cached run report spend it did not
+	// incur, which is the opposite of what the budget is for.
+	if usage.CacheHit {
+		return nil
+	}
+
+	// Attribute to the model that actually answered, not the one configured.
+	// For a fallback chain ProviderModel reports the primary's name even when a
+	// secondary served the request, which would credit every fallback dollar to
+	// the primary and make Breakdown point at the wrong model. The pricing
+	// still comes from the chain's worst-case card: over-counting the total is
+	// the safe direction, mis-attributing it is not.
+	model := usage.ResponseModel
+	if model == "" {
+		model = types.ProviderModel(provider)
+	}
 	caps, _ := types.ProviderCapabilities(provider)
 
 	status, err := a.cfg.Budget.Record(model, caps.Pricing, types.UsageFromDelta(usage))

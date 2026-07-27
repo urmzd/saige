@@ -227,7 +227,11 @@ func (c *Client) IsLocal() bool { return c.cmd != nil }
 // because a remote server may add or remove tools mid-session and a stale list
 // produces "tool not found" errors from the model's point of view.
 func (c *Client) Tools(ctx context.Context) ([]types.Tool, error) {
-	res, err := c.session.ListTools(ctx, nil)
+	session, err := c.activeSession()
+	if err != nil {
+		return nil, err
+	}
+	res, err := session.ListTools(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: list tools on %q: %w", c.spec.Name, err)
 	}
@@ -273,15 +277,34 @@ func (c *Client) Register(ctx context.Context, registry *types.ToolRegistry) (in
 	return len(tools), nil
 }
 
+// activeSession returns the live session, or an error once Close has run.
+// Every session user goes through it so a Close racing an in-flight call
+// returns a closed-server error rather than panicking on a nil session.
+func (c *Client) activeSession() (*mcpsdk.ClientSession, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.session == nil {
+		return nil, fmt.Errorf("mcp: server %q is closed", c.spec.Name)
+	}
+	return c.session, nil
+}
+
 // Close ends the session and, for a local server, waits for the child process
 // to exit. Safe to call more than once.
 func (c *Client) Close() error {
-	if c.session == nil {
+	// Guarded: Close races a concurrent CallTool, which reads c.session on the
+	// same mutex that protects the tool map.
+	c.mu.Lock()
+	session := c.session
+	c.session = nil
+	c.mu.Unlock()
+
+	if session == nil {
 		return nil
 	}
-	err := c.session.Close()
-	c.session = nil
-	return err
+	// Closing the session closes the transport, and for a local server the
+	// SDK's CommandTransport signals, kills and reaps the child process.
+	return session.Close()
 }
 
 // toolDef converts an MCP tool declaration into this SDK's ToolDef. The MCP
@@ -328,7 +351,12 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 
-	res, err := t.client.session.CallTool(ctx, &mcpsdk.CallToolParams{
+	session, err := t.client.activeSession()
+	if err != nil {
+		return types.ToolResult{Text: err.Error(), IsError: true}, nil
+	}
+
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name:      t.remote,
 		Arguments: args,
 	})

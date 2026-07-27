@@ -99,7 +99,8 @@ type Budget struct {
 	usage    TokenUsage
 	byModel  map[string]TokenUsage
 	costs    map[string]Cost
-	granted  Cost // extra allowance bought by approvals
+	currency map[string]string // per model, so a Report can name its unit
+	granted  Cost              // extra allowance bought by approvals
 	breaches int
 }
 
@@ -107,9 +108,10 @@ type Budget struct {
 // without limiting it, which is still useful for reporting.
 func NewBudget(policy BudgetPolicy) *Budget {
 	return &Budget{
-		policy:  policy,
-		byModel: map[string]TokenUsage{},
-		costs:   map[string]Cost{},
+		policy:   policy,
+		byModel:  map[string]TokenUsage{},
+		costs:    map[string]Cost{},
+		currency: map[string]string{},
 	}
 }
 
@@ -132,6 +134,9 @@ func (b *Budget) Record(model string, pricing Pricing, u TokenUsage) (BudgetStat
 	b.byModel[model] = existing
 	b.spent += cost
 	b.costs[model] += cost
+	if !pricing.IsZero() {
+		b.currency[model] = pricing.currency()
+	}
 	status := b.statusLocked()
 	if status == BudgetStatusExceeded {
 		b.breaches++
@@ -220,9 +225,12 @@ func (b *Budget) Usage() TokenUsage {
 
 // Report is a per-model spend breakdown.
 type Report struct {
-	Model    string
-	Usage    TokenUsage
-	Cost     Cost
+	Model string
+	Usage TokenUsage
+	Cost  Cost
+	// Currency is the ISO code Cost is denominated in, empty when the model was
+	// unpriced and Cost is therefore zero for lack of a rate card rather than
+	// for lack of spending.
 	Currency string
 }
 
@@ -234,7 +242,7 @@ func (b *Budget) Breakdown() []Report {
 	defer b.mu.Unlock()
 	out := make([]Report, 0, len(b.byModel))
 	for model, u := range b.byModel {
-		out = append(out, Report{Model: model, Usage: u, Cost: b.costs[model]})
+		out = append(out, Report{Model: model, Usage: u, Cost: b.costs[model], Currency: b.currency[model]})
 	}
 	return out
 }
