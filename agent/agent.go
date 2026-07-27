@@ -1354,46 +1354,11 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 
 	tool, found := tools.Get(tc.Name)
 	if !found {
-		res := toolResult{toolCallID: tc.ID, err: fmt.Sprintf("tool not found: %s", tc.Name)}
-		stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
-		return res
+		return failedTool(stream, tc.ID, fmt.Sprintf("tool not found: %s", tc.Name))
 	}
 
-	// Pre-gate: decide on the resolved definition and the model's actual
-	// arguments, before anything runs. A denial is reported to the model as a
-	// tool error so it can adapt, rather than failing the turn.
-	def := tool.Definition()
-	if decision := a.cfg.ToolGate.Check(ctx, def, tc.Arguments); decision.Outcome != types.GateAllow {
-		if decision.ModifiedArgs != nil {
-			tc.Arguments = decision.ModifiedArgs
-		}
-		switch decision.Outcome {
-		case types.GateDeny:
-			reason := decision.Reason
-			if reason == "" {
-				reason = "denied by policy"
-			}
-			res := toolResult{toolCallID: tc.ID, err: "refused: " + reason}
-			stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
-			return res
-		case types.GateRequireApproval:
-			marker := types.Marker{Kind: "gate_approval", Message: decision.Reason}
-			if decision.Marker != nil {
-				marker = *decision.Marker
-			}
-			approved, args, ok := a.awaitApproval(ctx, stream, tc, []types.Marker{marker})
-			if !ok {
-				res := toolResult{toolCallID: tc.ID, err: approved}
-				stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
-				return res
-			}
-			if args != nil {
-				tc.Arguments = args
-			}
-		}
-	} else if decision.ModifiedArgs != nil {
-		// An allowing gate may still narrow the call, e.g. clamping a limit.
-		tc.Arguments = decision.ModifiedArgs
+	if res, done := a.gateTool(ctx, stream, &tc, tool.Definition()); done {
+		return res
 	}
 
 	// Attach the deployment's tool knobs so a Configurable tool can read them
@@ -1402,37 +1367,9 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		ctx = types.WithToolContext(ctx, a.cfg.ToolContext)
 	}
 
-	// Markers: emit MarkerDelta and wait for human resolution.
-	if mt, ok := tool.(*types.MarkedTool); ok && len(mt.Markers) > 0 {
-		stream.send(types.MarkerDelta{
-			ToolCallID: tc.ID,
-			ToolName:   tc.Name,
-			Arguments:  tc.Arguments,
-			Markers:    mt.Markers,
-		})
-
-		resCh := stream.awaitResolution(tc.ID)
-		select {
-		case r := <-resCh:
-			if !r.Approved {
-				msg := "rejected"
-				if r.Message != "" {
-					msg = "rejected: " + r.Message
-				}
-				res := toolResult{toolCallID: tc.ID, err: msg}
-				stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
-				return res
-			}
-			if r.ModifiedArgs != nil {
-				tc.Arguments = r.ModifiedArgs
-			}
-		case <-ctx.Done():
-			// Must still produce a matching, well-formed tool_result.
-			res := toolResult{toolCallID: tc.ID, err: "context cancelled"}
-			stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Error: res.err})
-			return res
-		}
-		tool = mt.Inner
+	tool, res, done := a.resolveMarkers(ctx, stream, &tc, tool)
+	if done {
+		return res
 	}
 
 	// Handoff signal: a control transfer, not a normal result. Checked before
@@ -1444,51 +1381,144 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return toolResult{toolCallID: tc.ID, result: out, handoffTo: target}
 	}
 
-	// Sub-agent: forward child deltas (the delegation itself is not a durable
-	// step: the child inherits the parent's StepRunner so its own LLM/tool
-	// steps are the durable units).
 	if invoker, ok := tool.(SubAgentInvoker); ok {
-		task, _ := tc.Arguments["task"].(string)
-		var childStream *EventStream
-		if st, ok := tool.(*subAgentTool); ok {
-			childStream = st.invokeWithRunner(ctx, task, a.childStepRunner(tc.ID))
-		} else {
-			childStream = invoker.InvokeAgent(ctx, task)
-		}
-
-		// A child failure must fail the delegation: partial text plus success
-		// would let the parent LLM treat a crashed child as a completed task.
-		// The ErrorDelta scan covers custom SubAgentInvoker streams that may
-		// not close with the error they emitted.
-		var childErr error
-		var resultBuf strings.Builder
-		for d := range childStream.Deltas() {
-			stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
-			switch v := d.(type) {
-			case types.TextContentDelta:
-				resultBuf.WriteString(v.Content)
-			case types.CitationDelta:
-				// A source the child cited is a source the whole answer rests
-				// on, so it is registered here too and gets one number across
-				// parent and child rather than one per agent.
-				a.citations.Add(v.Citation)
-			case types.ErrorDelta:
-				childErr = v.Error
-			}
-		}
-		if err := childStream.Wait(); err != nil {
-			childErr = err
-		}
-		res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
-		if childErr != nil {
-			res.err = childErr.Error()
-		}
-		stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Result: res.result, Error: res.err})
-		return res
+		return a.delegateToSubAgent(ctx, stream, tc, tool, invoker)
 	}
 
-	// Regular tool execution, wrapped in a durable step. A RichTool yields
-	// multi-modal Blocks; a plain Tool yields text only.
+	return a.runToolStep(ctx, stream, tc, tool)
+}
+
+// failedTool emits the terminal ToolExecEndDelta for a call that failed before
+// (or instead of) execution and returns the matching result. Every early exit
+// from executeOneTool goes through here so a tool_use ID is never left without
+// a tool_result.
+func failedTool(stream *EventStream, toolCallID, errMsg string) toolResult {
+	res := toolResult{toolCallID: toolCallID, err: errMsg}
+	stream.send(types.ToolExecEndDelta{ToolCallID: toolCallID, Error: res.err})
+	return res
+}
+
+// gateTool applies the pre-execution gate to the resolved definition and the
+// model's actual arguments, before anything runs. It may rewrite tc.Arguments
+// in place. A denial is reported to the model as a tool error so it can adapt,
+// rather than failing the turn; done reports whether the call is finished.
+func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef) (toolResult, bool) {
+	decision := a.cfg.ToolGate.Check(ctx, def, tc.Arguments)
+	if decision.Outcome == types.GateAllow {
+		if decision.ModifiedArgs != nil {
+			// An allowing gate may still narrow the call, e.g. clamping a limit.
+			tc.Arguments = decision.ModifiedArgs
+		}
+		return toolResult{}, false
+	}
+
+	if decision.ModifiedArgs != nil {
+		tc.Arguments = decision.ModifiedArgs
+	}
+	switch decision.Outcome {
+	case types.GateDeny:
+		reason := decision.Reason
+		if reason == "" {
+			reason = "denied by policy"
+		}
+		return failedTool(stream, tc.ID, "refused: "+reason), true
+	case types.GateRequireApproval:
+		marker := types.Marker{Kind: "gate_approval", Message: decision.Reason}
+		if decision.Marker != nil {
+			marker = *decision.Marker
+		}
+		approved, args, ok := a.awaitApproval(ctx, stream, *tc, []types.Marker{marker})
+		if !ok {
+			return failedTool(stream, tc.ID, approved), true
+		}
+		if args != nil {
+			tc.Arguments = args
+		}
+	}
+	return toolResult{}, false
+}
+
+// resolveMarkers emits a MarkerDelta for a marked tool and waits for human
+// resolution, returning the unwrapped inner tool once approved. It may rewrite
+// tc.Arguments in place; done reports whether the call is finished.
+func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool) (types.Tool, toolResult, bool) {
+	mt, ok := tool.(*types.MarkedTool)
+	if !ok || len(mt.Markers) == 0 {
+		return tool, toolResult{}, false
+	}
+
+	stream.send(types.MarkerDelta{
+		ToolCallID: tc.ID,
+		ToolName:   tc.Name,
+		Arguments:  tc.Arguments,
+		Markers:    mt.Markers,
+	})
+
+	select {
+	case r := <-stream.awaitResolution(tc.ID):
+		if !r.Approved {
+			msg := "rejected"
+			if r.Message != "" {
+				msg = "rejected: " + r.Message
+			}
+			return tool, failedTool(stream, tc.ID, msg), true
+		}
+		if r.ModifiedArgs != nil {
+			tc.Arguments = r.ModifiedArgs
+		}
+	case <-ctx.Done():
+		// Must still produce a matching, well-formed tool_result.
+		return tool, failedTool(stream, tc.ID, "context cancelled"), true
+	}
+	return mt.Inner, toolResult{}, false
+}
+
+// delegateToSubAgent runs a sub-agent tool, forwarding child deltas. The
+// delegation itself is not a durable step: the child inherits the parent's
+// StepRunner so its own LLM/tool steps are the durable units.
+func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool, invoker SubAgentInvoker) toolResult {
+	task, _ := tc.Arguments["task"].(string)
+	var childStream *EventStream
+	if st, ok := tool.(*subAgentTool); ok {
+		childStream = st.invokeWithRunner(ctx, task, a.childStepRunner(tc.ID))
+	} else {
+		childStream = invoker.InvokeAgent(ctx, task)
+	}
+
+	// A child failure must fail the delegation: partial text plus success
+	// would let the parent LLM treat a crashed child as a completed task.
+	// The ErrorDelta scan covers custom SubAgentInvoker streams that may
+	// not close with the error they emitted.
+	var childErr error
+	var resultBuf strings.Builder
+	for d := range childStream.Deltas() {
+		stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
+		switch v := d.(type) {
+		case types.TextContentDelta:
+			resultBuf.WriteString(v.Content)
+		case types.CitationDelta:
+			// A source the child cited is a source the whole answer rests
+			// on, so it is registered here too and gets one number across
+			// parent and child rather than one per agent.
+			a.citations.Add(v.Citation)
+		case types.ErrorDelta:
+			childErr = v.Error
+		}
+	}
+	if err := childStream.Wait(); err != nil {
+		childErr = err
+	}
+	res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
+	if childErr != nil {
+		res.err = childErr.Error()
+	}
+	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Result: res.result, Error: res.err})
+	return res
+}
+
+// runToolStep executes a regular tool, wrapped in a durable step. A RichTool
+// yields multi-modal Blocks; a plain Tool yields text only.
+func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool) toolResult {
 	stepName := "tool-" + tc.ID
 	sr, stepErr := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (types.StepResult, error) {
 		// Bound this tool call with a child deadline so a slow tool is cancelled

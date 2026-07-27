@@ -187,6 +187,11 @@ func Connect(ctx context.Context, spec ServerSpec) (*Client, error) {
 	if spec.IsLocal() {
 		// The command must NOT take connectCtx: that context is cancelled when
 		// the handshake finishes, which would kill the server we just started.
+		//
+		// #nosec G204 -- spawning the configured executable is the local
+		// transport. Command and Args come from a ServerSpec the deployment
+		// constructs in Go; the spec is never deserialized from model output or
+		// any other untrusted source.
 		cmd = exec.Command(spec.Command, spec.Args...)
 		cmd.Env = spec.Env
 		cmd.Dir = spec.WorkDir
