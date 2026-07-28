@@ -21,13 +21,21 @@ var (
 // HandoffDef defines one agent that participates in a handoff group. Unlike
 // SubAgentDef (a fresh, stateless child per call), a handoff agent shares the
 // entry agent's tree and continues the same conversation via a stable root.
+// A handoff member runs inside the entry agent's loop, so it inherits that
+// agent's operational config (timeouts, metrics, compaction, file pipeline,
+// store, step runner) for free. The three fields it may swap are the ones the
+// loop reads per-iteration: persona, provider, and tool registry. Leaving any
+// of them zero inherits the entry agent's.
 type HandoffDef struct {
 	Name         string
 	Description  string // shown to the LLM in the handoff_to_<name> tool
 	SystemPrompt string // this agent's persona overlay (NOT the stable root)
-	Provider     types.Provider
-	Tools        *types.ToolRegistry
-	MaxIter      int // 0 = inherit entry agent's MaxIter
+	// Provider targets this member at its own model. nil inherits the entry
+	// agent's provider, which is what a group that differs only by persona
+	// wants.
+	Provider types.Provider
+	Tools    *types.ToolRegistry
+	MaxIter  int // 0 = inherit entry agent's MaxIter
 
 	// CanHandOffTo restricts which agents this one may transfer to. Empty means
 	// it may hand off to anyone in the group (including back to the entry agent).
@@ -112,10 +120,16 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, 
 		if names[d.Name] {
 			return nil, fmt.Errorf("duplicate handoff agent name: %s", d.Name)
 		}
-		if d.Provider == nil {
-			return nil, fmt.Errorf("handoff agent %q has no provider", d.Name)
-		}
 		names[d.Name] = true
+	}
+	// A group with no provider anywhere cannot run: the entry agent is the
+	// inheritance root, so its absence is the real error, not a member's.
+	if entry.provider == nil {
+		for _, d := range defs {
+			if d.Provider == nil {
+				return nil, fmt.Errorf("handoff agent %q has no provider and the entry agent has none to inherit", d.Name)
+			}
+		}
 	}
 
 	members := map[string]*handoffMember{entry.name: entry}
@@ -125,12 +139,20 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, 
 		if tools == nil {
 			tools = types.NewToolRegistry()
 		}
+		provider := d.Provider
+		if provider == nil {
+			provider = entry.provider
+		}
+		maxIter := d.MaxIter
+		if maxIter <= 0 {
+			maxIter = entry.maxIter
+		}
 		members[d.Name] = &handoffMember{
 			name:         d.Name,
 			systemPrompt: d.SystemPrompt,
-			provider:     d.Provider,
+			provider:     provider,
 			tools:        tools,
-			maxIter:      d.MaxIter,
+			maxIter:      maxIter,
 		}
 		descByName[d.Name] = d.Description
 	}

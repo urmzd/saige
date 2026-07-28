@@ -64,6 +64,23 @@ func (r *Provider) WithModel(model string) types.Provider {
 	return &Provider{Inner: types.ProviderWithModel(r.Inner, model), Config: r.Config}
 }
 
+// ContentSupport implements types.ContentNegotiator by delegating to the inner
+// provider. Without this the file pipeline sees a retry-wrapped adapter as
+// supporting no media at all and extracts every attachment to text, silently
+// discarding images the model could have read natively.
+func (r *Provider) ContentSupport() types.ContentSupport {
+	return types.ProviderContentSupport(r.Inner)
+}
+
+// Capabilities implements types.CapabilityReporter by delegating to the inner
+// provider. When the inner provider does not report, the zero value is
+// returned: it declares nothing and has Known false, so a caller that must
+// fail closed still can.
+func (r *Provider) Capabilities() types.ModelCapabilities {
+	caps, _ := types.ProviderCapabilities(r.Inner)
+	return caps
+}
+
 func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
 		return r.Inner.ChatStream(ctx, messages, tools)

@@ -38,6 +38,7 @@ func main() {
 		newRagCmd(ctx),
 		newKgCmd(ctx),
 		newEvalCmd(ctx),
+		newModelsCmd(),
 		newUpdateCmd(),
 		newVersionCmd(),
 	)

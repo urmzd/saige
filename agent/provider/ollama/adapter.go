@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 
+	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -13,6 +14,9 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
+	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.CapabilityReporter       = (*Adapter)(nil)
+	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
 
 // Name implements types.NamedProvider.
@@ -166,8 +170,18 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 	return out
 }
 
+// Capabilities implements types.CapabilityReporter. Ollama is the one provider
+// whose capabilities follow the pulled weights rather than the endpoint, so an
+// unrecognised model resolves to the conservative baseline (Known false) and
+// callers that must fail closed can see that.
+func (a *Adapter) Capabilities() types.ModelCapabilities {
+	return catalog.MustLookup("ollama", a.Client.Model)
+}
+
 // ContentSupport implements types.ContentNegotiator.
-// Ollama supports JPEG and PNG natively via the images field.
+// The Ollama images field carries JPEG and PNG, but only a vision model can
+// read them: Capabilities is the model-aware answer, this is the wire-format
+// one.
 func (a *Adapter) ContentSupport() types.ContentSupport {
 	return types.ContentSupport{
 		NativeTypes: map[types.MediaType]bool{

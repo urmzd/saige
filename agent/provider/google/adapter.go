@@ -2,8 +2,13 @@ package google
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 
+	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
 )
@@ -13,25 +18,161 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
+	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.CapabilityReporter       = (*Adapter)(nil)
+	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
+
+// Option configures the Google adapter.
+type Option func(*Adapter)
+
+// WithVertex targets Vertex AI instead of the Gemini Developer API. The project
+// and location are required by that backend; authentication falls back to
+// Application Default Credentials, so NewAdapter may be called with an empty
+// API key.
+//
+// The two backends speak the same Gen AI SDK but differ in auth, quota, model
+// availability and region, which is why this is a deployment choice rather than
+// a model name.
+func WithVertex(project, location string) Option {
+	return func(a *Adapter) {
+		a.backend = genai.BackendVertexAI
+		a.project = project
+		a.location = location
+	}
+}
+
+// WithHTTPClient replaces the underlying HTTP client, for callers that need a
+// custom transport, timeout, or (on Vertex) their own credentials.
+func WithHTTPClient(h *http.Client) Option {
+	return func(a *Adapter) { a.httpClient = h }
+}
+
+// WithThinkingLevel sets ThinkingConfig.ThinkingLevel, the Gemini 3 way of
+// sizing reasoning. Use WithThinkingBudget for 2.5-series models, which take a
+// token budget instead: sending the wrong one is silently ignored, so check
+// Capabilities for CapReasoningEffort versus CapReasoningBudget.
+func WithThinkingLevel(level genai.ThinkingLevel) Option {
+	return func(a *Adapter) {
+		a.thinking = &genai.ThinkingConfig{IncludeThoughts: true, ThinkingLevel: level}
+	}
+}
+
+// WithThinkingBudget sets ThinkingConfig.ThinkingBudget in tokens, the
+// 2.5-series way of sizing reasoning. A budget of 0 disables thinking on flash
+// models; pro models cannot disable it.
+func WithThinkingBudget(tokens int32) Option {
+	return func(a *Adapter) {
+		a.thinking = &genai.ThinkingConfig{IncludeThoughts: tokens > 0, ThinkingBudget: &tokens}
+	}
+}
+
+// WithoutThinking disables reasoning and its thought output where the model
+// permits it.
+func WithoutThinking() Option {
+	return func(a *Adapter) {
+		zero := int32(0)
+		a.thinking = &genai.ThinkingConfig{IncludeThoughts: false, ThinkingBudget: &zero}
+	}
+}
+
+// WithServerTools enables provider-executed tools. Gemini runs search
+// grounding and code execution inside the model call, so unlike a local tool
+// there is no ToolExecStartDelta, no ToolGate, and no durable step: the only
+// trace is the grounding metadata, which this adapter turns into citations.
+//
+// An unsupported kind is rejected here rather than sent, because Gemini
+// answers an unknown tool with an opaque 400.
+func WithServerTools(tools ...types.ServerTool) Option {
+	return func(a *Adapter) { a.serverTools = append(a.serverTools, tools...) }
+}
+
+// WithGoogleSearch enables search grounding, the common case of
+// WithServerTools.
+func WithGoogleSearch() Option {
+	return WithServerTools(types.ServerTool{Kind: types.ServerToolWebSearch})
+}
+
+// WithGenerationConfig sets the sampling knobs sent on every request. Fields
+// left nil are omitted so the model default applies.
+func WithGenerationConfig(g GenerationConfig) Option {
+	return func(a *Adapter) { a.generation = g }
+}
+
+// WithSafetySettings sets per-request content safety thresholds. Without them
+// the backend's defaults apply, which differ between the Gemini API and Vertex.
+func WithSafetySettings(settings ...*genai.SafetySetting) Option {
+	return func(a *Adapter) { a.safety = settings }
+}
+
+// GenerationConfig is the subset of genai.GenerateContentConfig sampling knobs
+// callers most often set. Pointer fields are omitted when nil, so the zero
+// value sends nothing and the model's defaults apply.
+type GenerationConfig struct {
+	Temperature     *float32
+	TopP            *float32
+	TopK            *float32
+	Seed            *int32
+	MaxOutputTokens int32
+	StopSequences   []string
+}
+
+// apply copies the set knobs onto a request config.
+func (g GenerationConfig) apply(c *genai.GenerateContentConfig) {
+	c.Temperature = g.Temperature
+	c.TopP = g.TopP
+	c.TopK = g.TopK
+	c.Seed = g.Seed
+	c.MaxOutputTokens = g.MaxOutputTokens
+	c.StopSequences = g.StopSequences
+}
 
 // Adapter wraps the official Google GenAI SDK client and implements types.Provider,
 // types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
 type Adapter struct {
 	client *genai.Client
 	model  string
+
+	backend    genai.Backend
+	project    string
+	location   string
+	httpClient *http.Client
+
+	thinking    *genai.ThinkingConfig
+	generation  GenerationConfig
+	safety      []*genai.SafetySetting
+	serverTools []types.ServerTool
 }
 
-// NewAdapter creates a new Google provider adapter using the official SDK.
-func NewAdapter(ctx context.Context, apiKey, model string) (*Adapter, error) {
+// NewAdapter creates a new Google provider adapter using the official SDK. It
+// targets the Gemini Developer API by default; pass WithVertex to target Vertex
+// AI, in which case apiKey may be empty and Application Default Credentials are
+// used.
+func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Adapter, error) {
+	a := &Adapter{model: model, backend: genai.BackendGeminiAPI}
+	for _, o := range opts {
+		o(a)
+	}
+	if a.backend == genai.BackendVertexAI && (a.project == "" || a.location == "") {
+		return nil, fmt.Errorf("google: vertex backend requires both project and location")
+	}
+	// Fail at construction, not mid-stream: an unsupported server tool comes
+	// back from Gemini as an opaque 400 on the first request that uses it.
+	if err := types.ValidateServerTools(catalog.MustLookup("google", model), a.serverTools); err != nil {
+		return nil, fmt.Errorf("google: %w", err)
+	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey:     apiKey,
+		Backend:    a.backend,
+		Project:    a.project,
+		Location:   a.location,
+		HTTPClient: a.httpClient,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Adapter{client: client, model: model}, nil
+	a.client = client
+	return a, nil
 }
 
 // Name implements types.NamedProvider.
@@ -57,73 +198,126 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	systemInst, contents := toGeminiContents(messages)
-	config := &genai.GenerateContentConfig{}
-	if systemInst != nil {
-		config.SystemInstruction = systemInst
-	}
-
-	gTools := toGeminiTools(tools)
-	if len(gTools) > 0 {
-		config.Tools = gTools
-	}
-
+	contents, config := a.buildRequest(messages, tools)
 	return a.chatStream(ctx, contents, config)
 }
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	contents, config := a.buildRequest(messages, tools)
+	if schema != nil {
+		config.ResponseMIMEType = "application/json"
+		config.ResponseSchema = parameterSchemaToGemini(*schema)
+	}
+	return a.chatStream(ctx, contents, config)
+}
+
+// buildRequest converts messages and tools and applies every configured knob,
+// so the schema and non-schema paths cannot drift apart.
+func (a *Adapter) buildRequest(messages []types.Message, tools []types.ToolDef) ([]*genai.Content, *genai.GenerateContentConfig) {
 	systemInst, contents := toGeminiContents(messages)
 	config := &genai.GenerateContentConfig{}
 	if systemInst != nil {
 		config.SystemInstruction = systemInst
 	}
-
 	gTools := toGeminiTools(tools)
+	gTools = append(gTools, a.serverToolDecls()...)
 	if len(gTools) > 0 {
 		config.Tools = gTools
 	}
-
-	if schema != nil {
-		config.ResponseMIMEType = "application/json"
-		config.ResponseSchema = parameterSchemaToGemini(*schema)
+	a.generation.apply(config)
+	if a.thinking != nil {
+		config.ThinkingConfig = a.thinking
 	}
-
-	return a.chatStream(ctx, contents, config)
+	if len(a.safety) > 0 {
+		config.SafetySettings = a.safety
+	}
+	return contents, config
 }
 
 // chatStream runs the streaming generation goroutine.
+//
+// Parts are walked directly rather than read through resp.Text(), because
+// Text() skips thought parts entirely: reading it is why reasoning from
+// Gemini 2.5 and 3 models used to vanish before reaching the agent loop. Text
+// and thinking blocks are bracketed across chunks (one Start, many Content,
+// one End) to match the other adapters, so downstream aggregators see one
+// block per run of content rather than one per network chunk.
 func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, config *genai.GenerateContentConfig) (<-chan types.Delta, error) {
 	out := make(chan types.Delta, 64)
 	go func() {
 		defer close(out)
 
+		textStarted, thinkStarted := false, false
+		var signature string
+
+		endThinking := func() {
+			if thinkStarted {
+				out <- types.ThinkingEndDelta{Signature: signature}
+				thinkStarted, signature = false, ""
+			}
+		}
+		endText := func() {
+			if textStarted {
+				out <- types.TextEndDelta{}
+				textStarted = false
+			}
+		}
+
 		for resp, err := range a.client.Models.GenerateContentStream(ctx, a.model, contents, config) {
 			if err != nil {
+				endThinking()
+				endText()
 				out <- types.ErrorDelta{Error: &types.ProviderError{
 					Provider: "google",
 					Model:    a.model,
-					Kind:     types.ErrorKindPermanent,
+					Kind:     classifyGoogleError(err),
 					Err:      err,
 				}}
 				return
 			}
 
-			// Emit text content.
-			if text := resp.Text(); text != "" {
-				out <- types.TextStartDelta{}
-				out <- types.TextContentDelta{Content: text}
-				out <- types.TextEndDelta{}
+			if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
+				for _, part := range resp.Candidates[0].Content.Parts {
+					switch {
+					case part.Text != "" && part.Thought:
+						endText()
+						if !thinkStarted {
+							out <- types.ThinkingStartDelta{}
+							thinkStarted = true
+						}
+						if len(part.ThoughtSignature) > 0 {
+							signature = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
+						}
+						out <- types.ThinkingContentDelta{Content: part.Text}
+
+					case part.Text != "":
+						endThinking()
+						if !textStarted {
+							out <- types.TextStartDelta{}
+							textStarted = true
+						}
+						out <- types.TextContentDelta{Content: part.Text}
+
+					case part.FunctionCall != nil:
+						endThinking()
+						endText()
+						id := part.FunctionCall.ID
+						if id == "" {
+							id = types.NewID()
+						}
+						out <- types.ToolCallStartDelta{ID: id, Name: part.FunctionCall.Name}
+						out <- types.ToolCallEndDelta{Arguments: part.FunctionCall.Args}
+					}
+				}
 			}
 
-			// Emit function calls (Gemini sends complete calls per chunk).
-			for _, fc := range resp.FunctionCalls() {
-				id := fc.ID
-				if id == "" {
-					id = types.NewID()
+			// Emit grounding citations before usage, so a consumer has the
+			// sources in hand by the time the turn closes.
+			if len(resp.Candidates) > 0 {
+				for _, c := range citationsFrom(resp.Candidates[0].GroundingMetadata) {
+					out <- types.CitationDelta{Citation: c}
 				}
-				out <- types.ToolCallStartDelta{ID: id, Name: fc.Name}
-				out <- types.ToolCallEndDelta{Arguments: fc.Args}
 			}
 
 			// Emit usage.
@@ -141,9 +335,69 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 				out <- ud
 			}
 		}
+
+		endThinking()
+		endText()
 	}()
 
 	return out, nil
+}
+
+// classifyGoogleError maps an SDK error onto a retry decision. Everything used
+// to be reported permanent, which meant a 429 or a 503 from Gemini defeated the
+// retry and fallback decorators entirely: they only act on transient errors by
+// default.
+func classifyGoogleError(err error) types.ErrorKind {
+	var apiErr genai.APIError
+	if errors.As(err, &apiErr) {
+		return types.ClassifyHTTPStatus(apiErr.Code)
+	}
+	return types.ErrorKindPermanent
+}
+
+// Capabilities implements types.CapabilityReporter: it resolves the target
+// model against the shared catalog so callers can check whether a flag (e.g.
+// reasoning) is supported before building a request that would be rejected.
+func (a *Adapter) Capabilities() types.ModelCapabilities {
+	return catalog.MustLookup("google", a.model)
+}
+
+// serverToolDecls converts the configured server tools into Gemini tool
+// declarations.
+func (a *Adapter) serverToolDecls() []*genai.Tool {
+	var out []*genai.Tool
+	for _, st := range a.serverTools {
+		switch st.Kind {
+		case types.ServerToolWebSearch:
+			out = append(out, &genai.Tool{GoogleSearch: &genai.GoogleSearch{}})
+		case types.ServerToolCodeExecution:
+			out = append(out, &genai.Tool{CodeExecution: &genai.ToolCodeExecution{}})
+		}
+	}
+	return out
+}
+
+// citationsFrom converts Gemini grounding metadata into this SDK's citations,
+// so a fact the model found through its own search is attributed the same way
+// as one a local search tool found. Without this the grounding is returned,
+// dropped, and the answer reads as ungrounded.
+func citationsFrom(md *genai.GroundingMetadata) []types.Citation {
+	if md == nil {
+		return nil
+	}
+	out := make([]types.Citation, 0, len(md.GroundingChunks))
+	for _, chunk := range md.GroundingChunks {
+		if chunk == nil || chunk.Web == nil || chunk.Web.URI == "" {
+			continue
+		}
+		c := types.NewCitation(types.CitationWeb, chunk.Web.URI, chunk.Web.Title)
+		c.Producer = "google"
+		if chunk.Web.Domain != "" {
+			c.Meta = map[string]any{"domain": chunk.Web.Domain}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // ContentSupport implements types.ContentNegotiator.
@@ -234,6 +488,17 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 			var parts []*genai.Part
 			for _, c := range v.Content {
 				switch bc := c.(type) {
+				case types.ThinkingContent:
+					// Thought parts must go back with their signature attached:
+					// Gemini 3 uses it to validate the reasoning chain across
+					// turns, and dropping it degrades multi-turn function
+					// calling. An unparseable signature is sent without one
+					// rather than dropping the thought entirely.
+					part := &genai.Part{Text: bc.Thinking, Thought: true}
+					if sig, err := base64.StdEncoding.DecodeString(bc.Signature); err == nil && len(sig) > 0 {
+						part.ThoughtSignature = sig
+					}
+					parts = append(parts, part)
 				case types.TextContent:
 					parts = append(parts, &genai.Part{Text: bc.Text})
 				case types.ToolUseContent:

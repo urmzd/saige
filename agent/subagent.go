@@ -7,14 +7,95 @@ import (
 )
 
 // SubAgentDef defines a sub-agent that can be delegated to.
+//
+// A sub-agent is a full agent, so it needs a full config. Everything not named
+// here is inherited from the parent at registration time (see inheritConfig):
+// logger, metrics, timeouts, tool parallelism, compaction, and the file
+// resolver/extractor pipeline. Leaving a field zero means "same as my parent",
+// never "off" -- a delegated child that silently ran without the parent's LLM
+// timeout or file resolvers is the failure this inheritance exists to prevent.
+//
+// Use Options for anything inheritance gets wrong for a particular child.
 type SubAgentDef struct {
 	Name         string
 	Description  string
 	SystemPrompt string
-	Provider     types.Provider
-	Tools        *types.ToolRegistry
-	SubAgents    []SubAgentDef // sub-agents can have their own sub-agents
-	MaxIter      int
+	// Provider targets this sub-agent at its own model. nil inherits the
+	// parent's provider, which is the common case: most sub-agents differ by
+	// prompt and tools, not by model.
+	Provider  types.Provider
+	Tools     *types.ToolRegistry
+	SubAgents []SubAgentDef // sub-agents can have their own sub-agents
+	MaxIter   int           // 0 inherits the parent's MaxIter
+
+	// Options are applied last, after inheritance and after the fields above,
+	// so any inherited value can be overridden per sub-agent. This is the
+	// escape hatch that keeps SubAgentDef from having to mirror every field of
+	// AgentConfig.
+	Options []AgentOption
+}
+
+// inheritConfig builds a sub-agent's AgentConfig from its definition and its
+// parent's config. The split is deliberate:
+//
+//   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
+//     MaxParallelTools, CompactCfg, Resolvers, Extractors. These describe how
+//     this deployment runs agents, not what one agent is for, so a child that
+//     did not inherit them would quietly run with different guarantees than the
+//     parent that delegated to it.
+//   - From the definition (identity): Name, SystemPrompt, Tools, SubAgents,
+//     MaxIter, and Provider when set.
+//   - Deliberately NOT inherited:
+//     Tree, because sub-agents are stateless across delegations and each
+//     invocation builds a fresh one;
+//     Store, because a fresh tree per call would write a new root into the
+//     parent's store on every delegation;
+//     ResponseSchema, because it constrains the parent's final answer, not the
+//     child's working output;
+//     Handoffs and MaxHandoffs, because a handoff group belongs to the entry
+//     agent that owns the shared tree;
+//     ServerTools, because they are bound to the parent's provider instance and
+//     a child targeting a different model may not support them.
+//
+// Budget is shared rather than inherited: see the comment at the assignment.
+//
+// StepRunner is passed separately: the parent's effective runner is only known
+// at invocation time, since RunDurable injects one after registration.
+func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) AgentConfig {
+	provider := sa.Provider
+	if provider == nil {
+		provider = parent.Provider
+	}
+	maxIter := sa.MaxIter
+	if maxIter <= 0 {
+		maxIter = parent.MaxIter
+	}
+	return AgentConfig{
+		Name:         sa.Name,
+		SystemPrompt: sa.SystemPrompt,
+		Provider:     provider,
+		Tools:        sa.Tools,
+		SubAgents:    sa.SubAgents,
+		MaxIter:      maxIter,
+		StepRunner:   runner,
+
+		// Inherited operational config.
+		Logger:           parent.Logger,
+		Metrics:          parent.Metrics,
+		LLMTimeout:       parent.LLMTimeout,
+		ToolTimeout:      parent.ToolTimeout,
+		MaxParallelTools: parent.MaxParallelTools,
+		CompactCfg:       parent.CompactCfg,
+		Resolvers:        parent.Resolvers,
+		Extractors:       parent.Extractors,
+		ToolGate:         parent.ToolGate,
+		ToolContext:      parent.ToolContext,
+		// Budget is shared by pointer, not copied: a per-child copy would let a
+		// run with four sub-agents spend four times its ceiling, which is the
+		// precise failure a budget exists to prevent. Give a sub-agent its own
+		// Budget through Options to cap that delegation separately.
+		Budget: parent.Budget,
+	}
 }
 
 // SubAgentInvoker is implemented by tools that wrap a sub-agent.

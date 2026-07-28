@@ -27,6 +27,58 @@ func New(providers ...types.Provider) *Provider {
 
 func (f *Provider) Name() string { return "fallback" }
 
+// Model implements types.ModelProvider. A fallback chain has no single model,
+// so it reports the primary's: that is the model a request is served by unless
+// something goes wrong, and it is what telemetry and cache keys want.
+func (f *Provider) Model() string {
+	if len(f.Providers) == 0 {
+		return ""
+	}
+	return types.ProviderModel(f.Providers[0])
+}
+
+// Capabilities implements types.CapabilityReporter as the intersection over
+// every member of the chain.
+//
+// The intersection is the only honest answer. Any member may serve the
+// request, so a capability the primary has and the secondary lacks is not one
+// a caller may rely on: promising it produces a chain that enforces a response
+// schema until the primary goes down, then quietly stops. A member that
+// reports nothing collapses the intersection to nothing, which is the same
+// conservative direction.
+func (f *Provider) Capabilities() types.ModelCapabilities {
+	if len(f.Providers) == 0 {
+		return types.ModelCapabilities{}
+	}
+	out, _ := types.ProviderCapabilities(f.Providers[0])
+	for _, p := range f.Providers[1:] {
+		next, _ := types.ProviderCapabilities(p)
+		out = out.Intersect(next)
+	}
+	return out
+}
+
+// ContentSupport implements types.ContentNegotiator as the intersection over
+// the chain, for the same reason as Capabilities: a PDF the primary reads
+// natively must still be extracted to text if the secondary cannot.
+func (f *Provider) ContentSupport() types.ContentSupport {
+	if len(f.Providers) == 0 {
+		return types.ContentSupport{}
+	}
+	out := types.ProviderContentSupport(f.Providers[0])
+	for _, p := range f.Providers[1:] {
+		next := types.ProviderContentSupport(p)
+		merged := map[types.MediaType]bool{}
+		for mt := range out.NativeTypes {
+			if out.NativeTypes[mt] && next.NativeTypes[mt] {
+				merged[mt] = true
+			}
+		}
+		out = types.ContentSupport{NativeTypes: merged}
+	}
+	return out
+}
+
 // WithModel implements types.ModelSwitcher. It returns a new fallback provider
 // whose children each target the given model (children that do not implement
 // types.ModelSwitcher are kept as-is). This lets ConfigContent.Model switching

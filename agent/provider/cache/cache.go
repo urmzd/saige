@@ -39,6 +39,10 @@ var (
 	_ types.Provider                 = (*Provider)(nil)
 	_ types.StructuredOutputProvider = (*Provider)(nil)
 	_ types.NamedProvider            = (*Provider)(nil)
+	_ types.ModelProvider            = (*Provider)(nil)
+	_ types.ModelSwitcher            = (*Provider)(nil)
+	_ types.CapabilityReporter       = (*Provider)(nil)
+	_ types.ContentNegotiator        = (*Provider)(nil)
 )
 
 // New wraps a provider with response caching. cfg.Cache is required.
@@ -55,6 +59,30 @@ func New(inner types.Provider, cfg Config) *Provider {
 // Name implements types.NamedProvider.
 func (p *Provider) Name() string {
 	return "cache(" + types.ProviderName(p.inner) + ")"
+}
+
+// Model implements types.ModelProvider by delegating to the inner provider.
+func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
+
+// WithModel implements types.ModelSwitcher: it re-targets the inner provider
+// and keeps the same cache config. Without it a ConfigContent model switch was
+// silently dropped under a cache decorator, and every switched request was
+// answered from the original model's cache entries.
+func (p *Provider) WithModel(model string) types.Provider {
+	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg}
+}
+
+// ContentSupport implements types.ContentNegotiator by delegating to the inner
+// provider, so caching an adapter does not hide its native media support.
+func (p *Provider) ContentSupport() types.ContentSupport {
+	return types.ProviderContentSupport(p.inner)
+}
+
+// Capabilities implements types.CapabilityReporter by delegating to the inner
+// provider. A cache changes latency, not what the model accepts.
+func (p *Provider) Capabilities() types.ModelCapabilities {
+	caps, _ := types.ProviderCapabilities(p.inner)
+	return caps
 }
 
 // ChatStream implements types.Provider.

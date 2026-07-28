@@ -9,6 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -17,6 +18,9 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
+	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.CapabilityReporter       = (*Adapter)(nil)
+	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
 
 // Adapter wraps the official Anthropic SDK client and implements types.Provider,
@@ -26,34 +30,114 @@ type Adapter struct {
 	model     anthropic.Model
 	maxTokens int64
 	thinking  *int64 // nil = disabled; set to budget tokens to enable extended thinking
+
+	temperature   *float64
+	topP          *float64
+	topK          *int64
+	stop          []string
+	baseURL       string
+	parallelTools *bool
 }
 
 // Option configures the Anthropic adapter.
 type Option func(*Adapter)
 
-// WithMaxTokens sets the max tokens for responses.
+// WithMaxTokens sets the max tokens for responses. Anthropic requires this on
+// every request, which is why the adapter defaults it to 4096 rather than
+// leaving it unset.
 func WithMaxTokens(n int64) Option {
 	return func(a *Adapter) { a.maxTokens = n }
 }
 
 // WithThinking enables extended thinking with the given token budget.
-// Requires a minimum budget of 1024 tokens and a model that supports
-// extended thinking (e.g. claude-sonnet-4-5-20250514).
+// The budget must be at least ModelCapabilities.MinReasoningBudget (1024) and
+// the model must declare CapReasoning; on a model that does not, the flag is
+// dropped rather than sent, since Anthropic rejects it.
 func WithThinking(budgetTokens int64) Option {
 	return func(a *Adapter) { a.thinking = &budgetTokens }
+}
+
+// WithTemperature sets sampling temperature. Anthropic constrains combining
+// this with extended thinking, so it is dropped whenever thinking is active.
+func WithTemperature(t float64) Option {
+	return func(a *Adapter) { a.temperature = &t }
+}
+
+// WithTopP sets nucleus sampling. Subject to the same thinking constraint as
+// WithTemperature.
+func WithTopP(p float64) Option {
+	return func(a *Adapter) { a.topP = &p }
+}
+
+// WithTopK sets top-k sampling.
+func WithTopK(k int64) Option {
+	return func(a *Adapter) { a.topK = &k }
+}
+
+// WithStopSequences sets sequences that end generation.
+func WithStopSequences(stop ...string) Option {
+	return func(a *Adapter) { a.stop = stop }
+}
+
+// WithParallelToolCalls turns parallel tool use on or off. Anthropic expresses
+// "off" as disable_parallel_tool_use on the auto tool choice, so this is only
+// applied when the request does not already force a specific tool: the
+// structured-output path forces one, and overriding that would break it.
+func WithParallelToolCalls(enabled bool) Option {
+	return func(a *Adapter) { a.parallelTools = &enabled }
+}
+
+// WithBaseURL overrides the API base URL, for gateways and proxies.
+func WithBaseURL(url string) Option {
+	return func(a *Adapter) { a.baseURL = url }
 }
 
 // NewAdapter creates a new Anthropic provider adapter using the official SDK.
 func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	a := &Adapter{
-		client:    anthropic.NewClient(option.WithAPIKey(apiKey)),
 		model:     anthropic.Model(model),
 		maxTokens: 4096,
 	}
 	for _, o := range opts {
 		o(a)
 	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if a.baseURL != "" {
+		clientOpts = append(clientOpts, option.WithBaseURL(a.baseURL))
+	}
+	a.client = anthropic.NewClient(clientOpts...)
 	return a
+}
+
+// applyParams copies the configured knobs onto a request, dropping any the
+// target model does not declare and any that Anthropic forbids alongside
+// extended thinking.
+func (a *Adapter) applyParams(p *anthropic.MessageNewParams) {
+	caps := a.Capabilities()
+
+	thinkingOn := a.thinking != nil && caps.Supports(types.CapReasoning)
+	if thinkingOn {
+		p.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
+	}
+	if a.temperature != nil && caps.Supports(types.CapTemperature) && !thinkingOn {
+		p.Temperature = anthropic.Float(*a.temperature)
+	}
+	if a.topP != nil && caps.Supports(types.CapTopP) && !thinkingOn {
+		p.TopP = anthropic.Float(*a.topP)
+	}
+	if a.topK != nil && caps.Supports(types.CapTopK) && !thinkingOn {
+		p.TopK = anthropic.Int(*a.topK)
+	}
+	if len(a.stop) > 0 && caps.Supports(types.CapStopSequences) {
+		p.StopSequences = a.stop
+	}
+	if a.parallelTools != nil && caps.Supports(types.CapParallelToolControl) && p.ToolChoice.OfAuto == nil && p.ToolChoice.OfTool == nil {
+		p.ToolChoice = anthropic.ToolChoiceUnionParam{
+			OfAuto: &anthropic.ToolChoiceAutoParam{
+				DisableParallelToolUse: anthropic.Bool(!*a.parallelTools),
+			},
+		}
+	}
 }
 
 // Name implements types.NamedProvider.
@@ -91,9 +175,7 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	if len(aTools) > 0 {
 		params.Tools = aTools
 	}
-	if a.thinking != nil {
-		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
-	}
+	a.applyParams(&params)
 
 	stream := a.client.Messages.NewStreaming(ctx, params)
 	return a.consumeStream(stream, nil), nil
@@ -111,9 +193,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		Messages:  aMsgs,
 		System:    systemBlocks,
 	}
-	if a.thinking != nil {
-		params.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
-	}
+	a.applyParams(&params)
 
 	if schema != nil {
 		// Inject a hidden tool whose input schema is the desired response schema.
@@ -263,6 +343,13 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 	}()
 
 	return out
+}
+
+// Capabilities implements types.CapabilityReporter: it resolves the target
+// model against the shared catalog so callers can check whether a flag (e.g.
+// reasoning) is supported before building a request that would be rejected.
+func (a *Adapter) Capabilities() types.ModelCapabilities {
+	return catalog.MustLookup("anthropic", string(a.model))
 }
 
 // ContentSupport implements types.ContentNegotiator.
