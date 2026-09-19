@@ -84,6 +84,30 @@ result, _ := eval.Run(ctx, "my-eval", observations, []eval.Scorer{
 })
 ```
 
+## Sampling
+
+One run of an LLM judge, or of an LLM subject, is one draw from a distribution. A `Sampler` asks for N draws and reports how much they moved, so a suite can tell a stable 0.8 from a 0.8 that was 0.4 a moment ago.
+
+```go
+sampler := eval.Sampler{N: 5, Tolerance: 0.1, Reduce: eval.Median}
+
+// Sample every scorer in a run. Scorers marked Deterministic are scored once.
+suite, _ := eval.Run(ctx, "suite", observations,
+    []eval.Scorer{judge, eval.Deterministic(exactMatch)},
+    eval.WithSampler(sampler))
+
+fmt.Println(suite.UnstableScores) // verdicts that changed between samples
+
+// Or sample only the scorer that needs it.
+judge = eval.Sampled(judge, sampler)
+
+// Sample the system under test: N copies of each observation, numbered in
+// Observation.Sample, so Populate runs the subject once per copy.
+observations = sampler.Replicate(observations)
+```
+
+A sampled `Score` carries the reduced `Value` plus `Samples`: every value and reason in order, mean, standard deviation, min, max, failed-sample count, and `Stable` (max minus min within `Tolerance`; the zero tolerance flags any change). Reducers: `Mean` (default), `Median` (resists one outlier), `Min` (a gate that must hold on every sample). A failed sample is counted and skipped; the score errors only when every sample fails.
+
 ## A/B Experiment
 
 Compare two approaches on the same inputs:
