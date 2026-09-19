@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.0 (2026-09-19)
+
+### Features
+
+- **eval**: add a Sampler to measure how stable scores and subjects are (#55) ([9d396ca](https://github.com/urmzd/saige/commit/9d396ca825ed2949453a5808d95bb6cbaf34d5fa))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.15.0...v0.16.0)
+
+
 ## 0.15.0 (2026-09-19)
 
 ### Features
