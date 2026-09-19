@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.1 (2026-09-19)
+
+### Bug Fixes
+
+- **openai**: send structured-output schemas that strict mode accepts (#56) ([9468f0c](https://github.com/urmzd/saige/commit/9468f0cebfd8df57bea97656a28886a3ca34d0ef))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.16.0...v0.16.1)
+
+
 ## 0.16.0 (2026-09-19)
 
 ### Features
