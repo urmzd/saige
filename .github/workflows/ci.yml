@@ -61,7 +61,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # govulncheck tracks the newest Go release, so building it can need a
+      # newer toolchain than go.mod pins. setup-go sets GOTOOLCHAIN=local, which
+      # forbids fetching one; lift that for the install only. The scan below
+      # still runs against the go.mod toolchain, so standard-library findings
+      # describe the Go version this module actually ships on.
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        env:
+          GOTOOLCHAIN: auto
       - run: govulncheck ./...
 
   build:
