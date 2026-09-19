@@ -167,6 +167,17 @@ tool := &types.ToolFunc{
 
 When the LLM requests multiple tool calls, all tools execute **concurrently**.
 
+Tools that share mutable state, or whose contract depends on call order, need a
+total order instead. `agent.WithSequentialTools()` runs the calls one at a time,
+in the order the model requested them:
+
+```go
+a := agent.NewAgent(cfg, agent.WithSequentialTools())
+```
+
+It is sugar for `agent.WithMaxParallelTools(1)`. A larger cap bounds the
+fan-out without ordering it.
+
 ## Sub-Agents
 
 Sub-agents are registered as tools and execute within parallel tool dispatch. Their deltas are forwarded through the parent's stream. **Sub-agents are stateless**: a fresh agent is constructed for each delegation, so conversation history is not preserved between calls. This is intentional. Sub-agents are task executors, not persistent conversational partners.

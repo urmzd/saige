@@ -52,8 +52,10 @@ type AgentConfig struct {
 	ToolTimeout time.Duration
 
 	// MaxParallelTools caps how many tool goroutines run concurrently when tools
-	// are fanned out (NoopStepRunner path). 0 means unlimited. Under a durable
-	// StepRunner tools always run sequentially, so this has no effect there.
+	// are fanned out (NoopStepRunner path). 0 means unlimited. 1 means tools run
+	// sequentially in the order the model requested them, with no goroutines at
+	// all. Under a durable StepRunner tools always run sequentially, so this has
+	// no effect there.
 	MaxParallelTools int
 
 	// File pipeline configuration.
@@ -197,9 +199,25 @@ func WithToolTimeout(d time.Duration) AgentOption {
 }
 
 // WithMaxParallelTools caps how many tool goroutines run concurrently when tools
-// are fanned out. A non-positive value means unlimited (today's behavior).
+// are fanned out. A non-positive value means unlimited (today's behavior). A
+// value of 1 runs tools sequentially in request order; see WithSequentialTools.
 func WithMaxParallelTools(n int) AgentOption {
 	return func(c *AgentConfig) { c.MaxParallelTools = n }
+}
+
+// WithSequentialTools runs tool calls one at a time, in the order the model
+// requested them, in the caller's goroutine.
+//
+// Fanning tools out is the right default: independent lookups finish in the
+// time of the slowest one. But tools that share mutable state, or whose
+// contract is defined by their order, need a total order the caller can
+// predict. A semaphore of one is not enough on its own: it serializes
+// execution while leaving the winner of each slot to the scheduler, so the
+// observable order still varies run to run.
+//
+// This is sugar for WithMaxParallelTools(1).
+func WithSequentialTools() AgentOption {
+	return WithMaxParallelTools(1)
 }
 
 // Agent runs an LLM agent loop with tool execution.
@@ -1230,13 +1248,21 @@ type toolResult struct {
 // active registry (which differs per agent during a handoff).
 //
 // With the default NoopStepRunner tools run in parallel goroutines (today's
-// behavior). With a durable StepRunner, tools run SEQUENTIALLY in the caller's
-// goroutine: durable engines correlate steps to the workflow's calling context,
-// so fanning out RunStep across goroutines would race on per-workflow step state.
+// behavior). Two cases run SEQUENTIALLY in the caller's goroutine instead:
+//
+//   - A durable StepRunner: durable engines correlate steps to the workflow's
+//     calling context, so fanning out RunStep across goroutines would race on
+//     per-workflow step state.
+//   - MaxParallelTools == 1: a cap of one already forbids overlap, and running
+//     the calls inline additionally fixes their order to the order the model
+//     requested. A semaphore of one would serialize execution but leave the
+//     winner of each slot to the scheduler, which is the surprising half of
+//     the behavior for tools that share state or whose contract is ordering.
 func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStream, toolCalls []types.ToolUseContent, tools *types.ToolRegistry) []toolResult {
 	results := make([]toolResult, len(toolCalls))
 
-	if _, isNoop := a.cfg.StepRunner.(types.NoopStepRunner); !isNoop {
+	_, isNoop := a.cfg.StepRunner.(types.NoopStepRunner)
+	if !isNoop || a.cfg.MaxParallelTools == 1 {
 		for i, tc := range toolCalls {
 			results[i] = a.executeOneTool(ctx, stream, tc, tools)
 		}
@@ -1246,6 +1272,7 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 	// Optional concurrency cap: a buffered channel acts as a counting semaphore.
 	// A slot is acquired before each tool runs and released after, so at most
 	// MaxParallelTools goroutines execute a tool simultaneously. 0 = unlimited.
+	// A cap of 1 never reaches here; it took the sequential path above.
 	var sem chan struct{}
 	if a.cfg.MaxParallelTools > 0 {
 		sem = make(chan struct{}, a.cfg.MaxParallelTools)
