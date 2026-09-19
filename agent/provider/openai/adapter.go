@@ -205,13 +205,13 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	var rf *openai.ChatCompletionNewParamsResponseFormatUnion
 	if schema != nil {
-		schemaMap := parameterSchemaToMap(*schema)
+		schemaMap, strict := responseSchema(*schema)
 		rf = &openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
 				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
 					Name:   "response",
 					Schema: schemaMap,
-					Strict: openai.Bool(true),
+					Strict: openai.Bool(strict),
 				},
 			},
 		}
@@ -552,6 +552,50 @@ func parameterSchemaToMap(ps types.ParameterSchema) map[string]any {
 		schema["properties"] = props
 	}
 	return schema
+}
+
+// responseSchema builds the response_format schema and reports whether it can
+// be sent in strict mode.
+//
+// Strict mode makes the API guarantee the shape, but it has two requirements
+// of its own: every object must set additionalProperties to false, and every
+// object must list all of its properties as required. The first is added
+// here, since a ParameterSchema has no way to say otherwise. The second is the
+// caller's choice, so a schema with optional properties is sent non-strict
+// rather than rejected: the API then treats the schema as guidance.
+func responseSchema(ps types.ParameterSchema) (map[string]any, bool) {
+	schema := parameterSchemaToMap(ps)
+	return schema, closeObjects(schema)
+}
+
+// closeObjects sets additionalProperties to false on every object in the
+// schema, in place, and reports whether every object requires all of its
+// properties.
+func closeObjects(node map[string]any) bool {
+	strict := true
+	if node["type"] == "object" {
+		node["additionalProperties"] = false
+		props, _ := node["properties"].(map[string]any)
+		required := map[string]bool{}
+		switch list := node["required"].(type) {
+		case []string:
+			for _, name := range list {
+				required[name] = true
+			}
+		}
+		for name, child := range props {
+			if !required[name] {
+				strict = false
+			}
+			if m, ok := child.(map[string]any); ok && !closeObjects(m) {
+				strict = false
+			}
+		}
+	}
+	if items, ok := node["items"].(map[string]any); ok && !closeObjects(items) {
+		strict = false
+	}
+	return strict
 }
 
 func propertyToSchema(p types.PropertyDef) map[string]any {
