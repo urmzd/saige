@@ -14,7 +14,7 @@ import (
 //   - enum tag → PropertyDef.Enum (comma-separated values)
 //   - Type mapping: string→"string", int*/uint*→"integer", float*→"number",
 //     bool→"boolean", slice→"array", struct→"object"
-//   - Pointer types are dereferenced
+//   - Pointer types permit null; omitempty still controls field presence
 //   - Nested structs and slice element types are recursed into
 func SchemaFrom[T any]() ParameterSchema {
 	var zero T
@@ -76,9 +76,10 @@ func structToProperties(t reflect.Type) (map[string]PropertyDef, []string) {
 }
 
 func typeToPropertyDef(t reflect.Type) PropertyDef {
-	// Dereference pointers.
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
+	if t.Kind() == reflect.Ptr {
+		property := typeToPropertyDef(t.Elem())
+		property.Nullable = true
+		return property
 	}
 
 	switch t.Kind() {

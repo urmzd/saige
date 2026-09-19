@@ -30,6 +30,7 @@
 - **Knowledge graph construction** with LLM-powered entity extraction, fuzzy dedup, and temporal tracking
 - **Multi-retriever RAG** fusing vector, BM25, and graph retrieval via Reciprocal Rank Fusion, with reranking and citations
 - **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface, with retry and fallback composition
+- **Nullable tool properties** with separate presence rules across providers and MCP. See [tool schemas](docs/tool-schemas.md).
 - **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client
 - **Universal evaluation** with composable scorers, A/B experiments, and LLM-as-judge
 

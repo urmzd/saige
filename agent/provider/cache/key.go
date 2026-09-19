@@ -177,6 +177,9 @@ func hashParameterSchema(h hash.Hash, s types.ParameterSchema) {
 
 func hashProperty(h hash.Hash, p types.PropertyDef) {
 	writeField(h, "ptype", []byte(p.Type))
+	if p.Nullable {
+		writeField(h, "pnullable", []byte("true"))
+	}
 	writeField(h, "pdesc", []byte(p.Description))
 	for _, e := range p.Enum {
 		writeField(h, "penum", []byte(e))
