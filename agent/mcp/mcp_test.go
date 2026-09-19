@@ -102,11 +102,11 @@ func TestUnreadableSchemaDegradesToAnEmptyObject(t *testing.T) {
 	}
 }
 
-func TestTypeUnionsPickTheGeneratableMember(t *testing.T) {
+func TestTypeUnionsPreserveNull(t *testing.T) {
 	raw := json.RawMessage(`{"type":"object","properties":{"x":{"type":["null","integer"]}}}`)
 	got := schemaFromMCP(raw)
-	if p := got.Properties["x"]; p.Type != "integer" {
-		t.Errorf("union type resolved to %q, want integer: null is not something the model can emit", p.Type)
+	if p := got.Properties["x"]; p.Type != "integer" || !p.Nullable {
+		t.Errorf("union lost integer or null: %+v", p)
 	}
 }
 

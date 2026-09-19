@@ -319,6 +319,7 @@ func toOllamaTools(defs []types.ToolDef) []Tool {
 // convertProperty recursively converts a types.PropertyDef to an Ollama ToolProperty.
 func convertProperty(p types.PropertyDef) ToolProperty {
 	tp := ToolProperty{
+		Nullable:    p.Nullable,
 		Type:        p.Type,
 		Description: p.Description,
 		Enum:        p.Enum,
@@ -355,30 +356,7 @@ func parameterSchemaToMap(ps types.ParameterSchema) map[string]any {
 }
 
 func propertyDefToMap(p types.PropertyDef) map[string]any {
-	m := map[string]any{"type": p.Type}
-	if p.Description != "" {
-		m["description"] = p.Description
-	}
-	if len(p.Enum) > 0 {
-		m["enum"] = p.Enum
-	}
-	if p.Default != nil {
-		m["default"] = p.Default
-	}
-	if p.Items != nil {
-		m["items"] = propertyDefToMap(*p.Items)
-	}
-	if len(p.Properties) > 0 {
-		props := make(map[string]any, len(p.Properties))
-		for k, v := range p.Properties {
-			props[k] = propertyDefToMap(v)
-		}
-		m["properties"] = props
-	}
-	if len(p.Required) > 0 {
-		m["required"] = p.Required
-	}
-	return m
+	return p.JSONSchema()
 }
 
 // classifyOllamaError inspects the error to determine if it's transient.

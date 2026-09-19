@@ -207,6 +207,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 				Description: anthropic.String("Return the structured response"),
 				InputSchema: anthropic.ToolInputSchemaParam{
 					Properties: props,
+					Required:   schema.Required,
 				},
 			},
 		}
@@ -535,6 +536,7 @@ func toAnthropicTools(defs []types.ToolDef) []anthropic.ToolUnionParam {
 				Description: anthropic.String(d.Description),
 				InputSchema: anthropic.ToolInputSchemaParam{
 					Properties: props,
+					Required:   d.Parameters.Required,
 				},
 			},
 		}
@@ -543,30 +545,7 @@ func toAnthropicTools(defs []types.ToolDef) []anthropic.ToolUnionParam {
 }
 
 func propertyToSchema(p types.PropertyDef) map[string]any {
-	m := map[string]any{"type": p.Type}
-	if p.Description != "" {
-		m["description"] = p.Description
-	}
-	if len(p.Enum) > 0 {
-		m["enum"] = p.Enum
-	}
-	if p.Default != nil {
-		m["default"] = p.Default
-	}
-	if p.Items != nil {
-		m["items"] = propertyToSchema(*p.Items)
-	}
-	if len(p.Properties) > 0 {
-		nested := make(map[string]any, len(p.Properties))
-		for k, v := range p.Properties {
-			nested[k] = propertyToSchema(v)
-		}
-		m["properties"] = nested
-	}
-	if len(p.Required) > 0 {
-		m["required"] = p.Required
-	}
-	return m
+	return p.JSONSchema()
 }
 
 func classifyAnthropicError(err error) error {

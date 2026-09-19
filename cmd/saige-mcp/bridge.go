@@ -69,30 +69,5 @@ func parameterSchemaToJSON(ps agenttypes.ParameterSchema) map[string]any {
 }
 
 func propertyDefToJSON(pd agenttypes.PropertyDef) map[string]any {
-	prop := map[string]any{
-		"type": pd.Type,
-	}
-	if pd.Description != "" {
-		prop["description"] = pd.Description
-	}
-	if len(pd.Enum) > 0 {
-		prop["enum"] = pd.Enum
-	}
-	if pd.Items != nil {
-		prop["items"] = propertyDefToJSON(*pd.Items)
-	}
-	if len(pd.Properties) > 0 {
-		nested := make(map[string]any, len(pd.Properties))
-		for name, p := range pd.Properties {
-			nested[name] = propertyDefToJSON(p)
-		}
-		prop["properties"] = nested
-	}
-	if len(pd.Required) > 0 {
-		prop["required"] = pd.Required
-	}
-	if pd.Default != nil {
-		prop["default"] = pd.Default
-	}
-	return prop
+	return pd.JSONSchema()
 }

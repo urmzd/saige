@@ -505,16 +505,24 @@ func schemaFromMCP(raw any) types.ParameterSchema {
 
 func propertyFromMCP(m map[string]any) types.PropertyDef {
 	p := types.PropertyDef{Type: "string"}
+	p.Nullable, _ = m["nullable"].(bool)
 	if s, ok := m["type"].(string); ok && s != "" {
 		p.Type = s
-	} else if list, ok := m["type"].([]any); ok {
-		// JSON Schema allows a type union; take the first non-null member,
-		// which is the one the model should generate.
-		for _, v := range list {
-			if s, ok := v.(string); ok && s != "null" {
-				p.Type = s
-				break
+	} else if members := stringSlice(m["type"]); len(members) > 0 {
+		// Preserve null regardless of its position. Other unions retain the
+		// existing first-non-null approximation; this is not a general union API.
+		base := ""
+		for _, member := range members {
+			if member == "null" {
+				p.Nullable = true
+			} else if base == "" {
+				base = member
 			}
+		}
+		if base != "" {
+			p.Type = base
+		} else if p.Nullable {
+			p.Type = "null"
 		}
 	}
 	if s, ok := m["description"].(string); ok {

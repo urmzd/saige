@@ -573,7 +573,13 @@ func responseSchema(ps types.ParameterSchema) (map[string]any, bool) {
 // properties.
 func closeObjects(node map[string]any) bool {
 	strict := true
-	if node["type"] == "object" {
+	object := node["type"] == "object"
+	if union, ok := node["type"].([]string); ok {
+		for _, member := range union {
+			object = object || member == "object"
+		}
+	}
+	if object {
 		node["additionalProperties"] = false
 		props, _ := node["properties"].(map[string]any)
 		required := map[string]bool{}
@@ -599,30 +605,7 @@ func closeObjects(node map[string]any) bool {
 }
 
 func propertyToSchema(p types.PropertyDef) map[string]any {
-	m := map[string]any{"type": p.Type}
-	if p.Description != "" {
-		m["description"] = p.Description
-	}
-	if len(p.Enum) > 0 {
-		m["enum"] = p.Enum
-	}
-	if p.Default != nil {
-		m["default"] = p.Default
-	}
-	if p.Items != nil {
-		m["items"] = propertyToSchema(*p.Items)
-	}
-	if len(p.Properties) > 0 {
-		props := make(map[string]any, len(p.Properties))
-		for k, v := range p.Properties {
-			props[k] = propertyToSchema(v)
-		}
-		m["properties"] = props
-	}
-	if len(p.Required) > 0 {
-		m["required"] = p.Required
-	}
-	return m
+	return p.JSONSchema()
 }
 
 func classifyOpenAIError(err error) error {

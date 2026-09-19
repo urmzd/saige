@@ -24,6 +24,9 @@ type ParameterSchema struct {
 
 // PropertyDef describes a single parameter property using JSON Schema fields.
 type PropertyDef struct {
+	// Nullable permits JSON null in addition to Type.
+	// The parent schema's Required list controls field presence.
+	Nullable    bool                   `json:"nullable,omitempty"`
 	Type        string                 `json:"type"`
 	Description string                 `json:"description,omitempty"`
 	Enum        []string               `json:"enum,omitempty"`

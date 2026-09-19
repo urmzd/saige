@@ -1,5 +1,11 @@
 package ollama
 
+import (
+	"encoding/json"
+
+	"github.com/urmzd/saige/agent/types"
+)
+
 // Ollama API wire types.
 
 type ChatMessage struct {
@@ -37,6 +43,7 @@ type ToolFunctionParams struct {
 }
 
 type ToolProperty struct {
+	Nullable    bool                    `json:"-"`
 	Type        string                  `json:"type"`
 	Description string                  `json:"description,omitempty"`
 	Enum        []string                `json:"enum,omitempty"`
@@ -94,4 +101,19 @@ type EmbedRequest struct {
 
 type EmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
+}
+
+// MarshalJSON preserves the string Type API while emitting nullable type unions.
+func (p ToolProperty) MarshalJSON() ([]byte, error) {
+	schema := (types.PropertyDef{
+		Type: p.Type, Nullable: p.Nullable, Description: p.Description,
+		Enum: p.Enum, Required: p.Required, Default: p.Default,
+	}).JSONSchema()
+	if p.Items != nil {
+		schema["items"] = p.Items
+	}
+	if len(p.Properties) > 0 {
+		schema["properties"] = p.Properties
+	}
+	return json.Marshal(schema)
 }

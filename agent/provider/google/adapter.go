@@ -560,6 +560,10 @@ func propertyToGemini(p types.PropertyDef) *genai.Schema {
 		Required:    p.Required,
 		Default:     p.Default,
 	}
+	if p.Nullable {
+		nullable := true
+		s.Nullable = &nullable
+	}
 	if p.Items != nil {
 		s.Items = propertyToGemini(*p.Items)
 	}
@@ -574,6 +578,8 @@ func propertyToGemini(p types.PropertyDef) *genai.Schema {
 
 func mapType(t string) genai.Type {
 	switch t {
+	case "null":
+		return genai.TypeNULL
 	case "string":
 		return genai.TypeString
 	case "number":
