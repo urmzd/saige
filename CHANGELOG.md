@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0 (2026-09-19)
+
+### Features
+
+- **agent**: run tools sequentially in request order when capped at one (#54) ([1c13029](https://github.com/urmzd/saige/commit/1c13029d8a103319bfa405dd576c42c2d99a5160))
+- model capability category, model registry with pricing, budgets, MCP client and tool gating (#53) ([a9c129a](https://github.com/urmzd/saige/commit/a9c129a883112ca957f27f15ed9ace887b092535))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.14.0...v0.15.0)
+
+
 ## 0.14.0 (2026-07-25)
 
 ### Features
