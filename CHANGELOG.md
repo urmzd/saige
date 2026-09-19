@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.2 (2026-09-19)
+
+### Bug Fixes
+
+- **schema**: preserve nullable tool properties across providers (#57) ([9ebceb1](https://github.com/urmzd/saige/commit/9ebceb172a9b7b03a7dee73b9e758c55973a13d8))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.16.1...v0.16.2)
+
+
 ## 0.16.1 (2026-09-19)
 
 ### Bug Fixes
