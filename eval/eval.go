@@ -22,8 +22,11 @@ import (
 // json.RawMessage so the same structure works for RAG queries, agent
 // conversations, KG episodes, or end-to-end flows.
 type Observation struct {
-	ID          string                     `json:"id"`
-	Turn        int                        `json:"turn"`
+	ID   string `json:"id"`
+	Turn int    `json:"turn"`
+	// Sample numbers the copies made by [Sampler.Replicate], from 1. Zero
+	// means the observation was not replicated.
+	Sample      int                        `json:"sample,omitempty"`
 	Input       json.RawMessage            `json:"input"`
 	Output      json.RawMessage            `json:"output"`
 	GroundTruth json.RawMessage            `json:"ground_truth,omitempty"`
@@ -49,6 +52,9 @@ type Score struct {
 	Value  float64 `json:"value"`
 	Reason string  `json:"reason,omitempty"`
 	Error  string  `json:"error,omitempty"`
+	// Samples is set when the score came from a [Sampled] scorer: Value is
+	// then the reduced value and Samples describes the spread behind it.
+	Samples *SampleStats `json:"samples,omitempty"`
 }
 
 // ObservationResult pairs an observation with its scores.
@@ -65,6 +71,9 @@ type SuiteResult struct {
 	Aggregate map[string]float64  `json:"aggregate"`
 	// ErroredCases counts observations with at least one errored score.
 	ErroredCases int `json:"errored_cases,omitempty"`
+	// UnstableScores counts sampled scores whose spread exceeded the
+	// Sampler's tolerance: the verdicts that changed between samples.
+	UnstableScores int `json:"unstable_scores,omitempty"`
 }
 
 // Run executes an evaluation suite: for each observation, it runs all scorers
@@ -83,6 +92,14 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	}
 	for _, o := range opts {
 		o(cfg)
+	}
+
+	if cfg.Sampler.N > 1 {
+		sampled := make([]Scorer, len(scorers))
+		for i, sc := range scorers {
+			sampled[i] = Sampled(sc, cfg.Sampler)
+		}
+		scorers = sampled
 	}
 
 	results := make([]ObservationResult, len(observations))
@@ -112,9 +129,13 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 
 	erroredCases := 0
 	succeeded := 0
+	unstable := 0
 	for _, r := range results {
 		cerr := false
 		for _, s := range r.Scores {
+			if s.Samples != nil && !s.Samples.Stable {
+				unstable++
+			}
 			if s.Error != "" {
 				cerr = true
 			} else if s.Name != "" {
@@ -127,11 +148,12 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	}
 
 	suite := &SuiteResult{
-		Name:         name,
-		CreatedAt:    time.Now(),
-		Results:      results,
-		Aggregate:    Aggregate(results),
-		ErroredCases: erroredCases,
+		Name:           name,
+		CreatedAt:      time.Now(),
+		Results:        results,
+		Aggregate:      Aggregate(results),
+		ErroredCases:   erroredCases,
+		UnstableScores: unstable,
 	}
 
 	if erroredCases > 0 && succeeded == 0 {
