@@ -143,7 +143,7 @@ A plain provider can still be used without a router.
 | `HandoffContextPolicy` | Select recipient context | The host must preserve valid tool-call pairs |
 | `LinkPolicy` | Define directed control-transfer edges | One handoff owner runs at a time |
 | Router `Policy` | Order eligible complete profiles | No distributed load scheduler |
-| `BudgetPolicy` | Track usage and stop, warn, or request approval | No reservation ledger |
+| `BudgetPolicy` | Reserve capacity, settle usage, stop, warn, or request approval | Shared process-local ledger; host-supplied per-call bounds |
 
 The default tool policy exposes all tools in stable name order.
 A custom policy can expose discovery tools first, then selected tools on later turns.
@@ -169,23 +169,21 @@ The consumer calls `ResolveMarker` or `ResolveMarkerWithMessage` with the interr
 Registration occurs before event delivery. Duplicate decisions do not block the consumer.
 A subagent marker uses a parent-call prefix and routes the decision back to the correct child.
 
-The wait parks a goroutine. It does not occupy an OS thread while idle.
-Other tool calls can run, but the paused call retains its parallel-tool slot.
-The parent waits for the complete tool batch before its next model turn.
-With sequential tools or a durable step runner, later tools in that batch wait too.
+The streaming wait parks a goroutine. It does not hold a regular tool execution slot.
+Independent calls can run. The parent still waits for the complete tool batch before its next model turn.
+`MaxParallelTools: 1` preserves strict ordering for streaming calls.
 The consumer must drain events. A full event buffer applies backpressure to producers.
 
-Pending decisions are in memory. Process failure loses them.
-A durable interrupt service needs these operations:
+Use `agent/durable/local` for persisted decisions and process recovery.
+Pending approvals return `ErrSuspended` without holding a goroutine for the human decision.
+The worker releases its run lock after active siblings finish and their results are saved.
+A new worker uses the same run ID, revision, input, and fresh agent factory to resume.
+The engine rejects conflicting decisions, changed revisions, cancellation, and expired pending approvals.
+Non-streaming approvals require `ApprovalRunner`; unsupported runners fail instead of waiting for a missing consumer.
+The DBOS runner does not yet implement this approval contract.
 
-1. Save the interrupt with the run ID, call ID, owner, arguments, and policy revision.
-2. Commit the waiting state and release the worker lease.
-3. Accept one authenticated decision with an idempotency key.
-4. Resume the exact continuation with a new worker lease.
-5. Reject stale decisions after cancellation, expiry, or policy changes.
-
-Aggregation belongs in that service. It must preserve a separate decision for each call.
-A human decision must not approve future calls or different arguments by accident.
+Aggregation belongs in the host. It must preserve a separate decision for each call.
+See [durable execution](durable-execution.md) for recovery and deployment examples.
 
 ## Budget and failure limits
 
@@ -194,12 +192,20 @@ Subagents share the parent `Budget` by default. Handoffs use the entry agent's b
 An explicit child budget replaces the shared budget. It does not form a hierarchical budget.
 Use the shared budget until parent-and-child admission is implemented.
 
-Usage is counted after a call. Parallel calls can exceed the limit together.
-The agent checks a stopped budget before another request, but this check does not reserve funds.
-Failed requests with missing usage, provider-native tool fees, and explicit-cache storage need separate accounting.
-Durable replay does not restore a budget ledger or routing affinity.
+Each call reserves capacity before provider dispatch. `ErrBudgetBusy` means other calls hold the allowance.
+`PerCallCost` and `PerCallTokens` must cover the complete configured request and any hidden retry attempts.
+A zero bound reserves all remaining capacity for its enabled limit. This can serialize monetary or token admission.
+The agent reports actual usage even if it exceeds a declared bound, then fails the attempt.
+`BudgetWarn` records breaches and permits additional calls. It is not a spending control.
+
+Missing usage consumes the reserved allowance and increments `Budget.Uncertain()`.
+Local response-cache hits settle without a provider charge. Provider prompt-cache hits remain billable requests.
+The four adapters identify cumulative usage snapshots so repeated totals are not summed again.
+The local engine saves reservation and settlement receipts. Replay restores them into a fresh budget exactly once.
 A monetary approval grant does not increase token or request limits.
 
-Before distributed execution, add a durable reservation ledger with atomic admission, settlement, and uncertain-charge states.
-Also add ownership leases, duplicate-result handling, per-owner context checkpoints, and bounded event retention.
-Do not use a cache entry as the source of truth for any of those states.
+Provider-native tool fees, explicit-cache storage, hidden retries, and incomplete price cards need host accounting.
+Request limits count calls at the wrapped provider boundary; inner retry attempts need a separate attempt ledger.
+Routing affinity is still in memory. Pin the provider configuration in a durable factory when replay must retain that route.
+Distributed execution still needs a shared ledger, fenced ownership, context checkpoints, and bounded event retention.
+Do not use a cache entry as the source of truth for these states.

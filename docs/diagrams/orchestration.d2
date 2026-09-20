@@ -9,7 +9,11 @@ current: "Current implementation" {
   tools: "Tool policy then ToolGate"
   route: "Routing session\nsticky complete profile"
   provider: "Configured provider\nmodel, reasoning, sampling, cache"
-  interrupt: "In-memory approval\none call waits; siblings can run"
+  interrupt: "Approval contract\nstreaming wait or durable suspension"
+  runner: "Local durable engine\none owner per run, parallel steps"
+  state: "Atomic local snapshot\nsteps, decisions, event history" {shape: cylinder}
+  budget: "Shared budget\nreserve, dispatch, settle"
+  recovery: "Uncertain operation\nhost checks effect before retry"
   owner -> source: record
   owner -> links -> specialist: transfer ownership
   specialist -> owner: explicit return with brief
@@ -19,12 +23,17 @@ current: "Current implementation" {
   owner -> tools -> route -> provider
   tools -> interrupt: approval required
   interrupt -> tools: decision
+  runner -> state: save before dispatch and publication
+  interrupt -> runner: save request, release after batch
+  runner -> recovery: started without completed result
+  tools -> budget -> provider
+  budget -> state: reservation and settlement receipts
 }
 future: "Future distributed contracts" {
   style.stroke-dash: 4
-  scheduler: "Worker leases\nremote handoff owners"
-  ledger: "Durable reservations\nsettlement and uncertain charges" {shape: cylinder}
-  interrupts: "Persisted interrupts\nrelease worker, resume later" {shape: cylinder}
+  scheduler: "Fenced worker leases\nremote owners, fair scheduling"
+  ledger: "Distributed budget ledger\ntransactional account admission" {shape: cylinder}
+  interrupts: "Decision service and queue\nauthenticate, persist, schedule resume" {shape: cylinder}
   resources: "Cache resource manager\ntenant scope, TTL, cleanup"
   extensions: "Versioned skills and memory\npermissions and provenance"
   scheduler -> ledger
@@ -32,4 +41,4 @@ future: "Future distributed contracts" {
   scheduler -> resources
   scheduler -> extensions
 }
-current.source -> future.scheduler: requires durable ownership
+current.runner -> future.scheduler: extend ownership beyond one machine
