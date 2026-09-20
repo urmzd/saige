@@ -125,3 +125,9 @@ This repo's conventions are available as portable agent skills in [`skills/`](sk
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
+
+### Orchestration contracts
+
+See [ownership and policies](docs/orchestration-policies.md) for subagent results, handoff return links, sticky routing, and approval limits.
+See [cache contracts](docs/cache-contracts.md) for cache identity, provider cache modes, and remaining defects.
+[Design decisions](DESIGN_DECISIONS.md) explain the choices and their limits.

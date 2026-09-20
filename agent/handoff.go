@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -88,7 +89,7 @@ func registerHandoff(registry *types.ToolRegistry, target, description string) {
 			Parameters: types.ParameterSchema{
 				Type: "object",
 				Properties: map[string]types.PropertyDef{
-					"reason": {Type: "string", Description: "Why control is being transferred (optional)."},
+					"reason": {Type: "string", Description: "Task brief, data, and why control is being transferred. When unable to proceed, explain what the previous owner must resolve."},
 				},
 			},
 		},
@@ -111,7 +112,10 @@ type handoffMember struct {
 }
 
 // buildHandoffGroup validates the defs and wires each member's handoff tools.
-func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, error) {
+func buildHandoffGroup(entry *handoffMember, defs []HandoffDef, policies ...LinkPolicy) (*handoffGroup, error) {
+	if entry.name == "" {
+		return nil, fmt.Errorf("handoff entry agent requires a name for return links")
+	}
 	names := map[string]bool{entry.name: true}
 	for _, d := range defs {
 		if d.Name == "" {
@@ -135,14 +139,15 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, 
 	members := map[string]*handoffMember{entry.name: entry}
 	descByName := map[string]string{}
 	for _, d := range defs {
-		tools := d.Tools
-		if tools == nil {
-			tools = types.NewToolRegistry()
+		tools := types.NewToolRegistry()
+		if d.Tools != nil {
+			tools = types.NewToolRegistry(d.Tools.All()...)
 		}
 		provider := d.Provider
 		if provider == nil {
 			provider = entry.provider
 		}
+		provider = types.NewProviderSession(provider)
 		maxIter := d.MaxIter
 		if maxIter <= 0 {
 			maxIter = entry.maxIter
@@ -175,18 +180,14 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, 
 		return nil
 	}
 
-	// Entry agent may hand off to every defined agent.
-	entryAllowed := make([]string, 0, len(defs))
+	// Build and validate the declared graph before applying return links.
+	sort.Strings(allNames)
+	links := map[string][]string{}
 	for _, d := range defs {
-		entryAllowed = append(entryAllowed, d.Name)
+		links[entry.name] = append(links[entry.name], d.Name)
 	}
-	if err := register(entry, entryAllowed); err != nil {
-		return nil, err
-	}
-
 	for _, d := range defs {
-		m := members[d.Name]
-		allowed := d.CanHandOffTo
+		allowed := append([]string(nil), d.CanHandOffTo...)
 		if len(allowed) == 0 {
 			for _, n := range allNames {
 				if n != d.Name {
@@ -194,7 +195,28 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef) (*handoffGroup, 
 				}
 			}
 		}
-		if err := register(m, allowed); err != nil {
+		for _, to := range allowed {
+			if !names[to] {
+				return nil, fmt.Errorf("%w: %s", ErrUnknownHandoffTarget, to)
+			}
+		}
+		links[d.Name] = allowed
+	}
+	var policy LinkPolicy = DirectReturnLinks{}
+	if len(policies) > 0 && policies[0] != nil {
+		policy = policies[0]
+	}
+	links, err := policy.Resolve(cloneLinks(links))
+	if err != nil {
+		return nil, err
+	}
+	for from, targets := range links {
+		m, ok := members[from]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownHandoffTarget, from)
+		}
+		sort.Strings(targets)
+		if err := register(m, targets); err != nil {
 			return nil, err
 		}
 	}

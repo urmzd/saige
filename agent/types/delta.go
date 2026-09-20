@@ -180,10 +180,13 @@ func (FeedbackDelta) isDelta() {}
 
 // UsageDelta carries token usage and latency from an LLM call.
 type UsageDelta struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	Latency          time.Duration
+	// PromptTokens includes uncached input, cache reads, and cache writes.
+	PromptTokens       int
+	CachedPromptTokens int
+	CacheWriteTokens   int
+	CompletionTokens   int
+	TotalTokens        int
+	Latency            time.Duration
 
 	// Response metadata for OpenTelemetry GenAI semantic conventions.
 	ResponseModel string   // gen_ai.response.model
@@ -205,6 +208,8 @@ func (UsageDelta) isDelta() {}
 // the most recent non-zero value, not summed.
 func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
 	u.PromptTokens += o.PromptTokens
+	u.CachedPromptTokens += o.CachedPromptTokens
+	u.CacheWriteTokens += o.CacheWriteTokens
 	u.CompletionTokens += o.CompletionTokens
 	u.TotalTokens = u.PromptTokens + u.CompletionTokens
 	if o.Latency != 0 {
@@ -224,3 +229,13 @@ func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
 	}
 	return u
 }
+
+// RouteDelta identifies the complete configuration used for a provider attempt.
+// It does not contain credentials or imply that the attempt succeeded.
+type RouteDelta struct {
+	Profile  string
+	Provider string
+	Model    string
+}
+
+func (RouteDelta) isDelta() {}

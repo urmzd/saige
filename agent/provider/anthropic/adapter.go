@@ -26,10 +26,11 @@ var (
 // Adapter wraps the official Anthropic SDK client and implements types.Provider,
 // types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
 type Adapter struct {
-	client    anthropic.Client
-	model     anthropic.Model
-	maxTokens int64
-	thinking  *int64 // nil = disabled; set to budget tokens to enable extended thinking
+	systemCacheTTL string
+	client         anthropic.Client
+	model          anthropic.Model
+	maxTokens      int64
+	thinking       *int64 // nil = disabled; set to budget tokens to enable extended thinking
 
 	temperature   *float64
 	topP          *float64
@@ -164,6 +165,9 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	systemBlocks, aMsgs := toAnthropicParams(messages)
+	if err := a.applyPromptCache(systemBlocks); err != nil {
+		return nil, err
+	}
 	aTools := toAnthropicTools(tools)
 
 	params := anthropic.MessageNewParams{
@@ -185,6 +189,9 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 // Anthropic has no native response_format; we inject a hidden tool and force the model to call it.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	systemBlocks, aMsgs := toAnthropicParams(messages)
+	if err := a.applyPromptCache(systemBlocks); err != nil {
+		return nil, err
+	}
 	aTools := toAnthropicTools(tools)
 
 	params := anthropic.MessageNewParams{
@@ -252,12 +259,14 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 			case "message_start":
 				responseID = evt.Message.ID
 				responseModel = string(evt.Message.Model)
-				if evt.Message.Usage.InputTokens > 0 {
+				if evt.Message.Usage.InputTokens+evt.Message.Usage.CacheReadInputTokens+evt.Message.Usage.CacheCreationInputTokens > 0 {
 					out <- types.UsageDelta{
-						PromptTokens:  int(evt.Message.Usage.InputTokens),
-						TotalTokens:   int(evt.Message.Usage.InputTokens + evt.Message.Usage.OutputTokens),
-						ResponseID:    evt.Message.ID,
-						ResponseModel: string(evt.Message.Model),
+						PromptTokens:       int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens),
+						CachedPromptTokens: int(evt.Message.Usage.CacheReadInputTokens),
+						CacheWriteTokens:   int(evt.Message.Usage.CacheCreationInputTokens),
+						TotalTokens:        int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens + evt.Message.Usage.OutputTokens),
+						ResponseID:         evt.Message.ID,
+						ResponseModel:      string(evt.Message.Model),
 					}
 				}
 

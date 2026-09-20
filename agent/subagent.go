@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -33,6 +34,12 @@ type SubAgentDef struct {
 	// escape hatch that keeps SubAgentDef from having to mirror every field of
 	// AgentConfig.
 	Options []AgentOption
+
+	// ResultPolicy selects the parent tool result. Nil returns final assistant text.
+	ResultPolicy SubAgentResultPolicy
+	// ResultSink retains complete traces, including failed calls. Nil retains only
+	// the direct invocation stream result, for as long as the caller keeps it.
+	ResultSink SubAgentResultSink
 }
 
 // inheritConfig builds a sub-agent's AgentConfig from its definition and its
@@ -66,6 +73,9 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 	if provider == nil {
 		provider = parent.Provider
 	}
+	if sessions, ok := provider.(types.SessionProvider); ok {
+		provider = sessions.NewSession()
+	}
 	maxIter := sa.MaxIter
 	if maxIter <= 0 {
 		maxIter = parent.MaxIter
@@ -89,6 +99,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		Resolvers:        parent.Resolvers,
 		Extractors:       parent.Extractors,
 		ToolGate:         parent.ToolGate,
+		ToolPolicy:       parent.ToolPolicy,
 		ToolContext:      parent.ToolContext,
 		// Budget is shared by pointer, not copied: a per-child copy would let a
 		// run with four sub-agents spend four times its ceiling, which is the
@@ -113,35 +124,42 @@ type SubAgentInvoker interface {
 type subAgentTool struct {
 	def     types.ToolDef
 	factory func(runner types.StepRunner) *Agent
+	name    string
+	policy  SubAgentResultPolicy
+	sink    SubAgentResultSink
 }
 
 func (t *subAgentTool) Definition() types.ToolDef { return t.def }
 
 // Execute provides a blocking fallback: runs the child agent and returns
-// the concatenated text. The agent loop prefers InvokeAgent for streaming.
+// the selected result. The agent loop prefers InvokeAgent for streaming.
 func (t *subAgentTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	task, _ := args["task"].(string)
 	stream := t.InvokeAgent(ctx, task)
-	var result string
-	for d := range stream.Deltas() {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			result += tc.Content
-		}
+	for range stream.Deltas() {
 	}
-	return result, stream.Wait()
+	result, err := stream.SubAgentResult()
+	return result.Output, err
 }
 
 // InvokeAgent creates a fresh child agent and invokes it, returning its stream.
 func (t *subAgentTool) InvokeAgent(ctx context.Context, task string) *EventStream {
-	return t.invokeWithRunner(ctx, task, nil)
+	return t.invokeWithRunner(ctx, task, nil, types.NewID())
 }
 
 // invokeWithRunner creates a fresh child agent that inherits the given
 // StepRunner and invokes it. The agent loop uses this so durable execution
 // covers delegated work too.
-func (t *subAgentTool) invokeWithRunner(ctx context.Context, task string, runner types.StepRunner) *EventStream {
+func (t *subAgentTool) invokeWithRunner(ctx context.Context, task string, runner types.StepRunner, id string) *EventStream {
 	child := t.factory(runner)
-	return child.Invoke(ctx, []types.Message{types.NewUserMessage(task)})
+	ctx, cancel := context.WithCancel(ctx)
+	stream := newEventStream(ctx, cancel)
+	stream.capture = &subAgentCapture{
+		result: SubAgentResult{ID: id, Name: t.name, Task: task, StartedAt: time.Now().UTC()},
+		policy: t.policy, sink: t.sink,
+	}
+	go child.runLoop(ctx, stream, []types.Message{types.NewUserMessage(task)}, child.cfg.Tree.Active())
+	return stream
 }
 
 // prefixStepRunner namespaces step names before delegating to the inner runner.

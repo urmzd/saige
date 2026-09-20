@@ -28,8 +28,10 @@ type AgentConfig struct {
 
 	// Agent handoffs: a group of agents that share this (entry) agent's tree and
 	// transfer control via handoff_to_<name> tools (see agent/handoff.go).
-	Handoffs    []HandoffDef
-	MaxHandoffs int // max control transfers per run (default 8); ping-pong guard
+	HandoffContextPolicy HandoffContextPolicy
+	Handoffs             []HandoffDef
+	LinkPolicy           LinkPolicy // nil adds direct return links
+	MaxHandoffs          int        // max control transfers per run (default 8); ping-pong guard
 
 	// StepRunner durably memoizes LLM and tool calls so a crashed process can
 	// resume without repeating them. Defaults to types.NoopStepRunner (inline,
@@ -70,7 +72,8 @@ type AgentConfig struct {
 	// allow a read and stop a write on the same tool. Defaults to
 	// types.AllowAllGate. The pre-existing MarkedTool mechanism still applies
 	// and runs after the gate.
-	ToolGate types.ToolGate
+	ToolGate   types.ToolGate
+	ToolPolicy ToolPolicy // nil exposes all tools
 
 	// ToolContext carries the configurable knobs tools read (see
 	// types.ToolContext). It is attached to every tool call's context, so a
@@ -258,9 +261,9 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	if cfg.ToolGate == nil {
 		cfg.ToolGate = types.AllowAllGate{}
 	}
-	tools := cfg.Tools
-	if tools == nil {
-		tools = types.NewToolRegistry()
+	tools := types.NewToolRegistry()
+	if cfg.Tools != nil {
+		tools = types.NewToolRegistry(cfg.Tools.All()...)
 	}
 
 	if cfg.Tree == nil {
@@ -296,7 +299,7 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 			tools:    tools,
 			maxIter:  cfg.MaxIter,
 		}
-		grp, err := buildHandoffGroup(entry, cfg.Handoffs)
+		grp, err := buildHandoffGroup(entry, cfg.Handoffs, cfg.LinkPolicy)
 		if err != nil {
 			panic(fmt.Sprintf("agent: invalid handoff configuration: %v", err))
 		}
@@ -308,13 +311,14 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 
 // registerSubAgent registers a SubAgentDef as a delegate tool. Each invocation
 // constructs a fresh Agent: the sub-agent's conversation history is intentionally
-// discarded between delegations, so sub-agents are stateless across calls.
+// not reused between delegations. A result sink can retain completed traces.
 //
 // parent is the delegating agent's config; the child inherits its operational
 // settings (see inheritConfig) so a delegated run carries the same timeouts,
 // logging, metrics, compaction and file pipeline as the run that spawned it.
 func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent AgentConfig) {
 	registry.Register(&subAgentTool{
+		name: sa.Name, policy: sa.ResultPolicy, sink: sa.ResultSink,
 		def: types.ToolDef{
 			Name:        "delegate_to_" + sa.Name,
 			Description: sa.Description,
@@ -856,7 +860,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		log.Debug("agent loop finished", "agent", a.cfg.Name, "elapsed", time.Since(start))
 	}()
 
+	stream.branch = branch
 	loopErr = a.run(ctx, stream, input, branch)
+	loopErr = a.captureSubAgent(ctx, stream, loopErr)
 }
 
 // run executes the agent loop and returns its terminal error (nil on a clean
@@ -894,6 +900,14 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// is byte-for-byte the non-handoff path.
 		resolved, llmMessages := a.prepareMessages(messages)
 		active := a.applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
+		active, err = a.selectHandoffContext(ctx, active, messages)
+		if err != nil {
+			return err
+		}
+		active, err = a.selectTools(ctx, active)
+		if err != nil {
+			return err
+		}
 
 		// Check iteration cap. If we break here while the last assistant turn left
 		// tool calls pending (pendingWork), the run was truncated, not finished:
@@ -907,15 +921,24 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			break
 		}
 
+		if a.handoffs != nil && resolved.compactor != nil {
+			return errors.New("handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported")
+		}
 		// Resolve file URIs to data.
 		active.messages = a.resolveFiles(ctx, active.messages)
 
 		// Compact if configured: summarize, fork a new branch off root, continue.
 		if newBranch, compacted := a.tryCompact(ctx, log, resolved, active.messages, tr); compacted {
 			branch = newBranch
+			stream.branch = branch
 			continue // re-flatten from the new branch
 		}
 
+		if a.cfg.Budget != nil {
+			if err := a.cfg.Budget.Err(); err != nil {
+				return err
+			}
+		}
 		// Get the assistant message as a durable step (provider call + aggregation).
 		stepName := fmt.Sprintf("llm-%s-%d", branch, iterCount)
 		msg, usage, llmErr := a.getAssistantMessage(ctx, stream, active.provider, active.messages, active.toolDefs, stepName)
@@ -1096,9 +1119,11 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 // write failed.
 func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) error {
 	handoffTo := ""
+	reason := ""
 	for _, r := range results {
 		if r.handoffTo != "" {
 			handoffTo = r.handoffTo
+			reason = r.handoffReason
 			break
 		}
 	}
@@ -1111,9 +1136,9 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 		return ErrHandoffLimitExceeded
 	}
 	*handoffCount++
-	stream.send(types.HandoffDelta{From: activeName, To: handoffTo})
+	stream.send(types.HandoffDelta{From: activeName, To: handoffTo, Reason: reason})
 	overlay := types.SystemMessage{Content: []types.SystemContent{
-		types.HandoffContent{From: activeName, To: handoffTo},
+		types.HandoffContent{From: activeName, To: handoffTo, Reason: reason},
 	}}
 	tip, err := tr.Tip(branch)
 	if err != nil {
@@ -1198,6 +1223,9 @@ func (a *Agent) getAssistantMessage(
 			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), toErr)
 			return types.StepResult{}, toErr
 		}
+		if stepCtx.Err() != nil {
+			return types.StepResult{}, stepCtx.Err()
+		}
 		providerName := types.ProviderName(provider)
 		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", providerName, time.Since(llmStart), nil)
 		// (token metric) Record token usage once per completed LLM call with the
@@ -1236,11 +1264,12 @@ func (a *Agent) getAssistantMessage(
 
 // toolResult collects the outcome of a single tool execution.
 type toolResult struct {
-	toolCallID string
-	result     string                  // text projection
-	blocks     []types.ToolResultBlock // rich multi-modal output (nil for plain tools)
-	err        string
-	handoffTo  string // non-empty when a HandoffSignaler tool fired
+	toolCallID    string
+	result        string                  // text projection
+	blocks        []types.ToolResultBlock // rich multi-modal output (nil for plain tools)
+	err           string
+	handoffTo     string // non-empty when a HandoffSignaler tool fired
+	handoffReason string
 }
 
 // executeToolsConcurrently runs all tool calls, streaming deltas as they arrive.
@@ -1260,6 +1289,22 @@ type toolResult struct {
 //     the behavior for tools that share state or whose contract is ordering.
 func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStream, toolCalls []types.ToolUseContent, tools *types.ToolRegistry) []toolResult {
 	results := make([]toolResult, len(toolCalls))
+	transfers := 0
+	for _, call := range toolCalls {
+		tool, _ := tools.Get(call.Name)
+		if marked, ok := tool.(*types.MarkedTool); ok {
+			tool = marked.Inner
+		}
+		if _, ok := tool.(HandoffSignaler); ok {
+			transfers++
+		}
+	}
+	if transfers > 1 {
+		for i, call := range toolCalls {
+			results[i] = failedTool(stream, call.ID, "ambiguous handoff: request one control transfer per turn")
+		}
+		return results
+	}
 
 	_, isNoop := a.cfg.StepRunner.(types.NoopStepRunner)
 	if !isNoop || a.cfg.MaxParallelTools == 1 {
@@ -1284,7 +1329,12 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 		go func(idx int, tc types.ToolUseContent) {
 			defer wg.Done()
 			if sem != nil {
-				sem <- struct{}{}
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					results[idx] = failedTool(stream, tc.ID, ctx.Err().Error())
+					return
+				}
 				defer func() { <-sem }()
 			}
 			results[idx] = a.executeOneTool(ctx, stream, tc, tools)
@@ -1367,6 +1417,8 @@ func (a *Agent) Budget() *types.Budget { return a.cfg.Budget }
 // It returns (message, modifiedArgs, approved). On refusal or cancellation the
 // message is the tool error to report.
 func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker) (string, map[string]any, bool) {
+	resolution := stream.awaitResolution(tc.ID)
+	defer stream.clearResolution(tc.ID)
 	stream.send(types.MarkerDelta{
 		ToolCallID: tc.ID,
 		ToolName:   tc.Name,
@@ -1375,7 +1427,7 @@ func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types
 	})
 
 	select {
-	case r := <-stream.awaitResolution(tc.ID):
+	case r := <-resolution:
 		if !r.Approved {
 			msg := "rejected"
 			if r.Message != "" {
@@ -1423,7 +1475,7 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		target := h.HandoffTarget()
 		out, _ := tool.Execute(ctx, tc.Arguments)
 		stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Result: out})
-		return toolResult{toolCallID: tc.ID, result: out, handoffTo: target}
+		return toolResult{toolCallID: tc.ID, result: out, handoffTo: target, handoffReason: stringArg(tc.Arguments, "reason")}
 	}
 
 	if invoker, ok := tool.(SubAgentInvoker); ok {
@@ -1492,6 +1544,8 @@ func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *typ
 		return tool, toolResult{}, false
 	}
 
+	resolution := stream.awaitResolution(tc.ID)
+	defer stream.clearResolution(tc.ID)
 	stream.send(types.MarkerDelta{
 		ToolCallID: tc.ID,
 		ToolName:   tc.Name,
@@ -1500,7 +1554,7 @@ func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *typ
 	})
 
 	select {
-	case r := <-stream.awaitResolution(tc.ID):
+	case r := <-resolution:
 		if !r.Approved {
 			msg := "rejected"
 			if r.Message != "" {
@@ -1522,10 +1576,15 @@ func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *typ
 // delegation itself is not a durable step: the child inherits the parent's
 // StepRunner so its own LLM/tool steps are the durable units.
 func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool, invoker SubAgentInvoker) toolResult {
+	if a.cfg.ToolTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.cfg.ToolTimeout)
+		defer cancel()
+	}
 	task, _ := tc.Arguments["task"].(string)
 	var childStream *EventStream
 	if st, ok := tool.(*subAgentTool); ok {
-		childStream = st.invokeWithRunner(ctx, task, a.childStepRunner(tc.ID))
+		childStream = st.invokeWithRunner(ctx, task, a.childStepRunner(tc.ID), tc.ID)
 	} else {
 		childStream = invoker.InvokeAgent(ctx, task)
 	}
@@ -1537,6 +1596,20 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 	var childErr error
 	var resultBuf strings.Builder
 	for d := range childStream.Deltas() {
+		if marker, ok := d.(types.MarkerDelta); ok {
+			originalID := marker.ToolCallID
+			marker.ToolCallID = tc.ID + "/" + originalID
+			resolution := stream.awaitResolution(marker.ToolCallID)
+			stream.send(marker)
+			select {
+			case r := <-resolution:
+				childStream.ResolveMarkerWithMessage(originalID, r.Approved, r.ModifiedArgs, r.Message)
+			case <-ctx.Done():
+				childStream.Cancel()
+			}
+			stream.clearResolution(marker.ToolCallID)
+			continue
+		}
 		stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
 		switch v := d.(type) {
 		case types.TextContentDelta:
@@ -1554,6 +1627,13 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 		childErr = err
 	}
 	res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
+	if _, native := tool.(*subAgentTool); native {
+		result, err := childStream.SubAgentResult()
+		res.result = result.Output
+		if err != nil {
+			childErr = err
+		}
+	}
 	if childErr != nil {
 		res.err = childErr.Error()
 	}
@@ -1622,4 +1702,9 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 	}
 	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Result: res.result, Blocks: res.blocks, Error: res.err})
 	return res
+}
+
+func stringArg(args map[string]any, name string) string {
+	value, _ := args[name].(string)
+	return value
 }

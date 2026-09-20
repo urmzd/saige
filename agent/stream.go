@@ -16,6 +16,9 @@ type Resolution struct {
 
 // EventStream is the consumer handle for streaming agent deltas.
 type EventStream struct {
+	capture     *subAgentCapture
+	result      *SubAgentResult
+	branch      types.BranchID
 	deltas      chan types.Delta
 	done        chan struct{}
 	err         error
@@ -73,7 +76,10 @@ func (s *EventStream) ResolveMarker(toolCallID string, approved bool, modifiedAr
 	ch, ok := s.resolutions[toolCallID]
 	s.resMu.Unlock()
 	if ok {
-		ch <- Resolution{Approved: approved, ModifiedArgs: modifiedArgs}
+		select {
+		case ch <- Resolution{Approved: approved, ModifiedArgs: modifiedArgs}:
+		default:
+		}
 	}
 }
 
@@ -83,7 +89,10 @@ func (s *EventStream) ResolveMarkerWithMessage(toolCallID string, approved bool,
 	ch, ok := s.resolutions[toolCallID]
 	s.resMu.Unlock()
 	if ok {
-		ch <- Resolution{Approved: approved, ModifiedArgs: modifiedArgs, Message: message}
+		select {
+		case ch <- Resolution{Approved: approved, ModifiedArgs: modifiedArgs, Message: message}:
+		default:
+		}
 	}
 }
 
@@ -175,4 +184,10 @@ func replayUserToolResults(stream *EventStream, content []types.UserContent) {
 			stream.send(types.HandoffDelta{From: v.From, To: v.To, Reason: v.Reason})
 		}
 	}
+}
+
+func (s *EventStream) clearResolution(id string) {
+	s.resMu.Lock()
+	delete(s.resolutions, id)
+	s.resMu.Unlock()
 }

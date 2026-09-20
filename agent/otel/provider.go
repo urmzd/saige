@@ -181,3 +181,7 @@ func errorType(err error) string {
 	}
 	return fmt.Sprintf("%T", err)
 }
+
+func (p *TracedProvider) NewSession() types.Provider {
+	return NewTracedProvider(types.NewProviderSession(p.Inner), p.tracer)
+}

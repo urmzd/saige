@@ -1,7 +1,9 @@
 package cache
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -26,17 +28,36 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 
 		var rec CachedResponse
 		failed := false
+		openBlocks := 0
 
 		for d := range in {
+			switch d.(type) {
+			case types.TextStartDelta, types.ThinkingStartDelta, types.ToolCallStartDelta:
+				openBlocks++
+			case types.TextEndDelta, types.ThinkingEndDelta, types.ToolCallEndDelta:
+				openBlocks--
+			}
+			if openBlocks < 0 {
+				failed = true
+			}
+			if _, ok := d.(types.ToolCallStartDelta); ok && !p.cfg.CacheToolCalls {
+				failed = true
+			}
 			switch v := d.(type) {
 			case types.ErrorDelta:
 				failed = true // poison the recording; do not cache
 			case types.UsageDelta:
+				v.FinishReasons = append([]string(nil), v.FinishReasons...)
 				rec.Usage = rec.Usage.Merge(v) // providers may emit usage in parts
 			case types.TextStartDelta, types.TextContentDelta, types.TextEndDelta,
 				types.ThinkingStartDelta, types.ThinkingContentDelta, types.ThinkingEndDelta,
-				types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta:
-				rec.Deltas = append(rec.Deltas, v)
+				types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta, types.CitationDelta:
+				cloned, err := cloneDelta(v)
+				if err != nil {
+					failed = true
+				} else {
+					rec.Deltas = append(rec.Deltas, cloned)
+				}
 			default:
 				// DoneDelta / MarkerDelta / ToolExec* / others: forwarded, not recorded.
 			}
@@ -48,7 +69,7 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 			}
 		}
 
-		if failed || ctx.Err() != nil || len(rec.Deltas) == 0 {
+		if failed || openBlocks != 0 || ctx.Err() != nil || len(rec.Deltas) == 0 {
 			return // correctness: never cache error/partial/empty streams
 		}
 		if err := p.cfg.Cache.Set(ctx, key, rec, p.cfg.TTL); err != nil {
@@ -65,11 +86,51 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 func replay(cr CachedResponse) <-chan types.Delta {
 	out := make(chan types.Delta, len(cr.Deltas)+1)
 	for _, d := range cr.Deltas {
-		out <- d
+		cloned, err := cloneDelta(d)
+		if err != nil {
+			out <- types.ErrorDelta{Error: err}
+			close(out)
+			return out
+		}
+		if call, ok := cloned.(types.ToolCallStartDelta); ok {
+			call.ID = types.NewID()
+			cloned = call
+		}
+		out <- cloned
 	}
 	u := cr.Usage
+	u.FinishReasons = append([]string(nil), u.FinishReasons...)
 	u.CacheHit = true
 	out <- u
 	close(out)
 	return out
+}
+
+// Mutable payloads are copied at record and replay boundaries. The cache never
+// lends an argument map to a tool or a citation map to a consumer.
+func cloneDelta(delta types.Delta) (types.Delta, error) {
+	switch value := delta.(type) {
+	case types.ToolCallEndDelta:
+		raw, err := json.Marshal(value.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		value.Arguments = nil
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		err = decoder.Decode(&value.Arguments)
+		return value, err
+	case types.CitationDelta:
+		raw, err := json.Marshal(value.Citation.Meta)
+		if err != nil {
+			return nil, err
+		}
+		value.Citation.Meta = nil
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		err = decoder.Decode(&value.Citation.Meta)
+		return value, err
+	default:
+		return delta, nil
+	}
 }

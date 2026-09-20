@@ -103,7 +103,7 @@ func TestToolCallIsCached(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.ToolCallResponse("t1", "search", map[string]any{"q": "go"}),
 	}}
-	p := newProvider(inner)
+	p := New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true})
 	msgs := []types.Message{types.NewUserMessage("find")}
 
 	collect(mustStream(t, p, msgs)) // miss records the tool-call deltas
