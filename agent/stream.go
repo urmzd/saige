@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/urmzd/saige/agent/types"
@@ -16,17 +17,20 @@ type Resolution struct {
 
 // EventStream is the consumer handle for streaming agent deltas.
 type EventStream struct {
-	capture     *subAgentCapture
-	result      *SubAgentResult
-	branch      types.BranchID
-	deltas      chan types.Delta
-	done        chan struct{}
-	err         error
-	cancel      context.CancelFunc
-	once        sync.Once
-	ctx         context.Context
-	resMu       sync.Mutex
-	resolutions map[string]chan Resolution
+	capture      *subAgentCapture
+	result       *SubAgentResult
+	branch       types.BranchID
+	deltas       chan types.Delta
+	done         chan struct{}
+	err          error
+	cancel       context.CancelFunc
+	once         sync.Once
+	ctx          context.Context
+	terminalMu   sync.Mutex
+	terminalErr  error
+	nonStreaming bool
+	resMu        sync.Mutex
+	resolutions  map[string]chan Resolution
 }
 
 func newEventStream(ctx context.Context, cancel context.CancelFunc) *EventStream {
@@ -190,4 +194,17 @@ func (s *EventStream) clearResolution(id string) {
 	s.resMu.Lock()
 	delete(s.resolutions, id)
 	s.resMu.Unlock()
+}
+
+func (s *EventStream) stopRun(err error) {
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	if s.terminalErr == nil || errors.Is(s.terminalErr, types.ErrSuspended) {
+		s.terminalErr = err
+	}
+}
+func (s *EventStream) runError() error {
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	return s.terminalErr
 }

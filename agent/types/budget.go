@@ -34,12 +34,16 @@ const (
 
 // BudgetPolicy is the spending ceiling for a run and what to do at it.
 //
-// Enforcement is checked on every usage report rather than once per iteration.
-// A single call to a long-context model can cost more than the whole budget, so
-// a per-iteration check can overshoot by an unbounded amount; a per-usage check
-// can overshoot by every concurrent in-flight call. This is post-use accounting,
-// not admission control or a reservation ledger.
+// The agent reserves capacity before dispatch and settles each attempt once.
+// Bounds must include the full configured request and any hidden retries.
+// Missing usage consumes the reservation and remains marked uncertain.
+// This is a process-local ledger, not a distributed account or provider invoice.
 type BudgetPolicy struct {
+	// PerCallCost and PerCallTokens are upper bounds for a configured request.
+	// Zero reserves all remaining capacity when the matching ceiling is enabled.
+	// Include retry/failover attempts in these bounds, or budget inside decorators.
+	PerCallCost   Cost
+	PerCallTokens int
 	// Limit is the reported cost ceiling. Zero disables the cost ceiling;
 	// token and request limits still apply.
 	Limit Cost
@@ -93,7 +97,10 @@ func (s BudgetStatus) String() string {
 // Share one Budget across an agent and its sub-agents to cap a whole run; give
 // a sub-agent its own to cap that delegation independently.
 type Budget struct {
-	policy BudgetPolicy
+	policy       BudgetPolicy
+	reservations map[string]BudgetReservation
+	settled      map[string]BudgetReceipt
+	uncertain    int
 
 	mu       sync.Mutex
 	spent    Cost
@@ -129,19 +136,8 @@ func (b *Budget) Record(model string, pricing Pricing, u TokenUsage) (BudgetStat
 	unpriced := pricing.IsZero() && u.Total() > 0
 
 	b.mu.Lock()
-	b.usage.Add(u)
-	existing := b.byModel[model]
-	existing.Add(u)
-	b.byModel[model] = existing
-	b.spent += cost
-	b.costs[model] += cost
-	if !pricing.IsZero() {
-		b.currency[model] = pricing.currency()
-	}
+	b.recordLocked(model, pricing, u, cost)
 	status := b.statusLocked()
-	if status == BudgetStatusExceeded {
-		b.breaches++
-	}
 	b.mu.Unlock()
 
 	if unpriced && !b.policy.AllowUnpriced && b.policy.Limit > 0 {
@@ -211,6 +207,9 @@ func (b *Budget) Remaining() Cost {
 		return -1
 	}
 	rem := b.policy.Limit + b.granted - b.spent
+	for _, r := range b.reservations {
+		rem -= r.Cost
+	}
 	if rem < 0 {
 		return 0
 	}

@@ -436,23 +436,19 @@ func (a *Agent) Invoke(ctx context.Context, input []types.Message, branch ...typ
 	return stream
 }
 
-// RunDurable runs the agent loop to completion (non-streaming) using the given
-// durable StepRunner, returning the final assistant message. Each LLM call and
-// tool execution is wrapped in runner.RunStep so a crashed process resumes
-// without repeating them. It is intended to be called from inside a durable
-// workflow (see agent/durable/dbos), which supplies a runner bound to the
-// workflow's durable context.
-//
-// The runner is injected via a shallow copy of the Agent, so concurrent durable
-// runs on the same Agent do not race on the step runner. Conversation state is
-// persisted to the tree (Store/WAL) regardless of streaming, so it is correct
-// after recovery; the runner only prevents re-spending on memoized steps.
+// RunDurable runs the loop without a streaming consumer. The runner controls
+// replay and uncertain outcomes. Use a fresh Agent, tree, and budget for each
+// reconstructed run; copying the Agent does not isolate its mutable state.
+// Approvals require an ApprovalRunner because no consumer can resolve events.
 func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input []types.Message, branch types.BranchID) (*types.AssistantMessage, error) {
 	if runner == nil {
 		runner = types.NoopStepRunner{}
 	}
 	clone := *a
 	clone.cfg.StepRunner = runner
+	if _, durableApprovals := runner.(types.ApprovalRunner); durableApprovals && clone.cfg.CompactCfg != nil && clone.cfg.CompactCfg.ToCompactor() != nil {
+		return nil, errors.New("durable approval replay requires compaction checkpoints; automatic compaction is unsupported")
+	}
 
 	if branch == "" {
 		branch = clone.cfg.Tree.Active()
@@ -461,6 +457,7 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 	loopCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stream := newEventStream(loopCtx, cancel)
+	stream.nonStreaming = true
 
 	// Drain deltas in a separate goroutine so the loop's RunStep calls execute
 	// synchronously in THIS goroutine: important for durable engines that
@@ -868,6 +865,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 // run executes the agent loop and returns its terminal error (nil on a clean
 // finish). runLoop turns that error into the stream's ErrorDelta + close error.
 func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Message, branch types.BranchID) error {
+	if _, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok && a.cfg.CompactCfg != nil && a.cfg.CompactCfg.ToCompactor() != nil {
+		return errors.New("durable approval replay requires compaction checkpoints; automatic compaction is unsupported")
+	}
 	log := a.cfg.Logger
 	tr := a.cfg.Tree
 
@@ -992,6 +992,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// Persist results BEFORE any handoff so every tool_use gets a matching
 		// tool_result (provider contract) and rich Blocks are persisted.
 		results := a.executeToolsConcurrently(ctx, stream, toolCalls, active.tools)
+		if err := stream.runError(); err != nil {
+			return err
+		}
 		pendingWork = true
 		if err := a.persistToolResults(ctx, tr, branch, results); err != nil {
 			return err
@@ -1167,8 +1170,60 @@ func (a *Agent) getAssistantMessage(
 	)
 
 	start := time.Now()
-	res, err := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (types.StepResult, error) {
+	res, err := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (stepResult types.StepResult, stepError error) {
 		ran = true
+		if a.cfg.Budget != nil {
+			caps, _ := types.ProviderCapabilities(provider)
+			reservation, err := a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
+			if errors.Is(err, types.ErrBudgetExceeded) && a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
+				call := types.ToolUseContent{ID: stepName, Name: "budget"}
+				_, _, approved := a.awaitApprovalPhase(stepCtx, stream, call, []types.Marker{a.cfg.Budget.ApprovalMarker()}, "budget-admission")
+				if stopped := stream.runError(); stopped != nil {
+					return types.StepResult{}, stopped
+				}
+				if approved {
+					a.cfg.Budget.Grant(0)
+					reservation, err = a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
+				}
+			}
+			if err != nil {
+				return types.StepResult{}, fmt.Errorf("%w: %w", types.ErrBudgetAdmission, err)
+			}
+			if recorder, ok := a.cfg.StepRunner.(types.BudgetReservationRunner); ok {
+				receipt := a.cfg.Budget.ReservationReceipt(reservation.ID, types.ProviderModel(provider), caps.Pricing)
+				if err := recorder.RecordReservation(stepCtx, stepName, receipt); err != nil {
+					_ = a.cfg.Budget.Settle(reservation.ID, receipt.Model, caps.Pricing, types.TokenUsage{}, false)
+					return types.StepResult{}, fmt.Errorf("%w: persist reservation: %w", types.ErrBudgetAdmission, err)
+				}
+			}
+			defer func() {
+				unknown := liveUsage == nil || stepError != nil
+				if liveUsage == nil {
+					liveUsage = &types.UsageDelta{}
+					stepResult.Usage = liveUsage
+				}
+				usage := types.TokenUsage{}
+				model := types.ProviderModel(provider)
+				if liveUsage != nil {
+					usage = types.UsageFromDelta(*liveUsage)
+					liveUsage.AccountingID = reservation.ID
+					if liveUsage.ResponseModel != "" {
+						model = liveUsage.ResponseModel
+					}
+				}
+				settleErr := a.cfg.Budget.Settle(reservation.ID, model, caps.Pricing, usage, unknown)
+				receipt := a.cfg.Budget.Receipt(reservation.ID)
+				stepResult.Receipt = &receipt
+				if stepError == nil {
+					stepError = settleErr
+				}
+			}()
+		}
+		defer func() {
+			if value := recover(); value != nil {
+				stepError = fmt.Errorf("provider panic: %v", value)
+			}
+		}()
 		// Bound the provider call (and its stream aggregation) with a child
 		// deadline so a slow provider is cancelled rather than hanging the loop.
 		if a.cfg.LLMTimeout > 0 {
@@ -1240,7 +1295,7 @@ func (a *Agent) getAssistantMessage(
 		if m, ok := agg.Message().(types.AssistantMessage); ok {
 			msg = &m
 		}
-		return types.StepResult{Kind: types.StepKindLLM, Message: msg}, nil
+		return types.StepResult{Kind: types.StepKindLLM, Message: msg, Usage: liveUsage}, nil
 	})
 	if err != nil {
 		return nil, nil, err
@@ -1250,11 +1305,19 @@ func (a *Agent) getAssistantMessage(
 
 	// On REPLAY the closure never ran, so nothing streamed; re-emit the recorded
 	// message's blocks so the consumer's view matches a live run.
+	if !ran && res.Receipt != nil && a.cfg.Budget != nil {
+		if err := a.cfg.Budget.Restore(*res.Receipt); err != nil {
+			return nil, nil, err
+		}
+	}
 	if !ran && res.Message != nil {
 		replayAssistantBlocks(stream, *res.Message)
 	}
 
 	usage := liveUsage
+	if !ran {
+		usage = res.Usage
+	}
 	if usage == nil {
 		usage = &types.UsageDelta{}
 	}
@@ -1276,17 +1339,10 @@ type toolResult struct {
 // Results are returned in the same order as toolCalls. Tools are looked up in the
 // active registry (which differs per agent during a handoff).
 //
-// With the default NoopStepRunner tools run in parallel goroutines (today's
-// behavior). Two cases run SEQUENTIALLY in the caller's goroutine instead:
-//
-//   - A durable StepRunner: durable engines correlate steps to the workflow's
-//     calling context, so fanning out RunStep across goroutines would race on
-//     per-workflow step state.
-//   - MaxParallelTools == 1: a cap of one already forbids overlap, and running
-//     the calls inline additionally fixes their order to the order the model
-//     requested. A semaphore of one would serialize execution but leave the
-//     winner of each slot to the scheduler, which is the surprising half of
-//     the behavior for tools that share state or whose contract is ordering.
+// Noop and explicitly concurrent runners execute independent calls in parallel.
+// Other durable engines keep steps on their workflow goroutine. A limit of one
+// preserves model order. Only regular tool execution holds a semaphore slot;
+// approval waits and delegated children do not. Children apply their own limit.
 func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStream, toolCalls []types.ToolUseContent, tools *types.ToolRegistry) []toolResult {
 	results := make([]toolResult, len(toolCalls))
 	transfers := 0
@@ -1307,7 +1363,8 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 	}
 
 	_, isNoop := a.cfg.StepRunner.(types.NoopStepRunner)
-	if !isNoop || a.cfg.MaxParallelTools == 1 {
+	concurrent, _ := a.cfg.StepRunner.(types.ConcurrentStepRunner)
+	if (!isNoop && (concurrent == nil || !concurrent.ConcurrentSteps())) || a.cfg.MaxParallelTools == 1 {
 		for i, tc := range toolCalls {
 			results[i] = a.executeOneTool(ctx, stream, tc, tools)
 		}
@@ -1323,20 +1380,13 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 		sem = make(chan struct{}, a.cfg.MaxParallelTools)
 	}
 
+	ctx = context.WithValue(ctx, toolSlotsKey{}, sem)
 	var wg sync.WaitGroup
 	for i, tc := range toolCalls {
 		wg.Add(1)
 		go func(idx int, tc types.ToolUseContent) {
 			defer wg.Done()
-			if sem != nil {
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
-					results[idx] = failedTool(stream, tc.ID, ctx.Err().Error())
-					return
-				}
-				defer func() { <-sem }()
-			}
+
 			results[idx] = a.executeOneTool(ctx, stream, tc, tools)
 		}(i, tc)
 	}
@@ -1375,7 +1425,13 @@ func (a *Agent) chargeBudget(ctx context.Context, stream *EventStream, provider 
 	}
 	caps, _ := types.ProviderCapabilities(provider)
 
-	status, err := a.cfg.Budget.Record(model, caps.Pricing, types.UsageFromDelta(usage))
+	var status types.BudgetStatus
+	var err error
+	if usage.AccountingID != "" {
+		status, err = a.cfg.Budget.RecordOnce(usage.AccountingID, model, caps.Pricing, types.UsageFromDelta(usage))
+	} else {
+		status, err = a.cfg.Budget.Record(model, caps.Pricing, types.UsageFromDelta(usage))
+	}
 	if err != nil {
 		return err // unpriced model under an enforcing policy
 	}
@@ -1389,9 +1445,12 @@ func (a *Agent) chargeBudget(ctx context.Context, stream *EventStream, provider 
 	case types.BudgetStatusExceeded:
 		if a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
 			marker := a.cfg.Budget.ApprovalMarker()
-			pending := types.ToolUseContent{ID: types.NewID(), Name: "budget"}
+			pending := types.ToolUseContent{ID: "budget-" + usage.AccountingID, Name: "budget"}
 			msg, _, approved := a.awaitApproval(ctx, stream, pending, []types.Marker{marker})
 			if !approved {
+				if err := stream.runError(); err != nil {
+					return err
+				}
 				return fmt.Errorf("%w: %s", types.ErrBudgetExceeded, msg)
 			}
 			a.cfg.Budget.Grant(0)
@@ -1417,6 +1476,26 @@ func (a *Agent) Budget() *types.Budget { return a.cfg.Budget }
 // It returns (message, modifiedArgs, approved). On refusal or cancellation the
 // message is the tool error to report.
 func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker) (string, map[string]any, bool) {
+	return a.awaitApprovalPhase(ctx, stream, tc, markers, "gate")
+}
+
+func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker, phase string) (string, map[string]any, bool) {
+	if runner, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok {
+		decision, err := runner.ResolveApproval(ctx, types.ApprovalRequest{ID: phase + "/" + tc.ID, ToolCall: tc, Markers: markers})
+		if err != nil {
+			stream.stopRun(err)
+			return err.Error(), nil, false
+		}
+		if !decision.Approved {
+			return "rejected: " + decision.Message, nil, false
+		}
+		return "", decision.ModifiedArgs, true
+	}
+	if stream.nonStreaming {
+		err := errors.New("non-streaming approvals require an ApprovalRunner")
+		stream.stopRun(err)
+		return err.Error(), nil, false
+	}
 	resolution := stream.awaitResolution(tc.ID)
 	defer stream.clearResolution(tc.ID)
 	stream.send(types.MarkerDelta{
@@ -1482,6 +1561,15 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return a.delegateToSubAgent(ctx, stream, tc, tool, invoker)
 	}
 
+	if sem, ok := ctx.Value(toolSlotsKey{}).(chan struct{}); ok && sem != nil {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return failedTool(stream, tc.ID, ctx.Err().Error())
+		}
+		defer func() { <-sem }()
+	}
+
 	return a.runToolStep(ctx, stream, tc, tool)
 }
 
@@ -1544,31 +1632,14 @@ func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *typ
 		return tool, toolResult{}, false
 	}
 
-	resolution := stream.awaitResolution(tc.ID)
-	defer stream.clearResolution(tc.ID)
-	stream.send(types.MarkerDelta{
-		ToolCallID: tc.ID,
-		ToolName:   tc.Name,
-		Arguments:  tc.Arguments,
-		Markers:    mt.Markers,
-	})
-
-	select {
-	case r := <-resolution:
-		if !r.Approved {
-			msg := "rejected"
-			if r.Message != "" {
-				msg = "rejected: " + r.Message
-			}
-			return tool, failedTool(stream, tc.ID, msg), true
-		}
-		if r.ModifiedArgs != nil {
-			tc.Arguments = r.ModifiedArgs
-		}
-	case <-ctx.Done():
-		// Must still produce a matching, well-formed tool_result.
-		return tool, failedTool(stream, tc.ID, "context cancelled"), true
+	message, args, approved := a.awaitApprovalPhase(ctx, stream, *tc, mt.Markers, "marker")
+	if !approved {
+		return tool, failedTool(stream, tc.ID, message), true
 	}
+	if args != nil {
+		tc.Arguments = args
+	}
+
 	return mt.Inner, toolResult{}, false
 }
 
@@ -1625,6 +1696,9 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 	}
 	if err := childStream.Wait(); err != nil {
 		childErr = err
+		if _, durable := a.cfg.StepRunner.(types.ApprovalRunner); durable {
+			stream.stopRun(err)
+		}
 	}
 	res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
 	if _, native := tool.(*subAgentTool); native {
@@ -1694,6 +1768,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 
 	var res toolResult
 	if stepErr != nil {
+		stream.stopRun(stepErr)
 		// Infrastructure failure from the runner itself (e.g. durable engine
 		// error): surface it as a tool error rather than dropping it.
 		res = toolResult{toolCallID: tc.ID, err: stepErr.Error()}
@@ -1708,3 +1783,5 @@ func stringArg(args map[string]any, name string) string {
 	value, _ := args[name].(string)
 	return value
 }
+
+type toolSlotsKey struct{}

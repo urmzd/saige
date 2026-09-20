@@ -298,7 +298,7 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 			}
 
 			if chunk.Usage.TotalTokens > 0 {
-				ud := types.UsageDelta{
+				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:       int(chunk.Usage.PromptTokens),
 					CachedPromptTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
 					CompletionTokens:   int(chunk.Usage.CompletionTokens),

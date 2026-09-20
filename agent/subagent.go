@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
@@ -183,4 +184,25 @@ func (a *Agent) childStepRunner(toolCallID string) types.StepRunner {
 		return nil
 	}
 	return prefixStepRunner{inner: a.cfg.StepRunner, prefix: "sub-" + toolCallID + "-"}
+}
+
+// Approval resolution retains the same namespace as the child's steps.
+func (r prefixStepRunner) ResolveApproval(ctx context.Context, req types.ApprovalRequest) (types.ApprovalDecision, error) {
+	runner, ok := r.inner.(types.ApprovalRunner)
+	if !ok {
+		return types.ApprovalDecision{}, errors.New("durable child approvals require an ApprovalRunner")
+	}
+	req.ID = r.prefix + req.ID
+	return runner.ResolveApproval(ctx, req)
+}
+func (r prefixStepRunner) ConcurrentSteps() bool {
+	runner, ok := r.inner.(types.ConcurrentStepRunner)
+	return ok && runner.ConcurrentSteps()
+}
+
+func (r prefixStepRunner) RecordReservation(ctx context.Context, name string, receipt types.BudgetReceipt) error {
+	if recorder, ok := r.inner.(types.BudgetReservationRunner); ok {
+		return recorder.RecordReservation(ctx, r.prefix+name, receipt)
+	}
+	return nil
 }

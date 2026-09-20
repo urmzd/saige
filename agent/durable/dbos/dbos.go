@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/urmzd/saige/agent"
+	_ "github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -41,23 +42,7 @@ func init() {
 	// interface values, so the wrapper types need registration too.
 	gob.Register(RunInput{})
 	gob.Register(RunOutput{})
-	gob.Register(types.StepResult{})
-	gob.Register(types.SystemMessage{})
-	gob.Register(types.UserMessage{})
-	gob.Register(types.AssistantMessage{})
-	gob.Register(types.TextContent{})
-	gob.Register(types.ToolUseContent{})
-	gob.Register(types.ThinkingContent{})
-	gob.Register(types.ToolResultContent{})
-	gob.Register(types.FileContent{})
-	gob.Register(types.ConfigContent{})
-	gob.Register(types.FeedbackContent{})
-	gob.Register(types.HandoffContent{})
-	// Tool-call Arguments are map[string]any decoded from JSON; nested arrays and
-	// objects arrive as []interface{} / map[string]interface{} inside interface
-	// values and must be registered or gob.Encode fails on real tool schemas.
-	gob.Register([]interface{}{})
-	gob.Register(map[string]interface{}{})
+
 }
 
 // Runner adapts a workflow-bound dbos.DBOSContext to types.StepRunner by mapping
