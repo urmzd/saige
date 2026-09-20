@@ -239,11 +239,10 @@ OpenAI's require the Responses API, which the adapter does not use. Until
 wired, `ValidateServerTools` will pass and nothing will happen -- the one place
 in this design where a declaration outruns the implementation.
 
-**C. Prompt-cache tokens are not reported.** `UsageDelta` has no cached-read or
-cache-write fields, so `TokenUsage` leaves them zero and cached reads are billed
-at the full input rate. This over-counts, which is the safe direction for a
-budget, but it means reported spend will exceed the invoice on cache-heavy
-workloads.
+**C. Cache accounting needs complete tariffs.** `UsageDelta` now reports cache
+reads and writes. OpenAI, Anthropic, and Google populate those fields.
+The budget separates cache tiers, but cache storage and TTL-specific write
+prices still need a complete rate model. See [cache contracts](cache-contracts.md).
 
 **D. Pricing coverage is incomplete.** Claude 5 and Gemini 3 rows are
 deliberately unpriced rather than guessed. A `Budget` refuses to run against

@@ -235,3 +235,7 @@ func replay(buffered []types.Delta, errAfter error, rest <-chan types.Delta) <-c
 	}()
 	return out
 }
+
+func (p *Provider) NewSession() types.Provider {
+	return &Provider{Inner: types.NewProviderSession(p.Inner), Config: p.Config}
+}

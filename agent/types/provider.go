@@ -114,3 +114,18 @@ func GenerateText(ctx context.Context, p Provider, prompt string) (string, error
 	}
 	return sb.String(), nil
 }
+
+// SessionProvider creates an independent provider routing session for a child.
+// Immutable clients may be shared; sticky selection and in-flight state may not.
+type SessionProvider interface {
+	Provider
+	NewSession() Provider
+}
+
+// NewProviderSession isolates optional routing state through provider decorators.
+func NewProviderSession(provider Provider) Provider {
+	if sessions, ok := provider.(SessionProvider); ok {
+		return sessions.NewSession()
+	}
+	return provider
+}

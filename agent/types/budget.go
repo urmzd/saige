@@ -37,10 +37,11 @@ const (
 // Enforcement is checked on every usage report rather than once per iteration.
 // A single call to a long-context model can cost more than the whole budget, so
 // a per-iteration check can overshoot by an unbounded amount; a per-usage check
-// overshoots by at most one call.
+// can overshoot by every concurrent in-flight call. This is post-use accounting,
+// not admission control or a reservation ledger.
 type BudgetPolicy struct {
-	// Limit is the hard ceiling. Zero means unlimited, and every other field is
-	// then inert.
+	// Limit is the reported cost ceiling. Zero disables the cost ceiling;
+	// token and request limits still apply.
 	Limit Cost
 	// WarnAt is the fraction of Limit (0 to 1) at which Status starts reporting
 	// BudgetStatusWarn. Zero disables the warning tier.

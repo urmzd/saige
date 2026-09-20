@@ -130,8 +130,9 @@ func (g GenerationConfig) apply(c *genai.GenerateContentConfig) {
 // Adapter wraps the official Google GenAI SDK client and implements types.Provider,
 // types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
 type Adapter struct {
-	client *genai.Client
-	model  string
+	contextCache *ContextCache
+	client       *genai.Client
+	model        string
 
 	backend    genai.Backend
 	project    string
@@ -198,13 +199,19 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	contents, config := a.buildRequest(messages, tools)
+	contents, config, err := a.cachedRequest(messages, tools)
+	if err != nil {
+		return nil, err
+	}
 	return a.chatStream(ctx, contents, config)
 }
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	contents, config := a.buildRequest(messages, tools)
+	contents, config, err := a.cachedRequest(messages, tools)
+	if err != nil {
+		return nil, err
+	}
 	if schema != nil {
 		config.ResponseMIMEType = "application/json"
 		config.ResponseSchema = parameterSchemaToGemini(*schema)
@@ -323,11 +330,12 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 			// Emit usage.
 			if resp.UsageMetadata != nil {
 				ud := types.UsageDelta{
-					PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-					CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount),
-					TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
-					ResponseModel:    resp.ModelVersion,
-					ResponseID:       resp.ResponseID,
+					PromptTokens:       int(resp.UsageMetadata.PromptTokenCount),
+					CachedPromptTokens: int(resp.UsageMetadata.CachedContentTokenCount),
+					CompletionTokens:   int(resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount),
+					TotalTokens:        int(resp.UsageMetadata.TotalTokenCount),
+					ResponseModel:      resp.ModelVersion,
+					ResponseID:         resp.ResponseID,
 				}
 				if len(resp.Candidates) > 0 && string(resp.Candidates[0].FinishReason) != "" {
 					ud.FinishReasons = []string{string(resp.Candidates[0].FinishReason)}

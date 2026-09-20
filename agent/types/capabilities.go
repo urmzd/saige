@@ -34,6 +34,10 @@ const (
 	CapSystemPrompt Capability = "system_prompt"
 	// CapPromptCaching: repeated prompt prefixes can be cached provider-side.
 	CapPromptCaching Capability = "prompt_caching"
+	// Cache modes are separate because their resource and billing contracts differ.
+	CapAutomaticPromptCache Capability = "automatic_prompt_cache"
+	CapPromptCacheMarkers   Capability = "prompt_cache_markers"
+	CapExplicitContextCache Capability = "explicit_context_cache"
 	// CapReasoning: the model produces reasoning/thinking content.
 	CapReasoning Capability = "reasoning"
 	// CapReasoningSignature: reasoning blocks carry an opaque signature that must

@@ -80,7 +80,7 @@ func registerAnthropic() {
 		c := with(toolUse,
 			types.CapTemperature, types.CapTopP, types.CapTopK,
 			types.CapStopSequences, types.CapMaxOutputTokens,
-			types.CapPromptCaching, types.CapStructuredOutput,
+			types.CapPromptCaching, types.CapPromptCacheMarkers, types.CapStructuredOutput,
 			types.CapParallelToolControl,
 		)
 		c.ContextWindow = 200_000
@@ -167,7 +167,7 @@ func registerOpenAI() {
 	reasoning := func(ctxWindow, maxOut int, pricing types.Pricing) types.ModelCapabilities {
 		c := with(toolUse,
 			types.CapMaxOutputTokens, types.CapStructuredOutput,
-			types.CapReasoning, types.CapReasoningEffort, types.CapPromptCaching,
+			types.CapReasoning, types.CapReasoningEffort, types.CapPromptCaching, types.CapAutomaticPromptCache,
 			types.CapParallelToolControl,
 			types.CapServerTools, types.CapWebSearch, types.CapCitations, types.CapRemoteMCP,
 		)
@@ -190,7 +190,7 @@ func registerOpenAI() {
 	chat := func(ctxWindow, maxOut int, structured bool, pricing types.Pricing) types.ModelCapabilities {
 		c := with(toolUse, classicSampling...)
 		c = c.With(types.CapSeed, types.CapFrequencyPenalty, types.CapPresencePenalty,
-			types.CapPromptCaching, types.CapParallelToolControl)
+			types.CapPromptCaching, types.CapAutomaticPromptCache, types.CapParallelToolControl)
 		if structured {
 			c = c.With(types.CapStructuredOutput)
 			c.StructuredOutput = types.StructuredOutputNative
@@ -252,7 +252,7 @@ func registerGoogle() {
 			types.CapTemperature, types.CapTopP, types.CapTopK, types.CapSeed,
 			types.CapStopSequences, types.CapMaxOutputTokens,
 			types.CapFrequencyPenalty, types.CapPresencePenalty,
-			types.CapSafetySettings, types.CapStructuredOutput, types.CapPromptCaching,
+			types.CapSafetySettings, types.CapStructuredOutput, types.CapPromptCaching, types.CapAutomaticPromptCache, types.CapExplicitContextCache,
 			types.CapServerTools, types.CapWebSearch, types.CapCodeExecution, types.CapCitations,
 		)
 		if reasoningKnob != "" {
@@ -298,7 +298,7 @@ func registerGoogle() {
 
 	// 2.0 and earlier: no thinking. Vendor-deprecated, and still this repo's
 	// CLI default, which is itself a gap (see docs/model-capabilities.md).
-	legacy := gemini("", nil, 1_000_000, 8192, price(0.10, 0.40, 0.025))
+	legacy := gemini("", nil, 1_000_000, 8192, price(0.10, 0.40, 0.025)).Without(types.CapAutomaticPromptCache)
 	legacy.Notes = []string{"no thinking support", "vendor-deprecated: migrate to a 2.5 or 3.x model"}
 	seed(Entry{Provider: p, Prefix: "gemini-2.0", Caps: legacy})
 
@@ -308,7 +308,7 @@ func registerGoogle() {
 		seed(Entry{Provider: p, Prefix: prefix, Caps: embed})
 	}
 
-	fallback := gemini("", nil, 0, 0, types.Pricing{})
+	fallback := gemini("", nil, 0, 0, types.Pricing{}).Without(types.CapAutomaticPromptCache, types.CapExplicitContextCache)
 	fallback.Notes = []string{"unrecognised Gemini model: thinking and pricing not assumed"}
 	RegisterBaseline(p, fallback)
 }

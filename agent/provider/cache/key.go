@@ -145,11 +145,9 @@ func canonicalJSON(v any) []byte {
 }
 
 func hashTools(h hash.Hash, tools []types.ToolDef) {
-	// Sort tools by name so registry ordering (map iteration) doesn't perturb the key.
-	sorted := make([]types.ToolDef, len(tools))
-	copy(sorted, tools)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
-	for _, t := range sorted {
+	// Tool order is part of the actual provider prompt. Registries already
+	// expose a stable order; direct callers can deliberately choose another one.
+	for _, t := range tools {
 		writeField(h, "tool", []byte(t.Name))
 		writeField(h, "tooldesc", []byte(t.Description))
 		hashParameterSchema(h, t.Parameters)

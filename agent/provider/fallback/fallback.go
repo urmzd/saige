@@ -245,3 +245,11 @@ func drain(ch <-chan types.Delta) {
 	for range ch {
 	}
 }
+
+func (f *Provider) NewSession() types.Provider {
+	children := make([]types.Provider, len(f.Providers))
+	for i, p := range f.Providers {
+		children[i] = types.NewProviderSession(p)
+	}
+	return &Provider{Providers: children, FallbackOn: f.FallbackOn}
+}

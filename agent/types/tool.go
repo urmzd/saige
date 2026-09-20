@@ -160,6 +160,7 @@ func (r *ToolRegistry) Definitions() []ToolDef {
 	for _, t := range r.tools {
 		defs = append(defs, t.Definition())
 	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }
 

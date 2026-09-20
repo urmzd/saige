@@ -106,8 +106,7 @@ func (p Pricing) currency() string {
 
 // TokenUsage is the token breakdown a cost is computed from. It is separate
 // from UsageDelta because a delta is a streaming increment while this is a
-// settled total, and because the cache fields have no delta representation yet
-// (see UsageDelta).
+// settled total, and to separate input cache tiers from generated tokens.
 type TokenUsage struct {
 	// InputTokens are uncached prompt tokens.
 	InputTokens int
@@ -135,15 +134,20 @@ func (u TokenUsage) Total() int {
 	return u.InputTokens + u.CachedInputTokens + u.CacheWriteTokens + u.OutputTokens
 }
 
-// UsageFromDelta converts a streamed UsageDelta into a settled TokenUsage,
-// counting one request. Cache fields stay zero: no adapter reports them yet, so
-// cached reads are currently priced at the full input rate, which over-counts
-// rather than under-counts. Over-counting is the safe direction for a budget.
+// UsageFromDelta converts normalized usage to billing tiers. A response-cache
+// replay makes no new request. Provider prompt-cache hits remain billable.
 func UsageFromDelta(d UsageDelta) TokenUsage {
+	if d.CacheHit {
+		return TokenUsage{}
+	}
+	cached := max(0, d.CachedPromptTokens)
+	written := max(0, d.CacheWriteTokens)
 	return TokenUsage{
-		InputTokens:  d.PromptTokens,
-		OutputTokens: d.CompletionTokens,
-		Requests:     1,
+		InputTokens:       max(0, d.PromptTokens-cached-written),
+		CachedInputTokens: cached,
+		CacheWriteTokens:  written,
+		OutputTokens:      d.CompletionTokens,
+		Requests:          1,
 	}
 }
 

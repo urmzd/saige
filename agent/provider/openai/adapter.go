@@ -37,6 +37,8 @@ type config struct {
 // "unset" is distinguishable from "set to zero": temperature 0 is a meaningful
 // value, and sending it when the caller never asked would change behaviour.
 type genParams struct {
+	cacheKey         string
+	cacheRetention   string
 	maxTokens        *int64
 	temperature      *float64
 	topP             *float64
@@ -249,6 +251,9 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 	}
 
 	a.applyParams(&params)
+	if err := a.applyPromptCache(&params); err != nil {
+		return nil, err
+	}
 
 	oTools := toOpenAITools(tools)
 	if len(oTools) > 0 {
@@ -285,11 +290,12 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 
 			if chunk.Usage.TotalTokens > 0 {
 				ud := types.UsageDelta{
-					PromptTokens:     int(chunk.Usage.PromptTokens),
-					CompletionTokens: int(chunk.Usage.CompletionTokens),
-					TotalTokens:      int(chunk.Usage.TotalTokens),
-					ResponseID:       responseID,
-					ResponseModel:    responseModel,
+					PromptTokens:       int(chunk.Usage.PromptTokens),
+					CachedPromptTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
+					CompletionTokens:   int(chunk.Usage.CompletionTokens),
+					TotalTokens:        int(chunk.Usage.TotalTokens),
+					ResponseID:         responseID,
+					ResponseModel:      responseModel,
 				}
 				if finishReason != "" {
 					ud.FinishReasons = []string{finishReason}

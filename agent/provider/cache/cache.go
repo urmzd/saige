@@ -8,6 +8,8 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -23,6 +25,15 @@ type Config struct {
 	// KeyNamespace is prefixed into every key so multiple providers/agents can
 	// share one backing store without collisions (e.g. "anthropic").
 	KeyNamespace string
+	// ScopeKey identifies the tenant/auth scope. ConfigKey identifies the complete
+	// immutable provider configuration, including endpoint, model options, and
+	// policy revisions. Both are required for reuse across wrapper instances.
+	// Without both, New uses a private instance namespace.
+	ScopeKey  string
+	ConfigKey string
+	// CacheToolCalls opts into replaying model tool decisions. Calls still pass
+	// through gates and execute again, with fresh call IDs. Disabled by default.
+	CacheToolCalls bool
 	// Logger and Metrics default to noop.
 	Logger  *slog.Logger
 	Metrics types.Metrics
@@ -31,8 +42,9 @@ type Config struct {
 // Provider memoizes ChatStream responses. Only fully-completed, error-free
 // streams are cached.
 type Provider struct {
-	inner types.Provider
-	cfg   Config
+	inner    types.Provider
+	cfg      Config
+	identity string
 }
 
 var (
@@ -53,7 +65,12 @@ func New(inner types.Provider, cfg Config) *Provider {
 	if cfg.Metrics == nil {
 		cfg.Metrics = types.NoopMetrics{}
 	}
-	return &Provider{inner: inner, cfg: cfg}
+	identity := types.NewID()
+	if cfg.ScopeKey != "" && cfg.ConfigKey != "" {
+		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.ProviderName(inner)})
+		identity = string(raw)
+	}
+	return &Provider{inner: inner, cfg: cfg, identity: identity}
 }
 
 // Name implements types.NamedProvider.
@@ -69,7 +86,7 @@ func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
 // silently dropped under a cache decorator, and every switched request was
 // answered from the original model's cache entries.
 func (p *Provider) WithModel(model string) types.Provider {
-	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg}
+	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg, identity: p.identity}
 }
 
 // ContentSupport implements types.ContentNegotiator by delegating to the inner
@@ -98,7 +115,7 @@ func (p *Provider) ChatStreamWithSchema(ctx context.Context, msgs []types.Messag
 		if sp, ok := p.inner.(types.StructuredOutputProvider); ok {
 			return sp.ChatStreamWithSchema(ctx, msgs, tools, schema)
 		}
-		return p.inner.ChatStream(ctx, msgs, tools) // schema lost, mirrors retry/fallback
+		return nil, fmt.Errorf("response cache: underlying provider cannot enforce a schema")
 	}
 	return p.stream(ctx, msgs, tools, schema, call)
 }
@@ -111,7 +128,11 @@ func (p *Provider) stream(
 	if p.cfg.Cache == nil {
 		return call() // no backing store: behave as a transparent passthrough
 	}
-	key := p.cfg.KeyNamespace + ":" + Key(types.ProviderModel(p.inner), msgs, tools, schema)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	identity, _ := json.Marshal([]string{p.identity, types.ProviderModel(p.inner)})
+	key := p.cfg.KeyNamespace + ":" + Key(string(identity), msgs, tools, schema)
 
 	// HIT: replay recorded deltas, no upstream call.
 	if cr, found, err := p.cfg.Cache.Get(ctx, key); err == nil && found {
@@ -125,4 +146,13 @@ func (p *Provider) stream(
 		return nil, err // never cache provider construction errors
 	}
 	return p.recordAndTee(ctx, key, in), nil
+}
+
+// NewSession preserves cache configuration while isolating inner routing state.
+func (p *Provider) NewSession() types.Provider {
+	inner := p.inner
+	if sessions, ok := inner.(types.SessionProvider); ok {
+		inner = sessions.NewSession()
+	}
+	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity}
 }

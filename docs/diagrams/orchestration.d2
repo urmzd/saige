@@ -1,0 +1,35 @@
+direction: right
+current: "Current implementation" {
+  source: "Audit tree\nbranches, nodes, handoff events" {shape: cylinder}
+  owner: "Current owner\nselected context"
+  links: "Link policy\ndirect return edges by default"
+  specialist: "Handoff recipient\nfinish, transfer onward, or return"
+  child: "Subagent\nnew tree per task"
+  result: "Detached result\nfinal text or selected data"
+  tools: "Tool policy then ToolGate"
+  route: "Routing session\nsticky complete profile"
+  provider: "Configured provider\nmodel, reasoning, sampling, cache"
+  interrupt: "In-memory approval\none call waits; siblings can run"
+  owner -> source: record
+  owner -> links -> specialist: transfer ownership
+  specialist -> owner: explicit return with brief
+  specialist -> source: record
+  owner -> child: delegate task
+  child -> result -> owner: always return
+  owner -> tools -> route -> provider
+  tools -> interrupt: approval required
+  interrupt -> tools: decision
+}
+future: "Future distributed contracts" {
+  style.stroke-dash: 4
+  scheduler: "Worker leases\nremote handoff owners"
+  ledger: "Durable reservations\nsettlement and uncertain charges" {shape: cylinder}
+  interrupts: "Persisted interrupts\nrelease worker, resume later" {shape: cylinder}
+  resources: "Cache resource manager\ntenant scope, TTL, cleanup"
+  extensions: "Versioned skills and memory\npermissions and provenance"
+  scheduler -> ledger
+  scheduler -> interrupts
+  scheduler -> resources
+  scheduler -> extensions
+}
+current.source -> future.scheduler: requires durable ownership
