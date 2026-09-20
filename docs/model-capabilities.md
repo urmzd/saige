@@ -1,9 +1,92 @@
 # Model capabilities, tools, and cost: the category and the gaps
 
-This document does two things. It describes the category introduced on this
-branch -- one vocabulary covering what a model can do, what a tool needs, who
-may call it, and what it costs -- and it records the gaps found while building
-it, including the ones still open.
+This document describes model capabilities, tool permissions, and cost controls.
+It explains the contracts and records known limits.
+
+## Request validation and reasoning
+
+Reasoning support already existed. Adapters now enforce configured controls before network I/O
+instead of silently dropping incompatible options. Call `adapter.Validate()` for an early check;
+both plain and schema streaming paths revalidate, including after `WithModel`. Invalid settings
+return a permanent `ProviderError` wrapping `types.ErrInvalidModelConfig`. A retry wrapper does
+not retry them. Constructors keep their existing signatures; Google also validates at construction.
+
+```go
+p := openai.NewAdapter(key, "o3", openai.WithTemperature(0))
+err := p.Validate() // temperature: not declared supported for this model
+if errors.Is(err, types.ErrInvalidModelConfig) { /* fix the configuration */ }
+
+p = openai.NewAdapter(key, "o3", openai.WithReasoningEffort("high"))
+err = p.Validate() // nil
+```
+
+`Capabilities()` exposes declared controls. `ReasoningRequired` distinguishes required reasoning
+from optional reasoning, and `DefaultReasoningEffort`, `ReasoningDefaultEnabled`, budget bounds,
+zero/dynamic budget support and `SamplingRequiresNoReasoning` describe conditional settings.
+`ValidateOptions(types.RequestOptions{...})` evaluates those rules for a particular request.
+A capability flag alone is not proof that every combination of controls is valid.
+
+| Adapter | Enforced reasoning behavior | Visible reasoning |
+|---|---|---|
+| OpenAI Chat Completions | Effort enum per cataloged model; required reasoning cannot be disabled; unsupported sampling is rejected | Final text and usage, not raw internal reasoning |
+| Anthropic | Manual budgets or adaptive effort where declared; manual budget must fit below output cap; thinking/sampling conflicts fail | Signed thinking blocks, possibly empty depending on model/display |
+| Google | Budget versus level per family; positive budget bounds, dynamic `-1`, and forbidden disabling | Thinking parts and signatures returned by the API |
+| Ollama adapter | Explicit `think` must be declared; recognized sampling fields validated from their actual JSON representation | Thinking chunks when the local model emits them |
+
+GPT-5.1/5.2 allow temperature and top-p when reasoning is disabled; o-series and original GPT-5
+rows do not. Omitted effort preserves the provider default. These newer rows are deliberately
+unpriced rather than inheriting an older rate. [OpenAI parameter compatibility](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2).
+
+Gemini 2.5 Pro cannot disable thinking; Flash can. Budget `-1` means dynamic thinking, not off.
+The SDK's uppercase level constants are normalized for comparison with the catalog while retaining
+the SDK wire representation. [Google thinking controls](https://ai.google.dev/gemini-api/docs/generate-content/thinking).
+
+Anthropic adaptive-only families reject manual budgets. `WithReasoningEffort` enables adaptive
+thinking and sends output effort. Manual thinking rejects non-default temperature, top-k, and
+top-p below 0.95. This adapter uses a forced tool for schema output.
+Manual thinking cannot use this path. Adaptive thinking can use it when the model permits forced tools. [Anthropic thinking rules](https://platform.claude.com/docs/en/build-with-claude/thinking).
+
+Ollama validates `top_k` as a nonnegative integer. Strings, fractions, and negative values fail
+before HTTP. This follows the [Ollama parameter types](https://docs.ollama.com/modelfile#valid-parameters-and-values).
+
+**Compatibility change:** a previously ignored option now fails. Configure each fallback member
+for its own model. Do not share temperature across a chat/reasoning fallback and assume it was
+honored. Explicit zero, false and empty effort remain explicit; omitted values preserve defaults.
+
+```sh
+go run ./cmd/saige models o3 --provider openai
+go run ./cmd/saige models gpt-5.2 --provider openai --format json
+go run ./cmd/saige models gemini-2.5-pro --provider google --format json
+```
+
+Request shape is checked too: all four adapters require streaming, tools when definitions are
+present, and structured output when a schema is supplied. An embedding-only model now fails
+before sending a chat request. This check applies to both plain and schema entry points.
+
+Catalog registration, baseline registration, returned registrations, history, lookup and rollback
+own their maps and slices. Editing a caller-held value cannot alter a recorded revision. To change
+capabilities, register a new revision. Only the exact declared model name has `Known=true`;
+prefix, date-suffix, tag and namespace inference retains the family metadata with `Known=false`.
+`Lookup`'s boolean follows `Known`, not whether any family prefix matched. Exact registrations
+for a variant or tagged/namespaced local model override inferred family metadata.
+
+**Limits:** the catalog remains curated model metadata, not live discovery or a
+complete vendor compatibility matrix. Undeclared models report `Known=false` and may inherit a family or use a baseline;
+applications requiring verified support must reject unknown models or register and pin a tested
+entry. Custom OpenAI-compatible endpoints can differ from OpenAI even with the same model name.
+Fallback intersections retain the stricter reasoning restrictions, but each adapter remains the
+final validator. Ollama's low-level `Client` is a wire API, not the validating adapter; its legacy
+`Options` struct omits zero values, whereas a map can send an explicit zero. Google generation
+config likewise uses zero as omission for its non-pointer output limit. Validation covers exposed
+controls, not every provider feature, media combination, or undeclared numeric limit.
+The Anthropic effort option selects adaptive thinking. It does not expose independent effort
+control for legacy manual thinking. New model variants can differ from an inferred family;
+for example, Fable 5.1 rejects forced tools. Register an exact declaration without `CapToolChoice`
+before using such a variant through this adapter.
+
+Request rules were checked against the linked provider documents on 2026-09-20.
+Anthropic effort values follow its [effort availability table](https://platform.claude.com/docs/en/build-with-claude/effort).
+These checks do not refresh the price table or certify every endpoint.
 
 ## Why a category was needed
 
@@ -15,8 +98,8 @@ in ways no amount of interface uniformity hides:
 
 | Question | Anthropic | OpenAI (reasoning) | OpenAI (chat) | Gemini 2.5 | Gemini 3 | Ollama |
 |---|---|---|---|---|---|---|
-| How is reasoning sized? | token budget, min 1024 | effort enum | not available | token budget | thinking level | on/off toggle |
-| Does it take `temperature`? | yes (not with thinking) | **no, rejects it** | yes | yes | yes | yes |
+| How is reasoning sized? | manual budget or adaptive effort | effort enum | not available | token budget | thinking level | on/off toggle |
+| Does it take `temperature`? | per model and thinking mode | per model and effort | yes | yes | yes | yes |
 | Schema output | emulated via forced tool call | native | native | native | native | native |
 | Reasoning signature round-trip | required | n/a | n/a | n/a | required | none returned |
 | Server-side web search | yes | yes | no | yes | yes | no |
@@ -193,9 +276,9 @@ anywhere in the group, and names the entry agent as the real problem.
 **8. OpenAI and Anthropic had almost no options.** OpenAI exposed only
 `WithBaseURL` -- no max tokens, temperature, seed, stop, penalties, reasoning
 effort, or parallel-tool control. Anthropic exposed only max tokens and
-thinking. All added, and applied through the capability table so a knob the
-target model rejects is dropped rather than sent. This is what lets one config
-be shared across a `gpt-4o`/`o3` fallback chain without failing on half of it.
+thinking. All added. The original implementation dropped unsupported knobs. Request validation now
+rejects them before network I/O, so callers can see that their requested configuration was not
+valid. Configure `gpt-4o`/`o3` fallback members separately.
 
 **9. No MCP client existed.** The repo could *serve* MCP (`cmd/saige-mcp`) but
 not *consume* it. `agent/mcp` adds both transports, with the differences made

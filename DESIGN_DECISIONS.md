@@ -85,3 +85,21 @@ A shared summary can erase ownership boundaries and expose another owner's conte
 Automatic compaction is therefore rejected for handoff groups.
 Per-owner checkpoints and summaries must exist before this restriction can be removed.
 This is a deliberate limit, not an implicit promise that long handoff sessions fit every model.
+
+## D-12: Reject unsupported request controls
+
+Adapters validate configured controls before they send a request.
+For example, temperature on an `o3` request returns `ErrInvalidModelConfig`.
+The adapter does not silently remove the requested value.
+This makes a configuration error visible and prevents retrying the same invalid request.
+Each route must have settings that its own model accepts.
+Validation preserves prompt cache options and reported cache usage.
+
+## D-13: Own catalog snapshots at the boundary
+
+The catalog copies mutable metadata on registration and on return.
+A caller can edit a lookup result without changing another session or a stored revision.
+For example, changing a returned effort list does not modify the next lookup.
+A deliberate change requires a new registration, which records a revision.
+An exact model declaration sets `Known=true`. A family inference sets it to false.
+This separates a declared model from an unverified variant that has a similar name.

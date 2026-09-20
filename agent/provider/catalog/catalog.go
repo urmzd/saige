@@ -15,7 +15,8 @@
 //
 // Model identifiers carry dated and versioned suffixes
 // ("claude-sonnet-4-5-20250514", "gemini-3-flash-preview"), so entries are
-// matched by longest declared prefix. An unrecognised model falls through to
+// matched by longest declared prefix. Only an exact declared name has Known
+// true; prefix/tag/path inference keeps Known false. An unrecognised model falls through to
 // the provider's Baseline: a deliberately conservative entry with Known set
 // false, so callers that must fail closed can tell "declared unsupported" from
 // "never heard of it".
@@ -71,15 +72,29 @@ func key(provider, prefix string) string { return provider + "/" + prefix }
 
 // Register adds a revision for a provider+prefix row and returns it. Resolution
 // takes the newest revision unless the row is pinned, so this both seeds the
-// table at init and corrects it at runtime.
+// table at init and corrects it at runtime. Inputs and returned values are
+// detached snapshots; subsequent caller mutations cannot rewrite a revision.
 func Register(e Entry, opts ...registry.Option) registry.Entry[Entry] {
-	return models.Register(key(e.Provider, e.Prefix), e, opts...)
+	stored := models.Register(key(e.Provider, e.Prefix), cloneEntry(e), opts...)
+	stored.Value = cloneEntry(stored.Value)
+	return stored
+}
+
+// cloneEntry owns every mutable map/slice in model metadata. Keep copying at
+// catalog boundaries rather than assuming the generic registry clones values.
+func cloneEntry(e Entry) Entry {
+	e.Caps = e.Caps.ForModel(e.Caps.Model)
+	return e
 }
 
 // History returns every revision of one row, oldest first. Use it to see what a
 // row said before a correction, and when it changed.
 func History(provider, prefix string) []registry.Entry[Entry] {
-	return models.History(key(provider, prefix))
+	history := models.History(key(provider, prefix))
+	for i := range history {
+		history[i].Value = cloneEntry(history[i].Value)
+	}
+	return history
 }
 
 // Pin freezes a row to a revision. A deployment whose cost model was validated
@@ -96,7 +111,7 @@ func Unpin(provider, prefix string) { models.Unpin(key(provider, prefix)) }
 // to be the wrong correction.
 func Rollback(provider, prefix string) (Entry, error) {
 	e, err := models.Rollback(key(provider, prefix))
-	return e.Value, err
+	return cloneEntry(e.Value), err
 }
 
 // Revisions returns how many revisions a row has.
@@ -109,13 +124,14 @@ func Revisions(provider, prefix string) int {
 func RegisterBaseline(provider string, caps types.ModelCapabilities) {
 	mu.Lock()
 	defer mu.Unlock()
-	baseline[provider] = caps
+	baseline[provider] = caps.ForModel(caps.Model)
 }
 
 // Lookup resolves the capabilities of one (provider, model) pair. The bool
-// reports whether a catalog entry matched: false means the returned value is
-// the provider baseline (or, for an unknown provider, the zero value, which
-// supports nothing).
+// reports whether the exact model is declared (also ModelCapabilities.Known).
+// A prefix-inferred result retains Family and capabilities but returns false;
+// a provider baseline has an empty Family and also returns false. Neither is
+// verified for the requested model.
 //
 // Matching is case-insensitive and ignores an ollama-style ":tag" suffix for
 // prefix purposes only, so "qwen3:4b" matches the "qwen3" entry.
@@ -132,6 +148,13 @@ func Lookup(provider, model string) (types.ModelCapabilities, bool) {
 			continue
 		}
 		p := normalize(e.Prefix)
+		// Exact tag/path declarations override a normalized family with the
+		// same length; otherwise registering pinned local weights would lose
+		// to their shorter family name after normalization.
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
+			best, bestLen = e, len(p)
+			break
+		}
 		if !strings.HasPrefix(want, p) {
 			continue
 		}
@@ -144,8 +167,13 @@ func Lookup(provider, model string) (types.ModelCapabilities, bool) {
 		out := best.Caps.ForModel(model)
 		out.Provider = provider
 		out.Family = best.Prefix
-		out.Known = true
-		return out, true
+		// A prefix or stripped Ollama tag/path identifies a possible family,
+		// not a declaration for the requested model or weights.
+		out.Known = strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(best.Prefix))
+		if !out.Known {
+			out.Notes = append(out.Notes, "capabilities inferred from family prefix; register the exact model to mark this declaration known")
+		}
+		return out, out.Known
 	}
 
 	if b, ok := baseline[provider]; ok {

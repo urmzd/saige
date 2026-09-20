@@ -38,18 +38,22 @@ func newModelsCmd() *cobra.Command {
 
 // capabilityRow is the JSON shape of one table row.
 type capabilityRow struct {
-	Provider        string   `json:"provider"`
-	Family          string   `json:"family"`
-	Reasoning       string   `json:"reasoning"`
-	StructuredOut   string   `json:"structured_output"`
-	Tools           bool     `json:"tools"`
-	Temperature     bool     `json:"temperature"`
-	ContextWindow   int      `json:"context_window,omitempty"`
-	MaxOutputTokens int      `json:"max_output_tokens,omitempty"`
-	ServerTools     []string `json:"server_tools,omitempty"`
-	Pricing         string   `json:"pricing"`
-	Revisions       int      `json:"revisions"`
-	Capabilities    []string `json:"capabilities"`
+	Provider                    string             `json:"provider"`
+	Family                      string             `json:"family"`
+	Reasoning                   string             `json:"reasoning"`
+	ReasoningRequired           bool               `json:"reasoning_required"`
+	ReasoningDefaultEnabled     bool               `json:"reasoning_default_enabled"`
+	DefaultReasoningEffort      string             `json:"default_reasoning_effort,omitempty"`
+	SamplingRequiresNoReasoning []types.Capability `json:"sampling_requires_no_reasoning,omitempty"`
+	StructuredOut               string             `json:"structured_output"`
+	Tools                       bool               `json:"tools"`
+	Temperature                 bool               `json:"temperature"`
+	ContextWindow               int                `json:"context_window,omitempty"`
+	MaxOutputTokens             int                `json:"max_output_tokens,omitempty"`
+	ServerTools                 []string           `json:"server_tools,omitempty"`
+	Pricing                     string             `json:"pricing"`
+	Revisions                   int                `json:"revisions"`
+	Capabilities                []string           `json:"capabilities"`
 }
 
 func listModels(asJSON bool) error {
@@ -71,7 +75,7 @@ func listModels(asJSON bool) error {
 	for _, r := range rows {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Provider, r.Family, r.Reasoning, dash(r.StructuredOut),
-			yesNo(r.Tools), yesNo(r.Temperature), count(r.ContextWindow),
+			yesNo(r.Tools), temperatureSummary(r), count(r.ContextWindow),
 			dash(strings.Join(r.ServerTools, ",")), r.Pricing)
 	}
 	return w.Flush()
@@ -83,23 +87,38 @@ func describeModel(provider, model string, asJSON bool) error {
 	if asJSON {
 		out := struct {
 			capabilityRow
-			Model              string   `json:"model"`
-			Known              bool     `json:"known"`
-			ReasoningEfforts   []string `json:"reasoning_efforts,omitempty"`
-			MinReasoningBudget int      `json:"min_reasoning_budget,omitempty"`
-			Notes              []string `json:"notes,omitempty"`
-		}{newRow(caps), model, found, caps.ReasoningEfforts, caps.MinReasoningBudget, caps.Notes}
+			Model                  string   `json:"model"`
+			Known                  bool     `json:"known"`
+			ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`
+			MinReasoningBudget     int      `json:"min_reasoning_budget,omitempty"`
+			MaxReasoningBudget     int      `json:"max_reasoning_budget,omitempty"`
+			ZeroReasoningBudget    bool     `json:"zero_reasoning_budget"`
+			DynamicReasoningBudget bool     `json:"dynamic_reasoning_budget"`
+			Notes                  []string `json:"notes,omitempty"`
+		}{newRow(caps), model, found, caps.ReasoningEfforts, caps.MinReasoningBudget, caps.MaxReasoningBudget, caps.ZeroReasoningBudget, caps.DynamicReasoningBudget, caps.Notes}
 		return json.NewEncoder(os.Stdout).Encode(out)
 	}
 
 	fmt.Printf("%s / %s\n", provider, model)
-	if !found {
+	if !found && caps.Family != "" {
+		fmt.Printf("  inferred from family %s: not an exact model declaration.\n", caps.Family)
+		fmt.Println("  Register the exact model before treating these capabilities as verified.")
+	} else if !found {
 		fmt.Printf("  not in the catalog: showing the conservative %s baseline.\n", provider)
 		fmt.Println("  Treat every capability below as unverified for this model.")
 	} else {
 		fmt.Printf("  family: %s\n", caps.Family)
 	}
-	fmt.Printf("  reasoning: %s\n", reasoningSummary(caps))
+	fmt.Printf("  reasoning: %s (required: %s)\n", reasoningSummary(caps), yesNo(caps.ReasoningRequired))
+	if len(caps.ReasoningEfforts) > 0 {
+		fmt.Printf("  reasoning efforts: %s (default: %s)\n", strings.Join(caps.ReasoningEfforts, ", "), dash(caps.DefaultReasoningEffort))
+	}
+	if caps.Supports(types.CapReasoningBudget) {
+		fmt.Printf("  reasoning budget: min %d, max %s; zero: %s, dynamic (-1): %s\n", caps.MinReasoningBudget, count(caps.MaxReasoningBudget), yesNo(caps.ZeroReasoningBudget), yesNo(caps.DynamicReasoningBudget))
+	}
+	if len(caps.SamplingRequiresNoReasoning) > 0 {
+		fmt.Printf("  require reasoning off: %v\n", caps.SamplingRequiresNoReasoning)
+	}
 	fmt.Printf("  structured output: %s\n", dash(string(caps.StructuredOutput)))
 	if caps.ContextWindow > 0 {
 		fmt.Printf("  context window: %d tokens\n", caps.ContextWindow)
@@ -138,18 +157,22 @@ func newRow(caps types.ModelCapabilities) capabilityRow {
 		revisions = catalog.Revisions(caps.Provider, caps.Family)
 	}
 	return capabilityRow{
-		Provider:        caps.Provider,
-		Family:          caps.Family,
-		ServerTools:     serverTools,
-		Pricing:         caps.Pricing.Describe(),
-		Revisions:       revisions,
-		Reasoning:       reasoningSummary(caps),
-		StructuredOut:   string(caps.StructuredOutput),
-		Tools:           caps.Supports(types.CapTools),
-		Temperature:     caps.Supports(types.CapTemperature),
-		ContextWindow:   caps.ContextWindow,
-		MaxOutputTokens: caps.MaxOutputTokens,
-		Capabilities:    capNames(caps),
+		Provider:                    caps.Provider,
+		Family:                      caps.Family,
+		ServerTools:                 serverTools,
+		Pricing:                     caps.Pricing.Describe(),
+		Revisions:                   revisions,
+		Reasoning:                   reasoningSummary(caps),
+		ReasoningRequired:           caps.ReasoningRequired,
+		ReasoningDefaultEnabled:     caps.ReasoningActive(types.RequestOptions{}),
+		DefaultReasoningEffort:      caps.DefaultReasoningEffort,
+		SamplingRequiresNoReasoning: caps.SamplingRequiresNoReasoning,
+		StructuredOut:               string(caps.StructuredOutput),
+		Tools:                       caps.Supports(types.CapTools),
+		Temperature:                 caps.Supports(types.CapTemperature),
+		ContextWindow:               caps.ContextWindow,
+		MaxOutputTokens:             caps.MaxOutputTokens,
+		Capabilities:                capNames(caps),
 	}
 }
 
@@ -211,4 +234,16 @@ func count(n int) string {
 		return "-"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func temperatureSummary(r capabilityRow) string {
+	if !r.Temperature {
+		return "no"
+	}
+	for _, c := range r.SamplingRequiresNoReasoning {
+		if c == types.CapTemperature {
+			return "reasoning=off"
+		}
+	}
+	return "yes"
 }

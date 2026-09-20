@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/urmzd/saige/agent/provider/catalog"
 )
 
 // Client is an HTTP client for the Ollama API.
@@ -275,7 +277,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, tools [
 // return no usable content. Set WithThink(true) to override.
 func (c *Client) ChatStreamWithFormat(ctx context.Context, messages []ChatMessage, tools []Tool, format any) (<-chan ChatChunk, error) {
 	think := c.Think
-	if think == nil && format != nil {
+	if think == nil && format != nil && !catalog.MustLookup("ollama", c.Model).ReasoningRequired {
 		off := false
 		think = &off
 	}

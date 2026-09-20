@@ -26,11 +26,12 @@ var (
 // Adapter wraps the official Anthropic SDK client and implements types.Provider,
 // types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
 type Adapter struct {
-	systemCacheTTL string
-	client         anthropic.Client
-	model          anthropic.Model
-	maxTokens      int64
-	thinking       *int64 // nil = disabled; set to budget tokens to enable extended thinking
+	systemCacheTTL  string
+	client          anthropic.Client
+	model           anthropic.Model
+	maxTokens       int64
+	thinking        *int64  // manual thinking budget; nil uses the model default
+	reasoningEffort *string // adaptive thinking when set
 
 	temperature   *float64
 	topP          *float64
@@ -52,14 +53,19 @@ func WithMaxTokens(n int64) Option {
 
 // WithThinking enables extended thinking with the given token budget.
 // The budget must be at least ModelCapabilities.MinReasoningBudget (1024) and
-// the model must declare CapReasoning; on a model that does not, the flag is
-// dropped rather than sent, since Anthropic rejects it.
+// the model must declare CapReasoningBudget. Unsupported settings fail locally.
 func WithThinking(budgetTokens int64) Option {
 	return func(a *Adapter) { a.thinking = &budgetTokens }
 }
 
+// WithReasoningEffort enables adaptive thinking and sets its effort. Models
+// accepting only a manual budget reject this option; use WithThinking for them.
+func WithReasoningEffort(effort string) Option {
+	return func(a *Adapter) { a.reasoningEffort = &effort }
+}
+
 // WithTemperature sets sampling temperature. Anthropic constrains combining
-// this with extended thinking, so it is dropped whenever thinking is active.
+// this with extended thinking; incompatible settings fail locally.
 func WithTemperature(t float64) Option {
 	return func(a *Adapter) { a.temperature = &t }
 }
@@ -110,35 +116,70 @@ func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	return a
 }
 
-// applyParams copies the configured knobs onto a request, dropping any the
-// target model does not declare and any that Anthropic forbids alongside
-// extended thinking.
+// applyParams encodes controls already checked by Validate.
 func (a *Adapter) applyParams(p *anthropic.MessageNewParams) {
-	caps := a.Capabilities()
 
-	thinkingOn := a.thinking != nil && caps.Supports(types.CapReasoning)
+	thinkingOn := a.thinking != nil
+	if a.reasoningEffort != nil {
+		p.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		p.OutputConfig.Effort = anthropic.OutputConfigEffort(*a.reasoningEffort)
+	}
 	if thinkingOn {
 		p.Thinking = anthropic.ThinkingConfigParamOfEnabled(*a.thinking)
 	}
-	if a.temperature != nil && caps.Supports(types.CapTemperature) && !thinkingOn {
+	if a.temperature != nil {
 		p.Temperature = anthropic.Float(*a.temperature)
 	}
-	if a.topP != nil && caps.Supports(types.CapTopP) && !thinkingOn {
+	if a.topP != nil {
 		p.TopP = anthropic.Float(*a.topP)
 	}
-	if a.topK != nil && caps.Supports(types.CapTopK) && !thinkingOn {
+	if a.topK != nil {
 		p.TopK = anthropic.Int(*a.topK)
 	}
-	if len(a.stop) > 0 && caps.Supports(types.CapStopSequences) {
+	if len(a.stop) > 0 {
 		p.StopSequences = a.stop
 	}
-	if a.parallelTools != nil && caps.Supports(types.CapParallelToolControl) && p.ToolChoice.OfAuto == nil && p.ToolChoice.OfTool == nil {
+	if a.parallelTools != nil && p.ToolChoice.OfAuto == nil && p.ToolChoice.OfTool == nil {
 		p.ToolChoice = anthropic.ToolChoiceUnionParam{
 			OfAuto: &anthropic.ToolChoiceAutoParam{
 				DisableParallelToolUse: anthropic.Bool(!*a.parallelTools),
 			},
 		}
 	}
+}
+
+// Validate rejects unsupported or incompatible controls before any request.
+func (a *Adapter) Validate() error {
+	caps := a.Capabilities()
+	var topK *float64
+	if a.topK != nil {
+		k := float64(*a.topK)
+		topK = &k
+	}
+	o := types.RequestOptions{Temperature: a.temperature, TopP: a.topP, TopK: topK,
+		MaxOutputTokens: &a.maxTokens, StopSequences: a.stop, ParallelTools: a.parallelTools,
+		ReasoningBudget: a.thinking, ReasoningEffort: a.reasoningEffort}
+	if err := caps.ValidateOptions(o); err != nil {
+		return err
+	}
+	if a.temperature != nil && *a.temperature > 1 {
+		return caps.OptionError("temperature", "must be between 0 and 1")
+	}
+	if a.thinking != nil && *a.thinking >= a.maxTokens {
+		return caps.OptionError("reasoning_budget", "must be smaller than max_output_tokens")
+	}
+	if caps.ReasoningActive(o) {
+		if a.temperature != nil && *a.temperature != 1 {
+			return caps.OptionError("temperature", "cannot modify temperature while thinking")
+		}
+		if a.topK != nil {
+			return caps.OptionError("top_k", "cannot set top_k while thinking")
+		}
+		if a.topP != nil && *a.topP < 0.95 {
+			return caps.OptionError("top_p", "must be in [0.95, 1] while thinking")
+		}
+	}
+	return nil
 }
 
 // Name implements types.NamedProvider.
@@ -164,6 +205,14 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
 	systemBlocks, aMsgs := toAnthropicParams(messages)
 	if err := a.applyPromptCache(systemBlocks); err != nil {
 		return nil, err
@@ -186,8 +235,25 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 }
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
-// Anthropic has no native response_format; we inject a hidden tool and force the model to call it.
+// This adapter constrains output with a hidden tool and forces the model to call it.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
+	if schema != nil && a.thinking != nil {
+		return nil, a.Capabilities().OptionError("structured_output", "forced-tool schema output is incompatible with manual thinking")
+	}
+	if schema != nil {
+		if err := a.Capabilities().Require(types.CapTools, types.CapToolChoice); err != nil {
+			return nil, err
+		}
+	}
+
 	systemBlocks, aMsgs := toAnthropicParams(messages)
 	if err := a.applyPromptCache(systemBlocks); err != nil {
 		return nil, err
