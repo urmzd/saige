@@ -1,6 +1,6 @@
 # eval
 
-Composable evaluation framework that works across all saige subsystems. The core `eval` package has zero subsystem dependencies. Subsystem-specific scorers live alongside their domains: [`agent/eval`](../agent/eval/), [`knowledge/eval`](../knowledge/eval/), [`rag/eval`](../rag/eval/).
+Composable evaluation framework that works across all saige subsystems. The core `eval` package has zero subsystem dependencies. Subsystem-specific scorers live alongside their domains: [`agent/eval`](../agent/eval/), [`rag/knowledge/eval`](../rag/knowledge/eval/), [`rag/eval`](../rag/eval/).
 
 ```go
 import "github.com/urmzd/saige/eval"
@@ -45,7 +45,7 @@ Full API reference: [pkg.go.dev/github.com/urmzd/saige/eval](https://pkg.go.dev/
 | `ToolSuccessRateScorer` | Fraction of successful tool calls |
 | `TurnCountScorer` | Agent loop iterations |
 
-**Knowledge Graph** ([`knowledge/eval`](../knowledge/eval/)):
+**Knowledge Graph** ([`rag/knowledge/eval`](../rag/knowledge/eval/)):
 
 | Scorer | Description |
 |--------|-------------|

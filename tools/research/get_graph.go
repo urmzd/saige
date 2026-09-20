@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/urmzd/saige/agent/types"
-	"github.com/urmzd/saige/knowledge/graph"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	"github.com/urmzd/saige/rag/knowledge/graph"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
 // GetGraphTool implements types.Tool for knowledge graph visualization.

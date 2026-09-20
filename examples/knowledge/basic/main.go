@@ -17,9 +17,9 @@ import (
 	"os"
 
 	"github.com/urmzd/saige/agent/provider/ollama"
-	"github.com/urmzd/saige/knowledge"
-	"github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/postgres"
+	"github.com/urmzd/saige/rag/knowledge"
+	"github.com/urmzd/saige/rag/knowledge/types"
 )
 
 func main() {

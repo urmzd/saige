@@ -26,6 +26,6 @@ All constructor parameters are optional except the root directory. Pass `nil` fo
 
 ## Related
 
-- [`knowledge`](../../knowledge/README.md): the graph backing the knowledge tools
+- [`rag/knowledge`](../../rag/knowledge/README.md): the graph backing the knowledge tools
 - [`rag/source/searxng`](../../rag/source/searxng/): the SearXNG HTTP client
 - [Root README](../../README.md): project overview and installation

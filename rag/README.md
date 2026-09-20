@@ -207,5 +207,5 @@ results, _ := client.Search(ctx, "retrieval augmented generation")
 ## Related
 
 - [`tools/research`](../tools/research/): web search, file, and knowledge graph tools built on this package
-- [`knowledge`](../knowledge/README.md): knowledge graph SDK backing the graph retriever
+- [`rag/knowledge`](knowledge/README.md): knowledge graph SDK backing the graph retriever
 - [Root README](../README.md): project overview and installation

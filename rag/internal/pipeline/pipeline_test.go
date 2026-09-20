@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/internal/pipeline"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	"github.com/urmzd/saige/rag/memstore"
 	"github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/vectorretriever"

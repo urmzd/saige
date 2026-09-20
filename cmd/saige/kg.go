@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/tui"
-	"github.com/urmzd/saige/knowledge"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	"github.com/urmzd/saige/rag/knowledge"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
 func newKgCmd(ctx context.Context) *cobra.Command {

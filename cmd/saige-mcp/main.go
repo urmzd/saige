@@ -14,8 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	agenttypes "github.com/urmzd/saige/agent/types"
-	kgtool "github.com/urmzd/saige/knowledge/tool"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	kgtool "github.com/urmzd/saige/rag/knowledge/tool"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 	"github.com/urmzd/saige/rag/source/searxng"
 	"github.com/urmzd/saige/tools/research"
 )

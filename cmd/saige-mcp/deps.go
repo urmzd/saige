@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	knowledge "github.com/urmzd/saige/knowledge"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	knowledge "github.com/urmzd/saige/rag/knowledge"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
 // mustGraph creates a knowledge graph backed by the given pool, or exits on error.

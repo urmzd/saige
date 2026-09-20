@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	agenttypes "github.com/urmzd/saige/agent/types"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
 // stubGraph is a no-op kgtypes.Graph for asserting tool assembly.
