@@ -6,6 +6,7 @@ A single cache switch cannot represent them safely.
 | Cache | Stored data | Reuse identity | Current support |
 | --- | --- | --- | --- |
 | Response cache | A completed model response | Request, schema, tools, model, configuration, tenant scope | Local decorator with explicit shared identity |
+| Embedding cache | An embedding vector | Currently content type and text within one wrapper | Local LRU in `rag/embeddingcache` |
 | Tool cache | A tool result | Arguments, declared context values, scope | Local policy and store |
 | Automatic prompt cache | Provider computation for a prefix | Provider-specific routing and an exact prefix | Provider behavior; OpenAI affinity and retention options |
 | Prompt markers | A provider prefix boundary | Ordered tools, system blocks, messages, marker TTL | Anthropic final-system-block marker |
@@ -88,6 +89,8 @@ The current handle does not encode all those deployment dimensions; the host mus
 
 | Gap | Why it matters | Required contract |
 | --- | --- | --- |
+| Embedding keys omit binary data and MIME type | Different images or files with the same text can reuse one vector | Hash the complete embedding input and bind the embedding configuration |
+| Embedding results share stored slices | A reader can modify the cached vector or race another reader | Copy vectors at store and return boundaries |
 | Tool-cache results can still contain shared mutable payloads | A consumer can alter a later result | Detached blocks, bytes, JSON, and citation metadata at every cache boundary |
 | Tool-cache stale retention uses the fresh TTL | A store can discard data before stale-on-error can use it | Retain through the maximum stale window; expire freshness separately |
 | Tool-cache configuration identity is incomplete | The same tool name can target a changed implementation | Tool revision, deployment identity, and declared context in the key |
