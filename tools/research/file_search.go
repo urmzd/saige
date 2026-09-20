@@ -56,7 +56,7 @@ func (t *FileSearchTool) Execute(ctx context.Context, args map[string]any) (stri
 	// Confine the search root to the configured root. A "path" arg may scope
 	// the search to a subdirectory, but it cannot escape the root via ../ or an
 	// absolute path, and symlinks that escape the root are rejected.
-	root := t.root
+	var root string
 	if p, ok := args["path"].(string); ok && p != "" {
 		resolved, err := resolveWithinRoot(t.root, p, true)
 		if err != nil {

@@ -19,7 +19,7 @@ import (
 func SchemaFrom[T any]() ParameterSchema {
 	var zero T
 	t := reflect.TypeOf(zero)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -32,7 +32,7 @@ func SchemaFrom[T any]() ParameterSchema {
 }
 
 func structToProperties(t reflect.Type) (map[string]PropertyDef, []string) {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -76,7 +76,7 @@ func structToProperties(t reflect.Type) (map[string]PropertyDef, []string) {
 }
 
 func typeToPropertyDef(t reflect.Type) PropertyDef {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		property := typeToPropertyDef(t.Elem())
 		property.Nullable = true
 		return property
