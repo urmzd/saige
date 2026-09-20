@@ -164,3 +164,48 @@ func TestCacheEmpty(t *testing.T) {
 		t.Errorf("expected 0 inner calls for empty input, got %d", inner.callCount.Load())
 	}
 }
+
+func TestBinaryInputsAndReturnedVectorsAreIndependent(t *testing.T) {
+	inner := &countingEmbedder{}
+	cache := embeddingcache.New(inner)
+	first := types.ContentVariant{ContentType: types.ContentImage, MIMEType: "image/png", Data: []byte{1}, Text: "same"}
+	second := first
+	second.Data = []byte{2}
+	for _, variant := range []types.ContentVariant{first, second} {
+		if _, err := cache.Embed(context.Background(), []types.ContentVariant{variant}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second = first
+	second.MIMEType = "image/jpeg"
+	if _, err := cache.Embed(context.Background(), []types.ContentVariant{second}); err != nil {
+		t.Fatal(err)
+	}
+	if inner.callCount.Load() != 3 {
+		t.Fatal("binary or MIME identity collapsed")
+	}
+	values, err := cache.Embed(context.Background(), []types.ContentVariant{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values[0][0] = 99
+	again, err := cache.Embed(context.Background(), []types.ContentVariant{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again[0][0] == 99 {
+		t.Fatal("reader poisoned vector")
+	}
+}
+
+type shortEmbedder struct{}
+
+func (shortEmbedder) Embed(context.Context, []types.ContentVariant) ([][]float32, error) {
+	return nil, nil
+}
+func TestMissingEmbeddingFails(t *testing.T) {
+	_, err := embeddingcache.New(shortEmbedder{}).Embed(context.Background(), []types.ContentVariant{{Text: "test"}})
+	if err == nil {
+		t.Fatal("missing vector reported success")
+	}
+}

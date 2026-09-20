@@ -13,6 +13,7 @@
 package toolcache
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +55,9 @@ type Config struct {
 	// Cache is the backing store. Required; without it the decorator is a
 	// transparent passthrough rather than a silent no-cache surprise.
 	Cache types.Cache[Entry]
+	// ConfigKey identifies tool implementation, deployment and policy revision.
+	// Empty creates a private wrapper namespace.
+	ConfigKey string
 	// Policy overrides the tool's own declaration. Use the zero value to take
 	// the tool's, which is the intended path.
 	Policy *types.CachePolicy
@@ -125,6 +128,12 @@ func New(inner types.Tool, cfg Config) (types.Tool, error) {
 		return nil, fmt.Errorf("toolcache: tool %q declares a cache policy but no Cache was supplied", inner.Definition().Name)
 	}
 
+	policy.KeyArgs = append([]string(nil), policy.KeyArgs...)
+	policy.IgnoreArgs = append([]string(nil), policy.IgnoreArgs...)
+	policy.VaryOnContext = append([]string(nil), policy.VaryOnContext...)
+	if policy.MaxEntries != 0 {
+		return nil, fmt.Errorf("toolcache: MaxEntries requires a dedicated bounded store; set its capacity and leave MaxEntries zero")
+	}
 	scope := policy.EffectiveScope()
 	prefix := inner.Definition().Name
 	if scope != types.CacheScopeGlobal {
@@ -135,6 +144,20 @@ func New(inner types.Tool, cfg Config) (types.Tool, error) {
 		}
 		prefix = string(scope) + ":" + id + ":" + prefix
 	}
+
+	identity := cfg.ConfigKey
+	if identity == "" {
+		identity = types.NewID()
+	}
+	identityRaw, err := json.Marshal(struct {
+		Scope, Config string
+		Policy        types.CachePolicy
+	}{prefix, identity, policy})
+	if err != nil {
+		return nil, err
+	}
+	identityHash := sha256.Sum256(identityRaw)
+	prefix = hex.EncodeToString(identityHash[:])
 
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -160,7 +183,13 @@ func (t *Tool) Definition() types.ToolDef { return t.inner.Definition() }
 
 // CachePolicy implements types.Cacheable so a wrapped tool still reports what
 // it does.
-func (t *Tool) CachePolicy() types.CachePolicy { return t.policy }
+func (t *Tool) CachePolicy() types.CachePolicy {
+	p := t.policy
+	p.KeyArgs = append([]string(nil), p.KeyArgs...)
+	p.IgnoreArgs = append([]string(nil), p.IgnoreArgs...)
+	p.VaryOnContext = append([]string(nil), p.VaryOnContext...)
+	return p
+}
 
 // Execute runs the tool through the cache and returns the text projection.
 func (t *Tool) Execute(ctx context.Context, args map[string]any) (string, error) {
@@ -171,7 +200,13 @@ func (t *Tool) Execute(ctx context.Context, args map[string]any) (string, error)
 // ExecuteRich returns a cached result when one is fresh, and otherwise runs the
 // tool and stores the outcome.
 func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.ToolResult, error) {
-	key := t.key(ctx, args)
+	if err := ctx.Err(); err != nil {
+		return types.ToolResult{}, err
+	}
+	key, err := t.key(ctx, args)
+	if err != nil {
+		return types.ToolResult{}, err
+	}
 	now := t.cfg.Now()
 
 	if entry, found, err := t.cfg.Cache.Get(ctx, key); err == nil && found {
@@ -185,8 +220,8 @@ func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.Tool
 		t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_miss", 0, nil)
 		// The expired entry is kept in hand: if the refresh fails and the policy
 		// allows stale reads, it is better than an error.
-		res, err := t.refresh(ctx, key, args, now)
-		if err != nil && entry.Servable(now, t.policy) {
+		res, err := t.refresh(ctx, key, args)
+		if (err != nil || res.IsError) && ctx.Err() == nil && entry.Err == "" && !entry.Result.IsError && entry.Servable(t.cfg.Now(), t.policy) {
 			t.cfg.Logger.Warn("toolcache: serving stale result after refresh failure",
 				"tool", t.Definition().Name, "error", err, "age", now.Sub(entry.StoredAt))
 			return t.replay(entry)
@@ -195,20 +230,24 @@ func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.Tool
 	}
 
 	t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_miss", 0, nil)
-	return t.refresh(ctx, key, args, now)
+	return t.refresh(ctx, key, args)
 }
 
 // replay returns a cached entry, restoring a cached error as an error result.
 func (t *Tool) replay(e Entry) (types.ToolResult, error) {
 	if e.Err != "" {
-		return e.Result, fmt.Errorf("%s", e.Err)
+		res, err := cloneResult(e.Result)
+		if err != nil {
+			return types.ToolResult{}, err
+		}
+		return res, fmt.Errorf("%s", e.Err)
 	}
-	return e.Result, nil
+	return cloneResult(e.Result)
 }
 
 // refresh executes the tool, collapsing concurrent identical calls, and stores
 // the outcome when the policy permits.
-func (t *Tool) refresh(ctx context.Context, key string, args map[string]any, now time.Time) (types.ToolResult, error) {
+func (t *Tool) refresh(ctx context.Context, key string, args map[string]any) (types.ToolResult, error) {
 	for {
 		t.mu.Lock()
 		if c, ok := t.inflight[key]; ok {
@@ -222,16 +261,27 @@ func (t *Tool) refresh(ctx context.Context, key string, args map[string]any, now
 				if isContextErr(c.err) && ctx.Err() == nil {
 					continue
 				}
-				return c.res, c.err
+				return detachedResult(c.res, c.err)
 			case <-ctx.Done():
 				return types.ToolResult{}, ctx.Err()
 			}
+		}
+		// A previous leader may have committed after this caller's first Get.
+		if entry, found, err := t.cfg.Cache.Get(ctx, key); err == nil && found && entry.Fresh(t.cfg.Now()) {
+			t.mu.Unlock()
+			return t.replay(entry)
 		}
 		c := &call{done: make(chan struct{})}
 		t.inflight[key] = c
 		t.mu.Unlock()
 
 		c.res, c.err = t.execute(ctx, args)
+		if detached, cloneErr := cloneResult(c.res); cloneErr != nil {
+			c.res, c.err = types.ToolResult{}, cloneErr
+		} else {
+			c.res = detached
+		}
+		t.store(ctx, key, c.res, c.err, t.cfg.Now())
 
 		// Deregister before waking followers, so a follower that retries a
 		// cancelled execution finds no stale leader to attach to.
@@ -240,8 +290,7 @@ func (t *Tool) refresh(ctx context.Context, key string, args map[string]any, now
 		t.mu.Unlock()
 		close(c.done)
 
-		t.store(ctx, key, c.res, c.err, now)
-		return c.res, c.err
+		return detachedResult(c.res, c.err)
 	}
 }
 
@@ -251,7 +300,13 @@ func isContextErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func (t *Tool) execute(ctx context.Context, args map[string]any) (types.ToolResult, error) {
+func (t *Tool) execute(ctx context.Context, args map[string]any) (result types.ToolResult, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			result = types.ToolResult{}
+			err = fmt.Errorf("toolcache: tool panic: %v", p)
+		}
+	}()
 	if rt, ok := t.inner.(types.RichTool); ok {
 		return rt.ExecuteRich(ctx, args)
 	}
@@ -263,18 +318,26 @@ func (t *Tool) execute(ctx context.Context, args map[string]any) (types.ToolResu
 // logged, never propagated: a broken cache must not break a working tool.
 func (t *Tool) store(ctx context.Context, key string, res types.ToolResult, execErr error, now time.Time) {
 	failed := execErr != nil || res.IsError
-	if failed && !t.policy.CacheErrors {
+	if failed && (!t.policy.CacheErrors || t.policy.ServeStaleOnError) {
+		return
+	}
+	detached, err := cloneResult(res)
+	if err != nil {
 		return
 	}
 	entry := Entry{
-		Result:    res,
+		Result:    detached,
 		StoredAt:  now,
 		ExpiresAt: now.Add(t.policy.TTL),
 	}
 	if execErr != nil {
 		entry.Err = execErr.Error()
 	}
-	if err := t.cfg.Cache.Set(ctx, key, entry, t.policy.TTL); err != nil {
+	retention := t.policy.TTL
+	if t.policy.ServeStaleOnError {
+		retention += t.policy.MaxStale
+	}
+	if err := t.cfg.Cache.Set(ctx, key, entry, retention); err != nil {
 		t.cfg.Logger.Warn("toolcache: store failed", "tool", t.Definition().Name, "error", err)
 	}
 }
@@ -285,46 +348,60 @@ func (t *Tool) store(ctx context.Context, key string, res types.ToolResult, exec
 // Hashing rather than concatenating keeps keys bounded for tools whose
 // arguments are large, and the prefix stays readable so a store can be
 // inspected by tool name.
-func (t *Tool) key(ctx context.Context, args map[string]any) string {
-	h := sha256.New()
-
+func (t *Tool) key(ctx context.Context, args map[string]any) (string, error) {
+	selected := map[string]any{}
 	for _, name := range t.policy.KeyArguments(args) {
-		v, ok := args[name]
-		if !ok {
-			continue
-		}
-		raw, err := json.Marshal(v)
-		if err != nil {
-			// An unmarshalable argument must not collapse into "absent", which
-			// would make two different calls share a key.
-			raw = []byte(fmt.Sprintf("%#v", v))
-		}
-		fmt.Fprintf(h, "a:%s=%s\x00", name, raw)
-	}
-
-	if len(t.policy.VaryOnContext) > 0 {
-		tc := types.ToolContextFrom(ctx)
-		vary := append([]string(nil), t.policy.VaryOnContext...)
-		sortStrings(vary)
-		for _, name := range vary {
-			if v, ok := tc.Value(name); ok {
-				raw, _ := json.Marshal(v)
-				fmt.Fprintf(h, "c:%s=%s\x00", name, raw)
-			} else {
-				fmt.Fprintf(h, "c:%s=\x00", name)
-			}
+		if v, ok := args[name]; ok {
+			selected[name] = v
 		}
 	}
-
-	return t.prefix + ":" + hex.EncodeToString(h.Sum(nil))[:32]
+	varying := map[string]any{}
+	tc := types.ToolContextFrom(ctx)
+	for _, name := range t.policy.VaryOnContext {
+		if v, ok := tc.Value(name); ok {
+			varying[name] = v
+		}
+	}
+	raw, err := json.Marshal(struct{ Arguments, Context map[string]any }{selected, varying})
+	if err != nil {
+		return "", fmt.Errorf("toolcache: unserializable cache identity: %w", err)
+	}
+	hash := sha256.Sum256(raw)
+	return t.prefix + ":" + hex.EncodeToString(hash[:]), nil
 }
 
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && strings.Compare(s[j-1], s[j]) > 0; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
+func detachedResult(res types.ToolResult, execErr error) (types.ToolResult, error) {
+	copy, err := cloneResult(res)
+	if err != nil {
+		return types.ToolResult{}, err
 	}
+	return copy, execErr
+}
+
+func cloneResult(res types.ToolResult) (types.ToolResult, error) {
+	res.Blocks = append([]types.ToolResultBlock(nil), res.Blocks...)
+	for i := range res.Blocks {
+		res.Blocks[i].Data = append([]byte(nil), res.Blocks[i].Data...)
+		res.Blocks[i].JSON = append(json.RawMessage(nil), res.Blocks[i].JSON...)
+	}
+	res.Citations = append([]types.Citation(nil), res.Citations...)
+	for i := range res.Citations {
+		if res.Citations[i].Meta == nil {
+			continue
+		}
+		raw, err := json.Marshal(res.Citations[i].Meta)
+		if err != nil {
+			return types.ToolResult{}, fmt.Errorf("toolcache: citation metadata: %w", err)
+		}
+		var meta map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&meta); err != nil {
+			return types.ToolResult{}, err
+		}
+		res.Citations[i].Meta = meta
+	}
+	return res, nil
 }
 
 // WrapAll wraps every tool in a registry that declares a cache policy, and

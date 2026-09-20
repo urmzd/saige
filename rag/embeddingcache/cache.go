@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -24,6 +25,9 @@ func WithMaxSize(n int) Option {
 	}
 }
 
+// WithConfigKey binds entries to an immutable embedder configuration revision.
+func WithConfigKey(key string) Option { return func(c *Cache) { c.configKey = key } }
+
 type entry struct {
 	key       string
 	embedding []float32
@@ -31,11 +35,12 @@ type entry struct {
 
 // Cache wraps a VariantEmbedder with LRU caching keyed by content hash.
 type Cache struct {
-	inner   types.VariantEmbedder
-	mu      sync.Mutex
-	entries map[string]*list.Element
-	lru     *list.List
-	maxSize int
+	configKey string
+	inner     types.VariantEmbedder
+	mu        sync.Mutex
+	entries   map[string]*list.Element
+	lru       *list.List
+	maxSize   int
 }
 
 // New creates a caching VariantEmbedder decorator.
@@ -59,17 +64,31 @@ func (c *Cache) Embed(ctx context.Context, variants []types.ContentVariant) ([][
 		return nil, nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	results := make([][]float32, len(variants))
 	keys := make([]string, len(variants))
 
-	// Compute cache keys and collect hits.
+	// Encode the complete input before acquiring the cache lock.
+	for i, v := range variants {
+		raw, err := json.Marshal(struct {
+			Config  string
+			Variant types.ContentVariant
+		}{c.configKey, v})
+		if err != nil {
+			return nil, fmt.Errorf("embeddingcache: input %d: %w", i, err)
+		}
+		hash := sha256.Sum256(raw)
+		keys[i] = hex.EncodeToString(hash[:])
+	}
+	// Collect detached hits.
 	var missIndices []int
 	c.mu.Lock()
-	for i, v := range variants {
-		keys[i] = cacheKey(v)
+	for i := range variants {
 		if elem, ok := c.entries[keys[i]]; ok {
 			c.lru.MoveToFront(elem)
-			results[i] = elem.Value.(*entry).embedding
+			results[i] = append([]float32(nil), elem.Value.(*entry).embedding...)
 		} else {
 			missIndices = append(missIndices, i)
 		}
@@ -91,13 +110,17 @@ func (c *Cache) Embed(ctx context.Context, variants []types.ContentVariant) ([][
 		return nil, err
 	}
 
+	if len(missEmbeddings) != len(missIndices) {
+		return nil, fmt.Errorf("embeddingcache: got %d vectors for %d inputs", len(missEmbeddings), len(missIndices))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Store results and update cache.
 	c.mu.Lock()
 	for i, idx := range missIndices {
-		if i < len(missEmbeddings) {
-			results[idx] = missEmbeddings[i]
-			c.put(keys[idx], missEmbeddings[i])
-		}
+		results[idx] = append([]float32(nil), missEmbeddings[i]...)
+		c.put(keys[idx], missEmbeddings[i])
 	}
 	c.mu.Unlock()
 
@@ -107,6 +130,7 @@ func (c *Cache) Embed(ctx context.Context, variants []types.ContentVariant) ([][
 // put adds an entry to the cache, evicting the LRU entry if over capacity.
 // Must be called with c.mu held.
 func (c *Cache) put(key string, embedding []float32) {
+	embedding = append([]float32(nil), embedding...)
 	if elem, ok := c.entries[key]; ok {
 		c.lru.MoveToFront(elem)
 		elem.Value.(*entry).embedding = embedding
@@ -124,10 +148,4 @@ func (c *Cache) put(key string, embedding []float32) {
 		c.lru.Remove(oldest)
 		delete(c.entries, oldest.Value.(*entry).key)
 	}
-}
-
-func cacheKey(v types.ContentVariant) string {
-	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s:%s", v.ContentType, v.Text)
-	return hex.EncodeToString(h.Sum(nil))
 }

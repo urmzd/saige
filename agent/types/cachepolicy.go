@@ -97,6 +97,9 @@ func (p CachePolicy) Validate() error {
 	if p.ServeStaleOnError && p.MaxStale <= 0 {
 		return fmt.Errorf("cache policy: ServeStaleOnError requires a positive MaxStale")
 	}
+	if p.MaxStale > time.Duration(1<<63-1)-p.TTL {
+		return fmt.Errorf("cache policy: TTL plus MaxStale overflows")
+	}
 	if p.MaxStale < 0 {
 		return fmt.Errorf("cache policy: MaxStale must not be negative")
 	}
