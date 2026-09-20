@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 (2026-09-20)
+
+### Features
+
+- add local durable approvals and atomic budget admission (#62) ([9d39891](https://github.com/urmzd/saige/commit/9d398917931b29d57b1ff124a4b65582429cd43c))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.20.0...v0.21.0)
+
+
 ## 0.20.0 (2026-09-20)
 
 ### Breaking
