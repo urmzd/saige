@@ -33,6 +33,8 @@ const (
 // StepKindTool). Using one concrete struct (rather than an `any`) keeps
 // serializer registration trivial in the durable layer.
 type StepResult struct {
+	Receipt    *BudgetReceipt    // exact settlement, including uncertain charges
+	Usage      *UsageDelta       // normalized usage retained for budget replay
 	Kind       StepKind          // discriminator
 	Message    *AssistantMessage // populated when Kind == StepKindLLM
 	ToolCallID string            // populated when Kind == StepKindTool

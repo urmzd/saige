@@ -64,20 +64,25 @@ A skill can supply content. It cannot grant permissions by itself.
 A memory service can supply evidence. It cannot silently change system authority.
 This allows a service to replace one policy without replacing the agent loop.
 
-## D-09: State the budget limit accurately
+## D-09: Reserve budget before dispatch
 
-The current budget counts reported usage after execution. It is not a reservation service.
-Children share it by default, but concurrent requests can exceed the ceiling together.
-Cache storage, missing usage, and provider-native tool fees require additional accounting.
-Distributed execution needs durable admission and settlement before it can claim a strict monetary ceiling.
+A shared `Budget` reserves request, token, and cost capacity under one lock.
+This prevents concurrent children from spending the same available allowance.
+The host supplies per-call upper bounds. Without a bound, a call reserves the remaining allowance for that limit.
+For example, four reservations of $0.25 can occupy a $1 allowance. A fifth call receives `ErrBudgetBusy`.
+Settlement releases unused capacity and records actual usage once. Missing usage consumes the reservation and remains uncertain.
+Local durable runs save reservations before dispatch and restore settlement receipts during replay.
+This does not include a distributed account, provider-native fees, or cache storage invoices.
 
-## D-10: Do not claim durable interrupts
+## D-10: Save approvals and release local workers
 
-An approval currently parks a goroutine and retains a worker slot.
-Independent calls can continue, but the parent waits for its tool batch.
-Approval IDs are registered before delivery and child IDs are scoped to their caller.
-Process-independent interrupts still require persisted decisions, worker leases, and resumable continuations.
-The host must preserve per-call decisions even if its user interface groups them.
+Streaming approvals park a goroutine but do not hold a regular tool execution slot.
+The local durable engine saves each request and returns `ErrSuspended` after the current batch drains.
+Completed siblings remain saved. A later worker replays those results and resumes the approved call.
+For example, an independent read can finish while a write waits for approval.
+Decisions require the original run revision and an idempotency key. Changed decisions and expired requests fail.
+The host authenticates users and preserves separate decisions when its interface groups approvals.
+A local process lock protects one run. Remote workers still need a shared lease and fencing contract.
 
 ## D-11: Fail closed on handoff compaction
 
@@ -103,3 +108,31 @@ For example, changing a returned effort list does not modify the next lookup.
 A deliberate change requires a new registration, which records a revision.
 An exact model declaration sets `Known=true`. A family inference sets it to false.
 This separates a declared model from an unverified variant that has a similar name.
+
+## D-14: Keep uncertain effects explicit
+
+A completed step is saved before its result returns. A started step is saved before its function runs.
+A crash between those records does not prove whether an external write succeeded.
+Recovery therefore stops with `ErrIndeterminate`; it does not repeat the write automatically.
+The host checks the external system, then supplies a result or explicitly permits retry through `Reconcile`.
+For example, check a payment's idempotency key before allowing another payment attempt.
+Local snapshots cannot provide an atomic transaction with an external API.
+
+## D-15: Copy cache values at ownership boundaries
+
+A read must not let one caller alter another caller's future result.
+Tool results and embedding vectors are copied before storage and before return.
+Embedding keys include the full input, including binary data and MIME type.
+Tool keys include a configuration revision, scope, policy, arguments, and declared context.
+Invalid key data fails explicitly. No fallback string is treated as a stable identity.
+Stale data stays in storage through its stale window, but only a successful old result can mask a refresh failure.
+
+## D-16: Use a local engine before a distributed scheduler
+
+The local engine uses process locks, synced files, and atomic rename.
+This gives one machine a testable crash boundary without a queue or database deployment.
+An OS lock releases when its process exits. Pending approvals need no resident worker.
+Snapshots use private files and contain versioned recovery data plus ordered event metadata.
+They are not a portable trace format or an unbounded production journal.
+A distributed implementation must add fenced leases, transactional reservations, scheduling, and retention.
+See [durable execution](docs/durable-execution.md) for the failure table and deployment limits.

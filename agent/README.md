@@ -175,8 +175,13 @@ in the order the model requested them:
 a := agent.NewAgent(cfg, agent.WithSequentialTools())
 ```
 
-It is sugar for `agent.WithMaxParallelTools(1)`. A larger cap bounds the
-fan-out without ordering it.
+It is sugar for `agent.WithMaxParallelTools(1)`. A larger cap bounds regular tool
+execution without ordering it. Approval waits do not hold those execution slots.
+Delegated children apply their own inherited limits; the parent cap is not a global worker limit.
+Durable runners execute serially unless they implement `ConcurrentStepRunner`.
+
+For saved approvals and process recovery, use [local durable execution](../docs/durable-execution.md).
+It saves requests before suspension and preserves completed sibling results during replay.
 
 ## Sub-Agents
 

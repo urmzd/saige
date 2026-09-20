@@ -156,7 +156,7 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 					textStarted = false
 				}
 				// Emit usage delta from the final chunk.
-				ud := types.UsageDelta{
+				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:     chunk.PromptEvalCount,
 					CompletionTokens: chunk.EvalCount,
 					TotalTokens:      chunk.PromptEvalCount + chunk.EvalCount,

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
@@ -167,8 +168,9 @@ func (t *subAgentTool) invokeWithRunner(ctx context.Context, task string, runner
 // ("llm-main-0", ...), so a child sharing the parent's runner would otherwise
 // replay the parent's recorded steps.
 type prefixStepRunner struct {
-	inner  types.StepRunner
-	prefix string
+	inner        types.StepRunner
+	prefix       string
+	parentBudget *types.Budget
 }
 
 func (r prefixStepRunner) RunStep(ctx context.Context, name string, fn func(ctx context.Context) (types.StepResult, error)) (types.StepResult, error) {
@@ -182,5 +184,31 @@ func (a *Agent) childStepRunner(toolCallID string) types.StepRunner {
 	if _, isNoop := a.cfg.StepRunner.(types.NoopStepRunner); isNoop {
 		return nil
 	}
-	return prefixStepRunner{inner: a.cfg.StepRunner, prefix: "sub-" + toolCallID + "-"}
+	return prefixStepRunner{inner: a.cfg.StepRunner, prefix: "sub-" + toolCallID + "-", parentBudget: a.cfg.Budget}
+}
+
+// Approval resolution retains the same namespace as the child's steps.
+func (r prefixStepRunner) ResolveApproval(ctx context.Context, req types.ApprovalRequest) (types.ApprovalDecision, error) {
+	runner, ok := r.inner.(types.ApprovalRunner)
+	if !ok {
+		return types.ApprovalDecision{}, errors.New("durable child approvals require an ApprovalRunner")
+	}
+	req.ID = r.prefix + req.ID
+	return runner.ResolveApproval(ctx, req)
+}
+func (r prefixStepRunner) ConcurrentSteps() bool {
+	runner, ok := r.inner.(types.ConcurrentStepRunner)
+	return ok && runner.ConcurrentSteps()
+}
+
+func (r prefixStepRunner) RecordReservation(ctx context.Context, name string, receipt types.BudgetReceipt) error {
+	if recorder, ok := r.inner.(types.BudgetReservationRunner); ok {
+		return recorder.RecordReservation(ctx, r.prefix+name, receipt)
+	}
+	return nil
+}
+
+func (r prefixStepRunner) SharedBudgetOnly() bool {
+	runner, ok := r.inner.(types.SharedBudgetRunner)
+	return ok && runner.SharedBudgetOnly()
 }

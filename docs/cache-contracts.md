@@ -6,8 +6,8 @@ A single cache switch cannot represent them safely.
 | Cache | Stored data | Reuse identity | Current support |
 | --- | --- | --- | --- |
 | Response cache | A completed model response | Request, schema, tools, model, configuration, tenant scope | Local decorator with explicit shared identity |
-| Embedding cache | An embedding vector | Currently content type and text within one wrapper | Local LRU in `rag/embeddingcache` |
-| Tool cache | A tool result | Arguments, declared context values, scope | Local policy and store |
+| Embedding cache | An embedding vector | Complete serialized input and immutable embedding configuration | Local LRU in `rag/embeddingcache` |
+| Tool cache | A tool result | Configuration, policy, arguments, declared context, scope | Local policy and store |
 | Automatic prompt cache | Provider computation for a prefix | Provider-specific routing and an exact prefix | Provider behavior; OpenAI affinity and retention options |
 | Prompt markers | A provider prefix boundary | Ordered tools, system blocks, messages, marker TTL | Anthropic final-system-block marker |
 | Explicit context cache | A provider resource | Resource name, model, prefix, tools, expiry | Google create, bind, refresh, and delete |
@@ -85,22 +85,30 @@ The current handle does not encode all those deployment dimensions; the host mus
 | Tool order came from map iteration | Equivalent requests could have different prompt prefixes | Stable registry order; response keys preserve actual prompt order |
 | Provider cache counters were dropped | Budgets could not distinguish cache reads and writes | Explicit cache counters in normalized usage |
 
+## Tool and embedding cache ownership
+
+Tool wrappers use a private namespace by default. Set `ConfigKey` for explicit shared reuse.
+Change it when the implementation or deployment changes. Scope and policy also contribute to identity.
+Serialization errors fail before tool execution. Unsupported mutable citation metadata also fails instead of being shared.
+`MaxEntries` is rejected because a wrapper cannot enforce capacity on a shared store. Configure a dedicated bounded store instead.
+Single-flight followers receive detached results. A successful refresh enters the store before followers resume.
+Stale-on-error retains successful entries for `TTL + MaxStale`. Cancellation does not serve stale data.
+When stale-on-error is enabled, failed refreshes do not replace the previous successful entry.
+
+Embedding keys hash the full input, including bytes, MIME type, metadata, and existing embeddings.
+`WithConfigKey` binds the embedder revision. Vectors are copied at storage and return boundaries.
+Incorrect output counts fail. The host must not modify input concurrently with a call.
+These contracts prevent read results from mutating another session's cache state.
+They do not invalidate cached reads after an external write; include a world revision when freshness requires it.
+
 ## Remaining work and implications
 
 | Gap | Why it matters | Required contract |
 | --- | --- | --- |
-| Embedding keys omit binary data and MIME type | Different images or files with the same text can reuse one vector | Hash the complete embedding input and bind the embedding configuration |
-| Embedding results share stored slices | A reader can modify the cached vector or race another reader | Copy vectors at store and return boundaries |
-| Tool-cache results can still contain shared mutable payloads | A consumer can alter a later result | Detached blocks, bytes, JSON, and citation metadata at every cache boundary |
-| Tool-cache stale retention uses the fresh TTL | A store can discard data before stale-on-error can use it | Retain through the maximum stale window; expire freshness separately |
-| Tool-cache configuration identity is incomplete | The same tool name can target a changed implementation | Tool revision, deployment identity, and declared context in the key |
-| Some key serialization errors use fallback formatting | Invalid values can have unstable identity | Reject invalid key data or bypass caching explicitly |
 | No mutation-based invalidation | A cached read can remain stale after a write | World revision or dependency version in the key |
 | No durable cache resource manager | A crash can leave billable Google resources | Resource leases, cleanup queue, expiry reconciliation |
 | Cache write and storage tariffs vary | Token totals do not equal the provider invoice | TTL-specific rates, storage time, native-tool fees, and price revisions |
-| Failed requests can have unknown charges | Retry totals can be too low | Attempt ledger with uncertain costs and later reconciliation |
-| Provider usage events can be cumulative | Repeated totals can be counted more than once | Adapter-specific fixtures and conversion to increments |
-| Budget admission is not atomic | Parallel tasks can pass the same remaining-budget check | Reserve before dispatch, settle after completion |
+| Hidden retries and provider fees can have unknown charges | Outer usage is not a provider invoice | Per-attempt accounting and invoice reconciliation |
 | Capabilities describe models more broadly than adapters | A declared native tool might not be wired into requests | Separate model, adapter, and deployment capabilities |
 | Sticky routing state is in memory | Restart can select a different model and cold prefix | Persist route ID and configuration revision with the session |
 | Signed reasoning differs by provider | A cross-provider transcript can contain incompatible signed blocks | Explicit migration or fail closed after incompatible context |

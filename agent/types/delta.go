@@ -180,6 +180,10 @@ func (FeedbackDelta) isDelta() {}
 
 // UsageDelta carries token usage and latency from an LLM call.
 type UsageDelta struct {
+	// AccountingID deduplicates budget settlement during durable replay.
+	AccountingID string
+	// Cumulative marks a provider total snapshot instead of an increment.
+	Cumulative bool
 	// PromptTokens includes uncached input, cache reads, and cache writes.
 	PromptTokens       int
 	CachedPromptTokens int
@@ -207,10 +211,20 @@ func (UsageDelta) isDelta() {}
 // at message_delta); Merge reassembles the full total. Latency is taken from
 // the most recent non-zero value, not summed.
 func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
-	u.PromptTokens += o.PromptTokens
-	u.CachedPromptTokens += o.CachedPromptTokens
-	u.CacheWriteTokens += o.CacheWriteTokens
-	u.CompletionTokens += o.CompletionTokens
+	if o.Cumulative {
+		u.PromptTokens = max(u.PromptTokens, o.PromptTokens)
+		u.CachedPromptTokens = max(u.CachedPromptTokens, o.CachedPromptTokens)
+		u.CacheWriteTokens = max(u.CacheWriteTokens, o.CacheWriteTokens)
+		u.CompletionTokens = max(u.CompletionTokens, o.CompletionTokens)
+	} else {
+		u.PromptTokens += o.PromptTokens
+		u.CachedPromptTokens += o.CachedPromptTokens
+		u.CacheWriteTokens += o.CacheWriteTokens
+		u.CompletionTokens += o.CompletionTokens
+	}
+	if o.AccountingID != "" {
+		u.AccountingID = o.AccountingID
+	}
 	u.TotalTokens = u.PromptTokens + u.CompletionTokens
 	if o.Latency != 0 {
 		u.Latency = o.Latency

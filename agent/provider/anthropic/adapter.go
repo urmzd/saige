@@ -326,7 +326,8 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 				responseID = evt.Message.ID
 				responseModel = string(evt.Message.Model)
 				if evt.Message.Usage.InputTokens+evt.Message.Usage.CacheReadInputTokens+evt.Message.Usage.CacheCreationInputTokens > 0 {
-					out <- types.UsageDelta{
+					out <- types.UsageDelta{Cumulative: true,
+						CompletionTokens:   int(evt.Message.Usage.OutputTokens),
 						PromptTokens:       int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens),
 						CachedPromptTokens: int(evt.Message.Usage.CacheReadInputTokens),
 						CacheWriteTokens:   int(evt.Message.Usage.CacheCreationInputTokens),
@@ -399,7 +400,7 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 					finishReason = string(evt.Delta.StopReason)
 				}
 				if evt.Usage.OutputTokens > 0 {
-					ud := types.UsageDelta{
+					ud := types.UsageDelta{Cumulative: true,
 						CompletionTokens: int(evt.Usage.OutputTokens),
 						TotalTokens:      int(evt.Usage.OutputTokens),
 						ResponseID:       responseID,

@@ -396,7 +396,7 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 
 			// Emit usage.
 			if resp.UsageMetadata != nil {
-				ud := types.UsageDelta{
+				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:       int(resp.UsageMetadata.PromptTokenCount),
 					CachedPromptTokens: int(resp.UsageMetadata.CachedContentTokenCount),
 					CompletionTokens:   int(resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount),
