@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.0 (2026-09-20)
+
+### Features
+
+- add isolated orchestration and provider cache policies (#59) ([1d1a557](https://github.com/urmzd/saige/commit/1d1a55775ae23b8076157a9bb2fb596cd699235a))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.17.0...v0.18.0)
+
+
 ## 0.17.0 (2026-09-20)
 
 ### Features
