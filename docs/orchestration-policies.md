@@ -191,6 +191,7 @@ Subagents share the parent `Budget` by default. Handoffs use the entry agent's b
 `BudgetPolicy` supports cost, token, and request limits, warnings, and approval grants.
 An explicit child budget replaces the shared budget. It does not form a hierarchical budget.
 Use the shared budget until parent-and-child admission is implemented.
+Local durable runs reject separate child budgets because recovery receipts belong to one run ledger.
 
 Each call reserves capacity before provider dispatch. `ErrBudgetBusy` means other calls hold the allowance.
 `PerCallCost` and `PerCallTokens` must cover the complete configured request and any hidden retry attempts.

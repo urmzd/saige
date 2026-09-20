@@ -865,8 +865,8 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 // run executes the agent loop and returns its terminal error (nil on a clean
 // finish). runLoop turns that error into the stream's ErrorDelta + close error.
 func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Message, branch types.BranchID) error {
-	if _, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok && a.cfg.CompactCfg != nil && a.cfg.CompactCfg.ToCompactor() != nil {
-		return errors.New("durable approval replay requires compaction checkpoints; automatic compaction is unsupported")
+	if err := a.validateDurableConfiguration(); err != nil {
+		return err
 	}
 	log := a.cfg.Logger
 	tr := a.cfg.Tree
@@ -1173,46 +1173,14 @@ func (a *Agent) getAssistantMessage(
 	res, err := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (stepResult types.StepResult, stepError error) {
 		ran = true
 		if a.cfg.Budget != nil {
-			caps, _ := types.ProviderCapabilities(provider)
-			reservation, err := a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
-			if errors.Is(err, types.ErrBudgetExceeded) && a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
-				call := types.ToolUseContent{ID: stepName, Name: "budget"}
-				_, _, approved := a.awaitApprovalPhase(stepCtx, stream, call, []types.Marker{a.cfg.Budget.ApprovalMarker()}, "budget-admission")
-				if stopped := stream.runError(); stopped != nil {
-					return types.StepResult{}, stopped
-				}
-				if approved {
-					a.cfg.Budget.Grant(0)
-					reservation, err = a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
-				}
-			}
+			reservation, pricing, err := a.reserveProviderCall(stepCtx, stream, provider, stepName)
 			if err != nil {
-				return types.StepResult{}, fmt.Errorf("%w: %w", types.ErrBudgetAdmission, err)
-			}
-			if recorder, ok := a.cfg.StepRunner.(types.BudgetReservationRunner); ok {
-				receipt := a.cfg.Budget.ReservationReceipt(reservation.ID, types.ProviderModel(provider), caps.Pricing)
-				if err := recorder.RecordReservation(stepCtx, stepName, receipt); err != nil {
-					_ = a.cfg.Budget.Settle(reservation.ID, receipt.Model, caps.Pricing, types.TokenUsage{}, false)
-					return types.StepResult{}, fmt.Errorf("%w: persist reservation: %w", types.ErrBudgetAdmission, err)
-				}
+				return types.StepResult{}, err
 			}
 			defer func() {
-				unknown := liveUsage == nil || stepError != nil
-				if liveUsage == nil {
-					liveUsage = &types.UsageDelta{}
-					stepResult.Usage = liveUsage
-				}
-				usage := types.TokenUsage{}
-				model := types.ProviderModel(provider)
-				if liveUsage != nil {
-					usage = types.UsageFromDelta(*liveUsage)
-					liveUsage.AccountingID = reservation.ID
-					if liveUsage.ResponseModel != "" {
-						model = liveUsage.ResponseModel
-					}
-				}
-				settleErr := a.cfg.Budget.Settle(reservation.ID, model, caps.Pricing, usage, unknown)
-				receipt := a.cfg.Budget.Receipt(reservation.ID)
+				receipt, usage, settleErr := a.settleProviderCall(reservation, pricing, provider, liveUsage, stepError != nil)
+				liveUsage = usage
+				stepResult.Usage = usage
 				stepResult.Receipt = &receipt
 				if stepError == nil {
 					stepError = settleErr

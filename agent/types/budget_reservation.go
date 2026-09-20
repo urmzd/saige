@@ -199,3 +199,7 @@ func (b *Budget) ReservationReceipt(id, model string, pricing Pricing) BudgetRec
 	usage := TokenUsage{InputTokens: r.Tokens, Requests: r.Requests}
 	return BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: max(r.Cost, pricing.Cost(usage)), Uncertain: true, Granted: b.granted}
 }
+
+// SharedBudgetRunner declares that recovery receipts belong to one run budget.
+// Independent child budgets need separate durable receipt ownership.
+type SharedBudgetRunner interface{ SharedBudgetOnly() bool }

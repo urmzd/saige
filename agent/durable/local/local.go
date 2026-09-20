@@ -190,6 +190,8 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 
 func (r *runner) ConcurrentSteps() bool { return true }
 
+func (r *runner) SharedBudgetOnly() bool { return true }
+
 func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Context) (types.StepResult, error)) (types.StepResult, error) {
 	r.mu.Lock()
 	if r.poisoned != nil {

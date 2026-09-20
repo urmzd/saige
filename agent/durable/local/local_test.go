@@ -347,3 +347,15 @@ func TestAdmissionApprovalPersistsBeforeProviderAndRestoresGrant(t *testing.T) {
 		t.Fatal("repeated provider call")
 	}
 }
+
+func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
+	e := New(t.TempDir())
+	var parentCalls, childCalls atomic.Int32
+	factory := func() *agent.Agent {
+		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.AgentOption{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}})
+	}
+	_, err := e.Run(context.Background(), "separate", "v1", factory, []types.Message{types.NewUserMessage("go")})
+	if err == nil || childCalls.Load() != 0 {
+		t.Fatalf("independent child dispatched: %d, err=%v", childCalls.Load(), err)
+	}
+}

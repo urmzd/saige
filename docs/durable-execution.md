@@ -45,6 +45,8 @@ The revision identifies the provider, tools, permissions, and budget configurati
 Use the same input and revision to resume. A changed value returns `ErrConflict`.
 Do not share a mutable tree between factories or load a partially reconstructed tree into the factory.
 Tool objects and external services remain the host's isolation responsibility.
+Local durable children must share the root budget. An independent child budget is rejected because reconciled receipts belong to the run ledger.
+Result sinks and policy hooks can run again during replay. Make external writes in those hooks idempotent; they are outside the step journal.
 
 Each pending approval has its own ID and expiry. The default expiry is 24 hours.
 Gate approvals and marker approvals have separate IDs, including within subagents.
