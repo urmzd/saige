@@ -7,6 +7,8 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+const promptCacheInMemory = "in_memory"
+
 // WithPromptCache sets provider-side prefix cache affinity and retention.
 // retention is empty, "in_memory", or "24h". Model and endpoint availability
 // still apply. This does not cache responses or guarantee a cache hit.
@@ -23,10 +25,10 @@ func (a *Adapter) applyPromptCache(p *openai.ChatCompletionNewParams) error {
 		return fmt.Errorf("openai: model %s does not declare automatic prompt caching", a.model)
 	}
 	if retention == "in-memory" {
-		retention = "in_memory"
+		retention = promptCacheInMemory
 	} // older SDK spelling
 	switch retention {
-	case "", "in_memory", "24h":
+	case "", promptCacheInMemory, "24h":
 	default:
 		return fmt.Errorf("openai: invalid prompt cache retention %q", retention)
 	}
