@@ -26,8 +26,8 @@ import (
 	"sync"
 	"time"
 
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag/contextassembler"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag/graphretriever"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	"github.com/urmzd/saige/rag/memstore"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )

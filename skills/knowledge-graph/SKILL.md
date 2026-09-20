@@ -13,7 +13,7 @@ Build and query knowledge graphs using `saige/knowledge`.
 
 ```go
 import (
-    "github.com/urmzd/saige/knowledge"
+    "github.com/urmzd/saige/rag/knowledge"
     "github.com/urmzd/saige/postgres"
     "github.com/urmzd/saige/agent/provider/ollama"
 )
@@ -62,7 +62,7 @@ graph.ApplyOntology(ctx, &knowledge.Ontology{
 ## Agent Tool Bindings
 
 ```go
-import "github.com/urmzd/saige/knowledge/tool"
+import "github.com/urmzd/saige/rag/knowledge/tool"
 
 tools := tool.NewTools(graph)
 // kg_search, kg_ingest

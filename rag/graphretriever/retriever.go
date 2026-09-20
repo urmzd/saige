@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 

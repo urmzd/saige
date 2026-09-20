@@ -3,7 +3,7 @@
   <p align="center">
     <strong>Super Artificial Intelligence Graph Environment</strong>
     <br />
-    A unified Go SDK for streaming AI agents, knowledge graphs, and RAG pipelines.
+    A Go SDK for building AI agents, giving them context and memory, and evaluating them.
     <br /><br />
     <a href="https://pkg.go.dev/github.com/urmzd/saige">Install</a>
     &middot;
@@ -25,18 +25,31 @@
 
 ## Features
 
-- **Streaming-first agent loop** with typed delta events, parallel tool execution, and sub-agent delegation
-- **Conversation tree** with branching, checkpoints, rewind, and RLHF feedback
-- **Knowledge graph construction** with LLM-powered entity extraction, fuzzy dedup, and temporal tracking
-- **Multi-retriever RAG** fusing vector, BM25, and graph retrieval via Reciprocal Rank Fusion, with reranking and citations
+saige focuses on three things: running **agents**, supplying their **context and memory**, and measuring both with **evals**.
+
+### Agents
+
+- **Streaming-first agent loop** with typed delta events, parallel tool execution, sub-agent delegation, and handoffs
 - **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface, with retry and fallback composition
 - **Nullable tool properties** with separate presence rules across providers and MCP. See [tool schemas](docs/tool-schemas.md).
+- **Durable runs** that resume after a crash, plus response caching
 - **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client
-- **Universal evaluation** with composable scorers, A/B experiments, and LLM-as-judge
+
+### Context and memory
+
+- **Conversation tree** with branching, checkpoints, rewind, compaction, and RLHF feedback
+- **Multi-retriever RAG** fusing vector, BM25, and graph retrieval via Reciprocal Rank Fusion, with reranking and citations
+- **Knowledge graph backend** for RAG: LLM-powered entity extraction, fuzzy dedup, and temporal tracking. It differs from the document stores in ingestion and retrieval logic, not in role
+
+### Evals
+
+- **Composable scorers** for agents, retrieval, and knowledge graphs, with A/B experiments and LLM-as-judge
+- **Sampler** to measure how stable scores and subjects are across repeated runs
+- **Live eval harness** via `saige eval`
 
 ### Why one SDK?
 
-Agent orchestration, knowledge graphs, and RAG pipelines are deeply interconnected: RAG benefits from graph retrieval, agents need both for grounded responses, and all three share providers and embedders. **saige** unifies them under shared `Provider`, `Embedder`, and `Tool` interfaces, eliminating the wiring complexity of combining separate libraries.
+An agent is only as good as the context it is given, and you only know either works if you measure it. **saige** keeps all three under shared `Provider`, `Embedder`, and `Tool` interfaces, so retrieval plugs into the agent loop as tools and every layer is scored by the same eval framework.
 
 ## Installation
 
@@ -108,8 +121,8 @@ Each subsystem has its own README as the entrypoint for further information:
 | Package | Documentation | Covers |
 |---------|---------------|--------|
 | `agent` | [agent/README.md](agent/README.md) | Providers, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing |
-| `knowledge` | [knowledge/README.md](knowledge/README.md) | Graph interface, hybrid search, deduplication, PostgreSQL backend, formatting |
 | `rag` | [rag/README.md](rag/README.md) | Data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings |
+| `rag/knowledge` | [rag/knowledge/README.md](rag/knowledge/README.md) | Knowledge graph backend: graph interface, hybrid search, deduplication, PostgreSQL backend, formatting |
 | `eval` | [eval/README.md](eval/README.md) | Scorers, A/B experiments, LLM-as-judge, stream timing, live eval harness (`saige eval`) |
 | `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, rag, kg, eval |
 | `cmd/saige-mcp` | [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md) | MCP server setup for Claude Code, Codex, Gemini CLI |

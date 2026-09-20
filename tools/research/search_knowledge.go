@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/urmzd/saige/agent/types"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
 // SearchKnowledgeTool implements types.Tool for knowledge graph search.

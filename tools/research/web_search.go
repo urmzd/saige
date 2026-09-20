@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/urmzd/saige/agent/types"
-	kgtypes "github.com/urmzd/saige/knowledge/types"
+	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 	"github.com/urmzd/saige/rag/source/searxng"
 )
 

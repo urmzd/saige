@@ -1,6 +1,6 @@
 # saige
 
-A unified Go SDK combining AI agent orchestration, knowledge graph construction, and RAG pipelines.
+A Go SDK for building AI agents, giving them context and memory (RAG, with knowledge graphs as one backend), and evaluating them.
 
 ## Architecture
 
@@ -17,12 +17,12 @@ A unified Go SDK combining AI agent orchestration, knowledge graph construction,
 | `agent/durable/dbos/` | DBOS Transact-backed durable `StepRunner` + workflow engine (resumable runs) |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |
-| `knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
-| `knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
-| `knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |
-| `knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
-| `knowledge/graph/` | Graph formatting utilities (DOT, text) for visualization |
-| `knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
+| `rag/knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
+| `rag/knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
+| `rag/knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |
+| `rag/knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
+| `rag/knowledge/graph/` | Graph formatting utilities (DOT, text) for visualization |
+| `rag/knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
 | `postgres/` | Shared PostgreSQL connection pool and schema migrations |
 | `rag/` | RAG pipeline configuration and constructor |
 | `rag/types/` | Core RAG types: Document, Section, Variant, Pipeline/Store interfaces |

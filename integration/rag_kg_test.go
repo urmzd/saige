@@ -11,12 +11,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/urmzd/saige/knowledge"
-	kgpgstore "github.com/urmzd/saige/knowledge/pgstore"
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
+	"github.com/urmzd/saige/rag/knowledge"
+	kgpgstore "github.com/urmzd/saige/rag/knowledge/pgstore"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	ragpgstore "github.com/urmzd/saige/rag/pgstore"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
@@ -29,12 +29,12 @@ type kgFakeExtractor struct{}
 
 func (e *kgFakeExtractor) Extract(_ context.Context, _ string) ([]knowledgetypes.ExtractedEntity, []knowledgetypes.ExtractedRelation, error) {
 	return []knowledgetypes.ExtractedEntity{
-			{Name: "Ada Lovelace", Type: "Person", Summary: "pioneering programmer of the Analytical Engine"},
-			{Name: "Analytical Engine", Type: "Machine", Summary: "mechanical general-purpose computer designed by Babbage"},
-		}, []knowledgetypes.ExtractedRelation{
-			{Source: "Ada Lovelace", Target: "Analytical Engine", Type: "WROTE_PROGRAMS_FOR",
-				Fact: "Ada Lovelace wrote programs for the Analytical Engine"},
-		}, nil
+		{Name: "Ada Lovelace", Type: "Person", Summary: "pioneering programmer of the Analytical Engine"},
+		{Name: "Analytical Engine", Type: "Machine", Summary: "mechanical general-purpose computer designed by Babbage"},
+	}, []knowledgetypes.ExtractedRelation{
+		{Source: "Ada Lovelace", Target: "Analytical Engine", Type: "WROTE_PROGRAMS_FOR",
+			Fact: "Ada Lovelace wrote programs for the Analytical Engine"},
+	}, nil
 }
 
 // hashVariantEmbedder is a deterministic 768-dim bag-of-words embedder that
@@ -87,7 +87,7 @@ func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int 
 // RAG + KG integration over a real PostgreSQL on both sides:
 //
 //   - rag.NewPipeline(WithStore(rag/pgstore), WithGraph(knowledge graph over
-//     knowledge/pgstore)) ingests a document, producing kg_episode rows
+//     rag/knowledge/pgstore)) ingests a document, producing kg_episode rows
 //     grouped by the document UUID plus entities and relations in the group;
 //   - Search returns hits through the registered graph retriever (proved via
 //     a graph-only pipeline that has no other retriever);

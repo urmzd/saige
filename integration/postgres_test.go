@@ -12,11 +12,11 @@ import (
 	agentpgstore "github.com/urmzd/saige/agent/pgstore"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
-	"github.com/urmzd/saige/knowledge"
-	knowledgetypes "github.com/urmzd/saige/knowledge/types"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
+	"github.com/urmzd/saige/rag/knowledge"
+	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	ragpgstore "github.com/urmzd/saige/rag/pgstore"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
