@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ type Tree struct {
 	active      types.BranchID                  // the branch Invoke reads from
 	checkpoints map[types.CheckpointID]types.Checkpoint
 	wal         types.WAL
+	metadata    json.RawMessage
 }
 
 // New creates a new conversation tree rooted at the given system message.
@@ -39,6 +41,9 @@ func New(systemMsg types.SystemMessage, opts ...Option) (*Tree, error) {
 	}
 	for _, opt := range opts {
 		opt(t)
+	}
+	if err := validateMetadata(t.metadata); err != nil {
+		return nil, err
 	}
 
 	rootID := types.NodeID(types.NewID())
@@ -617,6 +622,9 @@ func FromStore(
 	}
 	for _, opt := range opts {
 		opt(t)
+	}
+	if err := validateMetadata(t.metadata); err != nil {
+		return nil, err
 	}
 
 	for _, n := range nodes {

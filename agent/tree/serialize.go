@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -20,6 +21,7 @@ const (
 
 // serializedTree is the JSON wire format for a Tree.
 type serializedTree struct {
+	Metadata    json.RawMessage                 `json:"metadata,omitempty"`
 	Nodes       []serializedNode                `json:"nodes"`
 	Children    map[string][]string             `json:"children"`
 	RootID      string                          `json:"root_id"`
@@ -252,7 +254,12 @@ func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, erro
 		return c, json.Unmarshal(ce.Data, &c)
 	case "tool_use":
 		var c types.ToolUseContent
-		return c, json.Unmarshal(ce.Data, &c)
+		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	case contentTypeThinking:
 		var c types.ThinkingContent
 		return c, json.Unmarshal(ce.Data, &c)
@@ -267,6 +274,7 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 	defer t.mu.RUnlock()
 
 	st := serializedTree{
+		Metadata: t.metadata,
 		RootID:   string(t.rootID),
 		Active:   string(t.active),
 		Children: make(map[string][]string, len(t.children)),
@@ -286,31 +294,11 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 	}
 
 	for _, node := range t.nodes {
-		msgBytes, err := marshalMessage(node.Message)
+		serialized, err := serializeNode(node)
 		if err != nil {
 			return nil, fmt.Errorf("marshal message for node %s: %w", node.ID, err)
 		}
-
-		summaryOf := make([]string, len(node.SummaryOf))
-		for i, s := range node.SummaryOf {
-			summaryOf[i] = string(s)
-		}
-
-		st.Nodes = append(st.Nodes, serializedNode{
-			ID:         string(node.ID),
-			ParentID:   string(node.ParentID),
-			Role:       string(node.Message.Role()),
-			Message:    msgBytes,
-			State:      int(node.State),
-			Version:    node.Version,
-			Depth:      node.Depth,
-			BranchID:   string(node.BranchID),
-			CreatedAt:  node.CreatedAt,
-			UpdatedAt:  node.UpdatedAt,
-			ArchivedAt: node.ArchivedAt,
-			ArchivedBy: node.ArchivedBy,
-			SummaryOf:  summaryOf,
-		})
+		st.Nodes = append(st.Nodes, serialized)
 	}
 
 	if len(t.checkpoints) > 0 {
@@ -331,10 +319,24 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON restores a tree from JSON.
 func (t *Tree) UnmarshalJSON(data []byte) error {
-	var st serializedTree
-	if err := json.Unmarshal(data, &st); err != nil {
+	var wire struct {
+		serializedTree
+		Content []serializedNode `json:"content"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
+	st := wire.serializedTree
+	if wire.Content != nil {
+		if st.Nodes != nil {
+			return fmt.Errorf("tree: both nodes and content were supplied")
+		}
+		st.Nodes = wire.Content
+	}
+	if err := validateMetadata(st.Metadata); err != nil {
+		return err
+	}
+	t.metadata = append(json.RawMessage(nil), st.Metadata...)
 
 	t.nodes = make(map[types.NodeID]*types.Node, len(st.Nodes))
 	t.children = make(map[types.NodeID][]types.NodeID, len(st.Children))
