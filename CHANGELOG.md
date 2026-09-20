@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.20.0 (2026-09-20)
+
+### Breaking
+
+- **rag**: move knowledge graph under rag as a retrieval backend (#61) ([d2a04cf](https://github.com/urmzd/saige/commit/d2a04cfc1c28762e117f9b4c2f005003501fa78e))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.19.0...v0.20.0)
+
+
 ## 0.19.0 (2026-09-20)
 
 ### Features
