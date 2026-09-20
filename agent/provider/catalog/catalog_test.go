@@ -24,19 +24,15 @@ func TestLookupMatchesLongestPrefix(t *testing.T) {
 		{"ollama", "nomic-embed-text", "nomic-embed"},
 	}
 	for _, tt := range tests {
-		caps, found := Lookup(tt.provider, tt.model)
-		if !found {
-			t.Errorf("Lookup(%q, %q) fell through to the baseline", tt.provider, tt.model)
-			continue
-		}
+		caps, known := Lookup(tt.provider, tt.model)
 		if caps.Family != tt.family {
 			t.Errorf("Lookup(%q, %q).Family = %q, want %q", tt.provider, tt.model, caps.Family, tt.family)
 		}
 		if caps.Model != tt.model {
 			t.Errorf("Lookup(%q, %q).Model = %q, want the queried model", tt.provider, tt.model, caps.Model)
 		}
-		if !caps.Known {
-			t.Errorf("Lookup(%q, %q).Known = false, want true for a matched entry", tt.provider, tt.model)
+		if caps.Known || known {
+			t.Errorf("Lookup(%q, %q) must mark prefix inference unverified", tt.provider, tt.model)
 		}
 	}
 }

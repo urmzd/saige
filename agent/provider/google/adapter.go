@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
@@ -50,7 +51,7 @@ func WithHTTPClient(h *http.Client) Option {
 
 // WithThinkingLevel sets ThinkingConfig.ThinkingLevel, the Gemini 3 way of
 // sizing reasoning. Use WithThinkingBudget for 2.5-series models, which take a
-// token budget instead: sending the wrong one is silently ignored, so check
+// token budget instead: sending the wrong one is rejected locally; check
 // Capabilities for CapReasoningEffort versus CapReasoningBudget.
 func WithThinkingLevel(level genai.ThinkingLevel) Option {
 	return func(a *Adapter) {
@@ -63,7 +64,7 @@ func WithThinkingLevel(level genai.ThinkingLevel) Option {
 // models; pro models cannot disable it.
 func WithThinkingBudget(tokens int32) Option {
 	return func(a *Adapter) {
-		a.thinking = &genai.ThinkingConfig{IncludeThoughts: tokens > 0, ThinkingBudget: &tokens}
+		a.thinking = &genai.ThinkingConfig{IncludeThoughts: tokens != 0, ThinkingBudget: &tokens}
 	}
 }
 
@@ -157,6 +158,9 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 	if a.backend == genai.BackendVertexAI && (a.project == "" || a.location == "") {
 		return nil, fmt.Errorf("google: vertex backend requires both project and location")
 	}
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
 	// Fail at construction, not mid-stream: an unsupported server tool comes
 	// back from Gemini as an opaque 400 on the first request that uses it.
 	if err := types.ValidateServerTools(catalog.MustLookup("google", model), a.serverTools); err != nil {
@@ -174,6 +178,53 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 	}
 	a.client = client
 	return a, nil
+}
+
+// Validate checks controls against the selected model, including after WithModel.
+func (a *Adapter) Validate() error {
+	caps := a.Capabilities()
+	toFloat := func(p *float32) *float64 {
+		if p == nil {
+			return nil
+		}
+		v := float64(*p)
+		return &v
+	}
+	o := types.RequestOptions{Temperature: toFloat(a.generation.Temperature),
+		TopP: toFloat(a.generation.TopP), TopK: toFloat(a.generation.TopK), StopSequences: a.generation.StopSequences}
+	if a.generation.Seed != nil {
+		n := int64(*a.generation.Seed)
+		o.Seed = &n
+	}
+	if a.generation.MaxOutputTokens != 0 {
+		n := int64(a.generation.MaxOutputTokens)
+		o.MaxOutputTokens = &n
+	}
+	if a.thinking != nil {
+		if a.thinking.ThinkingBudget != nil {
+			n := int64(*a.thinking.ThinkingBudget)
+			o.ReasoningBudget = &n
+		}
+		if a.thinking.ThinkingLevel != "" {
+			level := strings.ToLower(string(a.thinking.ThinkingLevel))
+			o.ReasoningEffort = &level
+		}
+		if o.ReasoningBudget == nil && o.ReasoningEffort == nil {
+			return caps.OptionError("reasoning", "an explicit thinking configuration needs a budget or level")
+		}
+	}
+	if err := caps.ValidateOptions(o); err != nil {
+		return err
+	}
+	if len(a.safety) > 0 {
+		if err := caps.Require(types.CapSafetySettings); err != nil {
+			return err
+		}
+	}
+	if err := types.ValidateServerTools(caps, a.serverTools); err != nil {
+		return caps.OptionError("server_tools", err.Error())
+	}
+	return nil
 }
 
 // Name implements types.NamedProvider.
@@ -199,6 +250,14 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
 	contents, config, err := a.cachedRequest(messages, tools)
 	if err != nil {
 		return nil, err
@@ -208,6 +267,14 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
 	contents, config, err := a.cachedRequest(messages, tools)
 	if err != nil {
 		return nil, err

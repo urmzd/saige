@@ -26,6 +26,16 @@ import (
 // shows what changed and Rollback undoes it.
 const asOf = "2026-07-24"
 
+const (
+	effortNone    = "none"
+	effortMinimal = "minimal"
+	effortLow     = "low"
+	effortMedium  = "medium"
+	effortHigh    = "high"
+	effortXhigh   = "xhigh"
+	effortMax     = "max"
+)
+
 // Shared media sets.
 var (
 	imagesAndPDF  = media(types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP, types.MediaPDF)
@@ -123,10 +133,20 @@ func registerAnthropic() {
 		}
 	}
 
-	// Claude 5: capabilities are known, list pricing is not stated here.
-	for _, prefix := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5"} {
-		c := thinking(types.Pricing{})
-		c.Notes = append(c.Notes, "unpriced in this table: set Pricing via Register before enforcing a budget")
+	// Adaptive-only families must not inherit the older manual budget control.
+	// https://platform.claude.com/docs/en/build-with-claude/thinking
+	for _, prefix := range []string{"claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-mythos-5", "claude-opus-4-7", "claude-opus-4-8"} {
+		c := thinking(types.Pricing{}).Without(types.CapReasoningBudget, types.CapTemperature, types.CapTopP, types.CapTopK).With(types.CapReasoningEffort)
+		c.MinReasoningBudget = 0
+		c.ReasoningEfforts = []string{effortLow, effortMedium, effortHigh, effortXhigh, effortMax}
+		c.ReasoningRequired = prefix == "claude-fable-5" || prefix == "claude-mythos-5"
+		c.ReasoningDefaultEnabled = prefix != "claude-opus-4-7" && prefix != "claude-opus-4-8"
+		c.Notes = []string{"adaptive thinking: manual budgets and sampling controls are not supported by this adapter", "unpriced: supply a verified rate card"}
+		seed(Entry{Provider: p, Prefix: prefix, Caps: c})
+	}
+	for _, prefix := range []string{"claude-opus-4-6", "claude-sonnet-4-6"} {
+		c := thinking(types.Pricing{}).With(types.CapReasoningEffort)
+		c.ReasoningEfforts = []string{effortLow, effortMedium, effortHigh, effortMax}
 		seed(Entry{Provider: p, Prefix: prefix, Caps: c})
 	}
 
@@ -173,7 +193,9 @@ func registerOpenAI() {
 		)
 		c.ContextWindow = ctxWindow
 		c.MaxOutputTokens = maxOut
-		c.ReasoningEfforts = []string{"minimal", "low", "medium", "high"}
+		c.ReasoningEfforts = []string{effortLow, effortMedium, effortHigh}
+		c.ReasoningRequired = true
+		c.DefaultReasoningEffort = effortMedium
 		c.StructuredOutput = types.StructuredOutputNative
 		c.ServerTools = []types.ServerToolKind{types.ServerToolWebSearch, types.ServerToolCodeExecution, types.ServerToolRemoteMCP}
 		c.Media = imagesAndPDF
@@ -203,7 +225,26 @@ func registerOpenAI() {
 		return c
 	}
 
-	seed(Entry{Provider: p, Prefix: "gpt-5", Caps: reasoning(400_000, 128_000, price(1.25, 10, 0.125))})
+	gpt5 := reasoning(400_000, 128_000, price(1.25, 10, 0.125))
+	gpt5.ReasoningEfforts = []string{effortMinimal, effortLow, effortMedium, effortHigh}
+	seed(Entry{Provider: p, Prefix: "gpt-5", Caps: gpt5})
+	// These request rules are model-specific; do not infer them for every gpt-5*.
+	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2
+	for _, row := range []struct {
+		prefix  string
+		efforts []string
+	}{
+		{"gpt-5.1", []string{effortNone, effortLow, effortMedium, effortHigh}},
+		{"gpt-5.2", []string{effortNone, effortLow, effortMedium, effortHigh, effortXhigh}},
+	} {
+		c := reasoning(400_000, 128_000, types.Pricing{}).With(types.CapTemperature, types.CapTopP)
+		c.ReasoningRequired = false
+		c.DefaultReasoningEffort = effortNone
+		c.ReasoningEfforts = row.efforts
+		c.SamplingRequiresNoReasoning = []types.Capability{types.CapTemperature, types.CapTopP}
+		c.Notes = []string{"temperature and top_p require reasoning effort none", "unpriced: supply a verified rate card"}
+		seed(Entry{Provider: p, Prefix: row.prefix, Caps: c})
+	}
 	seed(Entry{Provider: p, Prefix: "o1", Caps: reasoning(200_000, 100_000, price(15, 60, 7.50))})
 	seed(Entry{Provider: p, Prefix: "o3", Caps: reasoning(200_000, 100_000, price(2, 8, 0.50))})
 	seed(Entry{Provider: p, Prefix: "o4-mini", Caps: reasoning(200_000, 100_000, price(1.10, 4.40, 0.275))})
@@ -269,9 +310,17 @@ func registerGoogle() {
 	}
 
 	// 3.x: thinking level. Pricing not stated here.
-	lvl := []string{"low", "high"}
+	lvl := []string{effortLow, effortHigh}
 	for _, prefix := range []string{"gemini-3.1-pro", "gemini-3-pro", "gemini-3.1-flash", "gemini-3-flash"} {
 		c := gemini(types.CapReasoningEffort, lvl, 1_000_000, 65_536, types.Pricing{})
+		c.ReasoningRequired = true
+		c.DefaultReasoningEffort = effortHigh
+		if prefix == "gemini-3.1-pro" {
+			c.ReasoningEfforts = []string{effortLow, effortMedium, effortHigh}
+		}
+		if prefix == "gemini-3-flash" || prefix == "gemini-3.1-flash" {
+			c.ReasoningEfforts = []string{effortMinimal, effortLow, effortMedium, effortHigh}
+		}
 		c.Notes = []string{
 			"reasoning depth is set with ThinkingConfig.ThinkingLevel, not a token budget",
 			"thought signatures must round-trip or multi-turn function calling degrades",
@@ -282,6 +331,9 @@ func registerGoogle() {
 
 	// 2.5: thinking budget.
 	pro := gemini(types.CapReasoningBudget, nil, 1_000_000, 65_536, price(1.25, 10, 0.31))
+	pro.ReasoningRequired = true
+	pro.MinReasoningBudget, pro.MaxReasoningBudget = 128, 32768
+	pro.DynamicReasoningBudget = true
 	pro.Notes = []string{
 		"reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
 		"pro cannot disable thinking",
@@ -290,11 +342,19 @@ func registerGoogle() {
 	seed(Entry{Provider: p, Prefix: "gemini-2.5-pro", Caps: pro})
 
 	flash := gemini(types.CapReasoningBudget, nil, 1_000_000, 65_536, price(0.30, 2.50, 0.075))
+	flash.ZeroReasoningBudget, flash.DynamicReasoningBudget = true, true
+	flash.ReasoningDefaultEnabled = true
+	flash.MaxReasoningBudget = 24576
 	flash.Notes = []string{
 		"reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
 		"budget 0 disables thinking on flash",
 	}
 	seed(Entry{Provider: p, Prefix: "gemini-2.5-flash", Caps: flash})
+	lite := flash.ForModel("")
+	lite.MinReasoningBudget = 512
+	lite.ReasoningDefaultEnabled = false
+	lite.Pricing = types.Pricing{}
+	seed(Entry{Provider: p, Prefix: "gemini-2.5-flash-lite", Caps: lite})
 
 	// 2.0 and earlier: no thinking. Vendor-deprecated, and still this repo's
 	// CLI default, which is itself a gap (see docs/model-capabilities.md).

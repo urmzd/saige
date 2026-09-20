@@ -38,7 +38,8 @@ const (
 	CapAutomaticPromptCache Capability = "automatic_prompt_cache"
 	CapPromptCacheMarkers   Capability = "prompt_cache_markers"
 	CapExplicitContextCache Capability = "explicit_context_cache"
-	// CapReasoning: the model produces reasoning/thinking content.
+	// CapReasoning: the model can reason internally. Visible thinking content
+	// depends on the provider and API; this flag does not promise its exposure.
 	CapReasoning Capability = "reasoning"
 	// CapReasoningSignature: reasoning blocks carry an opaque signature that must
 	// be echoed back on the next turn. Anthropic and Gemini 3 both require this;
@@ -81,7 +82,7 @@ const (
 	// CapReasoningToggle: reasoning is only switchable on or off.
 	CapReasoningToggle Capability = "reasoning_toggle"
 	// CapTemperature: sampling temperature is accepted. Notably absent on
-	// OpenAI's reasoning models, which reject it outright.
+	// some reasoning models. Other models accept it only with reasoning off.
 	CapTemperature Capability = "temperature"
 	// CapTopP: nucleus sampling is accepted.
 	CapTopP Capability = "top_p"
@@ -158,6 +159,18 @@ type ModelCapabilities struct {
 	// MinReasoningBudget is the smallest legal token budget when
 	// CapReasoningBudget is set (Anthropic rejects anything below 1024).
 	MinReasoningBudget int
+	// ReasoningRequired means explicit disabling is invalid; omission uses the
+	// model's default reasoning. It does not require a visible thinking stream.
+	ReasoningRequired       bool
+	ReasoningDefaultEnabled bool
+	DefaultReasoningEffort  string
+	MaxReasoningBudget      int
+	// DynamicReasoningBudget permits -1; ZeroReasoningBudget permits disabling
+	// via budget 0. Neither follows merely from support for positive budgets.
+	DynamicReasoningBudget bool
+	ZeroReasoningBudget    bool
+	// These knobs are supported conditionally, only with reasoning disabled.
+	SamplingRequiresNoReasoning []Capability
 
 	// StructuredOutput records how schema constraint is achieved.
 	StructuredOutput StructuredOutputMode
@@ -176,9 +189,9 @@ type ModelCapabilities struct {
 	// adapter.
 	Media ContentSupport
 
-	// Known is false when these capabilities are a conservative provider
-	// baseline for an unrecognised model rather than a catalog entry. Callers
-	// that want to fail closed on unknown models check this.
+	// Known means the exact model name is declared. False covers both provider
+	// baselines and prefix/tag/path-inferred metadata. It does not certify the
+	// remote endpoint; callers requiring an exact declaration check this.
 	Known bool
 
 	// Notes carries caveats worth surfacing in logs, e.g. that a knob is
@@ -255,6 +268,7 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 		}
 	}
 	out.ReasoningEfforts = append([]string(nil), mc.ReasoningEfforts...)
+	out.SamplingRequiresNoReasoning = append([]Capability(nil), mc.SamplingRequiresNoReasoning...)
 	out.ServerTools = append([]ServerToolKind(nil), mc.ServerTools...)
 	out.Notes = append([]string(nil), mc.Notes...)
 	out.Media = ContentSupport{NativeTypes: map[MediaType]bool{}}
@@ -284,8 +298,27 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 		MaxOutputTokens:        minNonZero(mc.MaxOutputTokens, other.MaxOutputTokens),
 		DefaultMaxOutputTokens: minNonZero(mc.DefaultMaxOutputTokens, other.DefaultMaxOutputTokens),
 		MinReasoningBudget:     maxInt(mc.MinReasoningBudget, other.MinReasoningBudget),
+		MaxReasoningBudget:     minNonZero(mc.MaxReasoningBudget, other.MaxReasoningBudget),
+		ReasoningRequired:      mc.ReasoningRequired || other.ReasoningRequired,
+		ReasoningDefaultEnabled: mc.ReasoningDefaultEnabled || other.ReasoningDefaultEnabled ||
+			(mc.DefaultReasoningEffort != "" && mc.DefaultReasoningEffort != reasoningEffortNone) ||
+			(other.DefaultReasoningEffort != "" && other.DefaultReasoningEffort != reasoningEffortNone),
+		DynamicReasoningBudget: mc.DynamicReasoningBudget && other.DynamicReasoningBudget,
+		ZeroReasoningBudget:    mc.ZeroReasoningBudget && other.ZeroReasoningBudget,
 		Known:                  mc.Known && other.Known,
 		Media:                  ContentSupport{NativeTypes: map[MediaType]bool{}},
+	}
+	if mc.DefaultReasoningEffort == other.DefaultReasoningEffort {
+		out.DefaultReasoningEffort = mc.DefaultReasoningEffort
+	}
+	for _, c := range append(append([]Capability(nil), mc.SamplingRequiresNoReasoning...), other.SamplingRequiresNoReasoning...) {
+		found := false
+		for _, have := range out.SamplingRequiresNoReasoning {
+			found = found || have == c
+		}
+		if !found {
+			out.SamplingRequiresNoReasoning = append(out.SamplingRequiresNoReasoning, c)
+		}
 	}
 	if mc.Provider != other.Provider {
 		out.Provider = mc.Provider + "+" + other.Provider

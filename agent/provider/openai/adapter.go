@@ -46,7 +46,7 @@ type genParams struct {
 	frequencyPenalty *float64
 	presencePenalty  *float64
 	stop             []string
-	reasoningEffort  string
+	reasoningEffort  *string
 	parallelTools    *bool
 }
 
@@ -66,9 +66,8 @@ func WithMaxTokens(n int64) Option {
 	return func(c *config) { c.params.maxTokens = &n }
 }
 
-// WithTemperature sets sampling temperature. Ignored on models that do not
-// declare CapTemperature (the reasoning families), which reject it outright
-// rather than ignoring it.
+// WithTemperature sets sampling temperature. Unsupported settings are rejected
+// by Validate and before either streaming request path sends network traffic.
 func WithTemperature(t float64) Option {
 	return func(c *config) { c.params.temperature = &t }
 }
@@ -107,10 +106,10 @@ func WithParallelToolCalls(enabled bool) Option {
 }
 
 // WithReasoningEffort sizes reasoning on the models that support it. Legal
-// values are in ModelCapabilities.ReasoningEfforts; the flag is dropped for
-// models that do not declare CapReasoningEffort.
+// values are in ModelCapabilities.ReasoningEfforts. Unsupported or invalid
+// effort values are rejected, including an explicitly empty effort.
 func WithReasoningEffort(effort string) Option {
-	return func(c *config) { c.params.reasoningEffort = effort }
+	return func(c *config) { c.params.reasoningEffort = &effort }
 }
 
 // Adapter wraps the official OpenAI SDK client and implements types.Provider,
@@ -138,43 +137,46 @@ func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	}
 }
 
-// applyParams copies the configured knobs onto a request, dropping any the
-// target model does not declare.
-//
-// Dropping rather than sending is deliberate. The reasoning families return a
-// 400 for temperature, top_p and the repetition penalties, so a config shared
-// across a fallback chain of gpt-4o and o3 would fail on half the chain. The
-// capability table is what makes "which of these may I send" answerable
-// without a per-model switch here.
+// applyParams encodes options after Validate has checked their compatibility.
 func (a *Adapter) applyParams(p *openai.ChatCompletionNewParams) {
-	caps := a.Capabilities()
-	if a.params.maxTokens != nil && caps.Supports(types.CapMaxOutputTokens) {
+	if a.params.maxTokens != nil {
 		p.MaxCompletionTokens = openai.Int(*a.params.maxTokens)
 	}
-	if a.params.temperature != nil && caps.Supports(types.CapTemperature) {
+	if a.params.temperature != nil {
 		p.Temperature = openai.Float(*a.params.temperature)
 	}
-	if a.params.topP != nil && caps.Supports(types.CapTopP) {
+	if a.params.topP != nil {
 		p.TopP = openai.Float(*a.params.topP)
 	}
-	if a.params.seed != nil && caps.Supports(types.CapSeed) {
+	if a.params.seed != nil {
 		p.Seed = openai.Int(*a.params.seed)
 	}
-	if a.params.frequencyPenalty != nil && caps.Supports(types.CapFrequencyPenalty) {
+	if a.params.frequencyPenalty != nil {
 		p.FrequencyPenalty = openai.Float(*a.params.frequencyPenalty)
 	}
-	if a.params.presencePenalty != nil && caps.Supports(types.CapPresencePenalty) {
+	if a.params.presencePenalty != nil {
 		p.PresencePenalty = openai.Float(*a.params.presencePenalty)
 	}
-	if len(a.params.stop) > 0 && caps.Supports(types.CapStopSequences) {
+	if len(a.params.stop) > 0 {
 		p.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: a.params.stop}
 	}
-	if a.params.reasoningEffort != "" && caps.Supports(types.CapReasoningEffort) {
-		p.ReasoningEffort = shared.ReasoningEffort(a.params.reasoningEffort)
+	if a.params.reasoningEffort != nil {
+		p.ReasoningEffort = shared.ReasoningEffort(*a.params.reasoningEffort)
 	}
-	if a.params.parallelTools != nil && caps.Supports(types.CapParallelToolControl) {
+	if a.params.parallelTools != nil {
 		p.ParallelToolCalls = openai.Bool(*a.params.parallelTools)
 	}
+}
+
+// Validate checks configured controls against the currently selected model.
+// WithModel preserves options, so switching models revalidates on every call.
+func (a *Adapter) Validate() error {
+	return a.Capabilities().ValidateOptions(types.RequestOptions{
+		Temperature: a.params.temperature, TopP: a.params.topP, Seed: a.params.seed,
+		MaxOutputTokens: a.params.maxTokens, StopSequences: a.params.stop,
+		FrequencyPenalty: a.params.frequencyPenalty, PresencePenalty: a.params.presencePenalty,
+		ReasoningEffort: a.params.reasoningEffort, ParallelTools: a.params.parallelTools,
+	})
 }
 
 // Name implements types.NamedProvider.
@@ -242,6 +244,13 @@ func (a *Adapter) ContentSupport() types.ContentSupport {
 }
 
 func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef, rf *openai.ChatCompletionNewParamsResponseFormatUnion) (<-chan types.Delta, error) {
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	if err := a.Capabilities().ValidateRequest(tools, rf != nil); err != nil {
+		return nil, err
+	}
+
 	params := openai.ChatCompletionNewParams{
 		Model:    a.model,
 		Messages: toOpenAIMessages(messages),

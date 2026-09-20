@@ -3,6 +3,7 @@ package ollama
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
@@ -43,8 +44,51 @@ func NewAdapter(client *Client) *Adapter {
 	return &Adapter{Client: client}
 }
 
+// Validate checks explicitly configured controls. The low-level Client remains
+// a wire client; use Adapter when model capability enforcement is required.
+func (a *Adapter) Validate() error {
+	o := types.RequestOptions{ReasoningEnabled: a.Client.Think}
+	if a.Client.ChatOptions != nil {
+		// Decode the actual wire representation: maps can express zero values,
+		// whereas the legacy Options struct omits its zero-valued fields.
+		data, err := json.Marshal(a.Client.ChatOptions)
+		if err != nil {
+			return a.Capabilities().OptionError("options", "cannot encode options")
+		}
+		var g struct {
+			Temperature *float64 `json:"temperature"`
+			TopP        *float64 `json:"top_p"`
+			TopK        *int64   `json:"top_k"`
+			Seed        *int64   `json:"seed"`
+			NumPredict  *int64   `json:"num_predict"`
+			Stop        []string `json:"stop"`
+		}
+		if err := json.Unmarshal(data, &g); err != nil {
+			return a.Capabilities().OptionError("options", "invalid sampling option types")
+		}
+		o.Temperature, o.TopP, o.Seed, o.StopSequences = g.Temperature, g.TopP, g.Seed, g.Stop
+		if g.TopK != nil {
+			k := float64(*g.TopK)
+			o.TopK = &k
+		}
+		if g.NumPredict != nil && *g.NumPredict != -1 {
+			o.MaxOutputTokens = g.NumPredict
+		}
+	}
+
+	return a.Capabilities().ValidateOptions(o)
+}
+
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
 	oMsgs := toOllamaMessages(messages)
 	oTools := toOllamaTools(tools)
 
@@ -63,6 +107,14 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
+		return nil, err
+	}
+
+	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+
 	oMsgs := toOllamaMessages(messages)
 	oTools := toOllamaTools(tools)
 
