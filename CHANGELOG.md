@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.1 (2026-09-20)
+
+### Bug Fixes
+
+- **lint**: use reflect.Pointer and drop unused root assignment (#63) ([5af1fb6](https://github.com/urmzd/saige/commit/5af1fb662d3fdc0e43e5661be5af66661b34ed95))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.21.0...v0.21.1)
+
+
 ## 0.21.0 (2026-09-20)
 
 ### Features
