@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.0 (2026-09-20)
+
+### Features
+
+- validate model controls and isolate catalog snapshots (#60) ([b0790a3](https://github.com/urmzd/saige/commit/b0790a363f65a31279bc1ce2b7f418705c54c083))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.18.0...v0.19.0)
+
+
 ## 0.18.0 (2026-09-20)
 
 ### Features
