@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0 (2026-09-20)
+
+### Features
+
+- **tree**: print conversation documents with run metadata (#58) ([3b9e89c](https://github.com/urmzd/saige/commit/3b9e89c9ee5d2770c1f545621b2aef71c90de644))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.16.2...v0.17.0)
+
+
 ## 0.16.2 (2026-09-19)
 
 ### Bug Fixes
