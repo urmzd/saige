@@ -26,16 +26,28 @@ type ToolSet struct {
 // NewToolSet returns an empty tool set.
 func NewToolSet() *ToolSet { return &ToolSet{reg: New[types.Tool]()} }
 
-// Register adds a revision of a tool, keyed by its declared name. Registering a
-// tool whose Definition().Name differs from a previous revision's is rejected:
-// the name is the identity the model calls, so silently changing it would
-// orphan the history rather than extend it.
+// Register adds a revision of a tool, keyed by its declared name.
+//
+// A tool that reports a version (types.VersionedTool, as every agent.Func
+// tool does with a hash of its schema) is registered with that version, so
+// its revision follows its content: registering it again unchanged returns
+// the current revision, and a changed input type adds a new one. An
+// explicit WithVersion option takes precedence.
 func (s *ToolSet) Register(tool types.Tool, opts ...Option) (Entry[types.Tool], error) {
 	name := tool.Definition().Name
 	if name == "" {
 		return Entry[types.Tool]{}, fmt.Errorf("registry: tool has no name")
 	}
+	if v := types.ToolVersion(tool); v != "" {
+		opts = append([]Option{WithVersion(v)}, opts...)
+	}
 	return s.reg.Register(name, tool, opts...), nil
+}
+
+// AtVersion returns the newest revision of a tool registered with version,
+// such as the version a transcript recorded next to a result.
+func (s *ToolSet) AtVersion(name, version string) (Entry[types.Tool], bool) {
+	return s.reg.AtVersion(name, version)
 }
 
 // MustRegister is Register for package init, where a failure is a programming

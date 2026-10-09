@@ -24,6 +24,8 @@ type StepKind string
 const (
 	StepKindLLM  StepKind = "llm"
 	StepKindTool StepKind = "tool"
+	// StepKindApproval records an approval policy's verdict on one call.
+	StepKindApproval StepKind = "approval"
 )
 
 // StepResult is the serializable payload a durable step records. It is a
@@ -40,6 +42,7 @@ type StepResult struct {
 	ToolResult string            // tool text projection / aggregated sub-agent text
 	ToolBlocks []ToolResultBlock // rich tool output; survives durable replay
 	ToolError  string            // non-empty => tool errored (recorded, not retried)
+	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
 }
 
 // NoopStepRunner runs steps inline with no memoization. It is the default,
@@ -50,4 +53,21 @@ var _ StepRunner = NoopStepRunner{}
 
 func (NoopStepRunner) RunStep(ctx context.Context, _ string, fn func(ctx context.Context) (StepResult, error)) (StepResult, error) {
 	return fn(ctx)
+}
+
+type idempotentStepKey struct{}
+
+// WithIdempotentStep marks the step run under ctx as idempotent: running it
+// twice has the same effect as running it once. The agent loop sets it for a
+// tool that declares itself idempotent (IdempotentTool). A durable engine may
+// then repeat an attempt whose outcome a crash left unknown instead of
+// waiting for the host to reconcile it.
+func WithIdempotentStep(ctx context.Context) context.Context {
+	return context.WithValue(ctx, idempotentStepKey{}, true)
+}
+
+// IdempotentStep reports whether ctx marks its step as idempotent.
+func IdempotentStep(ctx context.Context) bool {
+	v, _ := ctx.Value(idempotentStepKey{}).(bool)
+	return v
 }

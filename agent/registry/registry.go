@@ -38,15 +38,19 @@ type Entry[T any] struct {
 	Source string
 	// Note is a free-form reason for the change.
 	Note string
+	// Version is a content version of Value, such as a hash of a tool's
+	// schema, when the registration supplied one (WithVersion).
+	Version string
 }
 
 // Option configures a registration.
 type Option func(*entryMeta)
 
 type entryMeta struct {
-	source string
-	note   string
-	at     time.Time
+	source  string
+	note    string
+	version string
+	at      time.Time
 }
 
 // WithSource records what registered the revision.
@@ -57,6 +61,15 @@ func WithSource(source string) Option {
 // WithNote records why.
 func WithNote(note string) Option {
 	return func(m *entryMeta) { m.note = note }
+}
+
+// WithVersion records a content version for the value. Registering a value
+// whose version equals the latest revision's adds no revision: Register
+// returns the latest entry unchanged. A revision is then derived from the
+// content, so re-registering an unchanged value at every start keeps one
+// revision, and a changed value adds one without anyone deciding to.
+func WithVersion(version string) Option {
+	return func(m *entryMeta) { m.version = version }
 }
 
 // WithTime overrides the recorded timestamp, for deterministic tests.
@@ -93,7 +106,11 @@ func (r *Registry[T]) Register(name string, value T, opts ...Option) Entry[T] {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rev := Revision(len(r.history[name]) + 1)
+	revs := r.history[name]
+	if n := len(revs); n > 0 && m.version != "" && revs[n-1].Version == m.version {
+		return revs[n-1]
+	}
+	rev := Revision(len(revs) + 1)
 	e := Entry[T]{
 		Name:       name,
 		Revision:   rev,
@@ -101,6 +118,7 @@ func (r *Registry[T]) Register(name string, value T, opts ...Option) Entry[T] {
 		RecordedAt: m.at,
 		Source:     m.source,
 		Note:       m.note,
+		Version:    m.version,
 	}
 	r.history[name] = append(r.history[name], e)
 	return e
@@ -142,6 +160,20 @@ func (r *Registry[T]) At(name string, rev Revision) (Entry[T], bool) {
 		return zero, false
 	}
 	return revs[rev-1], true
+}
+
+// AtVersion returns the newest revision of name registered with version.
+func (r *Registry[T]) AtVersion(name, version string) (Entry[T], bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	revs := r.history[name]
+	for i := len(revs) - 1; i >= 0; i-- {
+		if version != "" && revs[i].Version == version {
+			return revs[i], true
+		}
+	}
+	var zero Entry[T]
+	return zero, false
 }
 
 // Latest returns the newest revision, ignoring any pin.

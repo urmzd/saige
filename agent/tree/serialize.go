@@ -20,6 +20,7 @@ const (
 	contentTypeSteer      = "steer"
 	contentTypeTruncation = "truncation"
 	contentTypeRoute      = "route"
+	contentTypeApproval   = "approval"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -179,6 +180,8 @@ func systemContentType(c types.SystemContent) string {
 		return contentTypeHandoff
 	case types.RouteContent:
 		return contentTypeRoute
+	case types.ApprovalContent:
+		return contentTypeApproval
 	default:
 		return contentTypeUnknown
 	}
@@ -240,6 +243,9 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeRoute:
 		var c types.RouteContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeApproval:
+		var c types.ApprovalContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)

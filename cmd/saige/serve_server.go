@@ -623,13 +623,18 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Approved     *bool          `json:"approved"`
-		Message      string         `json:"message"`
-		ModifiedArgs map[string]any `json:"modified_args"`
+		Approved     *bool               `json:"approved"`
+		Message      string              `json:"message"`
+		ModifiedArgs map[string]any      `json:"modified_args"`
+		Grant        *types.GrantRequest `json:"grant"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Approved == nil {
 		// A decision must be explicit: a missing field is never a yes.
 		writeError(w, http.StatusBadRequest, `body must include "approved": true or false`)
+		return
+	}
+	if err := checkGrant(body.Grant, *body.Approved, time.Now()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id := r.PathValue("toolCallID")
@@ -637,6 +642,7 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		Approved:     *body.Approved,
 		ModifiedArgs: body.ModifiedArgs,
 		Message:      body.Message,
+		Grant:        body.Grant,
 	})
 	switch {
 	case errors.Is(err, agentsdk.ErrUnknownMarker):
@@ -649,6 +655,25 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		t.disarm(id)
 		writeJSON(w, http.StatusOK, map[string]any{"tool_call_id": id, "approved": *body.Approved})
 	}
+}
+
+// checkGrant validates the grant a client attached to a decision: only an
+// approval can carry one, its scope and matchers must be well formed, and
+// its expiry must lie in the future.
+func checkGrant(g *types.GrantRequest, approved bool, now time.Time) error {
+	if g == nil {
+		return nil
+	}
+	if !approved {
+		return errors.New(`"grant" requires "approved": true`)
+	}
+	if err := g.Validate(); err != nil {
+		return err
+	}
+	if !g.ExpiresAt.IsZero() && !g.ExpiresAt.After(now) {
+		return fmt.Errorf("%w: expires_at %s is not in the future", types.ErrInvalidGrant, g.ExpiresAt.Format(time.RFC3339))
+	}
+	return nil
 }
 
 func (s *server) cancelTurn(w http.ResponseWriter, r *http.Request) {

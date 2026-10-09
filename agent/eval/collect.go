@@ -54,9 +54,13 @@ type RouteRecord struct {
 }
 
 // AddProvenance records the run's response models, serving catalog
-// configurations and what each dial was sent as on p.
+// configurations, what each dial was sent as, and the versions of the tools
+// it ran on p.
 func (r AgentRun) AddProvenance(p *topeval.Provenance) {
 	p.AddModels(r.Models...)
+	for _, c := range r.ToolCalls {
+		p.AddTool(c.Name, c.Version)
+	}
 	for _, rt := range r.Routes {
 		p.AddRoute(rt.Profile, rt.Preset, rt.ConfigHash, rt.CatalogRevision)
 		if rt.Dials == nil {
@@ -250,6 +254,7 @@ func (tc *toolCollector) observe(now time.Time, delta types.Delta) {
 		}
 		rec.Result = v.Result
 		rec.Error = v.Error
+		rec.Version = v.Version
 		rec.Exec = ExecFinished
 		if !tc.execStart[idx].IsZero() {
 			rec.DurationMs = now.Sub(tc.execStart[idx]).Milliseconds()

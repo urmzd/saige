@@ -63,6 +63,10 @@ type Step struct {
 	CompletedAt time.Time `json:"completed_at,omitempty"`
 	Result      []byte    `json:"result,omitempty"` // gob preserves sealed content and raw bytes
 	Error       string    `json:"error,omitempty"`
+	// Idempotent records that the step ran an idempotent tool
+	// (types.IdempotentStep), so an attempt without a known outcome is
+	// repeated instead of waiting for Reconcile.
+	Idempotent bool `json:"idempotent,omitempty"`
 }
 
 type Interrupt struct {
@@ -228,7 +232,7 @@ func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Conte
 		r.mu.Unlock()
 		return types.StepResult{}, err
 	}
-	if s, ok := r.state.Steps[name]; ok {
+	if s, ok := r.state.Steps[name]; ok && (s.Status == statusCompleted || !s.Idempotent) {
 		r.mu.Unlock()
 		if s.Status != statusCompleted {
 			return types.StepResult{}, fmt.Errorf("%w: %s: %s", ErrIndeterminate, name, s.Error)
@@ -241,7 +245,10 @@ func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Conte
 		r.mu.Unlock()
 		return types.StepResult{}, err
 	}
-	s := Step{Status: statusRunning, StartedAt: time.Now().UTC()}
+	if _, ok := r.state.Steps[name]; ok {
+		r.note("step.repeated", name) // an idempotent step without an outcome
+	}
+	s := Step{Status: statusRunning, StartedAt: time.Now().UTC(), Idempotent: types.IdempotentStep(ctx)}
 	r.state.Steps[name] = s
 	r.note("step.started", name)
 	if err := r.save(); err != nil {

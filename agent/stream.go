@@ -35,6 +35,13 @@ type Resolution struct {
 	Approved     bool
 	ModifiedArgs map[string]any // nil = use original args
 	Message      string         // optional reason (shown to LLM on rejection)
+	// Approver names who decided, as the host authenticated them. It is
+	// recorded with the call (types.CallApproval) and never sent to the model.
+	Approver string
+	// Grant extends an approval beyond this call when the agent has an
+	// ApprovalPolicy: to the tool, to matching arguments, or to the whole
+	// conversation, until an optional expiry. nil approves this call only.
+	Grant *types.GrantRequest
 }
 
 // EventStream is the consumer handle for streaming agent deltas.
@@ -80,6 +87,9 @@ type EventStream struct {
 	claim *runClaim
 	// started reports the submission that started this run, if any.
 	started *Submission
+	// approvals is the conversation's approval policy state, nil when the
+	// agent has no ApprovalPolicy.
+	approvals *approvalState
 }
 
 func newEventStream(ctx context.Context, cancel context.CancelFunc) *EventStream {
@@ -200,8 +210,13 @@ func (s *EventStream) close(err error) {
 // was cancelled), ErrMarkerResolved when a decision is already pending, and
 // types.ErrInterruptExpired when the wait ended at its deadline.
 func (s *EventStream) ResolveMarkerErr(toolCallID string, r Resolution) error {
+	if r.Approved && r.Grant != nil {
+		if err := r.Grant.Validate(); err != nil {
+			return err
+		}
+	}
 	return s.replyMarker(toolCallID, types.InterruptReply{
-		Decision: types.ApprovalDecision{Approved: r.Approved, ModifiedArgs: r.ModifiedArgs, Message: r.Message},
+		Decision: types.ApprovalDecision{Approved: r.Approved, ModifiedArgs: r.ModifiedArgs, Message: r.Message, Approver: r.Approver, Grant: r.Grant},
 	})
 }
 
@@ -212,7 +227,7 @@ func (s *EventStream) replyMarker(toolCallID string, reply types.InterruptReply)
 		if d.Message == "" && len(reply.Answer) > 0 {
 			d.Message = replyAnswer(reply)
 		}
-		return s.resolve(toolCallID, Resolution{Approved: d.Approved, ModifiedArgs: d.ModifiedArgs, Message: d.Message})
+		return s.resolve(toolCallID, Resolution{Approved: d.Approved, ModifiedArgs: d.ModifiedArgs, Message: d.Message, Approver: d.Approver, Grant: d.Grant})
 	}
 	s.markerMu.Lock()
 	id, ok := s.markers[toolCallID]

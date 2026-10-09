@@ -81,7 +81,7 @@ func TestToolRedactorAtToolBoundary(t *testing.T) {
 			if gateSaw["email"] != "<<EMAIL_1>>" {
 				t.Fatalf("gate saw %v, want placeholders", gateSaw)
 			}
-			if tool.infos[0] != (types.ToolCallInfo{ID: "c1", Name: "lookup", Agent: "support"}) {
+			if info := tool.infos[0]; info.ID != "c1" || info.Name != "lookup" || info.Agent != "support" || info.RunID == "" || info.Branch == "" {
 				t.Fatalf("call info = %+v", tool.infos[0])
 			}
 

@@ -23,6 +23,8 @@ go run ./examples/rag/arxiv/
 | [`agent/handoffs`](agent/handoffs/) | Agent-to-agent handoffs |
 | [`agent/tui`](agent/tui/) | Interactive and verbose TUI modes |
 | [`agent/runner`](agent/runner/) | Multi-turn conversation loop |
+| [`agent/approval-grants`](agent/approval-grants/) | Approval policy with an args grant, capability defaults, and a denial limit |
+| [`agent/func-tools`](agent/func-tools/) | Typed tools with `agent.Func` and model-computed functions with `agent.AIFunc` |
 
 ## Knowledge Graph
 

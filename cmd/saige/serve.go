@@ -28,6 +28,7 @@ func newServeCmd(ctx context.Context) *cobra.Command {
 		packs           []string
 		workspace       string
 		bashNetwork     string
+		denyAfter       int
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -40,14 +41,24 @@ envelope. Approvals and cancellation are POST endpoints.
   POST /v1/sessions/{sid}/turns              {message}      -> 202 {turn_id}
   GET  /v1/sessions/{sid}/turns/{tid}/events                -> SSE (Last-Event-ID resumes)
   GET  /v1/sessions/{sid}/turns/{tid}/events?format=agui    -> SSE as AG-UI events
-  POST /v1/sessions/{sid}/turns/{tid}/interrupts/{call_id}  {approved, message, modified_args}
+  POST /v1/sessions/{sid}/turns/{tid}/interrupts/{call_id}  {approved, message, modified_args, grant}
   POST /v1/sessions/{sid}/turns/{tid}/cancel
   GET  /v1/sessions/{sid}/turns/{tid}                       -> {done, last_seq, error}
   GET  /v1/sessions/{sid}/tree                              -> conversation tree JSON
 
 The server binds to localhost by default. Binding to another address
 requires a bearer token (--token or SAIGE_SERVE_TOKEN). An approval nobody
-answers within --approval-timeout is denied.`,
+answers within --approval-timeout is denied.
+
+An approval may carry a grant, so later calls it covers run without asking
+for the rest of the session:
+
+  {"approved": true, "grant": {"scope": "tool"}}
+  {"approved": true, "grant": {"scope": "args", "match": [{"field": "path", "path_prefix": "/srv/app"}],
+                               "expires_at": "2026-12-31T00:00:00Z"}}
+
+Scopes are once, tool, args and session. Grants never cover destructive
+tools. --deny-after stops asking about a tool after that many denials.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cf := persistentFlagVars
 			if token == "" {
@@ -77,7 +88,7 @@ answers within --approval-timeout is denied.`,
 				if len(tools) > 0 {
 					cfg.Tools = types.NewToolRegistry(tools...)
 				}
-				return agentsdk.NewAgent(cfg), nil
+				return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter})), nil
 			}
 
 			srvCtx, stop := context.WithCancel(ctx)
@@ -109,6 +120,7 @@ answers within --approval-timeout is denied.`,
 	f.DurationVar(&idleTTL, "idle-ttl", time.Hour, "Drop a session that has had no running turn for this long")
 	f.StringSliceVar(&packs, "tools", nil, "Tool packs to enable: fs, fs-write, fetch, bash")
 	f.StringVar(&workspace, "workspace", "", "Workspace root for the fs and bash packs")
+	f.IntVar(&denyAfter, "deny-after", 0, "Refuse a tool without asking after this many denials in a session (0 always asks)")
 	f.StringVar(&bashNetwork, "bash-network", string(exec.NetworkDeny), "Network policy for bash: deny (needs an isolating wrapper) or allow")
 	return cmd
 }

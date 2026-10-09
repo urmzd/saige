@@ -35,6 +35,13 @@ type decision struct {
 	// message is the refusal reason or, for an approval with a note, the
 	// note. For a clarification it is the answer.
 	message string
+	// approver names who decided, as the host reported it.
+	approver string
+	// grant is the scope the host attached to an approval.
+	grant *types.GrantRequest
+	// denied is true when a person refused, as opposed to a cancellation,
+	// an expiry, or a failure to ask.
+	denied bool
 }
 
 // interruptRequest describes one decision a run needs from outside.
@@ -59,9 +66,9 @@ func (a *Agent) awaitInterrupt(ctx context.Context, stream *EventStream, req int
 			return decision{message: err.Error()}, false
 		}
 		if !d.Approved {
-			return decision{message: "rejected: " + d.Message}, false
+			return decision{message: "rejected: " + d.Message, approver: d.Approver, denied: true}, false
 		}
-		return decision{approved: true, args: d.ModifiedArgs, message: d.Message}, true
+		return decision{approved: true, args: d.ModifiedArgs, message: d.Message, approver: d.Approver, grant: d.Grant}, true
 	}
 	if stream.nonStreaming {
 		stream.stopRun(errNonStreamingApproval)
@@ -136,12 +143,12 @@ func replyDecision(r types.InterruptReply) (decision, bool) {
 		if r.Decision.Message != "" {
 			msg = "rejected: " + r.Decision.Message
 		}
-		return decision{message: msg}, false
+		return decision{message: msg, approver: r.Decision.Approver, denied: true}, false
 	}
 	if answer == "" {
 		answer = r.Decision.Message
 	}
-	return decision{approved: true, args: r.Decision.ModifiedArgs, message: answer}, true
+	return decision{approved: true, args: r.Decision.ModifiedArgs, message: answer, approver: r.Decision.Approver, grant: r.Decision.Grant}, true
 }
 
 // replyAnswer returns a reply's Answer as text: a JSON string is unquoted and

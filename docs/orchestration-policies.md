@@ -460,6 +460,7 @@ Registration occurs before event delivery. Duplicate decisions do not block the 
 A subagent marker uses a parent-call prefix and routes the decision back to the correct child.
 `ResolveMarkerErr` returns `ErrUnknownMarker` for an ID that is not waiting, so a stale or mistyped decision is reported instead of lost.
 Arguments edited during approval are validated and gated again. A gate can still deny the edited call.
+An `agent.ApprovalPolicy` lets an approval carry a grant (once, tool, matching arguments, or session, with an optional expiry), stops asking after repeated denials, and applies capability-class defaults. See [approval policy and grants](approval-policy.md).
 
 ```go
 worker := agent.NewAgent(cfg,

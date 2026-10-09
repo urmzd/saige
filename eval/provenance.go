@@ -35,9 +35,32 @@ type Provenance struct {
 	// Catalog records the declared configurations that served the run, when
 	// its providers were built from a model catalog.
 	Catalog *CatalogProvenance `json:"catalog,omitempty"`
+	// Tools maps each tool that reported a version, such as an agent.Func
+	// schema hash or an agent.AIFunc version, to the versions that ran,
+	// joined with ", " when several did.
+	Tools map[string]string `json:"tools,omitempty"`
 	// Dials records, per dial name, what each requested value compiled to
 	// on the run's calls. See AddDial.
 	Dials map[string][]DialOutcome `json:"dials,omitempty"`
+}
+
+// AddTool records that a version of a tool ran. Calls with an empty name or
+// version are ignored.
+func (p *Provenance) AddTool(name, version string) {
+	if name == "" || version == "" {
+		return
+	}
+	if p.Tools == nil {
+		p.Tools = map[string]string{}
+	}
+	have := p.Tools[name]
+	if have == "" {
+		p.Tools[name] = version
+		return
+	}
+	if !slices.Contains(strings.Split(have, ", "), version) {
+		p.Tools[name] = have + ", " + version
+	}
 }
 
 // DialOutcome is what one requested dial value compiled to across a run.
@@ -109,11 +132,12 @@ func (p *Provenance) AddRoute(profile, preset, configHash, revision string) {
 
 // ConfigDrift lists the differences between two runs' configurations that
 // make their scores incomparable: the same profile ID served with a
-// different configuration hash, a different catalog revision, or a dial
-// held at the same value in both runs that was sent as different raw
-// parameters. The catalog checks need catalog provenance on both runs.
+// different configuration hash, a different catalog revision, a dial held at
+// the same value in both runs that was sent as different raw parameters, or
+// the same tool run at a different version. The catalog checks need catalog
+// provenance on both runs.
 func ConfigDrift(base, exp Provenance) []string {
-	out := dialDrift(base, exp)
+	out := append(dialDrift(base, exp), toolDrift(base, exp)...)
 	if base.Catalog == nil || exp.Catalog == nil {
 		return out
 	}
@@ -226,4 +250,20 @@ func gitState(ctx context.Context, dir string) (commit string, dirty bool, ok bo
 		return "", false, false
 	}
 	return strings.TrimSpace(head), strings.TrimSpace(status) != "", true
+}
+
+// toolDrift lists tools both runs called at different versions.
+func toolDrift(base, exp Provenance) []string {
+	names := make([]string, 0, len(base.Tools))
+	for name := range base.Tools {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var out []string
+	for _, name := range names {
+		if v, ok := exp.Tools[name]; ok && v != base.Tools[name] {
+			out = append(out, fmt.Sprintf("tool %s: version %s vs %s", name, base.Tools[name], v))
+		}
+	}
+	return out
 }

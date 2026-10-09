@@ -203,7 +203,7 @@ func fromWireInterrupt(w wireInterrupt) Interrupt {
 func NewInterruptReplyEnvelope(r InterruptReply) (Envelope, error) {
 	w := wireInterruptReply{
 		ID: r.ID, IdempotencyKey: r.IdempotencyKey, Answer: r.Answer,
-		Decision: wireDecision{Approved: r.Decision.Approved, ModifiedArgs: r.Decision.ModifiedArgs, Message: r.Decision.Message},
+		Decision: toWireDecision(r.Decision),
 	}
 	raw, err := json.Marshal(w)
 	if err != nil {
@@ -223,8 +223,16 @@ func (e Envelope) InterruptReply() (InterruptReply, error) {
 	}
 	return InterruptReply{
 		ID: w.ID, IdempotencyKey: w.IdempotencyKey, Answer: w.Answer,
-		Decision: ApprovalDecision{Approved: w.Decision.Approved, ModifiedArgs: w.Decision.ModifiedArgs, Message: w.Decision.Message},
+		Decision: fromWireDecision(w.Decision),
 	}, nil
+}
+
+func toWireDecision(d ApprovalDecision) wireDecision {
+	return wireDecision(d)
+}
+
+func fromWireDecision(w wireDecision) ApprovalDecision {
+	return ApprovalDecision(w)
 }
 
 // FlattenDelta unwraps nested ToolExecDelta values and returns the tool call
@@ -414,6 +422,7 @@ type wireToolExec struct {
 	Error      string      `json:"error,omitempty"`
 	Blocks     []wireBlock `json:"blocks,omitempty"`
 	Inner      *Envelope   `json:"inner,omitempty"`
+	Version    string      `json:"version,omitempty"`
 }
 
 // wireBlock carries raw bytes too: a live consumer needs the image a tool
@@ -588,6 +597,8 @@ type wireDecision struct {
 	Approved     bool           `json:"approved"`
 	ModifiedArgs map[string]any `json:"modified_args,omitempty"`
 	Message      string         `json:"message,omitempty"`
+	Approver     string         `json:"approver,omitempty"`
+	Grant        *GrantRequest  `json:"grant,omitempty"`
 }
 
 type wireInterruptReply struct {
@@ -634,6 +645,7 @@ func encodeDelta(d Delta) (string, any, error) {
 	case ToolExecEndDelta:
 		return WireToolExecEnd, wireToolExec{
 			ToolCallID: v.ToolCallID, Name: v.Name, Result: v.Result, Error: v.Error, Blocks: toWireBlocks(v.Blocks),
+			Version: v.Version,
 		}, nil
 	case MarkerDelta:
 		w := wireMarkerDelta{
@@ -743,6 +755,7 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		w, err := decodeAs[wireToolExec](kind, data)
 		return ToolExecEndDelta{
 			ToolCallID: w.ToolCallID, Name: w.Name, Result: w.Result, Error: w.Error, Blocks: fromWireBlocks(w.Blocks),
+			Version: w.Version,
 		}, err
 	case WireMarker:
 		w, err := decodeAs[wireMarkerDelta](kind, data)

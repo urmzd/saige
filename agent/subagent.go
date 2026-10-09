@@ -83,7 +83,7 @@ type SubAgentDef struct {
 //
 //   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
 //     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolRedactor,
-//     Dials and DialPolicy. These
+//     Dials, DialPolicy, ApprovalPolicy and Deps. These
 //     describe how this deployment runs agents, not what one agent is for, so a
 //     child that did not inherit them would quietly run with different
 //     guarantees than the parent that delegated to it.
@@ -144,6 +144,8 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		Extractors:       parent.Extractors,
 		ToolGate:         parent.ToolGate,
 		ToolPolicy:       parent.ToolPolicy,
+		ApprovalPolicy:   parent.ApprovalPolicy,
+		Deps:             parent.Deps,
 		ToolContext:      parent.ToolContext,
 		Tokenizer:        parent.Tokenizer,
 		// The redactor is shared so a placeholder in the task means the same
