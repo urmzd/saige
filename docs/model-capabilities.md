@@ -53,6 +53,27 @@ before HTTP. This follows the [Ollama parameter types](https://docs.ollama.com/m
 for its own model. Do not share temperature across a chat/reasoning fallback and assume it was
 honored. Explicit zero, false and empty effort remain explicit; omitted values preserve defaults.
 
+### Dials
+
+To share a setting across a chain, use a [dial](dials.md) instead of a raw option. A dial is an
+intent (`creativity`, `reasoning`, `max_output`, `tools`, `parallel`, `reproducible`, `cache`)
+that `types.ResolveDials` compiles per attempt against the serving model's declaration. Raw
+options are still rejected, never stripped. A dial the model cannot honor exactly is mapped to the
+nearest declared value or dropped when it is advisory, lowered to the limit when it clamps, and
+rejected when it is contractual. Every decision is recorded in a `types.DialReport`.
+
+| Adapter | `reasoning: {depth: high}` | `reasoning: {mode: off}` | `creativity: focused` |
+|---|---|---|---|
+| OpenAI, effort rows | effort `high`; Chat Completions with tools on a `no_reasoning` row sends `none` | effort `none` when declared, else the lowest effort | `temperature` 0.3, `top_p` 0.9, dropped while reasoning is active on rows that take sampling only without it |
+| Anthropic adaptive | effort `high` | the lowest effort, since adaptive thinking cannot be turned off through this adapter | dropped: no sampling controls |
+| Anthropic manual thinking | a budget, kept below `max_tokens` | nothing sent; thinking is off by default | dropped while thinking, applied otherwise |
+| Google Gemini 3 | thinking level `HIGH` | the lowest level, since reasoning is required | `temperature` 0.3, `top_p` 0.9 |
+| Google Gemini 2.5 | a budget by fraction of the declared range | budget 0 where declared, else the lowest depth | `temperature` 0.3, `top_p` 0.9 |
+| Ollama reasoning models | `think: true`, recorded as mapped | `think: false` | `temperature` 0.3, `top_p` 0.9 |
+
+The derived mapping comes from the existing declarations, so registered rows and user catalogs
+work unchanged. A row's `dials` object overrides any part of it (see [the catalog guide](catalog.md#dials)).
+
 ```sh
 go run ./cmd/saige models gpt-6-luna --provider openai
 go run ./cmd/saige models gpt-6.1-sol --provider openai --format json

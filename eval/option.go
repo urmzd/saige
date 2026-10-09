@@ -1,6 +1,10 @@
 package eval
 
-import "log/slog"
+import (
+	"log/slog"
+
+	"github.com/urmzd/saige/agent/types"
+)
 
 // Config holds options for [Run], [PopulateAll], [Compare], and
 // [Experiment.Run]. Each function reads the fields that apply to it and
@@ -8,6 +12,8 @@ import "log/slog"
 type Config struct {
 	// provenance, when set by WithProvenance, is compared for drift.
 	provenance *[2]Provenance
+	// dialPolicy, when set by WithDialPolicy, governs the subjects' dials.
+	dialPolicy *types.DialPolicy
 
 	Concurrency int
 	Logger      *slog.Logger
@@ -155,6 +161,17 @@ func WithRunOptions(opts ...Option) Option {
 				o(c)
 			}
 		}
+	}
+}
+
+// WithDialPolicy runs every subject under p: the context passed to a
+// subject carries it (types.ContextWithDialPolicy), and an agent uses it
+// instead of its own. Use types.StrictDials to hold dials constant across
+// models, so a dial a model would map or drop fails the attempt instead.
+func WithDialPolicy(p types.DialPolicy) Option {
+	return func(c *Config) {
+		p = p.Clone()
+		c.dialPolicy = &p
 	}
 }
 

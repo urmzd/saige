@@ -91,6 +91,11 @@ type ConfigContent struct {
 	// A required or named choice applies to one model turn and then reverts,
 	// so a forced call cannot repeat in a loop. Auto and none stay in effect.
 	ToolChoice *ToolChoice `json:",omitempty"`
+	// Dials change the generation intents from the next call on, merged
+	// field by field over earlier blocks (nil = no change). They take
+	// effect at the next safe point; a reasoning change waits for the next
+	// user turn while a tool loop with signed reasoning is open.
+	Dials *Dials `json:",omitempty"`
 	// Reason records why this block was written, for example the outcome
 	// that made an OutcomePolicy switch models. It has no effect on the loop.
 	Reason string `json:",omitempty"`
@@ -221,6 +226,8 @@ type RouteContent struct {
 	ConfigHash      string          `json:"config_hash,omitempty"`
 	CatalogRevision string          `json:"catalog_revision,omitempty"`
 	Options         *RequestOptions `json:"-"`
+	// Dials records how the turn's dials compiled, when it had any.
+	Dials *DialReport `json:"dials,omitempty"`
 }
 
 // RouteContentFrom records the configuration a RouteDelta names.
@@ -230,6 +237,10 @@ func RouteContentFrom(r RouteDelta) RouteContent {
 	if r.Options != nil {
 		o := r.Options.Clone()
 		c.Options = &o
+	}
+	if r.Dials != nil {
+		d := r.Dials.Clone()
+		c.Dials = &d
 	}
 	return c
 }

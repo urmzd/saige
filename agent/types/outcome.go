@@ -41,11 +41,15 @@ type Outcome struct {
 	Err error
 }
 
-// Switch asks the agent to continue on another model. Model is passed to
-// ConfigContent.Model, so for a routing session it names a profile ID.
+// Switch asks the agent to continue on another model, or with other dials.
+// Model is passed to ConfigContent.Model, so for a routing session it names
+// a profile ID; empty keeps the model. Dials are passed to
+// ConfigContent.Dials, so a policy can raise reasoning depth on the same
+// model before it moves to another one.
 type Switch struct {
 	Model  string
 	Reason string
+	Dials  *Dials
 }
 
 // OutcomePolicy decides whether an outcome moves the conversation to another

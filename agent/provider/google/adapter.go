@@ -162,6 +162,8 @@ type Adapter struct {
 	safety      []*genai.SafetySetting
 	serverTools []types.ServerTool
 	toolChoice  *types.ToolChoice
+	dials       []types.DialLayer
+	dialPolicy  *types.DialPolicy
 }
 
 // NewAdapter creates a new Google provider adapter using the official SDK. It
@@ -226,7 +228,7 @@ func (a *Adapter) EffectiveOptions() types.RequestOptions {
 	o := types.RequestOptions{Temperature: toFloat(a.generation.Temperature),
 		TopP: toFloat(a.generation.TopP), TopK: toFloat(a.generation.TopK), StopSequences: a.generation.StopSequences,
 		FrequencyPenalty: toFloat(a.generation.FrequencyPenalty), PresencePenalty: toFloat(a.generation.PresencePenalty),
-		ToolChoice: a.toolChoice}
+		ToolChoice: a.toolChoice, DialLayers: a.dials, DialPolicy: a.dialPolicy}
 	if a.generation.Seed != nil {
 		n := int64(*a.generation.Seed)
 		o.Seed = &n
@@ -271,6 +273,10 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, false)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
 		return nil, err
 	}
@@ -291,6 +297,10 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
 		return nil, err
 	}

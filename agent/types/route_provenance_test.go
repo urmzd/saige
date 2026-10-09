@@ -58,3 +58,28 @@ func TestRouteContentJSON(t *testing.T) {
 		t.Fatalf("legacy: %v %#v", err, legacy)
 	}
 }
+
+func TestRouteDialReportRoundTrips(t *testing.T) {
+	low := "low"
+	rep := &DialReport{Requested: Dials{Reasoning: &ReasoningDial{Mode: ReasoningOff}}, Effective: RequestOptions{ReasoningEffort: &low},
+		EffectiveHash: "abc", Policy: "default",
+		Decisions: []DialDecision{{Dial: DialReasoning, Requested: "off", Sent: "effort=low", Action: DialMapped, Reason: "cannot disable", Scope: DialScopeAgent}}}
+	d := RouteDelta{Profile: "p", Provider: "openai", Options: &RequestOptions{ReasoningEffort: &low}, Dials: rep}
+	b, err := MarshalDelta(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnmarshalDelta(b)
+	if err != nil || !reflect.DeepEqual(got, d) {
+		t.Fatalf("delta round trip: %v\n got %#v\nwant %#v", err, got, d)
+	}
+	c := RouteContentFrom(d)
+	b, err = json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back RouteContent
+	if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, c) {
+		t.Fatalf("content round trip: %v\n got %#v\nwant %#v (%s)", err, back, c, b)
+	}
+}

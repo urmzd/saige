@@ -56,6 +56,8 @@ type Adapter struct {
 	serverTools   []types.ServerTool
 	maxRetries    int
 	requestOpts   []option.RequestOption
+	dials         []types.DialLayer
+	dialPolicy    *types.DialPolicy
 }
 
 // Option configures the Anthropic adapter.
@@ -181,7 +183,11 @@ func (a *Adapter) applyParams(p *anthropic.MessageNewParams) {
 // EffectiveOptions implements types.OptionsReporter: the adapter's configured
 // controls expressed as request options, including the max_tokens default
 // every request carries.
-func (a *Adapter) EffectiveOptions() types.RequestOptions { return a.requestOptions().Clone() }
+func (a *Adapter) EffectiveOptions() types.RequestOptions {
+	o := a.requestOptions()
+	o.DialLayers, o.DialPolicy = a.dials, a.dialPolicy
+	return o.Clone()
+}
 
 // requestOptions expresses the adapter's configured controls as request
 // options, so the shared validation and reasoning rules apply to them.
@@ -263,6 +269,10 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, false)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
 		return nil, err
 	}
@@ -299,6 +309,10 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 // This adapter constrains output with a hidden tool and forces the model to call it.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
+	if err != nil {
+		return nil, err
+	}
 	if schema != nil {
 		// Schema output forces a hidden tool, which the API rejects with a
 		// manual thinking budget and on models that refuse forcing. This

@@ -40,6 +40,8 @@ type Catalog struct {
 	// DefaultPreset is used by the CLI when neither a preset nor a model is
 	// named.
 	DefaultPreset string `json:"default_preset,omitempty"`
+	// Dials are global dials, the lowest layer of every preset entry's.
+	Dials *types.Dials `json:"dials,omitempty"`
 
 	// deletedPresets lists the presets a layer removes with null.
 	deletedPresets []string
@@ -76,7 +78,10 @@ type ModelSpec struct {
 	// Defaults are model-level option defaults, the lowest declared layer of
 	// a preset entry's options.
 	Defaults *OptionsSpec `json:"defaults,omitempty"`
-	Notes    []string     `json:"notes,omitempty"`
+	// Dials declares how the row compiles model-neutral dials, and its
+	// default dials. Templates and rows merge it field by field.
+	Dials *DialsSpec `json:"dials,omitempty"`
+	Notes []string   `json:"notes,omitempty"`
 	// Replace makes an overlay row replace the base row whole instead of
 	// patching it. Delete removes the base row.
 	Replace bool `json:"$replace,omitempty"`
@@ -219,6 +224,9 @@ type PresetSpec struct {
 	Extends string `json:"extends,omitempty"`
 	// Options are inherited by every chain entry that does not opt out.
 	Options *OptionsSpec `json:"options,omitempty"`
+	// Dials are inherited by every chain entry that does not opt out, and
+	// compiled for each entry's own model.
+	Dials *types.Dials `json:"dials,omitempty"`
 	// ToolChoice is the agent default: auto, none, required or named:<tool>.
 	ToolChoice string `json:"tool_choice,omitempty"`
 	// OutputMode is auto, native, tool or prompt.
@@ -291,7 +299,10 @@ type EntrySpec struct {
 	Provider string       `json:"provider"`
 	Model    string       `json:"model"`
 	Options  *OptionsSpec `json:"options,omitempty"`
-	// Unset removes inherited option names from the result.
+	// Dials are the entry's own dials, on top of the preset's.
+	Dials *types.Dials `json:"dials,omitempty"`
+	// Unset removes inherited option names from the result, and inherited
+	// dials named "dials.<name>".
 	Unset []string `json:"unset,omitempty"`
 	// Inherit is "all" (the default) or "none", which ignores the preset's
 	// options.

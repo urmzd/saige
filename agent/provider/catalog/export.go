@@ -101,6 +101,7 @@ func entrySpec(e Entry) ModelSpec {
 	}
 	s.Pricing = pricingSpec(c.Pricing)
 	s.Defaults = e.Defaults.clone()
+	s.Dials = e.Dials.clone()
 	s.Notes = append([]string(nil), c.Notes...)
 	return s
 }

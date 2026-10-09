@@ -107,7 +107,7 @@ func (p *TracedProvider) ChatStream(ctx context.Context, messages []types.Messag
 	// The clock starts before the inner call so connection setup and response
 	// headers count toward the time to first chunk.
 	start := time.Now()
-	ctx, span := p.startChat(ctx)
+	ctx, span := p.startChat(ctx, p.localDials(nil, tools)...)
 
 	ch, err := p.Inner.ChatStream(ctx, messages, tools)
 	if err != nil {
@@ -153,7 +153,11 @@ func (p *TracedProvider) ChatStreamWithSchema(ctx context.Context, messages []ty
 // them.
 func (p *TracedProvider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
 	start := time.Now()
-	ctx, span := p.startChat(ctx, requestAttributes(opts)...)
+	attrs := p.localDials(&opts, tools)
+	if attrs == nil {
+		attrs = requestAttributes(opts)
+	}
+	ctx, span := p.startChat(ctx, attrs...)
 
 	op, ok := p.Inner.(types.OptionsProvider)
 	if !ok {
@@ -299,6 +303,9 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 					// per-call overrides recorded when the span started.
 					span.SetAttributes(requestAttributes(*route.Options)...)
 				}
+				if route.Dials != nil {
+					span.SetAttributes(dialAttributes(*route.Dials)...)
+				}
 			}
 			span.End()
 		}()
@@ -325,6 +332,9 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 				attrs := routeAttributes(v)
 				if v.Options != nil {
 					attrs = append(attrs, requestAttributes(*v.Options)...)
+				}
+				if v.Dials != nil {
+					attrs = append(attrs, dialAttributes(*v.Dials)...)
 				}
 				span.AddEvent("saige.route.attempt", trace.WithAttributes(attrs...))
 			case types.ErrorDelta:
@@ -359,6 +369,63 @@ func usageAttributes(u types.UsageDelta) []attribute.KeyValue {
 	}
 	if u.CacheHit {
 		attrs = append(attrs, attribute.Bool("saige.response.cache_hit", true))
+	}
+	return attrs
+}
+
+// localDials compiles the dials of a call to a provider that reports its
+// capabilities, for the span attributes of a call that reports no route of
+// its own. It returns the effective request and dial attributes, or nil
+// when the call carries no dials. A router reports each attempt's dials on
+// its route, which replaces these.
+func (p *TracedProvider) localDials(opts *types.RequestOptions, tools []types.ToolDef) []attribute.KeyValue {
+	if _, multi := wrapper.As[wrapper.MultiWrapper](p.Inner); multi {
+		return nil
+	}
+	configured, _ := types.ProviderEffectiveOptions(p.Inner)
+	all := configured
+	if opts != nil {
+		all = configured.Merge(*opts)
+	}
+	if !all.HasDials() {
+		return nil
+	}
+	caps, ok := types.ProviderCapabilities(p.Inner)
+	if !ok {
+		return nil
+	}
+	ctx := types.DialContext{Tools: len(tools) > 0}
+	if r, ok := wrapper.As[types.DialSurfaceReporter](p.Inner); ok {
+		ctx.Surface = r.DialSurface()
+	}
+	eff, rep, err := types.CompileOptions(caps, all, ctx)
+	if rep == nil {
+		return nil
+	}
+	attrs := dialAttributes(*rep)
+	if err == nil {
+		attrs = append(attrs, requestAttributes(eff)...)
+	}
+	return attrs
+}
+
+// dialAttributes records how a call's dials compiled: every requested dial
+// as "name:value", the mapped ones as "name:from→to", the dropped ones,
+// and the policy in force.
+func dialAttributes(r types.DialReport) []attribute.KeyValue {
+	var requested []string
+	for _, d := range r.Decisions {
+		requested = append(requested, string(d.Dial)+":"+d.Requested)
+	}
+	attrs := []attribute.KeyValue{attribute.StringSlice("saige.dials.requested", requested)}
+	if mapped := r.Lines(types.DialMapped); len(mapped) > 0 {
+		attrs = append(attrs, attribute.StringSlice("saige.dials.mapped", mapped))
+	}
+	if dropped := r.Lines(types.DialDropped); len(dropped) > 0 {
+		attrs = append(attrs, attribute.StringSlice("saige.dials.dropped", dropped))
+	}
+	if r.Policy != "" {
+		attrs = append(attrs, attribute.String("saige.dials.policy", r.Policy))
 	}
 	return attrs
 }

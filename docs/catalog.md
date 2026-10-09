@@ -26,6 +26,7 @@ A catalog is one JSON object. The JSON Schema is `agent/provider/catalog/catalog
 | `baselines` | The conservative row per provider for unknown models. |
 | `presets` | Named configurations. |
 | `default_preset` | Used by the CLI when neither `--preset` nor `--model` is given. |
+| `dials` | Global [dials](dials.md), the lowest dial layer of every chain entry. |
 
 A model row matches model IDs by longest prefix. Only an exact match is a declaration (`Known` true); a dated or tagged ID inherits the family row with `Known` false.
 
@@ -41,7 +42,7 @@ A model row matches model IDs by longest prefix. Only an exact match is a declar
 }
 ```
 
-Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults` and `notes`.
+Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults`, `dials` and `notes`.
 
 Two fields describe request shapes a vendor rejects for one model:
 
@@ -63,6 +64,33 @@ The same shape appears in model `defaults`, preset `options` and entry `options`
 | `server_tools` | `[{"kind": "web_search", "max_uses": 3}]`. A remote MCP server's `url` must be `https` with a host, and its token is never part of a catalog. |
 
 JSON `null` is not accepted inside an options object. Remove an inherited option with the entry's `unset`, so that every removal is written down.
+
+### Dials
+
+[Dials](dials.md) are model-neutral intents such as `{"creativity": "focused", "reasoning": {"depth": "high"}}`. Unlike options, a dial an entry's model cannot honor exactly is mapped to the nearest declared value or dropped when it is advisory, and rejected only when it is contractual (`tools`, `parallel: false`, `reproducible`).
+
+A dials object appears in three places:
+
+| Where | Shape | Meaning |
+| --- | --- | --- |
+| top-level `dials`, preset `dials`, entry `dials` | the dial values | What to ask every entry, a preset's entries, or one entry for. |
+| model row (or template) `dials` | `creativity`, `reasoning`, `cache`, `defaults` | How the row compiles dials to options, and the model's own dial defaults. |
+
+A row needs no `dials`: its mapping is derived from `reasoning`, the sampling capabilities and the prompt cache capabilities. Declare one only to override a part of it:
+
+| Key | Meaning |
+| --- | --- |
+| `creativity.levels` | An options object per level (`deterministic`, `focused`, `balanced`, `creative`). |
+| `creativity.requires_reasoning_off` | Drop creativity while reasoning is active. The Anthropic thinking rows declare it. |
+| `reasoning.off`, `reasoning.on`, `reasoning.adaptive` | The options object for each mode. `{}` means the mode is expressed by sending nothing. |
+| `reasoning.depth` | An options object per depth (`minimal`, `low`, `medium`, `high`, `max`). A depth missing here maps to the nearest declared one. |
+| `reasoning.depth_change` | `per_request` when a depth change applies even inside a tool loop with signed reasoning. |
+| `reasoning.change_resets_cache` | A reasoning change invalidates the provider's cached prompt prefix. The Anthropic thinking rows declare it. |
+| `reasoning.with_tools` | Options per API surface (`chat`, `responses`) that replace the compiled reasoning when the request offers tools. |
+| `cache.on` | The `prompt_cache` object the cache dial turns on. |
+| `defaults` | The model's own dial values, below the preset's. |
+
+A declared level, depth or surface overrides the derived one of the same key, so an overlay can patch `models[].dials.creativity.levels.focused` and keep the rest. Templates and rows merge `dials` field by field, and maps key by key.
 
 ## Sources and layers
 
@@ -141,7 +169,7 @@ _, err := catalog.Use(ctx, catalog.Layered(catalog.EmbeddedSource(), s3src))
 }
 ```
 
-Preset keys: `description`, `extends`, `options`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `retry`, `routing`, `require_declared` and `chain`.
+Preset keys: `description`, `extends`, `options`, `dials`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `retry`, `routing`, `require_declared` and `chain`.
 
 Routing keys:
 
@@ -156,7 +184,7 @@ Routing keys:
 
 Setting `fail_threshold` or `reprobe_after` without a `policy` selects `affinity`; with `policy: sticky` it is an error. Other permanent errors never fail over.
 
-Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `unset`, `inherit` (`all` or `none`), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
+Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `dials`, `unset` (option names, and inherited dials as `dials.<name>`), `inherit` (`all` or `none`, which also skips the preset's dials), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
 
 `vertex` serves a Google entry through Vertex AI instead of the Gemini API: `{"project": "...", "location": "..."}`. Empty fields default from `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, and the location then defaults to `global`. Vertex authenticates with Application Default Credentials, so the entry needs a project, not an API key. Setting `GOOGLE_GENAI_USE_VERTEXAI=true` serves every Google entry through Vertex the same way. A `vertex` block on another provider's entry is rejected. An optional entry is dropped when its credentials are missing, and an optional entry that needs none (a local Ollama model) is dropped when its server does not answer a reachability check at build time (`preset.Options.Probe`, by default `preset.ProbeOllama`).
 
@@ -172,6 +200,8 @@ Options resolve field by field, lowest first:
 6. A per-request override at call time, merged by the adapter. It is not part of the configuration hash.
 
 There is one reasoning control: a higher layer that sets any `reasoning` key replaces the lower layer's reasoning whole.
+
+Dials resolve the same way in their own layers: the top-level `dials`, the row's `dials.defaults`, the preset's `dials` (skipped with `"inherit": "none"`), the entry's `dials`, then the entry's `unset`. The adapter compiles them on each request against its own model, under any dials the agent or the request adds ([precedence](dials.md#setting-dials)). An option that sets the same parameter as a dial wins over it. When the merged dials turn `cache` on and no `prompt_cache` option is set, the row's prompt cache is selected, with origin of the dial's layer.
 
 ## Validation
 
@@ -193,7 +223,14 @@ presets.p.chain[1].options.temperature: not declared supported for openai/gpt-6.
 
 On `gpt-6-luna`, which accepts sampling only with reasoning effort `none` and defaults to `medium`, the same option fails with `requires reasoning to be disabled` unless the entry also sets `"reasoning": {"effort": "none"}`.
 
-The fix is written in the file: `"unset": ["temperature"]`, an entry override, or `"inherit": "none"`.
+The fix is written in the file: `"unset": ["temperature"]`, an entry override, or `"inherit": "none"`. A preset with more than one entry whose shared options set `temperature`, `top_p`, `top_k` or `reasoning` also gets a `prefer_dial` warning: the creativity and reasoning dials adapt to each entry's model instead.
+
+Dials are checked as well:
+
+- every options object a row declares for a dial must pass the row's own validation and be expressible by its adapter, so a bad mapping fails at load time (`invalid_dial` at, for example, `models[3].dials.reasoning.depth.high`);
+- each entry's dials are compiled for its own model as a request without tools would be. A contractual dial the model cannot honor is an error that names the layer it came from; an advisory dial that is mapped or dropped is a `dial_mapped` or `dial_dropped` warning, and a dial a raw option overrides is a `dial_overridden` warning.
+
+The configuration hash covers an entry's dials and what they compile to, so changing a row's mapping changes the hash. An entry without dials keeps the hash it had before dials existed.
 
 Warnings do not fail validation: an inferred model, a fallback with a smaller context window than the primary, a superseded model, an unpriced entry under a budget, and a primary whose signed reasoning blocks failover during a tool loop.
 
@@ -223,7 +260,7 @@ a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "..."}, agent.WithPreset(bun
 
 ## Recording the serving configuration
 
-Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision` and the effective `Options` (the entry's options merged with the request override). The agent attaches the last route of the committed call to the assistant turn as `types.RouteContent`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
+Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision`, the effective `Options` (the entry's options merged with the request override, every dial compiled) and, when the attempt had dials, a `Dials` report of each decision ([dials](dials.md#seeing-what-was-sent)). The agent attaches the last route of the committed call to the assistant turn as `types.RouteContent`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
 
 ## CLI
 
@@ -243,7 +280,8 @@ A project file can arrive with a cloned repository, so it is checked against an 
 - `mcp_server` on a server tool, wherever options appear (preset, entry, model defaults, templates, baselines), which makes the provider connect to that server;
 - `routing.failover_on_content_filter` or `routing.failover_on_auth`, which send a refused or failed request to another vendor;
 - `inherit_default: false`, which discards the trusted layers below;
-- `vertex.project` or `vertex.location` on a chain entry, which bill and send prompts to a Google Cloud project you did not choose, with your own credentials. An empty `vertex` block, which uses your environment, is allowed.
+- `vertex.project` or `vertex.location` on a chain entry, which bill and send prompts to a Google Cloud project you did not choose, with your own credentials. An empty `vertex` block, which uses your environment, is allowed;
+- `dials`, at the top level, on a row or template, on a preset or on an entry, which can turn on prompt caching or raise reasoning spend.
 
 A field the allowlist does not name is refused too. Such a file fails validation unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the same file is named with `--catalog`, which loads it once, as a trusted explicit layer. Explicit references, including remote URLs, are trusted.
 
@@ -251,6 +289,7 @@ A field the allowlist does not name is refused too. Such a file fails validation
 saige --preset balanced chat
 saige catalog show balanced           # effective options per entry, with origins and hashes
 saige catalog show openai/gpt-6-luna  # a one-entry chain from the model's defaults
+saige catalog explain default --dials '{"creativity":"focused"}'  # per entry: dial decisions and raw options sent
 saige catalog validate --strict       # exit 1 on errors, or on warnings with --strict
 saige catalog validate --dry-build    # also build every adapter with a placeholder key
 saige catalog layers                  # paths, trust state and revisions

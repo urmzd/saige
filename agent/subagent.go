@@ -82,7 +82,8 @@ type SubAgentDef struct {
 // parent's config. The split is deliberate:
 //
 //   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
-//     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolRedactor. These
+//     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolRedactor,
+//     Dials and DialPolicy. These
 //     describe how this deployment runs agents, not what one agent is for, so a
 //     child that did not inherit them would quietly run with different
 //     guarantees than the parent that delegated to it.
@@ -164,6 +165,10 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		// precise failure a budget exists to prevent. Give a sub-agent its own
 		// Budget through Options to cap that delegation separately.
 		Budget: parent.Budget,
+		// Dials describe how this deployment wants models to generate, so a
+		// child keeps them unless its Options set WithDials.
+		Dials:      parent.Dials.Clone(),
+		DialPolicy: parent.DialPolicy,
 	}
 }
 

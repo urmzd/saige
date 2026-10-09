@@ -36,6 +36,13 @@ func TestUntrustedLayerAllowlist(t *testing.T) {
 			"presets.p.chain[0].vertex.project"},
 		{"vertex location", `{"version":1,"presets":{"p":{"chain":[{"provider":"google","model":"gemini-3.1-flash-lite","vertex":{"location":"us-east1"}}]}}}`,
 			"presets.p.chain[0].vertex.location"},
+		{"preset dials", `{"version":1,"presets":{"p":{"dials":{"cache":true},"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`,
+			"presets.p.dials"},
+		{"entry dials", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-6-luna","dials":{"reasoning":{"depth":"max"}}}]}}}`,
+			"presets.p.chain[0].dials"},
+		{"row dials", `{"version":1,"models":[{"provider":"openai","prefix":"gpt-6-luna","dials":{"defaults":{"reasoning":{"depth":"max"}}}}]}`,
+			"models[0].dials"},
+		{"global dials", `{"version":1,"dials":{"cache":true}}`, "dials"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

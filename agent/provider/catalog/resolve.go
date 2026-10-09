@@ -21,6 +21,8 @@ type Layer string
 const (
 	// LayerProvider is the adapter's own default; nothing is sent.
 	LayerProvider Layer = "provider"
+	// LayerCatalog is the catalog's top-level dials.
+	LayerCatalog Layer = "catalog"
 	// LayerModel is the catalog row's defaults.
 	LayerModel Layer = "model"
 	// LayerPreset is the preset's shared options.
@@ -44,7 +46,12 @@ type ResolvedEntry struct {
 	// Options are the effective options the adapter is built with.
 	Options types.RequestOptions
 	// Origin maps each option name to the layer that set it.
-	Origin         map[string]Layer
+	Origin map[string]Layer
+	// Dials are the entry's dial layers, lowest first. The adapter compiles
+	// them per request against its own model, under any request dials.
+	Dials []types.DialLayer
+	// DialOrigin maps each dial to the layer that set it.
+	DialOrigin     map[types.DialName]Layer
 	PromptCache    *PromptCacheSpec
 	ServerTools    []types.ServerTool
 	Retry          *RetrySpec
@@ -167,6 +174,9 @@ func (c *Catalog) flatten(name string, found *issues) (PresetSpec, bool) {
 		if s.Options != nil {
 			out.Options = s.Options
 		}
+		if s.Dials != nil {
+			out.Dials = s.Dials
+		}
 		if s.ToolChoice != "" {
 			out.ToolChoice = s.ToolChoice
 		}
@@ -286,7 +296,7 @@ func (c *Catalog) resolveEntry(preset, path string, spec PresetSpec, es EntrySpe
 	if hasRow && row.Defaults != nil {
 		layers = append(layers, layered{LayerModel, row.Defaults})
 	}
-	if es.Inherit != "none" && spec.Options != nil {
+	if es.Inherit != inheritNone && spec.Options != nil {
 		layers = append(layers, layered{LayerPreset, spec.Options})
 	}
 	if es.Options != nil {
@@ -348,6 +358,8 @@ func (c *Catalog) resolveEntry(preset, path string, spec PresetSpec, es EntrySpe
 		e.Origin[types.OptionMaxOutputTokens] = LayerProvider
 	}
 	e.Options = opts
+	e.Dials, e.DialOrigin = c.resolveDials(path, spec, es, row, hasRow, found)
+	applyCacheDial(&e, row)
 
 	e.Retry = spec.Retry
 	if es.Retry != nil {
@@ -411,6 +423,7 @@ func (c *Catalog) checkEntry(path string, spec PresetSpec, rp ResolvedPreset, e 
 			fail(name, CodeNotExpressible, ee.Reason)
 		}
 	}
+	checkEntryDials(path, e, found)
 	c.checkEntryExtras(path, rp, e, fail, found)
 }
 
@@ -515,6 +528,11 @@ type hashedEntry struct {
 	Vertex         *VertexSpec  `json:"vertex,omitempty"`
 	Retry          *RetrySpec   `json:"retry,omitempty"`
 	AttemptTimeout Duration     `json:"attempt_timeout,omitzero"`
+	// Dials and Compiled are set only for an entry with dials, so the hash
+	// of an entry without them is unchanged. Compiled is what the dials
+	// compile to on the entry's model, so a changed mapping changes it.
+	Dials    []types.DialLayer `json:"dials,omitempty"`
+	Compiled *OptionsSpec      `json:"compiled,omitempty"`
 }
 
 func configHash(e ResolvedEntry) string {
@@ -523,8 +541,15 @@ func configHash(e ResolvedEntry) string {
 	for _, st := range e.ServerTools {
 		o.ServerTools = append(o.ServerTools, serverToolSpec(st))
 	}
-	data, _ := json.Marshal(hashedEntry{Provider: e.Provider, Model: e.Model, Options: o, BaseURL: e.BaseURL,
-		APIKeyEnv: e.APIKeyEnv, Vertex: e.Vertex, Retry: e.Retry, AttemptTimeout: Duration(e.AttemptTimeout)})
+	h := hashedEntry{Provider: e.Provider, Model: e.Model, Options: o, BaseURL: e.BaseURL,
+		APIKeyEnv: e.APIKeyEnv, Vertex: e.Vertex, Retry: e.Retry, AttemptTimeout: Duration(e.AttemptTimeout)}
+	if len(e.Dials) > 0 {
+		h.Dials = e.Dials
+		if eff, _, err := types.ResolveDials(e.Caps, e.Options, types.DialContext{}, types.DialPolicy{}, e.Dials...); err == nil {
+			h.Compiled = optionsSpec(eff)
+		}
+	}
+	data, _ := json.Marshal(h)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])[:16]
 }

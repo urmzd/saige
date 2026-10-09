@@ -78,6 +78,8 @@ type genParams struct {
 	reasoningEffort  *string
 	parallelTools    *bool
 	toolChoice       *types.ToolChoice
+	dials            []types.DialLayer
+	dialPolicy       *types.DialPolicy
 }
 
 // WithBaseURL overrides the default OpenAI API base URL. This is also how an
@@ -229,7 +231,7 @@ func (a *Adapter) EffectiveOptions() types.RequestOptions {
 		MaxOutputTokens: a.params.maxTokens, StopSequences: a.params.stop,
 		FrequencyPenalty: a.params.frequencyPenalty, PresencePenalty: a.params.presencePenalty,
 		ReasoningEffort: a.params.reasoningEffort, ParallelTools: a.params.parallelTools,
-		ToolChoice: a.params.toolChoice,
+		ToolChoice: a.params.toolChoice, DialLayers: a.params.dials, DialPolicy: a.params.dialPolicy,
 	}.Clone()
 }
 
@@ -298,6 +300,10 @@ func (a *Adapter) ContentSupport() types.ContentSupport {
 }
 
 func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef, rf *openai.ChatCompletionNewParamsResponseFormatUnion) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, rf != nil, types.SurfaceChat)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Validate(); err != nil {
 		return nil, err
 	}
