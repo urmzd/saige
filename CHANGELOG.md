@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.24.0 (2026-10-09)
+
+### Features
+
+- **agent**: typed function tools and adaptive approval grants (#68) ([0521163](https://github.com/urmzd/saige/commit/052116359d93774f9dd7036f92ff3671982cbc18))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.23.0...v0.24.0)
+
+
 ## 0.22.0 (2026-10-09)
 
 ### Breaking
