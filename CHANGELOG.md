@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.0 (2026-10-09)
+
+### Breaking
+
+- harden agent runtime, add a JSON model catalog, and run on a single Postgres 18 (#64) ([cc59a32](https://github.com/urmzd/saige/commit/cc59a325c6f62679a2fb5bdfe2b159884321d1d3))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.21.1...v0.22.0)
+
+
 ## 0.21.1 (2026-09-20)
 
 ### Bug Fixes
