@@ -26,6 +26,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/otel/` | OpenTelemetry spans and metrics for providers, tools and runs |
 | `agent/agui/` | Maps the Delta stream to AG-UI protocol events and writes them as SSE |
 | `agent/cache/memcache/` | In-memory LRU `types.Cache[V]` with TTL |
+| `agent/notify/` | In-memory `types.Notifier`, subscriber fan-out, `Listen` triggers, and `Cache`, a local level kept coherent through a notifier |
 | `agent/durable/dbos/` | DBOS Transact-backed durable `StepRunner` + workflow engine (resumable runs) |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |
@@ -35,7 +36,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `rag/knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
 | `rag/knowledge/graph/` | Graph formatting utilities (DOT, text) for visualization |
 | `rag/knowledge/internal/` | Engine orchestration, extraction pipeline, fuzzy matching |
-| `postgres/` | Shared PostgreSQL connection pool and schema migrations |
+| `postgres/` | Shared PostgreSQL connection pool, schema migrations, `Notifier` (LISTEN/NOTIFY) and `CacheStore` (UNLOGGED cache table) |
 | `rag/` | RAG pipeline configuration and constructor |
 | `rag/fusion/` | Rank fusion strategies: RRF, Weighted |
 | `rag/otel/` | OpenTelemetry adapter for the rag Observer |

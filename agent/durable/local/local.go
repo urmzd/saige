@@ -30,6 +30,7 @@ const (
 	statusCompleted = "completed"
 	statusFailed    = "failed"
 	statusSuspended = "suspended"
+	statusReady     = "ready"
 )
 
 var (
@@ -47,6 +48,10 @@ type Factory func() *agent.Agent
 type Engine struct {
 	Directory   string
 	ApprovalTTL time.Duration
+	// Notifier, when set, announces replies, appended input, cancellation
+	// and finished runs on SignalChannel, so Await in this or another
+	// process wakes without polling. Nil changes nothing else.
+	Notifier types.Notifier
 }
 
 // New uses a host-owned private directory. A zero TTL defaults to 24 hours.
@@ -104,6 +109,7 @@ type runner struct {
 	path     string
 	ttl      time.Duration
 	poisoned error
+	notifier types.Notifier
 }
 
 // Run owns a worker lease only for this call. ErrSuspended means pending
@@ -134,7 +140,7 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 		if encErr != nil {
 			return nil, encErr
 		}
-		state = State{Version: 1, RunID: id, Revision: revision, Status: "ready", Input: raw, Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}
+		state = State{Version: 1, RunID: id, Revision: revision, Status: statusReady, Input: raw, Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}
 	} else if err != nil {
 		return nil, err
 	}
@@ -148,7 +154,7 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 	if err != nil {
 		return nil, err
 	}
-	r := &runner{state: state, path: path, ttl: e.ApprovalTTL}
+	r := &runner{state: state, path: path, ttl: e.ApprovalTTL, notifier: e.Notifier}
 	if r.ttl <= 0 {
 		r.ttl = 24 * time.Hour
 	}
@@ -188,6 +194,9 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 	r.note("run."+r.state.Status, id)
 	if err := r.save(); err != nil {
 		return nil, err
+	}
+	if err := signal(ctx, e.Notifier, Signal{RunID: id, Kind: SignalRun, ID: r.state.Status}); err != nil {
+		return result, errors.Join(runErr, err)
 	}
 	return result, runErr
 }
@@ -454,9 +463,13 @@ func (e *Engine) Delete(id, revision string) error {
 // An unknown interrupt matches types.ErrInterruptNotFound and an expired one
 // matches types.ErrInterruptExpired as well as ErrClosed.
 func (e *Engine) Decide(id, revision, interruptID, key string, decision types.ApprovalDecision) error {
-	return e.update(id, revision, func(s *State) error {
+	err := e.update(id, revision, func(s *State) error {
 		return applyReply(s, types.InterruptReply{ID: interruptID, IdempotencyKey: key, Decision: decision})
 	})
+	if err != nil {
+		return err
+	}
+	return signal(context.Background(), e.Notifier, Signal{RunID: id, Kind: SignalReply, ID: interruptID})
 }
 
 // applyReply records a reply on s. Replaying the same reply under the same
@@ -503,7 +516,7 @@ func applyReply(s *State, reply types.InterruptReply) error {
 // Cancel prevents future resumes. A currently leased run returns ErrBusy; its
 // owner must cancel the Run context first, then commit cancellation here.
 func (e *Engine) Cancel(id, revision string) error {
-	return e.update(id, revision, func(s *State) error {
+	err := e.update(id, revision, func(s *State) error {
 		if s.Status == statusCompleted {
 			return ErrClosed
 		}
@@ -514,6 +527,10 @@ func (e *Engine) Cancel(id, revision string) error {
 		s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: time.Now().UTC(), Kind: "run.cancelled", ID: id})
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return signal(context.Background(), e.Notifier, Signal{RunID: id, Kind: SignalCancel})
 }
 
 // Reconcile resolves an uncertain operation after the host checks its external

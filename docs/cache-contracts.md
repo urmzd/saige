@@ -44,9 +44,61 @@ A response that stopped at the output token limit (a truncation finish reason) i
 `Config.SingleFlight` collapses concurrent identical misses onto one upstream call; without it, concurrent misses can all incur cost.
 A failed cache read is logged at Warn, recorded as the `chat.cache_error` metric, and treated as a miss.
 
-`EncodeResponse` and `DecodeResponse` serialize a recorded response as versioned wire envelopes, and `BytesCache` adapts any `types.Cache[[]byte]` (Redis, disk, a database) to the response cache.
+`EncodeResponse` and `DecodeResponse` serialize a recorded response as versioned wire envelopes, and `BytesCache` adapts any `types.Cache[[]byte]` (such as `postgres.CacheStore` or a disk store) to the response cache.
 A stored value that does not decode is a cache error, so a store shared across releases misses instead of replaying a value it cannot read.
 The tool cache has the same pair: `toolcache.EncodeEntry`, `DecodeEntry` and `BytesCache`, which keep result block bytes, and records a read failure as the `<tool>.cache_error` metric.
+
+## Shared store on PostgreSQL
+
+`postgres.CacheStore` is the shared byte store for both caches. It needs no service other than PostgreSQL.
+
+```go
+store := postgres.NewCacheStore(pool, postgres.CacheStoreOptions{})
+stop := store.StartSweeper(ctx, time.Minute, logger)
+defer stop()
+
+responses := cache.New(inner, cache.Config{
+    Cache: cache.BytesCache(store), ScopeKey: tenant, ConfigKey: revision,
+})
+cached, err := toolcache.New(tool, toolcache.Config{
+    Cache: toolcache.BytesCache(store), ConfigKey: revision,
+})
+```
+
+| Property | Behavior |
+| --- | --- |
+| Table | `saige_cache`, UNLOGGED: no write-ahead log, emptied after a crash |
+| Columns | `key` text primary key, `value` bytea, `expires_at` timestamptz |
+| TTL | Set stores `now() + ttl` on the database clock; Get treats an expired row as a miss |
+| Zero TTL | Uses `CacheStoreOptions.DefaultTTL`; zero there stores without expiry |
+| Cleanup | `Sweep` deletes expired rows; `StartSweeper` runs it on an interval |
+| Schema | `postgres.RunMigrations` creates the table |
+
+An UNLOGGED table is not replicated to physical standbys. Read it from the primary.
+
+### Invalidation across processes
+
+`notify.Cache` puts a per-process level in front of the shared store and keeps it coherent through a `types.Notifier`.
+Set and Delete write the shared store, then the local level, then publish the key.
+Every other process drops that key from its local level.
+A fill from the shared store is skipped when an invalidation arrives during the read.
+If the notifier closes the subscription, the cache stops reading its local level.
+
+```go
+n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
+responses, err := notify.NewCache(ctx, notify.CacheConfig[cache.CachedResponse]{
+    Local:    memcache.New[cache.CachedResponse](),
+    Shared:   cache.BytesCache(store),
+    Notifier: n,
+    Channel:  "saige.cache.response",
+    LocalTTL: time.Minute,
+})
+// cache.Config{Cache: responses, ...}
+// After an external change: responses.Invalidate(ctx, key)
+```
+
+A notification published while a listener reconnects is lost. `LocalTTL` bounds how long a missed invalidation can serve a stale local value.
+Without a `notify.Cache`, every process reads the shared store directly and needs no invalidation.
 
 ## Provider prompt caches
 
@@ -112,7 +164,7 @@ They do not invalidate cached reads after an external write; include a world rev
 
 | Gap | Why it matters | Required contract |
 | --- | --- | --- |
-| No mutation-based invalidation | A cached read can remain stale after a write | World revision or dependency version in the key |
+| No automatic mutation-based invalidation | A cached read can remain stale after a write until the host calls `notify.Cache.Invalidate` | World revision or dependency version in the key |
 | No durable cache resource manager | A crash can leave billable Google resources | Resource leases, cleanup queue, expiry reconciliation |
 | Cache write and storage tariffs vary | Token totals do not equal the provider invoice | TTL-specific rates, storage time, native-tool fees, and price revisions |
 | Hidden retries and provider fees can have unknown charges | Outer usage is not a provider invoice | Per-attempt accounting and invoice reconciliation |

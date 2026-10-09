@@ -37,8 +37,8 @@ type wireBlock struct {
 	Data []byte `json:"data,omitempty"`
 }
 
-// EncodeEntry serializes a cached tool result for a byte store such as Redis
-// or disk.
+// EncodeEntry serializes a cached tool result for a byte store such as
+// postgres.CacheStore or disk.
 func EncodeEntry(e Entry) ([]byte, error) {
 	w := wireEntry{
 		V:         EntryCodecVersion,

@@ -116,6 +116,10 @@ func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (
 			return fmt.Errorf("migration %q: %w", stmt[:min(len(stmt), 80)], err)
 		}
 	}
+	// Notifier and CacheStore tables live in their own script.
+	if err := execScript(ctx, conn, notifySQL); err != nil {
+		return err
+	}
 
 	if checkKG {
 		if err := checkVectorDim(ctx, conn, "kg_entity", "embedding", opts.KGEmbeddingDim); err != nil {
@@ -192,6 +196,21 @@ func ensureExtensions(ctx context.Context, conn *pgx.Conn) error {
 		// The name comes from requiredExtensions, never from input.
 		if _, err := conn.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS `+ext.name); err != nil {
 			return fmt.Errorf("%w: create extension %s: %w", ErrExtensionUnavailable, ext.name, err)
+		}
+	}
+	return nil
+}
+
+// execScript runs each "---"-separated statement of script in order and
+// stops at the first failure.
+func execScript(ctx context.Context, conn *pgx.Conn, script string) error {
+	for _, stmt := range strings.Split(script, "---") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("migration %q: %w", stmt[:min(len(stmt), 80)], err)
 		}
 	}
 	return nil

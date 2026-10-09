@@ -27,8 +27,9 @@ type wireResponse struct {
 	Usage  json.RawMessage   `json:"usage"`
 }
 
-// EncodeResponse serializes a recorded response for a byte store such as Redis
-// or disk. Only the delta kinds the recorder keeps are accepted.
+// EncodeResponse serializes a recorded response for a byte store such as
+// postgres.CacheStore or disk. Only the delta kinds the recorder keeps are
+// accepted.
 func EncodeResponse(cr CachedResponse) ([]byte, error) {
 	w := wireResponse{V: ResponseCodecVersion, Deltas: make([]json.RawMessage, 0, len(cr.Deltas))}
 	for _, d := range cr.Deltas {
@@ -98,8 +99,8 @@ func recordable(d types.Delta) bool {
 }
 
 // BytesCache adapts a byte store to the response cache. A shared backend
-// (Redis, disk, a database) then stores only bytes and needs no knowledge of
-// delta types. A stored value that does not decode is reported as an error by
+// (postgres.CacheStore, disk) then stores only bytes and needs no knowledge
+// of delta types. A stored value that does not decode is reported as an error by
 // Get, which the response cache logs and treats as a miss.
 func BytesCache(store types.Cache[[]byte]) types.Cache[CachedResponse] {
 	return bytesCache{store: store}
