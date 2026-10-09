@@ -9,6 +9,7 @@ A raw request option names a vendor parameter: `temperature`, `reasoning_effort`
 - [Seeing what was sent](#seeing-what-was-sent)
 - [Declaring dials in the catalog](#declaring-dials-in-the-catalog)
 - [Scenarios](#scenarios)
+- [Known limits](#known-limits)
 
 Raw options keep their meaning and their strictness. Dials are additive: nothing is deprecated, and a raw option that sets the same parameter as a dial wins.
 
@@ -76,7 +77,7 @@ Layers 1 to 4 are configured on the adapter (`WithDials` on each adapter package
 
 Dials compile late, on each attempt, against that attempt's model and request: whether it offers tools or a response schema, and which API serves it. The OpenAI adapter reports its API through `types.DialSurfaceReporter`.
 
-A tool-free call that carries a native response schema cannot carry request options, so the agent does not send its dials on that call. Set them on the provider (layers 1 to 4) to cover it.
+A tool-free call that carries a native response schema does not carry the agent's dials; see [known limits](#known-limits).
 
 ## Changes during a run
 
@@ -98,7 +99,8 @@ A tool-free call that carries a native response schema cannot carry request opti
 | `Decisions` | one per dial: `applied`, `mapped`, `dropped`, `rejected`, `raw_override` or `deferred`, with what was sent, why, the scope that set it, and `cache_reset_expected` |
 | `Policy` | `default`, `strict`, or the overrides |
 
-- Each router attempt's `types.RouteDelta` carries the compiled `Options` and the `Dials` report. The agent saves the committed attempt's route on the turn as `types.RouteContent`, report included. A single adapter reports no route, so the agent records the report itself when a dial was mapped, dropped or overridden.
+- Each router attempt's `types.RouteDelta` carries the compiled `Options` and the `Dials` report. The agent saves the committed attempt's route on the turn as `types.RouteContent`, report included. A single adapter reports no route, so for a call with dials the agent compiles them the same way the adapter does and emits the route itself, with the report, whatever the decisions were.
+- `saige catalog explain <preset|provider/model> --dials '{"creativity":"focused"}'` prints, for every chain entry, each dial decision with its reason and the raw options the entry would send. `--tools` compiles for a request with tools, `--surface chat|responses` picks the OpenAI API, `--strict` and `--policy name=handling` set the policy, and `--format json` prints the same as JSON.
 - Traces add `saige.dials.requested`, `saige.dials.mapped`, `saige.dials.dropped` and `saige.dials.policy` to the call span. `gen_ai.request.*` keeps reporting the effective raw options.
 - `agent/eval.AgentRun.Routes` records each call's effective options and decisions. `eval.WithDialPolicy` runs subjects under a policy, and a comparison warns when a held dial was sent as different raw parameters on the two arms.
 
@@ -148,3 +150,10 @@ Mapped values are options objects. A declared level, depth or surface overrides 
 | f | Structured output on a model without native support | an output schema | D-21 applies unchanged: tool or prompt mode is chosen, and an explicit `native` is rejected. The SDK never falls back to extracting JSON from text. | not a dial |
 | g | An eval that holds settings constant | `eval.WithDialPolicy(types.StrictDials)` | Any map or drop fails the attempt. Each call records the effective options and decisions, and a comparison warns when a held dial was sent differently. | `rejected` |
 | h | A user catalog overrides a mapping | an overlay patching `models[].dials.creativity.levels.focused` | Merged as a JSON merge patch. Every mapped value must pass the row's validation and be expressible by its adapter, or the catalog fails to load. The configuration hash covers the compiled mapping. A repository layer may not set `dials`. | load-time `invalid_dial` |
+
+## Known limits
+
+- **Native response schemas.** Dials travel to the provider as request options (`types.OptionsProvider.ChatStreamWithOptions`), and that call has no response schema parameter. A tool-free call that carries a native schema (`OutputNative`, or auto mode on a provider with native structured output and no tools) therefore goes through `ChatStreamWithSchema`, and the agent does not send its dials on it; it logs a warning instead. Carrying both would need a new provider interface that every adapter implements and every decorator (retry, cache, tracing, attempt deadline, fallback, split, router) forwards. Putting the schema inside `RequestOptions` instead would let an options provider that does not know the field drop the schema silently, which D-12 rules out. Until then, set dials that must cover such calls on the provider: `provider.Config.Dials`, a preset's or entry's `dials`, or an adapter's `WithDials`. Those are compiled by the adapter on every path, the schema path included.
+- **Deferral needs a starting value.** A signed tool loop holds the reasoning dial that was in force when it opened. If no reasoning dial was set then, the model ran on its default, which no dial value names, so a reasoning change inside that loop is not deferred.
+- **Cache reset after a reload.** `cache_reset_expected` compares against the options last sent in the same routing session, which is not saved with the tree. The first call after a reload does not report it.
+

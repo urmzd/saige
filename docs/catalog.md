@@ -288,6 +288,7 @@ A field the allowlist does not name is refused too. Such a file fails validation
 saige --preset balanced chat
 saige catalog show balanced           # effective options per entry, with origins and hashes
 saige catalog show openai/gpt-6-luna  # a one-entry chain from the model's defaults
+saige catalog explain default --dials '{"creativity":"focused"}'  # per entry: dial decisions and raw options sent
 saige catalog validate --strict       # exit 1 on errors, or on warnings with --strict
 saige catalog validate --dry-build    # also build every adapter with a placeholder key
 saige catalog layers                  # paths, trust state and revisions
