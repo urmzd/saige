@@ -88,9 +88,9 @@ For example, an independent read can finish while a write waits for approval.
 Decisions require the original run revision and an idempotency key. Changed decisions and expired requests fail.
 The host authenticates users and preserves separate decisions when its interface groups approvals.
 A local process lock protects one run. Remote workers still need a shared lease and fencing contract.
-The `types.InterruptRouter` contract is served by the in-process router and the local durable engine (`local.Engine.Router`).
-The DBOS runner does not implement it. Its approvals travel as a durable `Send` and `Recv` pair (`Engine.Decide`, `Engine.PendingApproval`), which keeps no record of a delivered decision.
-Without that record a router could not make a repeated reply a no-op or refuse a changed one, so DBOS hosts use those two methods directly.
+The `types.InterruptRouter` contract is served by the in-process router and both durable engines (`local.Engine.Router`, `duraturo.Engine.Router`).
+The duraturo engine records each interrupt and each reply as a ledger record. A run waiting for a reply parks off the queue and holds no worker; the reply's record plus an enqueue resumes it.
+Because the reply is a write-once record, a repeated reply is a no-op and a changed one is refused.
 
 ## D-11: Fail closed on handoff compaction
 
@@ -142,7 +142,8 @@ This gives one machine a testable crash boundary without a queue or database dep
 An OS lock releases when its process exits. Pending approvals need no resident worker.
 Snapshots use private files and contain versioned recovery data plus ordered event metadata.
 They are not a portable trace format or an unbounded production journal.
-A distributed implementation must add fenced leases, transactional reservations, scheduling, and retention.
+The duraturo engine is the distributed option. duraturo supplies fenced leases, a queue, and a write-once record ledger on Postgres tables the host owns.
+Retention of finished runs remains a host policy.
 See [durable execution](docs/durable-execution.md) for the failure table and deployment limits.
 
 ## D-17: Allow one run per branch

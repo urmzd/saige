@@ -26,7 +26,8 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/otel/` | OpenTelemetry spans and metrics for providers, tools and runs |
 | `agent/agui/` | Maps the Delta stream to AG-UI protocol events and writes them as SSE |
 | `agent/cache/memcache/` | In-memory LRU `types.Cache[V]` with TTL |
-| `agent/durable/dbos/` | DBOS Transact-backed durable `StepRunner` + workflow engine (resumable runs) |
+| `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
+| `agent/durable/duraturo/` | duraturo-backed durable engine: runs on any duraturo ledger and queue, such as Postgres tables |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | ScriptedProvider, MockTool for testing |
 | `rag/knowledge/` | Knowledge graph public API (NewGraph, query helpers) |

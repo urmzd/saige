@@ -15,6 +15,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
 - [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
+- [docs/durable-execution.md](docs/durable-execution.md): Durable runs: local engine and duraturo engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
 - [docs/observability.md](docs/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
 - [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
 - [tools/fs/README.md](tools/fs/README.md): Workspace file tools: read with paging, glob, grep, write, edit; read-only by default
@@ -36,4 +37,5 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - Research: tools/research/tools.go, tools/research/web_search.go, tools/research/file_search.go, tools/research/read_file.go, tools/research/search_knowledge.go, tools/research/store_knowledge.go, tools/research/get_graph.go
 - Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go
 - SearXNG: rag/source/searxng/searxng.go
+- Durable: agent/durable/local/local.go, agent/durable/local/router.go, agent/durable/duraturo/duraturo.go, agent/durable/duraturo/runner.go, agent/durable/duraturo/interrupt.go
 - Shared: postgres/pool.go, postgres/migrate.go

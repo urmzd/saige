@@ -32,7 +32,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **Streaming-first agent loop** with typed delta events, parallel tool execution, sub-agent delegation, and handoffs
 - **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface, with retry and fallback composition
 - **Nullable tool properties** with separate presence rules across providers and MCP. See [tool schemas](docs/tool-schemas.md).
-- **Durable runs** that resume after a crash, plus response caching
+- **Durable runs** that resume after a crash, on a local engine or on Postgres through [duraturo](https://github.com/urmzd/duraturo), plus response caching
 - **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client, with approval enforced for mutating tools
 - **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
 - **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints

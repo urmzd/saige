@@ -19,7 +19,7 @@ go run ./examples/rag/arxiv/
 | [`agent/resilient`](agent/resilient/) | Retry + fallback composition |
 | [`agent/multimodal`](agent/multimodal/) | File pipeline with `file://` resolver |
 | [`agent/caching`](agent/caching/) | Response caching by request hash |
-| [`agent/durable`](agent/durable/) | DBOS-backed durable runs |
+| [`agent/durable`](agent/durable/) | Durable runs: local engine, or duraturo on Postgres |
 | [`agent/handoffs`](agent/handoffs/) | Agent-to-agent handoffs |
 | [`agent/tui`](agent/tui/) | Interactive and verbose TUI modes |
 | [`agent/runner`](agent/runner/) | Multi-turn conversation loop |
