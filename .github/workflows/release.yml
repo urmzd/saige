@@ -42,7 +42,7 @@ jobs:
       # Plan first so the binaries can embed the version that release will cut.
       - name: Plan release
         id: plan
-        uses: urmzd/sr@v8
+        uses: urmzd/sr@v9
         with:
           mode: plan
           github-token: ${{ steps.app-token.outputs.token }}
@@ -78,7 +78,7 @@ jobs:
       # release mode tags, creates the release, and uploads the artifacts as one
       # step, so assets are present when the release is published.
       - name: Release
-        uses: urmzd/sr@v8
+        uses: urmzd/sr@v9
         with:
           mode: release
           github-token: ${{ steps.app-token.outputs.token }}
