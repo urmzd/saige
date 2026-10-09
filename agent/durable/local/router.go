@@ -248,7 +248,10 @@ func (r *runner) Reply(ctx context.Context, reply types.InterruptReply) error {
 	if err := applyReply(&r.state, reply); err != nil {
 		return err
 	}
-	return r.save()
+	if err := r.save(); err != nil {
+		return err
+	}
+	return signal(ctx, r.notifier, Signal{RunID: r.state.RunID, Kind: SignalReply, ID: reply.ID})
 }
 
 // Pending lists the run's unanswered interrupts.
@@ -328,7 +331,10 @@ func (rt *Router) Reply(ctx context.Context, reply types.InterruptReply) error {
 	if err != nil {
 		return err
 	}
-	return rt.Engine.update(owner.RunID, owner.Revision, func(s *State) error { return applyReply(s, reply) })
+	if err := rt.Engine.update(owner.RunID, owner.Revision, func(s *State) error { return applyReply(s, reply) }); err != nil {
+		return err
+	}
+	return signal(ctx, rt.Engine.Notifier, Signal{RunID: owner.RunID, Kind: SignalReply, ID: reply.ID})
 }
 
 // owner finds the run holding interrupt id.

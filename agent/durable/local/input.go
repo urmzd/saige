@@ -126,7 +126,7 @@ func (e *Engine) Append(id, revision, key string, msgs []types.Message) error {
 	if err != nil {
 		return err
 	}
-	return e.update(id, revision, func(s *State) error {
+	err = e.update(id, revision, func(s *State) error {
 		if s.Status == statusCancelled {
 			return ErrClosed
 		}
@@ -148,10 +148,14 @@ func (e *Engine) Append(id, revision, key string, msgs []types.Message) error {
 		}
 		if s.Status == statusCompleted {
 			// The run has new work, so it is no longer complete.
-			s.Status = "ready"
+			s.Status = statusReady
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return signal(context.Background(), e.Notifier, Signal{RunID: id, Kind: SignalInput, ID: key})
 }
 
 // runSegments replays or runs each input segment in order on one agent, so

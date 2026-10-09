@@ -57,6 +57,34 @@ A modified argument map becomes the approved call's arguments.
 `Engine.Router()` returns a host-side `types.InterruptRouter` for the engine's runs; each interrupt's `RunID` names the run it belongs to.
 `agent.WithInterruptExpiry` sets the expiry policy: an expired approval is denied by default, fails the run with `InterruptExpireFail`, or is asked of the caller one level up with `InterruptExpireEscalate`.
 
+## Waking waiters without polling
+
+Set `Engine.Notifier` to announce state changes on the `local.SignalChannel` channel.
+`Decide`, `Router.Reply`, a worker's `Reply`, `Append`, `Cancel`, and the end of `Run` each publish a `local.Signal` after they save.
+`Engine.Await(ctx, id, ready)` subscribes, reads the run, and returns when `ready` accepts the state; it reads again after each signal for that run.
+It reads once after subscribing, so a change saved before the call is not missed.
+`local.Resumable` accepts a run that has new input, or a suspended run that received a reply or input after it suspended.
+
+```go
+n := postgres.NewNotifier(pool, postgres.NotifierOptions{}) // or notify.NewMemory(0) in one process
+engine := &local.Engine{Directory: "./private-runs", ApprovalTTL: 24 * time.Hour, Notifier: n}
+
+// Worker: run whenever a reply or new input arrives.
+for {
+    if _, err := engine.Await(ctx, "run-42", local.Resumable); err != nil { return err }
+    _, err := engine.Run(ctx, "run-42", "config-v3", factory, nil)
+    // ErrSuspended: wait for the next reply.
+}
+
+// Another process: deliver input or a decision.
+err := engine.Append("run-42", "config-v3", "msg-18", msgs)
+```
+
+A signal is a wake-up hint, not the change itself. A signal lost while a listener reconnects delays the waiter until the next signal for the run; use `NotifierOptions.OnReconnect` to re-check.
+A failed publish returns an error matching `local.ErrSignal`. The change is already saved, so a retry with the same idempotency key is safe.
+Without a notifier, the engine behaves as before and `Await` returns `local.ErrNoNotifier`.
+`agent.EventStream.Submit` delivers to a stream in the same process. To deliver from another process, `Append` to the durable run as above, or subscribe the process that owns the stream to a channel and call `Submit` for each message.
+
 ## Execution and recovery
 
 Each provider call and regular tool call has a stable step name.
