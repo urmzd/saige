@@ -376,7 +376,7 @@ func fileContentToInput(fc types.FileContent) responses.ResponseInputContentUnio
 	case fc.Data != nil && fc.MediaType == types.MediaPDF:
 		name := fc.Filename
 		if name == "" {
-			name = "document.pdf"
+			name = defaultPDFName
 		}
 		return responses.ResponseInputContentUnionParam{OfInputFile: &responses.ResponseInputFileParam{
 			FileData: openai.String(dataURI(fc.MediaType, fc.Data)),

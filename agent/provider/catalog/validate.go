@@ -135,6 +135,11 @@ func checkSpecNames(path string, s ModelSpec, found *issues) {
 			}
 		}
 	}
+	switch s.ChatCompletionsTools {
+	case "", chatToolsAny, string(types.ChatToolsNoReasoning), string(types.ChatToolsResponsesOnly):
+	default:
+		found.errorf(path+".chat_completions_tools", CodeBadValue, "chat_completions_tools must be any, no_reasoning or responses_only")
+	}
 	if s.Tier != "" && s.Tier != TierFrontier && s.Tier != TierStandard && s.Tier != TierEconomy {
 		found.errorf(path+".tier", CodeBadValue, "tier must be frontier, standard or economy")
 	}

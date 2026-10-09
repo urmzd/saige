@@ -31,7 +31,8 @@ func Export() *Catalog {
 // entrySpec writes a resolved entry as a self-contained row.
 func entrySpec(e Entry) ModelSpec {
 	c := e.Caps
-	s := ModelSpec{Provider: e.Provider, Prefix: e.Prefix, Tier: e.Tier, SupersededBy: e.SupersededBy}
+	s := ModelSpec{Provider: e.Provider, Prefix: e.Prefix, Tier: e.Tier, SupersededBy: e.SupersededBy,
+		ChatCompletionsTools: string(c.ChatCompletionsTools)}
 	s.Capabilities = append(s.Capabilities, c.List()...)
 	if len(s.Capabilities) == 0 {
 		// An empty list reads as "inherit"; a row without a template has
@@ -74,8 +75,12 @@ func entrySpec(e Entry) ModelSpec {
 	if c.ZeroReasoningBudget {
 		r.ZeroBudget = ptr(true)
 	}
+	if c.RejectsForcedToolChoice {
+		r.ForcedToolChoice = ptr(false)
+	}
 	if len(r.Efforts) > 0 || len(r.SamplingRequiresNoReasoning) > 0 || r.DefaultEffort != nil || r.Required != nil ||
-		r.DefaultEnabled != nil || r.MinBudget != nil || r.MaxBudget != nil || r.DynamicBudget != nil || r.ZeroBudget != nil {
+		r.DefaultEnabled != nil || r.MinBudget != nil || r.MaxBudget != nil || r.DynamicBudget != nil || r.ZeroBudget != nil ||
+		r.ForcedToolChoice != nil {
 		s.Reasoning = &r
 	}
 	if c.StructuredOutput != types.StructuredOutputNone {

@@ -105,7 +105,13 @@ func (mc ModelCapabilities) ValidateToolChoice(c *ToolChoice, tools []ToolDef) e
 	if c.Mode == "" || c.Mode == ToolChoiceAuto {
 		return nil
 	}
-	return mc.Require(CapToolChoice)
+	if err := mc.Require(CapToolChoice); err != nil {
+		return err
+	}
+	if c.Forced() && mc.RejectsForcedToolChoice {
+		return mc.OptionError("tool_choice", "this model rejects a forced tool choice (required or named)")
+	}
+	return nil
 }
 
 // OptionError names the rejected control without including prompts or secrets.

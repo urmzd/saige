@@ -66,15 +66,22 @@ func TestDescribeTierAndSuccessor(t *testing.T) {
 		tier            Tier
 		successor       string
 	}{
-		{"anthropic", "claude-opus-4-1", TierFrontier, ""},
-		{"anthropic", "claude-haiku-4-5", TierEconomy, ""},
-		{"anthropic", "claude-3-5-sonnet-20241022", TierStandard, "claude-sonnet-4"},
-		{"anthropic", "claude-3-opus-20240229", TierFrontier, "claude-opus-4"},
-		{"openai", "gpt-4o-mini", TierEconomy, ""},
-		{"openai", "gpt-4-turbo", TierStandard, "gpt-4o"},
-		{"openai", "o1-preview", TierFrontier, "o3"},
-		{"google", "gemini-2.0-flash", TierEconomy, "gemini-2.5-flash"},
-		{"google", "gemini-2.5-pro", TierFrontier, ""},
+		{"anthropic", "claude-opus-5-5", TierFrontier, ""},
+		{"anthropic", "claude-haiku-5-5", TierEconomy, ""},
+		{"anthropic", "claude-opus-4-1", TierFrontier, "claude-opus-5-5"},
+		{"anthropic", "claude-haiku-4-5", TierEconomy, "claude-haiku-5-5"},
+		{"anthropic", "claude-3-5-sonnet-20241022", TierStandard, "claude-haiku-5-5"},
+		{"anthropic", "claude-3-opus-20240229", TierFrontier, "claude-haiku-5-5"},
+		{"openai", "gpt-6-luna", TierEconomy, ""},
+		{"openai", "gpt-6-sol", TierStandard, "gpt-6.1-sol"},
+		{"openai", "gpt-4o-mini", TierEconomy, "gpt-6-luna"},
+		{"openai", "gpt-4.1-nano", TierEconomy, "gpt-6-luna"},
+		{"openai", "gpt-5-mini", TierEconomy, "gpt-6-luna"},
+		{"openai", "o1-preview", TierFrontier, "gpt-6.1-sol"},
+		{"google", "gemini-2.0-flash", TierEconomy, "gemini-3.1-flash-lite"},
+		{"google", "gemini-3-flash-preview", TierStandard, "gemini-3.1-flash-lite"},
+		{"google", "gemini-2.5-pro", TierFrontier, "gemini-3.8-flash"},
+		{"google", "gemini-3.1-flash-lite", TierEconomy, ""},
 	} {
 		e, ok := Describe(tt.provider, tt.model)
 		if !ok || e.Tier != tt.tier {

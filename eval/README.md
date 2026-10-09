@@ -345,7 +345,7 @@ import (
     "github.com/urmzd/saige/eval/store/filestore"
 )
 
-prov := eval.CaptureProvenance(ctx, ".", "gpt-4o-mini") // git commit, dirty flag, models, Go version
+prov := eval.CaptureProvenance(ctx, ".", "gpt-6-luna") // git commit, dirty flag, models, Go version
 suite, runErr := eval.Run(ctx, "nightly", observations, scorers)
 
 results, _ := filestore.Open("eval-results")

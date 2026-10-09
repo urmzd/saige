@@ -17,7 +17,10 @@ type OutputMode string
 
 const (
 	// OutputAuto picks a mode. For a schema set with WithResponseSchema it
-	// means OutputNative. For Structured it picks OutputTool when the agent
+	// means OutputNative, or OutputTool when the provider reports tool
+	// calling but cannot constrain output now (for example a model that
+	// rejects the forced tool its schema path needs). For Structured it
+	// picks OutputTool when the agent
 	// has tools, OutputNative when the provider can constrain output, then
 	// OutputTool, and OutputPrompt last.
 	OutputAuto OutputMode = ""
@@ -78,7 +81,7 @@ func (a *Agent) output(ctx context.Context) runOutput {
 	}
 	mode := a.cfg.OutputMode
 	if mode == OutputAuto {
-		mode = OutputNative
+		mode = a.autoResponseMode(a.cfg.Provider, a.cfg.ResponseSchema)
 	}
 	return runOutput{agent: a, schema: a.cfg.ResponseSchema, mode: mode}
 }
@@ -169,6 +172,22 @@ func (a *Agent) resolveOutputMode(mode OutputMode, schema *types.ParameterSchema
 		return OutputTool, nil
 	}
 	return OutputPrompt, nil
+}
+
+// autoResponseMode resolves OutputAuto for WithResponseSchema: native when
+// the provider can constrain output, otherwise the final_answer tool when
+// the provider reports tool calling and the schema fits a tool. The tool
+// mode never forces a call, so it works where a forced tool choice is
+// rejected. Anything else stays native, which fails before the first call.
+func (a *Agent) autoResponseMode(provider types.Provider, schema *types.ParameterSchema) OutputMode {
+	if nativeOutputUsable(provider) {
+		return OutputNative
+	}
+	mc, ok := types.ProviderCapabilities(provider)
+	if ok && mc.Supports(types.CapTools) && a.checkToolOutput(provider, schema) == nil {
+		return OutputTool
+	}
+	return OutputNative
 }
 
 // nativeOutputUsable reports whether the provider, as configured now, can

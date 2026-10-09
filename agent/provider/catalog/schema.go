@@ -55,6 +55,10 @@ type ModelSpec struct {
 	Extends      string `json:"extends,omitempty"`
 	Tier         Tier   `json:"tier,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty"`
+	// ChatCompletionsTools is "any", "no_reasoning" (tools on OpenAI Chat
+	// Completions need reasoning effort none) or "responses_only" (tools
+	// need the Responses API). Empty inherits.
+	ChatCompletionsTools string `json:"chat_completions_tools,omitempty"`
 	// Capabilities replaces the inherited list when non-empty.
 	// AddCapabilities and RemoveCapabilities then edit it.
 	Capabilities       []types.Capability `json:"capabilities,omitempty"`
@@ -101,6 +105,10 @@ type ReasoningSpec struct {
 	DynamicBudget               *bool              `json:"dynamic_budget,omitempty"`
 	ZeroBudget                  *bool              `json:"zero_budget,omitempty"`
 	SamplingRequiresNoReasoning []types.Capability `json:"sampling_requires_no_reasoning,omitempty"`
+	// ForcedToolChoice false declares that the API rejects a required or
+	// named tool choice for the model, as some always-thinking models do.
+	// Nil or true leaves forcing to CapToolChoice.
+	ForcedToolChoice *bool `json:"forced_tool_choice,omitempty"`
 }
 
 // PricingSpec is the JSON form of types.Pricing. Rates are per million tokens.
@@ -294,8 +302,19 @@ type EntrySpec struct {
 	// APIKeyEnv names the environment variable that holds the key. The key
 	// itself is never part of a catalog.
 	APIKeyEnv string `json:"api_key_env,omitempty"`
+	// Vertex serves a Google entry through Vertex AI instead of the Gemini
+	// API. Empty fields default from GOOGLE_CLOUD_PROJECT and
+	// GOOGLE_CLOUD_LOCATION (then "global").
+	Vertex *VertexSpec `json:"vertex,omitempty"`
 	// Optional drops the whole entry when its credentials are missing.
 	Optional bool `json:"optional,omitempty"`
+}
+
+// VertexSpec selects Vertex AI for a Google entry. Credentials come from
+// Application Default Credentials, never from the catalog.
+type VertexSpec struct {
+	Project  string `json:"project,omitempty"`
+	Location string `json:"location,omitempty"`
 }
 
 // Duration is a time.Duration written as a Go duration string ("500ms").

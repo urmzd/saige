@@ -44,7 +44,7 @@ const OpenAICompatible = "openai-compatible"
 const DefaultAPIBase = "https://api.openai.com/v1"
 
 // DefaultModel is the model [NewClient] uses when none is given.
-const DefaultModel = "gpt-4o-mini"
+const DefaultModel = "gpt-6-luna"
 
 // maxAttempts bounds the HTTP retry loop of [Client.Chat].
 const maxAttempts = 6

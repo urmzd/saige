@@ -1,2 +1,3 @@
 [
+{"path":"presets.default.chain[0]","code":"signed_reasoning_failover","message":"the primary signs its reasoning, so a tool loop it starts cannot fail over to another entry","severity":"warning"}
 ]

@@ -25,6 +25,10 @@ const releaseAPI = "https://api.github.com/repos/urmzd/saige/releases/latest"
 // checksumAsset is the release asset listing "<sha256>  <asset name>" lines.
 const checksumAsset = "SHA256SUMS"
 
+// goosWindows is the GOOS whose binaries carry an .exe suffix and cannot be
+// replaced while running.
+const goosWindows = "windows"
+
 func newUpdateCmd() *cobra.Command {
 	var check bool
 	cmd := &cobra.Command{
@@ -58,7 +62,7 @@ func newUpdateCmd() *cobra.Command {
 // <bin>-<goos>-<goarch>, with ".exe" appended on Windows.
 func assetName(bin, goos, goarch string) string {
 	name := fmt.Sprintf("%s-%s-%s", bin, goos, goarch)
-	if goos == "windows" {
+	if goos == goosWindows {
 		name += ".exe"
 	}
 	return name
@@ -161,7 +165,7 @@ func (u *updater) run(ctx context.Context, current string, checkOnly bool) error
 // running executable but allows renaming it, so there the old binary is
 // first moved aside to dst+".old" and removed on a best-effort basis.
 func replaceExecutable(goos, src, dst string) error {
-	if goos != "windows" {
+	if goos != goosWindows {
 		return os.Rename(src, dst)
 	}
 	old := dst + ".old"

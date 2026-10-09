@@ -26,11 +26,14 @@ const (
 	SubAgentSpawn
 )
 
+// subAgentDelegateName is the name SubAgentDelegate reports.
+const subAgentDelegateName = "delegate"
+
 // String returns the mode's name.
 func (m SubAgentMode) String() string {
 	switch m {
 	case SubAgentDelegate:
-		return "delegate"
+		return subAgentDelegateName
 	case SubAgentSpawn:
 		return "spawn"
 	default:

@@ -51,7 +51,9 @@ type ResolvedEntry struct {
 	AttemptTimeout time.Duration
 	BaseURL        string
 	APIKeyEnv      string
-	Optional       bool
+	// Vertex is set when a Google entry is served through Vertex AI.
+	Vertex   *VertexSpec
+	Optional bool
 	// ConfigHash is the first 16 hex digits of a SHA-256 over the entry's
 	// canonical configuration. Equal hashes mean identical requests.
 	ConfigHash string
@@ -263,6 +265,13 @@ func (c *Catalog) resolveEntry(preset, path string, spec PresetSpec, es EntrySpe
 	e := ResolvedEntry{ID: es.ID, Provider: es.Provider, Model: es.Model, BaseURL: es.BaseURL,
 		APIKeyEnv: es.APIKeyEnv, Optional: es.Optional, AttemptTimeout: time.Duration(es.AttemptTimeout),
 		Origin: map[string]Layer{}}
+	if es.Vertex != nil {
+		vs := *es.Vertex
+		e.Vertex = &vs
+		if es.Provider != "google" {
+			found.errorf(path+".vertex", CodeBadValue, "vertex applies only to google entries")
+		}
+	}
 	if e.ID == "" {
 		e.ID = es.Provider + "/" + es.Model
 	}
@@ -503,6 +512,7 @@ type hashedEntry struct {
 	Options        *OptionsSpec `json:"options"`
 	BaseURL        string       `json:"base_url,omitempty"`
 	APIKeyEnv      string       `json:"api_key_env,omitempty"`
+	Vertex         *VertexSpec  `json:"vertex,omitempty"`
 	Retry          *RetrySpec   `json:"retry,omitempty"`
 	AttemptTimeout Duration     `json:"attempt_timeout,omitzero"`
 }
@@ -514,7 +524,7 @@ func configHash(e ResolvedEntry) string {
 		o.ServerTools = append(o.ServerTools, serverToolSpec(st))
 	}
 	data, _ := json.Marshal(hashedEntry{Provider: e.Provider, Model: e.Model, Options: o, BaseURL: e.BaseURL,
-		APIKeyEnv: e.APIKeyEnv, Retry: e.Retry, AttemptTimeout: Duration(e.AttemptTimeout)})
+		APIKeyEnv: e.APIKeyEnv, Vertex: e.Vertex, Retry: e.Retry, AttemptTimeout: Duration(e.AttemptTimeout)})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])[:16]
 }

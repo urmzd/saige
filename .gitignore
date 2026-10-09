@@ -1,4 +1,8 @@
 .claude/
 bin/
 /saige
+/saige-mcp
+/tui
+/cmd/saige/saige
+/cmd/saige-mcp/saige-mcp
 .fastembed_cache/

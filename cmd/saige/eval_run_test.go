@@ -415,7 +415,7 @@ func TestEvalRunProviderDryRun(t *testing.T) {
 		want    string
 		wantErr string
 	}{
-		{"catalogued model", "claude-sonnet-4-6", "$ANTHROPIC_API_KEY (NOT SET)", ""},
+		{"catalogued model", "claude-haiku-5-5", "$ANTHROPIC_API_KEY (NOT SET)", ""},
 		{"unknown model", "claude-nonexistent", "", "not in the anthropic catalog"},
 	}
 	for _, tt := range tests {
@@ -464,7 +464,7 @@ func TestEvalOpenAIProviderBaseURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := evalClientConfig{provider: providerOpenAI, model: "gpt-4o", baseURL: tt.baseURL, baseURLFromFlag: tt.fromFlag}
+			cfg := evalClientConfig{provider: providerOpenAI, model: "gpt-6-luna", baseURL: tt.baseURL, baseURLFromFlag: tt.fromFlag}
 			_, _, err := buildEvalClient(context.Background(), cfg, true)
 			if got := err != nil; got != tt.wantErr {
 				t.Fatalf("err = %v, want error %v", err, tt.wantErr)

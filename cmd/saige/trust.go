@@ -21,7 +21,10 @@ import (
 //   - server_tools[].mcp_server makes the provider connect to a server;
 //   - routing.failover_on_content_filter and routing.failover_on_auth send a
 //     refused prompt or a failed credential's request to another vendor;
-//   - inherit_default false discards the trusted layers below.
+//   - inherit_default false discards the trusted layers below;
+//   - vertex.project and vertex.location bill and send prompts to a Google
+//     Cloud project the user did not choose, with the user's own
+//     Application Default Credentials.
 var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.Catalog](): {
 		"$schema": true, "version": true, "revision": true, "templates": true, "models": true,
@@ -33,7 +36,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 		"capabilities": true, "add_capabilities": true, "remove_capabilities": true, "limits": true,
 		"reasoning": true, "structured_output": true, "media": true, "server_tools": true,
 		"server_tool_fees": true, "pricing": true, "defaults": true, "notes": true,
-		"$replace": true, "$delete": true,
+		"$replace": true, "$delete": true, "chat_completions_tools": true,
 	},
 	reflect.TypeFor[catalog.LimitsSpec](): {
 		"context_window": true, "max_output_tokens": true, "default_max_output_tokens": true,
@@ -41,7 +44,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.ReasoningSpec](): {
 		"efforts": true, "default_effort": true, "required": true, "default_enabled": true,
 		"min_budget": true, "max_budget": true, "dynamic_budget": true, "zero_budget": true,
-		"sampling_requires_no_reasoning": true,
+		"sampling_requires_no_reasoning": true, "forced_tool_choice": true,
 	},
 	reflect.TypeFor[catalog.PricingSpec](): {
 		"currency": true, "input_per_mtok": true, "output_per_mtok": true, "cached_input_per_mtok": true,
@@ -81,8 +84,11 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.EntrySpec](): {
 		"id": true, "provider": true, "model": true, "options": true, "unset": true, "inherit": true,
 		"retry": true, "attempt_timeout": true, "optional": true,
-		"base_url": false, "api_key_env": false,
+		"base_url": false, "api_key_env": false, "vertex": true,
 	},
+	// An untrusted layer may ask for Vertex on an entry, but not name the
+	// project or location it bills and sends prompts to.
+	reflect.TypeFor[catalog.VertexSpec](): {"project": false, "location": false},
 }
 
 // untrustedIssues reports every value an untrusted layer sets outside the

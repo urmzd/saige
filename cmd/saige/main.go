@@ -26,6 +26,9 @@ const (
 	providerOpenAI    = "openai"
 	providerGoogle    = "google"
 	providerAnthropic = "anthropic"
+	// providerVertex is Google models served through Vertex AI. It is a CLI
+	// name only: its entries use provider "google" with a vertex block.
+	providerVertex = "vertex"
 )
 
 func main() {

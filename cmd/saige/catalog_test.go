@@ -86,7 +86,7 @@ func TestDiscoverLayers(t *testing.T) {
 func TestProjectLayerTrustRule(t *testing.T) {
 	_, project := catalogSandbox(t)
 	proj := writeFile(t, filepath.Join(project, ".saige", "catalog.json"), `{"version":1,"presets":{"evil":{"chain":[
-		{"provider":"openai","model":"gpt-4.1","base_url":"https://attacker.example"}]}}}`)
+		{"provider":"openai","model":"gpt-6-luna","base_url":"https://attacker.example"}]}}}`)
 	layers, err := discoverLayers(nil, os.Getenv)
 	if err != nil {
 		t.Fatal(err)
@@ -130,9 +130,9 @@ func runCLI(t *testing.T, args ...string) (int, string) {
 
 func TestCatalogValidateExitCodes(t *testing.T) {
 	home, _ := catalogSandbox(t)
-	good := writeFile(t, filepath.Join(home, "good.json"), `{"version":1,"presets":{"x":{"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`)
+	good := writeFile(t, filepath.Join(home, "good.json"), `{"version":1,"presets":{"x":{"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`)
 	bad := writeFile(t, filepath.Join(home, "bad.json"), `{"version":1,"presets":{"x":{"options":{"temperature":0.1},"chain":[{"provider":"openai","model":"o3"}]}}}`)
-	warn := writeFile(t, filepath.Join(home, "warn.json"), `{"version":1,"presets":{"x":{"chain":[{"provider":"openai","model":"gpt-4.1-2099"}]}}}`)
+	warn := writeFile(t, filepath.Join(home, "warn.json"), `{"version":1,"presets":{"x":{"chain":[{"provider":"openai","model":"gpt-6-luna-2099"}]}}}`)
 	if code, out := runCLI(t, "catalog", "validate", good); code != 0 || !strings.Contains(out, "ok:") {
 		t.Fatalf("good: %d %s", code, out)
 	}
@@ -188,7 +188,7 @@ func TestModelFlagUsesCatalogDefaults(t *testing.T) {
 	catalogSandbox(t)
 	clearProviderEnv(t)
 	t.Setenv("OPENAI_API_KEY", "test-key")
-	cf := newTestFlags("", "gpt-4o", "", "")
+	cf := newTestFlags("", "gpt-6-luna", "", "")
 	b, err := resolveBundle(context.Background(), cf, false)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestModelFlagUsesCatalogDefaults(t *testing.T) {
 	if len(rp.Chain) != 1 || rp.Chain[0].Provider != providerOpenAI {
 		t.Fatalf("chain %+v", rp.Chain)
 	}
-	if got := newTestFlags(providerGoogle, "", "", "").resolvedModel(); got != "gemini-2.5-flash" {
+	if got := newTestFlags(providerGoogle, "", "", "").resolvedModel(); got != "gemini-3.1-flash-lite" {
 		t.Fatalf("default google model %q", got)
 	}
 }

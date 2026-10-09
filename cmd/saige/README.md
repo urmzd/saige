@@ -13,7 +13,7 @@ Or use the [install script](../../README.md#installation) for a pre-built binary
 ```bash
 # Interactive multi-turn chat (Bubble Tea TUI)
 saige chat
-saige chat --provider anthropic --model claude-sonnet-4-6
+saige chat --provider anthropic --model claude-haiku-5-5
 saige chat --verbose  # plain-text mode for pipes/CI
 
 # Single-shot question (pipe-friendly)
@@ -137,7 +137,7 @@ saige eval init evals                          # scaffold a sample corpus and sa
 saige eval validate evals                      # check the manifest and corpus offline
 saige eval run --manifest evals/saige.eval.json --dry-run   # preflight and print the plan
 saige eval run --manifest evals/saige.eval.json             # --experiments-dir is optional with a manifest
-saige eval run --experiments-dir evals --model gpt-4o --flows base --force
+saige eval run --experiments-dir evals --model gpt-6-luna --flows base --force
 saige eval run --experiments-dir evals --store eval-results --suite docs   # also record the run for saige eval runs/show
 saige eval run --manifest evals/saige.eval.json --store eval-results --resume <run-id>
 saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=2000'
@@ -160,7 +160,7 @@ Model capabilities and named presets come from the model catalog: the embedded d
 | --- | --- | --- |
 | `--preset` | `SAIGE_PRESET` | Run a catalog preset: an ordered chain whose entries each carry their own options. |
 | `--model` | | A one-entry chain from the catalog's model defaults; the provider comes from `--provider` or is inferred from the model. |
-| `--provider` | `SAIGE_PROVIDER` | Without `--model`, run the preset of that name. |
+| `--provider` | `SAIGE_PROVIDER` | Without `--model`, run the preset of that name. `vertex` runs Google models through Vertex AI. |
 | `--catalog` | `SAIGE_CATALOG` | Add a catalog layer (repeatable). |
 
 ```bash
@@ -175,7 +175,7 @@ A project catalog is checked against an allowlist: it may not set `base_url`, `a
 
 ## Provider Auto-Detection
 
-Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the first entry of the catalog's `default_preset` that can serve. The shipped order is Anthropic, OpenAI, Google (whichever key is set first), then a local Ollama model when the server answers. With none available, it tells you to set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a Google key), or to start Ollama. Cross-vendor failover is opt-in: pass `--preset default`. `--base-url` applies to the selected provider's entries; on a multi-vendor preset add `--provider`.
+Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the first entry of the catalog's `default_preset` that can serve. The shipped order is Anthropic, OpenAI, Google (whichever key is set first), then a local Ollama model when the server answers. With none available, it tells you to set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a Google key), or to start Ollama. Cross-vendor failover is opt-in: pass `--preset default`. Each vendor's preset runs its cheapest current model (claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite); `--preset anthropic-quality`, `openai-quality` or `google-quality` runs the mid tier. For Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), or pass `--provider vertex`; it authenticates with Application Default Credentials. `--base-url` applies to the selected provider's entries; on a multi-vendor preset add `--provider`.
 
 > **Note:** Anthropic has no embedding API. With `--provider anthropic` plus RAG/KG
 > features, also pass `--embed-provider` (openai, google, or ollama) and that

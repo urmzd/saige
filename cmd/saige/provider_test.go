@@ -32,6 +32,47 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
+}
+
+// TestVertexProviderSelection checks the two ways to select Vertex AI: the
+// --provider vertex name, which runs the catalog's vertex preset or builds a
+// Google entry with a vertex block, and GOOGLE_GENAI_USE_VERTEXAI, which
+// makes vertex the detected provider.
+func TestVertexProviderSelection(t *testing.T) {
+	catalogSandbox(t)
+	clearProviderEnv(t)
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+	if got := newTestFlags("", "", "", "").resolvedProvider(); got != providerVertex {
+		t.Fatalf("detected provider %q, want vertex", got)
+	}
+	if got := newTestFlags(providerVertex, "", "", "").resolvedModel(); got != "gemini-3.1-flash-lite" {
+		t.Fatalf("vertex default model %q", got)
+	}
+
+	cf := newTestFlags(providerVertex, "", "", "")
+	cat, err := cf.catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, out, _, err := cf.selectPreset(cat)
+	if err != nil || name != providerVertex {
+		t.Fatalf("preset %q, err %v", name, err)
+	}
+	chain := presetChain(out, name)
+	if len(chain) != 1 || chain[0].Provider != providerGoogle || chain[0].Vertex == nil {
+		t.Fatalf("vertex preset chain %+v", chain)
+	}
+
+	cf = newTestFlags(providerVertex, "gemini-3.8-flash", "", "")
+	name, out, _, err = cf.selectPreset(cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain = presetChain(out, name)
+	if len(chain) != 1 || chain[0].Provider != providerGoogle || chain[0].Model != "gemini-3.8-flash" || chain[0].Vertex == nil {
+		t.Fatalf("--model chain %+v", chain)
+	}
 }
 
 func TestResolvedEmbedProvider(t *testing.T) {

@@ -22,6 +22,7 @@ var defaultEmbedModels = map[string]string{
 	providerAnthropic: "",
 	providerOpenAI:    "text-embedding-3-small",
 	providerGoogle:    "text-embedding-004",
+	providerVertex:    "text-embedding-004",
 	providerOllama:    "nomic-embed-text",
 }
 
@@ -60,7 +61,7 @@ var persistentFlagVars = &commonFlags{
 // addPersistentFlags registers provider and connection flags on the root command's PersistentFlags.
 func addPersistentFlags(cmd *cobra.Command) {
 	pf := cmd.PersistentFlags()
-	pf.StringVar(persistentFlagVars.provider, "provider", envOr("SAIGE_PROVIDER", ""), "LLM provider (anthropic|openai|google|ollama)")
+	pf.StringVar(persistentFlagVars.provider, "provider", envOr("SAIGE_PROVIDER", ""), "LLM provider (anthropic|openai|google|vertex|ollama)")
 	pf.StringVar(persistentFlagVars.model, "model", "", "Model name; builds a one-entry chain from the catalog's model defaults")
 	pf.StringVar(persistentFlagVars.preset, "preset", envOr("SAIGE_PRESET", ""), "Catalog preset to run (see saige catalog show)")
 	pf.StringArrayVar(persistentFlagVars.catalogs, "catalog", nil, "Catalog layer: a path, file:// or https:// URL (repeatable; also $SAIGE_CATALOG)")
@@ -89,6 +90,9 @@ func (cf *commonFlags) resolvedProvider() string {
 	}
 	if os.Getenv("OPENAI_API_KEY") != "" {
 		return providerOpenAI
+	}
+	if provider.VertexEnabled(os.Getenv) {
+		return providerVertex
 	}
 	if os.Getenv("GOOGLE_API_KEY") != "" {
 		return providerGoogle
@@ -246,6 +250,9 @@ func (cf *commonFlags) selectPreset(cat *catalog.Catalog) (name string, out *cat
 			}
 		}
 		entry := catalog.EntrySpec{ID: prov + "/" + *cf.model, Provider: prov, Model: *cf.model, BaseURL: *cf.baseURL}
+		if prov == providerVertex {
+			entry.Provider, entry.Vertex = providerGoogle, &catalog.VertexSpec{}
+		}
 		if prov == providerOllama {
 			// A local server that is not running should fail at once, not
 			// after a round of backoff.
@@ -419,6 +426,8 @@ func buildProvider(ctx context.Context, cf *commonFlags, verbose bool) (types.Pr
 	name := cf.resolvedProvider()
 	cfg := provider.Config{Provider: name, Model: cf.resolvedModel(), BaseURL: *cf.baseURL}
 	switch name {
+	case providerVertex:
+		cfg.Provider, cfg.Vertex = providerGoogle, &provider.Vertex{}
 	case providerOllama, providerAnthropic, providerGoogle, providerOpenAI:
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)

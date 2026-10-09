@@ -13,7 +13,7 @@ This release hardens saige across the agent loop, providers, safety controls, st
 - **RAG and eval**: source sync with replace-by-URI, scoped retrieval, rank fusion, and an eval stack with gates, Wilson intervals, regression comparison, trajectory scorers, a results store, and manifest validation.
 - **CLI**: `saige serve` (HTTP and SSE with approve and cancel), JSON output, strict approval prompts, `saige update`, and an MCP server that enforces approval for mutating tools.
 
-Final local check: `go build ./...` passed and `go test -race -count=1 ./...` passed (82 packages ok, 0 failed, 24 without tests).
+Final local check: `gofmt -l .`, `go build ./...`, `go vet ./...` and `golangci-lint run ./...` were clean, `govulncheck ./...` found no vulnerabilities, and `go test -race -count=1 -p 2 ./...` passed (83 packages ok, 0 failed, 24 without tests).
 
 ## Work by area
 
@@ -191,7 +191,7 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | `Structured[T]` repair after `Validate` rejects | OpenAI, Ollama | pass | 2 attempts, second answer accepted |
 | `OutcomePolicy` escalation weak to strong | Router (Ollama, OpenAI) | pass | Switch on `schema_invalid` logged, `RouteDelta` emitted, OpenAI answer accepted |
 | Escalation ladder exhausted | Router (Ollama) | pass | `errors.Is(err, ErrSchemaInvalid)=true` after 2 attempts |
-| `OutputAuto` on claude-sonnet-5-5 | Anthropic | fixed, not re-run live | Auto now picks native only when the provider reports structured output support; covered by unit tests. The live re-run was blocked by an invalid API key |
+| `OutputAuto` on a model that rejects forced tool choice | Anthropic claude-sonnet-5-5 | unit tested | Auto picks the `final_answer` tool with `tool_choice` auto, because the adapter reports no structured output for a model that declares `forced_tool_choice: false` |
 | Delegate with child approval via `ResolveMarkerErr` | OpenAI, Ollama | pass | Child marker on parent stream at depth 0, approved, 1 write, no hang |
 | Durable suspend, `Decide`, resume | OpenAI, Ollama | pass | First run `ErrSuspended` with 1 interrupt; resume completed with 1 write |
 | Spawn and `await_subagent` | OpenAI, Ollama | pass | Handle returned at once, awaited result "Canberra" |
@@ -234,14 +234,41 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | Approval prompt input validation | OpenAI | pass | Empty and invalid input re-prompt; end of input denies |
 | `saige serve` SSE, approve/deny, cancel, delete | OpenAI | pass | Resume by `Last-Event-ID`, 409 on repeated decision, 415 and 403 checks |
 | `saige-mcp` start and tool listing | offline | pass | Read-only tools listed, invalid regex returned `isError=true` |
-| All Anthropic agent-loop, structured, delegation, continue, and `web_search` scenarios | Anthropic claude-haiku-5-5, claude-sonnet-5-5 | fail (environment) | Every call returned 401 "invalid x-api-key"; a raw `curl` with the same key also returned 401. Errors were classified `auth` and surfaced through `ErrorDelta` and `Wait()` with no hang. Request shapes were correct |
-| Live Google 429 | Google | not exercised | The API key is invalid, so no 429 could occur; covered by the forced 429 scenario |
+| Parallel tool-call pairing | Anthropic claude-haiku-5-5 | pass | Each result paired with its own call ID |
+| Named and required tool choice | Anthropic claude-haiku-5-5 | pass | `{"type":"tool"}` and `{"type":"any"}` accepted with adaptive thinking on, forced for one turn, then absent |
+| Stop at tools | Anthropic claude-haiku-5-5 | pass | `StopToolCallID` set, 1 provider call |
+| `MaxIterForceFinal` | Anthropic claude-haiku-5-5 | pass | 1 tool run, final tool-free call |
+| `Structured[T]` auto, with tools, and repair | Anthropic claude-haiku-5-5 | pass | Auto without tools used the forced `structured_output` tool; with tools it chose `final_answer` with `tool_choice` absent; repair accepted the second answer |
+| Delegate with child approval | Anthropic claude-haiku-5-5 | pass | Child marker approved, 1 write, no hang |
+| Durable suspend, `Decide`, resume | Anthropic claude-haiku-5-5 | pass | First run `ErrSuspended`, resume completed |
+| Spawn and `await_subagent` | Anthropic claude-haiku-5-5 | pass | Handle returned at once, result awaited |
+| Handoff round trip | Anthropic claude-haiku-5-5 | pass | Control returned to the first agent |
+| Continue after output-limit truncation | Anthropic claude-haiku-5-5 | pass | Continued through the continue-prompt path, since the model accepts no prefill |
+| Submit queue and `InterruptReplace` | Anthropic claude-haiku-5-5 | pass | Queued message answered after the run; replace committed the partial turn |
+| Prompt caching | Anthropic claude-haiku-5-5 | pass | First call wrote 2643 cache tokens, the second read 2643 |
+| `web_search` server tool deltas | Anthropic claude-haiku-5-5 | pass | `ServerToolCallDelta` and `ServerToolResultDelta` streamed |
+| Preset failover on 529 | Anthropic to OpenAI | pass | Forced 529 failed over to OpenAI; route names named the vendor and model, not the decorators |
+| `ToolRedactor` | Anthropic claude-haiku-5-5 | pass | Request bodies held only placeholders |
+| `saige ask` and `--format json` | Anthropic claude-haiku-5-5 | pass | Text answer, and JSONL envelopes ending in `usage` and `done` |
+| Empty system prompt | Anthropic claude-haiku-5-5 | pass (after fix) | Was 400 "text content blocks must be non-empty"; `system` is now omitted when no text is left |
+| Forced tool choice on an adaptive model | Anthropic claude-haiku-5-5 | pass (after fix) | Was rejected locally because thinking is on by default; only a manual thinking budget, or a model that declares `forced_tool_choice: false`, now rejects it |
+| Tool call on Chat Completions | OpenAI gpt-6-luna | pass | The adapter sent `reasoning_effort: "none"` with the tools; `parallel_tool_calls: false` accepted |
+| Tool call through the Responses API | OpenAI gpt-6.1-sol | pass | `provider.Build` served the model on `/v1/responses`; tool ran once; `parallel_tool_calls: false` accepted |
+| One-call smoke | OpenAI gpt-6-luna, gpt-6.1-sol | pass | Answered "ok" on Chat Completions and Responses |
+| `saige ask` default and `openai`, `openai-quality` presets | Anthropic claude-haiku-5-5, OpenAI | pass | The default preset ran claude-haiku-5-5; both OpenAI presets answered |
+| Text answer | Google gemini-3.1-flash-lite, gemini-3.8-flash | pass | Answered "ok", 1 request each |
+| Tool call | Google gemini-3.1-flash-lite, gemini-3.8-flash | pass (after fix) | Was 400 "Function call is missing a thought_signature" on the second turn. The adapter now returns the signature Gemini puts on the function call part; tool ran once, 2 requests |
+| `Structured[T]` auto | Google gemini-3.1-flash-lite, gemini-3.8-flash | pass | Native `responseSchema` path, 1 request, typed value decoded |
+| `saige ask --preset google` and `google-quality` | Google | pass | gemini-3.1-flash-lite and gemini-3.8-flash answered |
+| Vertex AI text, tool call and `Structured[T]` | Google gemini-3.1-flash-lite on Vertex AI | pass | `GOOGLE_GENAI_USE_VERTEXAI=true` with the project and `global` location from the environment and no API key; Application Default Credentials attached; tool ran once; native schema path |
+| Vertex AI embeddings | Google gemini-embedding-001 on Vertex AI | pass | `WithEmbedVertex`, 3072 dimensions |
+| `saige --provider vertex ask` | Google gemini-3.1-flash-lite on Vertex AI | pass | Answered "ok" with no Gemini API key set |
+| Live Google 429 | Google | not exercised | No cheap way to trigger one; covered by the forced 429 scenario |
 
 ## Remaining gaps and known issues
 
 | Issue | Where | Effect |
 | --- | --- | --- |
-| Anthropic live paths are unverified. | environment | Needs a valid `ANTHROPIC_API_KEY` to verify prefill continue, forced-tool structured output, and server tool deltas. |
 | Plain `Ingest` of changed content at the same URI creates a second document. | `rag/internal/pipeline/pipeline.go` | Documented: use `SyncSource` or `Update` for replace-by-URI. |
 | The DBOS runner does not implement `types.InterruptRouter`. | `agent/durable/dbos/dbos.go` | By design: DBOS hosts use `Engine.Decide` and `Engine.PendingApproval` directly. |
 | Spawn mode is unavailable under durable runners. | `agent/spawn.go` | By design: returns `ErrSpawnUnsupported`. |

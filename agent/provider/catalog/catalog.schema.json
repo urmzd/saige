@@ -58,6 +58,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "vertex": {
+          "$ref": "#/$defs/VertexSpec"
         }
       },
       "required": [
@@ -240,6 +243,16 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "chat_completions_tools": {
+          "anyOf": [
+            {
+              "type": "string"
             },
             {
               "type": "null"
@@ -678,6 +691,9 @@
           },
           "type": "array"
         },
+        "forced_tool_choice": {
+          "type": "boolean"
+        },
         "max_budget": {
           "type": "integer"
         },
@@ -863,6 +879,18 @@
       "required": [
         "kind"
       ],
+      "type": "object"
+    },
+    "VertexSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
       "type": "object"
     }
   },

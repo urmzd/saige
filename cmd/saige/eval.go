@@ -439,7 +439,7 @@ const evalInitManifest = `{
   "flows": ["base", "stateless"],
   "subject": {
     "provider": "openai-compatible",
-    "model": "gpt-4o-mini",
+    "model": "gpt-6-luna",
     "api_key_env": "OPENAI_API_KEY"
   },
   "policy": {"concurrency": 2},

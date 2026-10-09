@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.25.5+
+- Go 1.26.9+
 - [just](https://github.com/casey/just) (optional)
 - `GH_TOKEN` for releases
 
