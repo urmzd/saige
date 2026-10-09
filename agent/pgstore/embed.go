@@ -40,3 +40,17 @@ var checkpointGetSQL string
 
 //go:embed sql/checkpoint_list.sql
 var checkpointListSQL string
+
+//go:embed sql/node_version.sql
+var nodeVersionSQL string
+
+// ── Conversation queries ───────────────────────────────────────────
+
+//go:embed sql/conversation_active_upsert.sql
+var conversationActiveUpsertSQL string
+
+//go:embed sql/conversation_active_get.sql
+var conversationActiveGetSQL string
+
+//go:embed sql/conversation_delete.sql
+var conversationDeleteSQL string

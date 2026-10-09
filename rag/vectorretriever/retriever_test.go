@@ -2,6 +2,7 @@ package vectorretriever_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -24,9 +25,9 @@ func (m *mockEmbedderRegistry) Embed(_ context.Context, variants []types.Content
 
 type mockStore struct {
 	types.Store
-	searchResult    []types.SearchHit
-	searchErr       error
-	lastEmbedding   []float32
+	searchResult  []types.SearchHit
+	searchErr     error
+	lastEmbedding []float32
 }
 
 func (m *mockStore) SearchByEmbedding(_ context.Context, embedding []float32, _ *types.SearchOptions) ([]types.SearchHit, error) {
@@ -81,5 +82,47 @@ func TestRetrieveSearchError(t *testing.T) {
 	_, err := r.Retrieve(context.Background(), "test", nil)
 	if err == nil {
 		t.Fatal("expected error from search failure")
+	}
+}
+
+type purposeRecorder struct {
+	purpose types.EmbedPurpose
+	result  [][]float32
+}
+
+func (p *purposeRecorder) Register(_ types.ContentType, _ types.VariantEmbedder) {}
+func (p *purposeRecorder) Embed(ctx context.Context, _ []types.ContentVariant) ([][]float32, error) {
+	p.purpose = types.EmbedPurposeFrom(ctx)
+	return p.result, nil
+}
+
+func TestRetrieveUsesQueryPurpose(t *testing.T) {
+	rec := &purposeRecorder{result: [][]float32{{1, 0}}}
+	r := vectorretriever.New(&mockStore{}, rec)
+	if _, err := r.Retrieve(context.Background(), "q", nil); err != nil {
+		t.Fatal(err)
+	}
+	if rec.purpose != types.PurposeQuery {
+		t.Errorf("embed purpose = %q, want %q", rec.purpose, types.PurposeQuery)
+	}
+}
+
+func TestRetrieveRejectsMalformedQueryEmbedding(t *testing.T) {
+	tests := []struct {
+		name   string
+		result [][]float32
+	}{
+		{name: "no vectors", result: nil},
+		{name: "empty vector", result: [][]float32{{}}},
+		{name: "two vectors", result: [][]float32{{1}, {2}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := vectorretriever.New(&mockStore{}, &mockEmbedderRegistry{result: tt.result})
+			_, err := r.Retrieve(context.Background(), "q", nil)
+			if !errors.Is(err, types.ErrEmbeddingShape) {
+				t.Fatalf("expected ErrEmbeddingShape, got %v", err)
+			}
+		})
 	}
 }

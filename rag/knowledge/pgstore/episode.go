@@ -12,29 +12,82 @@ import (
 )
 
 // CreateEpisode creates an episode and links it to entities via mentions.
+// Entity UUIDs with no stored entity are skipped.
 func (s *Store) CreateEpisode(ctx context.Context, input *types.EpisodeInput, entityUUIDs []string) (string, error) {
 	episodeUUID := uuid.New().String()
 
 	var episodeID int64
 	err := s.pool.QueryRow(ctx, episodeCreateSQL,
-		episodeUUID, input.Name, input.Body, input.Source, input.GroupID, encodeEpisodeMetadata(input.Metadata),
+		episodeUUID, input.Name, input.Body, input.Source, input.GroupID, input.DocumentID,
+		encodeEpisodeMetadata(input.Metadata),
 	).Scan(&episodeID)
 	if err != nil {
 		return "", fmt.Errorf("create episode %s: %w", input.Name, err)
 	}
 
-	for _, entUUID := range entityUUIDs {
-		entID, err := s.entityID(ctx, entUUID)
-		if err != nil {
-			s.logger.Warn("create mention: entity not found", "uuid", entUUID, "error", err)
-			continue
-		}
-		if _, err := s.pool.Exec(ctx, episodeMentionSQL, episodeID, entID); err != nil {
-			s.logger.Warn("create mention failed", "episode", input.Name, "error", err)
+	if len(entityUUIDs) > 0 {
+		if err := s.LinkEpisodeEntities(ctx, episodeUUID, entityUUIDs); err != nil {
+			return episodeUUID, fmt.Errorf("create episode %s: %w", input.Name, err)
 		}
 	}
 
 	return episodeUUID, nil
+}
+
+// LinkEpisodeEntities implements types.EpisodeLinker: it records mentions of
+// the entities by the episode in one statement. Existing mentions and
+// unknown entity UUIDs are ignored.
+func (s *Store) LinkEpisodeEntities(ctx context.Context, episodeUUID string, entityUUIDs []string) error {
+	if len(entityUUIDs) == 0 {
+		return nil
+	}
+	if _, err := s.pool.Exec(ctx, episodeMentionSQL, episodeUUID, entityUUIDs); err != nil {
+		return fmt.Errorf("link episode %s entities: %w", episodeUUID, err)
+	}
+	return nil
+}
+
+// LinkRelationEpisode implements types.EpisodeLinker: it records that the
+// episode asserts the relation. Linking twice is a no-op.
+func (s *Store) LinkRelationEpisode(ctx context.Context, relationUUID, episodeUUID string) error {
+	if _, err := s.pool.Exec(ctx, relationEpisodeLinkSQL, relationUUID, episodeUUID); err != nil {
+		return fmt.Errorf("link relation %s to episode %s: %w", relationUUID, episodeUUID, err)
+	}
+	return nil
+}
+
+// DeleteDocumentEpisodes implements types.DocumentEpisodeDeleter. In one
+// transaction it removes the document's episodes in the group (mentions and
+// relation links cascade), the relations no other episode asserts, and the
+// entities those episodes mentioned that have no mentions or relations left.
+// Relations that a removed relation had superseded, or that were backfilled
+// behind it, get their end recomputed from the relations that remain, so
+// another document's fact becomes current again once its only contradiction
+// is gone. The default group ("") is allowed because the delete is scoped to one
+// document.
+func (s *Store) DeleteDocumentEpisodes(ctx context.Context, groupID, documentID string) error {
+	if documentID == "" {
+		return fmt.Errorf("delete document episodes: document id must not be empty")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("delete document episodes %s: %w", documentID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		deleted  int64
+		entities []int64
+	)
+	if err := tx.QueryRow(ctx, episodeDeleteDocumentSQL, groupID, documentID).Scan(&deleted, &entities); err != nil {
+		return fmt.Errorf("delete document episodes %s: %w", documentID, err)
+	}
+	if len(entities) > 0 {
+		if _, err := tx.Exec(ctx, entityDeleteOrphansSQL, entities); err != nil {
+			return fmt.Errorf("delete document episodes %s: remove orphan entities: %w", documentID, err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // DeleteEpisodes implements types.EpisodeDeleter: it removes a group's

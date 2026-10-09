@@ -3,6 +3,7 @@ package retry
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -420,5 +421,67 @@ func TestWithModelRetargetsInner(t *testing.T) {
 	}
 	if _, ok := switched.(*Provider); !ok {
 		t.Errorf("switched provider is %T, want *retry.Provider (retry preserved)", switched)
+	}
+}
+
+// TestRetryProvider_RoutePreamble checks that a RouteDelta sent before an
+// attempt's error does not count as content, so the attempt is retried, and
+// that only the successful attempt's route reaches the consumer.
+func TestRetryProvider_RoutePreamble(t *testing.T) {
+	tests := []struct {
+		name       string
+		scripts    [][]types.Delta
+		wantText   string
+		wantRoutes []string
+		wantCalls  int32
+	}{
+		{
+			name: "route then transient error retries",
+			scripts: [][]types.Delta{
+				{types.RouteDelta{Profile: "a"}, types.ErrorDelta{Error: transientErr()}},
+				{types.RouteDelta{Profile: "b"}, types.TextContentDelta{Content: "ok"}},
+			},
+			wantText:   "ok",
+			wantRoutes: []string{"b"},
+			wantCalls:  2,
+		},
+		{
+			name: "route then content is not retried",
+			scripts: [][]types.Delta{
+				{types.RouteDelta{Profile: "a"}, types.TextContentDelta{Content: "first"}},
+				{types.RouteDelta{Profile: "b"}, types.TextContentDelta{Content: "second"}},
+			},
+			wantText:   "first",
+			wantRoutes: []string{"a"},
+			wantCalls:  1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner := &scriptedStreamProvider{Scripts: tt.scripts}
+			rp := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, Multiplier: 1})
+			ch, err := rp.ChatStream(context.Background(), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text string
+			var routes []string
+			for d := range ch {
+				switch v := d.(type) {
+				case types.TextContentDelta:
+					text += v.Content
+				case types.RouteDelta:
+					routes = append(routes, v.Profile)
+				case types.ErrorDelta:
+					t.Errorf("unexpected error: %v", v.Error)
+				}
+			}
+			if text != tt.wantText || !slices.Equal(routes, tt.wantRoutes) {
+				t.Errorf("text = %q, routes = %v; want %q, %v", text, routes, tt.wantText, tt.wantRoutes)
+			}
+			if got := inner.calls.Load(); got != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", got, tt.wantCalls)
+			}
+		})
 	}
 }

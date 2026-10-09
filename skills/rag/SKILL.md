@@ -41,7 +41,7 @@ import (
     "github.com/urmzd/saige/postgres"
 )
 
-// Connect to PostgreSQL (requires pgvector extension).
+// Connect to PostgreSQL 18 (requires the pgvector and pg_search extensions).
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
@@ -102,7 +102,7 @@ pipe, err := rag.NewPipeline(
 | `WithSemanticChunker(thresh, min, max)` | Semantic similarity chunking |
 | `WithEmbedders(reg)` | Set the embedder registry (optional, needed for search) |
 | `WithGraph(g)` | Enable knowledge graph entity extraction (optional) |
-| `WithBM25(cfg)` | Enable BM25 lexical retrieval |
+| `WithBM25(cfg)` | Enable BM25 lexical retrieval. The index is in memory: over a store that already holds documents (such as pgstore), call `rag.RebuildIndex(ctx, pipe)` once after `NewPipeline` |
 | `WithParentContext()` | Expand hits to parent section context |
 | `WithMMR(lambda)` | MMR diversity reranking |
 | `WithCrossEncoder(scorer)` | Cross-encoder reranking |
@@ -110,6 +110,8 @@ pipe, err := rag.NewPipeline(
 | `WithCompression(llm)` | LLM-based context compression |
 | `WithDedupBehavior(b)` | Set dedup behavior: DedupSkip (default) or DedupReplace |
 | `WithStoreOriginals(true)` | Persist raw document bytes |
+
+Search options: `types.WithCandidatePool(k)` sets how many fused candidates reach the reranker, and `types.WithMinScore(s)` is a threshold in [0, 1] on the normalized fused score (1.0 keeps only hits ranked first by every retriever), applied before reranking.
 
 ## Evaluation
 

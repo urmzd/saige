@@ -1,7 +1,7 @@
 // Command basic demonstrates building a knowledge graph with knowledge.
 //
 // Prerequisites:
-//   - PostgreSQL running with pgvector extension (e.g. docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg17)
+//   - PostgreSQL 18 with the pgvector and pg_search extensions (e.g. docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres paradedb/paradedb:0.26.1-pg18)
 //   - Ollama running with a model pulled (e.g. ollama pull llama3.2)
 //
 // Usage:
@@ -57,7 +57,10 @@ func main() {
 	}
 	defer graph.Close(ctx)
 
-	// 4. (Optional) Apply an ontology to guide extraction.
+	// 4. (Optional) Apply an ontology to guide extraction. The extractor is
+	// asked to use these types, and extracted types that match one ignoring
+	// case and punctuation are stored with the ontology's spelling. Build the
+	// graph with knowledge.WithStrictOntology() to drop any other type.
 	err = graph.ApplyOntology(ctx, &types.Ontology{
 		EntityTypes: []types.EntityTypeDef{
 			{Name: "Person", Description: "A human being"},

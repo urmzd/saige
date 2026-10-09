@@ -1,80 +1,136 @@
-// Package main demonstrates running an agent as a DBOS-backed durable workflow.
-// Each LLM call and tool execution becomes a memoized durable step: if the
-// process crashes mid-run, Launch() recovers the workflow and resumes it from
-// its last completed step instead of repeating (and re-billing) the work.
+// Package main runs an agent durably: each LLM call and tool execution is a
+// memoized step, so a crashed or restarted process resumes the run from its
+// last completed step instead of repeating (and re-billing) the work. The run
+// ID is the idempotency key: running the same ID again returns the recorded
+// result.
 //
-// Requires a reachable PostgreSQL instance. The DBOS engine shares the same
-// pgxpool used by the agent's pgstore, and uses the workflow ID as an
-// idempotency key so retries from a UI are exactly-once.
+// By default the run uses the local engine, which keeps each run in a private
+// directory on this machine:
+//
+//	go run ./examples/agent/durable/
+//
+// With -backend=duraturo the same agent runs as a duraturo workflow on
+// Postgres, the production backend: the ledger and the queue are tables in
+// your database, and any number of worker processes can execute runs.
+//
+//	DATABASE_URL=postgres://localhost:5432/saige go run ./examples/agent/durable/ -backend=duraturo
+//
+// duraturo never creates tables. When the schema is missing, the example
+// prints the suggested DDL for you to apply.
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"log"
 	"os"
-	"time"
+	"path/filepath"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/urmzd/duraturo/adapters/postgres/pgledger"
+	"github.com/urmzd/duraturo/adapters/postgres/pgqueue"
 
 	agentsdk "github.com/urmzd/saige/agent"
-	durabledbos "github.com/urmzd/saige/agent/durable/dbos"
+	durableduraturo "github.com/urmzd/saige/agent/durable/duraturo"
+	"github.com/urmzd/saige/agent/durable/local"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
 )
 
-func main() {
-	ctx := context.Background()
+// newAgent builds a fresh agent, tree and budget. Both engines call it again
+// for every replay, so concurrent and recovered runs never share state.
+func newAgent() *agentsdk.Agent {
+	return agentsdk.NewAgent(agentsdk.AgentConfig{
+		Name:         "researcher",
+		SystemPrompt: "You research questions and summarize concisely.",
+		Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
+	})
+}
 
+func main() {
+	backend := flag.String("backend", "local", "durable backend: local or duraturo")
+	flag.Parse()
+
+	ctx := context.Background()
+	input := []types.Message{types.NewUserMessage("Summarize the benefits of durable workflows.")}
+
+	var (
+		final *types.AssistantMessage
+		err   error
+	)
+	switch *backend {
+	case "local":
+		final, err = runLocal(ctx, input)
+	case "duraturo":
+		final, err = runDuraturo(ctx, input)
+	default:
+		log.Fatalf("unknown backend %q: use local or duraturo", *backend)
+	}
+	if errors.Is(err, types.ErrSuspended) {
+		log.Fatal("run is waiting for an approval; decide it and run again")
+	}
+	if err != nil {
+		log.Fatalf("run: %v", err)
+	}
+	if final != nil {
+		for _, c := range final.Content {
+			if t, ok := c.(types.TextContent); ok {
+				log.Printf("final: %s", t.Text)
+			}
+		}
+	}
+}
+
+// runLocal resumes or starts the run in a private directory. The revision
+// names the agent configuration; change it when the provider, tools or
+// policies change.
+func runLocal(ctx context.Context, input []types.Message) (*types.AssistantMessage, error) {
+	engine := local.New(filepath.Join(os.TempDir(), "saige-durable-example"))
+	return engine.Run(ctx, "demo-turn-1", "researcher-v1", newAgent, input)
+}
+
+// runDuraturo runs the agent on Postgres tables through duraturo. The worker
+// runs in this process here; a deployment can run it in separate processes
+// that register the same workflow.
+func runDuraturo(ctx context.Context, input []types.Message) (*types.AssistantMessage, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://localhost:5432/saige?sslmode=disable"
 	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		log.Fatalf("connect: %v", err)
+		return nil, err
 	}
 	defer pool.Close()
 
-	// Build the agent normally: the core package never imports dbos.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-		Name:         "researcher",
-		SystemPrompt: "You research questions and summarize concisely.",
-		Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
-	})
-
-	// The durable engine shares the same Postgres pool.
-	engine, err := durabledbos.NewEngine(ctx, "saige-demo", pool, dsn)
+	lgr, err := pgledger.New(pool, pgledger.DefaultMapping())
 	if err != nil {
-		log.Fatalf("dbos engine: %v", err)
+		return nil, err
 	}
-	defer engine.Shutdown(30 * time.Second)
-
-	// Register the agent-run workflow BEFORE Launch; Launch recovers any
-	// in-flight workflows from a previous crash.
-	wf := engine.RegisterAgent(agent, "saige.agent.run")
-	if err := engine.Launch(); err != nil {
-		log.Fatalf("launch: %v", err)
-	}
-
-	// Run durably. The workflow ID is the idempotency key: a second call with
-	// the same ID returns a handle to the existing run instead of re-executing.
-	handle, err := engine.Run(wf, durabledbos.RunInput{
-		Messages: []types.Message{types.NewUserMessage("Summarize the benefits of durable workflows.")},
-		Branch:   agent.Tree().Active(),
-	}, "demo-turn-1")
+	q, err := pgqueue.New(pool, pgqueue.DefaultMapping())
 	if err != nil {
-		log.Fatalf("run: %v", err)
+		return nil, err
+	}
+	if err := errors.Join(lgr.Validate(ctx), q.Validate(ctx)); err != nil {
+		log.Printf("apply this schema, then run again:\n%s\n%s",
+			pgledger.RecommendedDDL(pgledger.DefaultMapping()), pgqueue.RecommendedDDL(pgqueue.DefaultMapping()))
+		return nil, err
 	}
 
-	out, err := handle.GetResult()
-	if err != nil {
-		log.Fatalf("result: %v", err)
-	}
-	if out.Final != nil {
-		for _, c := range out.Final.Content {
-			if t, ok := c.(types.TextContent); ok {
-				log.Printf("final: %s", t.Text)
-			}
-		}
-	}
+	engine := durableduraturo.New(lgr, q)
+	wf := engine.Register("researcher.v1", func(string) *agentsdk.Agent { return newAgent() })
+
+	workerCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = engine.Worker().Run(workerCtx)
+	}()
+	defer func() {
+		stop()
+		<-done
+	}()
+
+	return engine.Run(ctx, wf, "demo-turn-1", input)
 }

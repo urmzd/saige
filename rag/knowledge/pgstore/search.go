@@ -9,46 +9,41 @@ import (
 	"github.com/urmzd/saige/rag/knowledge/types"
 )
 
-// SearchByEmbedding searches for facts using HNSW vector similarity on entity embeddings.
-func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts *types.SearchOptions) ([]types.ScoredFact, error) {
+// defaultSearchLimit bounds a search whose options set no limit.
+const defaultSearchLimit = 20
+
+// searchArgs returns the shared group, limit, and as-of parameters of the
+// search queries. An empty GroupID searches every group.
+func searchArgs(opts *types.SearchOptions) (group *string, limit int, validAt *time.Time) {
 	if opts == nil {
-		opts = &types.SearchOptions{}
+		return nil, defaultSearchLimit, nil
 	}
-
-	emb := pgvector.NewVector(embedding)
-
-	var query string
-	var args []any
-
 	if opts.GroupID != "" {
-		query = searchEmbeddingGroupSQL
-		args = []any{emb, opts.GroupID}
-	} else {
-		query = searchEmbeddingSQL
-		args = []any{emb}
+		g := opts.GroupID
+		group = &g
 	}
-
-	return s.queryFacts(ctx, query, args)
+	limit = opts.Limit
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	return group, limit, opts.ValidAt
 }
 
-// SearchByText searches for facts using fulltext search on entity name and summary.
+// SearchByEmbedding searches for facts using HNSW vector similarity on
+// entity embeddings. Each matched entity contributes at most Limit of its
+// newest edges, and at most Limit facts are returned.
+func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts *types.SearchOptions) ([]types.ScoredFact, error) {
+	group, limit, validAt := searchArgs(opts)
+	return s.queryFacts(ctx, searchEmbeddingSQL, []any{pgvector.NewVector(embedding), group, limit, validAt})
+}
+
+// SearchByText searches for facts using Postgres full-text search (ts_rank)
+// on entity name and summary and on the fact text and relation type. Each
+// matched entity contributes at most Limit of its newest edges, and at most
+// Limit facts are returned.
 func (s *Store) SearchByText(ctx context.Context, queryText string, opts *types.SearchOptions) ([]types.ScoredFact, error) {
-	if opts == nil {
-		opts = &types.SearchOptions{}
-	}
-
-	var query string
-	var args []any
-
-	if opts.GroupID != "" {
-		query = searchTextGroupSQL
-		args = []any{queryText, opts.GroupID}
-	} else {
-		query = searchTextSQL
-		args = []any{queryText}
-	}
-
-	return s.queryFacts(ctx, query, args)
+	group, limit, validAt := searchArgs(opts)
+	return s.queryFacts(ctx, searchTextSQL, []any{queryText, group, limit, validAt})
 }
 
 // queryFacts executes a fact query and returns deduplicated ScoredFacts.

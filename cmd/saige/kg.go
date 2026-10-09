@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/tui"
-	"github.com/urmzd/saige/rag/knowledge"
 	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
@@ -28,32 +27,33 @@ func newKgCmd(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func kgGraph_(ctx context.Context, dsn string) (kgtypes.Graph, func()) {
+// openKnowledgeGraph connects to the knowledge graph database (--db, then
+// SAIGE_KG_DB) and builds the shared graph. The returned cleanup closes the
+// graph and the pool. withEmbedder is set only for commands that embed (search,
+// ingest).
+func openKnowledgeGraph(ctx context.Context, dsn string, withEmbedder bool) (kgtypes.Graph, func(), error) {
 	if dsn == "" {
 		dsn = os.Getenv("SAIGE_KG_DB")
 	}
 	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "error: --db or SAIGE_KG_DB is required")
-		os.Exit(1)
+		return nil, nil, errors.New("--db or SAIGE_KG_DB is required")
 	}
 
 	pool, err := connectPostgres(ctx, dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
 
-	graph, err := knowledge.NewGraph(ctx, knowledge.WithPostgres(pool))
+	graph, err := newKnowledgeGraph(ctx, pool, persistentFlagVars, withEmbedder)
 	if err != nil {
 		pool.Close()
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
 
 	return graph, func() {
 		_ = graph.Close(ctx)
 		pool.Close()
-	}
+	}, nil
 }
 
 func newKgSearchCmd(ctx context.Context) *cobra.Command {
@@ -68,26 +68,26 @@ func newKgSearchCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "kg search"})
 
 			if query == "" {
-				out.Error(fmt.Errorf("--query is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--query is required"))
 			}
 
-			graph, cleanup := kgGraph_(ctx, db)
+			graph, cleanup, err := openKnowledgeGraph(ctx, db, true)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			// Partial failures still carry usable results: warn and print them.
 			result, err := graph.SearchFacts(ctx, query, kgtypes.WithLimit(limit))
 			if err != nil {
 				if !errors.Is(err, kgtypes.ErrPartialSearch) {
-					out.Error(err)
-					os.Exit(1)
+					return reported(out, err)
 				}
 				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
 
 			if err := out.Result(result); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -112,11 +112,13 @@ func newKgIngestCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "kg ingest"})
 
 			if name == "" || text == "" {
-				out.Error(fmt.Errorf("--name and --text are required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--name and --text are required"))
 			}
 
-			graph, cleanup := kgGraph_(ctx, db)
+			graph, cleanup, err := openKnowledgeGraph(ctx, db, true)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			result, err := graph.IngestEpisode(ctx, &kgtypes.EpisodeInput{
@@ -125,13 +127,16 @@ func newKgIngestCmd(ctx context.Context) *cobra.Command {
 				Source: source,
 			})
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				// A partial episode is stored; some extracted facts were not.
+				// Report the result and warn rather than fail.
+				if !errors.Is(err, kgtypes.ErrPartialEpisode) || result == nil {
+					return reported(out, err)
+				}
+				out.Status("warning: " + err.Error())
 			}
 
 			if err := out.Result(result); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -157,18 +162,19 @@ func newKgGraphCmd(ctx context.Context) *cobra.Command {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
 			out.Header(tui.OutputHeader{Operation: "kg graph"})
 
-			graph, cleanup := kgGraph_(ctx, db)
+			graph, cleanup, err := openKnowledgeGraph(ctx, db, false)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			data, err := graph.GetGraph(ctx, int64(limit))
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			if err := out.Result(data); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -193,22 +199,22 @@ func newKgNodeCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "kg node"})
 
 			if id == "" {
-				out.Error(fmt.Errorf("--id is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--id is required"))
 			}
 
-			graph, cleanup := kgGraph_(ctx, db)
+			graph, cleanup, err := openKnowledgeGraph(ctx, db, false)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			detail, err := graph.GetNode(ctx, id, depth)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			if err := out.Result(detail); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},

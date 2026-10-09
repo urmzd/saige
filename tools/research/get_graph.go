@@ -21,11 +21,12 @@ func NewGetGraphTool(g kgtypes.Graph) *GetGraphTool {
 func (t *GetGraphTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "get_knowledge_graph",
+		Capability:  types.ToolCapabilityRead,
 		Description: "Get the knowledge graph structure showing all entities and their relationships. Returns a readable summary of how stored knowledge is connected.",
 		Parameters: types.ParameterSchema{
-			Type: "object",
+			Type: types.SchemaObject,
 			Properties: map[string]types.PropertyDef{
-				"limit": {Type: "number", Description: "Max edges to return (default 100)"},
+				"limit": {Type: types.SchemaNumber, Description: "Max edges to return (default 100)"},
 			},
 		},
 	}

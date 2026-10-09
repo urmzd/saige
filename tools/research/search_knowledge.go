@@ -27,19 +27,20 @@ func (t *SearchKnowledgeTool) WithGroupID(id string) *SearchKnowledgeTool {
 func (t *SearchKnowledgeTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "search_knowledge",
+		Capability:  types.ToolCapabilityRead,
 		Description: "Search the knowledge graph for previously stored facts and entities. Returns up to 10 relevant facts.",
 		Parameters: types.ParameterSchema{
-			Type:     "object",
-			Required: []string{"query"},
+			Type:     types.SchemaObject,
+			Required: []string{argQuery},
 			Properties: map[string]types.PropertyDef{
-				"query": {Type: "string", Description: "The search query for knowledge retrieval"},
+				argQuery: {Type: types.SchemaString, Description: "The search query for knowledge retrieval"},
 			},
 		},
 	}
 }
 
 func (t *SearchKnowledgeTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	query, _ := args["query"].(string)
+	query, _ := args[argQuery].(string)
 	if query == "" {
 		return "", fmt.Errorf("search_knowledge: query is required")
 	}

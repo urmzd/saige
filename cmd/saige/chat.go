@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	agentsdk "github.com/urmzd/saige/agent"
@@ -24,42 +22,35 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 			tmpl := tui.TemplateByName(tmplName)
 			out := tui.ResolveOutput(cf.isJSON(), tmpl)
 
-			provider, err := resolveProvider(ctx, cf, verbose)
+			bundle, err := resolveBundle(ctx, cf, verbose)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			tools, cleanup, err := buildTools(ctx, cf)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			defer cleanup()
 
 			agentCfg := agentsdk.AgentConfig{
-				Name:         "saige",
+				Name:         cliName,
 				SystemPrompt: *cf.system,
-				Provider:     provider,
 			}
 			if len(tools) > 0 {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			agent := agentsdk.NewAgent(agentCfg)
+			agent := agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle))
 
 			runner := &tui.Runner{
-				Title:    "saige",
+				Title:    cliName,
 				Verbose:  verbose,
 				Template: tmpl,
 				Output:   out,
 			}
 
-			if err := agentsdk.Run(ctx, agent, runner); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			return nil
+			return agentsdk.Run(ctx, agent, runner)
 		},
 	}
 

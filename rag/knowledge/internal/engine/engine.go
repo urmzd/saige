@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/urmzd/saige/rag/knowledge/internal/fuzzy"
@@ -18,21 +20,30 @@ const (
 	// FuzzyMatchThreshold is the minimum similarity score for entity dedup.
 	FuzzyMatchThreshold = 0.8
 
-	// EdgeDedupEmbeddingSimilarityThreshold is the minimum embedding similarity
-	// for two relations to be considered duplicates.
-	EdgeDedupEmbeddingSimilarityThreshold = 0.92
+	// EdgeDedupTextSimilarityThreshold is the minimum text similarity between
+	// two relation facts for them to be considered duplicates.
+	EdgeDedupTextSimilarityThreshold = 0.92
 
 	// RRFConstant is the k parameter for Reciprocal Rank Fusion.
 	RRFConstant = 60
+
+	// DefaultSearchLimit is the number of facts SearchFacts returns when the
+	// caller sets no limit.
+	DefaultSearchLimit = 20
 )
 
 // GraphEngine implements types.Graph by orchestrating Store + Extractor + Embedder.
 type GraphEngine struct {
-	store     types.Store
-	extractor types.Extractor
-	embedder  types.Embedder
-	ontology  *types.Ontology
-	logger    *slog.Logger
+	store          types.Store
+	extractor      types.Extractor
+	embedder       types.Embedder
+	logger         *slog.Logger
+	strictOntology bool
+
+	// mu guards ontology, which ApplyOntology may replace while episodes
+	// are being ingested.
+	mu       sync.RWMutex
+	ontology *types.Ontology
 }
 
 // Option configures a GraphEngine.
@@ -58,6 +69,14 @@ func WithLogger(logger *slog.Logger) Option {
 	return func(e *GraphEngine) { e.logger = logger }
 }
 
+// WithStrictOntology drops extracted entities and relations whose type is
+// not in the applied ontology. Without it, unknown types are kept as the
+// extractor returned them. Each list is enforced only when the ontology
+// defines at least one type of that kind.
+func WithStrictOntology() Option {
+	return func(e *GraphEngine) { e.strictOntology = true }
+}
+
 // New creates a new GraphEngine.
 func New(opts ...Option) *GraphEngine {
 	e := &GraphEngine{logger: slog.Default()}
@@ -67,13 +86,38 @@ func New(opts ...Option) *GraphEngine {
 	return e
 }
 
-// ApplyOntology stores the ontology for use during extraction.
+// ApplyOntology sets the ontology used by later IngestEpisode calls. The
+// extractor receives it when it implements types.OntologyExtractor, and
+// extracted type names that match an ontology type case-insensitively are
+// rewritten to the ontology's spelling. A nil ontology clears it. The
+// ontology is copied, so later changes by the caller have no effect.
 func (e *GraphEngine) ApplyOntology(_ context.Context, ont *types.Ontology) error {
-	e.ontology = ont
+	var cp *types.Ontology
+	if ont != nil {
+		cp = &types.Ontology{
+			EntityTypes:   slices.Clone(ont.EntityTypes),
+			RelationTypes: slices.Clone(ont.RelationTypes),
+		}
+	}
+	e.mu.Lock()
+	e.ontology = cp
+	e.mu.Unlock()
 	return nil
 }
 
+// currentOntology returns the ontology snapshot for one ingest.
+func (e *GraphEngine) currentOntology() *types.Ontology {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.ontology
+}
+
 // IngestEpisode extracts entities/relations from text, deduplicates, and stores them.
+//
+// A failure to extract or to store the episode itself is returned as an
+// error with a nil result. Failures of individual entities, relations,
+// embeddings, or links do not stop the ingest: the stored parts are
+// returned together with an error wrapping types.ErrPartialEpisode.
 func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInput) (*types.IngestResult, error) {
 	if e.extractor == nil {
 		return nil, types.ErrNoExtractor
@@ -83,21 +127,52 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 	}
 
 	// Step 1: Extract entities and relations from text
-	extractedEntities, extractedRelations, err := e.extractor.Extract(ctx, input.Body)
+	ont := e.currentOntology()
+	extractedEntities, extractedRelations, err := e.extract(ctx, input.Body, ont)
 	if err != nil {
 		return nil, fmt.Errorf("extract: %w", err)
 	}
+	extractedEntities, extractedRelations = e.normalizeToOntology(ont, extractedEntities, extractedRelations)
 
-	// Step 2: Deduplicate and upsert entities
+	var partial []error
+
+	// Step 2: Create the episode first when the store can link it later, so
+	// every relation can name the episode that asserted it.
+	linker, canLink := e.store.(types.EpisodeLinker)
+	var episodeUUID string
+	if canLink {
+		episodeUUID, err = e.store.CreateEpisode(ctx, input, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create episode %s: %w", input.Name, err)
+		}
+	}
+
+	// Step 3: Embed all entities in one call, then deduplicate and upsert.
+	embeddings, err := e.embedEntities(ctx, extractedEntities)
+	if err != nil {
+		partial = append(partial, err)
+	}
+
 	// entityUUIDs maps extracted entity name → stored UUID
 	entityUUIDs := make(map[string]string, len(extractedEntities))
+	storedUUIDs := make([]string, 0, len(extractedEntities))
+	stored := make(map[string]bool, len(extractedEntities))
 	responseEntities := make([]types.Entity, 0, len(extractedEntities))
 
-	for _, ent := range extractedEntities {
-		resolvedUUID, err := e.deduplicateAndUpsertEntity(ctx, input.GroupID, &ent)
+	for i := range extractedEntities {
+		ent := extractedEntities[i]
+		var embedding []float32
+		if embeddings != nil {
+			embedding = embeddings[i]
+		}
+		resolvedUUID, err := e.deduplicateAndUpsertEntity(ctx, input.GroupID, &ent, embedding)
 		if err != nil {
-			e.logger.Warn("upsert entity failed", "entity", ent.Name, "error", err)
+			partial = append(partial, fmt.Errorf("upsert entity %s: %w", ent.Name, err))
 			continue
+		}
+		if !stored[resolvedUUID] {
+			stored[resolvedUUID] = true
+			storedUUIDs = append(storedUUIDs, resolvedUUID)
 		}
 		entityUUIDs[ent.Name] = resolvedUUID
 		responseEntities = append(responseEntities, types.Entity{
@@ -105,8 +180,20 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 		})
 	}
 
-	// Step 3: Deduplicate and create relations with temporal tracking
+	if canLink && len(storedUUIDs) > 0 {
+		if err := linker.LinkEpisodeEntities(ctx, episodeUUID, storedUUIDs); err != nil {
+			partial = append(partial, fmt.Errorf("link episode entities: %w", err))
+		}
+	}
+
+	// Step 4: Deduplicate and create relations with temporal tracking.
+	// Relations become valid at the episode's reference time, so a
+	// backfilled document does not look newer than what it describes.
 	now := time.Now()
+	validAt := input.ReferenceTime
+	if validAt.IsZero() {
+		validAt = now
+	}
 	responseRelations := make([]types.Relation, 0, len(extractedRelations))
 
 	for _, rel := range extractedRelations {
@@ -119,33 +206,59 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 			continue
 		}
 
-		// Edge dedup: check for existing similar relations
-		isDuplicate, err := e.isRelationDuplicate(ctx, srcUUID, tgtUUID, rel.Fact)
+		existing, err := e.store.FindRelationsBetweenEntities(ctx, srcUUID, tgtUUID)
 		if err != nil {
-			e.logger.Warn("edge dedup check failed", "error", err)
+			// Without the existing relations the edge cannot be deduplicated
+			// or superseded; creating it anyway keeps the fact.
+			partial = append(partial, fmt.Errorf("find relations %s->%s: %w", rel.Source, rel.Target, err))
+			existing = nil
 		}
-		if isDuplicate {
+		existing = sameDirection(existing, srcUUID, tgtUUID)
+
+		if dupUUID := duplicateRelation(existing, rel.Fact); dupUUID != "" {
 			e.logger.Debug("skipping duplicate relation", "source", rel.Source, "target", rel.Target, "type", rel.Type)
+			if canLink {
+				if err := linker.LinkRelationEpisode(ctx, dupUUID, episodeUUID); err != nil {
+					partial = append(partial, fmt.Errorf("link relation %s: %w", dupUUID, err))
+				}
+			}
 			continue
 		}
+
+		// Contradiction handling: an active prior relation of the same type
+		// and direction is superseded when it became valid no later than the
+		// new one. When a prior is newer, the new (backfilled) relation is
+		// created already superseded at the prior's ValidAt.
+		superseded, newInvalidAt := supersession(existing, rel.Type, validAt)
 
 		relUUID, err := e.store.CreateRelation(ctx, &types.RelationInput{
 			SourceUUID: srcUUID,
 			TargetUUID: tgtUUID,
 			Type:       rel.Type,
 			Fact:       rel.Fact,
-			ValidAt:    now,
+			ValidAt:    validAt,
+			InvalidAt:  newInvalidAt,
 			GroupID:    input.GroupID,
 		})
 		if err != nil {
-			e.logger.Warn("create relation failed", "type", rel.Type, "error", err)
+			partial = append(partial, fmt.Errorf("create relation %s: %w", rel.Type, err))
 			continue
 		}
 
-		// Contradiction invalidation: a new relation for an existing
-		// (source, target, type) supersedes any active prior relation(s) of the
-		// same type. Mark those priors invalid as of the new relation's ValidAt.
-		e.invalidateSupersededRelations(ctx, srcUUID, tgtUUID, rel.Type, relUUID, now)
+		if canLink {
+			if err := linker.LinkRelationEpisode(ctx, relUUID, episodeUUID); err != nil {
+				partial = append(partial, fmt.Errorf("link relation %s: %w", relUUID, err))
+			}
+		}
+
+		for _, priorUUID := range superseded {
+			if err := e.store.InvalidateRelation(ctx, priorUUID, validAt); err != nil {
+				partial = append(partial, fmt.Errorf("invalidate superseded relation %s: %w", priorUUID, err))
+				continue
+			}
+			e.logger.Info("invalidated superseded relation",
+				"relation", priorUUID, "type", rel.Type, "superseded_by", relUUID)
+		}
 
 		responseRelations = append(responseRelations, types.Relation{
 			UUID:       relUUID,
@@ -154,52 +267,113 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 			Type:       rel.Type,
 			Fact:       rel.Fact,
 			CreatedAt:  now,
-			ValidAt:    now,
+			ValidAt:    validAt,
+			InvalidAt:  newInvalidAt,
 		})
 	}
 
-	// Step 4: Create episode and link to entities
-	uuids := make([]string, 0, len(entityUUIDs))
-	for _, uuid := range entityUUIDs {
-		uuids = append(uuids, uuid)
+	// Step 5: A store without linking creates the episode last, with its
+	// mentions in the same call.
+	if !canLink {
+		episodeUUID, err = e.store.CreateEpisode(ctx, input, storedUUIDs)
+		if err != nil {
+			return nil, fmt.Errorf("create episode %s: %w", input.Name, err)
+		}
 	}
 
-	episodeUUID, err := e.store.CreateEpisode(ctx, input, uuids)
-	if err != nil {
-		e.logger.Warn("create episode failed", "name", input.Name, "error", err)
-	}
-
-	return &types.IngestResult{
+	result := &types.IngestResult{
 		UUID:          episodeUUID,
 		Name:          input.Name,
 		EntityNodes:   responseEntities,
 		EpisodicEdges: responseRelations,
-	}, nil
+	}
+	if len(partial) > 0 {
+		return result, fmt.Errorf("%w: %w", types.ErrPartialEpisode, errors.Join(partial...))
+	}
+	return result, nil
+}
+
+// extract runs the extractor, passing the ontology when the extractor
+// accepts one.
+func (e *GraphEngine) extract(ctx context.Context, text string, ont *types.Ontology) ([]types.ExtractedEntity, []types.ExtractedRelation, error) {
+	if oe, ok := e.extractor.(types.OntologyExtractor); ok && ont != nil {
+		return oe.ExtractWithOntology(ctx, text, ont)
+	}
+	return e.extractor.Extract(ctx, text)
+}
+
+// normalizeToOntology rewrites extracted type names to the ontology's
+// spelling when they match ignoring case and punctuation ("works at" and
+// "WORKS_AT" both match "works_at"). With strict ontology enabled, entities
+// and relations whose type matches no ontology type are dropped.
+func (e *GraphEngine) normalizeToOntology(ont *types.Ontology, ents []types.ExtractedEntity, rels []types.ExtractedRelation) ([]types.ExtractedEntity, []types.ExtractedRelation) {
+	if ont == nil {
+		return ents, rels
+	}
+	entityTypes := make(map[string]string, len(ont.EntityTypes))
+	for _, et := range ont.EntityTypes {
+		entityTypes[fuzzy.Normalize(et.Name)] = et.Name
+	}
+	relationTypes := make(map[string]string, len(ont.RelationTypes))
+	for _, rt := range ont.RelationTypes {
+		relationTypes[fuzzy.Normalize(rt.Name)] = rt.Name
+	}
+
+	outEnts := ents[:0:0]
+	for _, ent := range ents {
+		if canonical, ok := entityTypes[fuzzy.Normalize(ent.Type)]; ok {
+			ent.Type = canonical
+		} else if e.strictOntology && len(entityTypes) > 0 {
+			e.logger.Debug("dropping entity outside ontology", "entity", ent.Name, "type", ent.Type)
+			continue
+		}
+		outEnts = append(outEnts, ent)
+	}
+	outRels := rels[:0:0]
+	for _, rel := range rels {
+		if canonical, ok := relationTypes[fuzzy.Normalize(rel.Type)]; ok {
+			rel.Type = canonical
+		} else if e.strictOntology && len(relationTypes) > 0 {
+			e.logger.Debug("dropping relation outside ontology", "type", rel.Type)
+			continue
+		}
+		outRels = append(outRels, rel)
+	}
+	return outEnts, outRels
+}
+
+// embedEntities embeds every entity in one Embed call. It returns nil
+// vectors (and an error) when the embedder fails or returns the wrong count;
+// the entities are then stored without embeddings.
+func (e *GraphEngine) embedEntities(ctx context.Context, ents []types.ExtractedEntity) ([][]float32, error) {
+	if e.embedder == nil || len(ents) == 0 {
+		return nil, nil
+	}
+	texts := make([]string, len(ents))
+	for i, ent := range ents {
+		texts[i] = fmt.Sprintf("%s %s", ent.Name, ent.Summary)
+	}
+	vecs, err := e.embedder.Embed(ctx, texts)
+	if err != nil {
+		return nil, fmt.Errorf("embed entities: %w", err)
+	}
+	if len(vecs) != len(ents) {
+		return nil, fmt.Errorf("embed entities: got %d embeddings for %d entities", len(vecs), len(ents))
+	}
+	return vecs, nil
 }
 
 // deduplicateAndUpsertEntity performs fuzzy entity deduplication then upserts.
 // Dedup candidates are scoped to groupID when the store supports it, so
 // entities never merge across tenant groups.
-func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID string, ent *types.ExtractedEntity) (string, error) {
+func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID string, ent *types.ExtractedEntity, embedding []float32) (string, error) {
 	ent.GroupID = groupID
-
-	// Generate embedding
-	var embedding []float32
-	if e.embedder != nil {
-		embeddings, err := e.embedder.Embed(ctx, []string{fmt.Sprintf("%s %s", ent.Name, ent.Summary)})
-		if err == nil && len(embeddings) > 0 {
-			embedding = embeddings[0]
-		} else if err != nil {
-			e.logger.Warn("embedding failed", "entity", ent.Name, "error", err)
-		}
-	}
 
 	// Try exact match first (handled by UpsertEntity's name+type check)
 	existing, err := e.findEntitiesByNameType(ctx, groupID, ent.Name, ent.Type)
 	if err == nil && len(existing) > 0 {
 		// Exact match: upsert will update summary/embedding
-		uuid, err := e.store.UpsertEntity(ctx, ent, embedding)
-		return uuid, err
+		return e.store.UpsertEntity(ctx, ent, embedding)
 	}
 
 	// Try fuzzy match: find candidates with similar names
@@ -207,18 +381,19 @@ func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID st
 	if err == nil {
 		for _, candidate := range candidates {
 			if fuzzy.IsFuzzyMatch(ent.Name, candidate.Name, FuzzyMatchThreshold) {
-				// Fuzzy match found: update the existing entity with new data
+				// Fuzzy match found: update the existing entity with new data.
+				// The candidate's name and type are kept so the upsert hits the
+				// existing row instead of inserting a second node.
 				e.logger.Info("fuzzy entity merge",
 					"new", ent.Name, "existing", candidate.Name,
 					"similarity", fuzzy.Similarity(ent.Name, candidate.Name))
 				merged := &types.ExtractedEntity{
-					Name:    candidate.Name, // keep the canonical name
-					Type:    ent.Type,
+					Name:    candidate.Name,
+					Type:    candidate.Type,
 					Summary: ent.Summary, // use newer summary
 					GroupID: groupID,
 				}
-				uuid, err := e.store.UpsertEntity(ctx, merged, embedding)
-				return uuid, err
+				return e.store.UpsertEntity(ctx, merged, embedding)
 			}
 		}
 	}
@@ -245,58 +420,83 @@ func (e *GraphEngine) findEntitiesByFuzzyName(ctx context.Context, groupID, name
 	return e.store.FindEntitiesByFuzzyName(ctx, name, limit)
 }
 
-// isRelationDuplicate checks if a similar relation already exists between entities.
-func (e *GraphEngine) isRelationDuplicate(ctx context.Context, srcUUID, tgtUUID, fact string) (bool, error) {
-	existing, err := e.store.FindRelationsBetweenEntities(ctx, srcUUID, tgtUUID)
-	if err != nil {
-		return false, err
+// sameDirection keeps the relations that point from srcUUID to tgtUUID.
+// Stores return relations in both directions; "B reports_to A" must neither
+// duplicate nor supersede "A reports_to B".
+func sameDirection(rels []types.Relation, srcUUID, tgtUUID string) []types.Relation {
+	out := rels[:0:0]
+	for _, r := range rels {
+		if r.SourceUUID == srcUUID && r.TargetUUID == tgtUUID {
+			out = append(out, r)
+		}
 	}
+	return out
+}
 
+// duplicateRelation returns the UUID of an active relation whose fact text
+// is similar enough to fact to count as the same assertion, or "".
+func duplicateRelation(existing []types.Relation, fact string) string {
 	for _, rel := range existing {
 		if rel.InvalidAt != nil {
 			continue // skip invalidated relations
 		}
-		// Check text similarity for edge dedup
-		if fuzzy.Similarity(rel.Fact, fact) >= EdgeDedupEmbeddingSimilarityThreshold {
-			return true, nil
+		if fuzzy.Similarity(rel.Fact, fact) >= EdgeDedupTextSimilarityThreshold {
+			return rel.UUID
 		}
 	}
-	return false, nil
+	return ""
 }
 
-// invalidateSupersededRelations marks any active prior relation between
-// (srcUUID, tgtUUID) of the same relType as invalid as of invalidAt. The newly
-// created relation (newRelUUID) and any already-invalidated relations are left
-// untouched. This is a rule-based supersession: same source+target+type
-// supersedes, no LLM judge involved.
-func (e *GraphEngine) invalidateSupersededRelations(ctx context.Context, srcUUID, tgtUUID, relType, newRelUUID string, invalidAt time.Time) {
-	existing, err := e.store.FindRelationsBetweenEntities(ctx, srcUUID, tgtUUID)
-	if err != nil {
-		e.logger.Warn("supersession lookup failed", "source", srcUUID, "target", tgtUUID, "error", err)
-		return
-	}
+// supersession applies the rule that a newer relation of the same
+// (source, target, type) supersedes an older active one. It returns the
+// active priors that became valid no later than validAt, which the new
+// relation invalidates, and, when some active prior is newer than validAt,
+// the earliest such ValidAt: the new relation is already superseded then.
+// No LLM judge is involved.
+func supersession(existing []types.Relation, relType string, validAt time.Time) (superseded []string, newInvalidAt *time.Time) {
 	for _, prior := range existing {
-		if prior.UUID == newRelUUID {
-			continue // never invalidate the relation we just created
-		}
-		if prior.Type != relType {
-			continue // only same-type edges supersede each other
-		}
-		if prior.InvalidAt != nil {
-			continue // already invalidated
-		}
-		if err := e.store.InvalidateRelation(ctx, prior.UUID, invalidAt); err != nil {
-			e.logger.Warn("invalidate superseded relation failed", "relation", prior.UUID, "error", err)
+		if prior.Type != relType || prior.InvalidAt != nil {
 			continue
 		}
-		e.logger.Info("invalidated superseded relation",
-			"relation", prior.UUID, "type", relType, "superseded_by", newRelUUID)
+		if !prior.ValidAt.After(validAt) {
+			superseded = append(superseded, prior.UUID)
+			continue
+		}
+		if newInvalidAt == nil || prior.ValidAt.Before(*newInvalidAt) {
+			t := prior.ValidAt
+			newInvalidAt = &t
+		}
 	}
+	return superseded, newInvalidAt
 }
 
 // GetEntity retrieves an entity by UUID.
 func (e *GraphEngine) GetEntity(ctx context.Context, id string) (*types.Entity, error) {
 	return e.store.GetEntity(ctx, id)
+}
+
+// SupportsDocumentDeletion reports whether DeleteDocumentEpisodes can work:
+// true only when the configured store implements types.DocumentEpisodeDeleter.
+// The method set of GraphEngine always includes DeleteDocumentEpisodes, so
+// callers that pick a storage layout by document deletion support must ask
+// here instead of relying on a type assertion.
+func (e *GraphEngine) SupportsDocumentDeletion() bool {
+	_, ok := e.store.(types.DocumentEpisodeDeleter)
+	return ok
+}
+
+// DeleteDocumentEpisodes implements types.DocumentEpisodeDeleter by
+// delegating to the store. It errors when the configured store cannot delete
+// by document (see SupportsDocumentDeletion).
+func (e *GraphEngine) DeleteDocumentEpisodes(ctx context.Context, groupID, documentID string) error {
+	if e.store == nil {
+		return types.ErrStoreNotReady
+	}
+	dd, ok := e.store.(types.DocumentEpisodeDeleter)
+	if !ok {
+		return fmt.Errorf("store %T does not support document episode deletion", e.store)
+	}
+	return dd.DeleteDocumentEpisodes(ctx, groupID, documentID)
 }
 
 // DeleteEpisodes implements types.EpisodeDeleter by delegating to the store.
@@ -313,7 +513,7 @@ func (e *GraphEngine) DeleteEpisodes(ctx context.Context, groupID string) error 
 	return ed.DeleteEpisodes(ctx, groupID)
 }
 
-// SearchFacts combines vector and BM25 search using Reciprocal Rank Fusion.
+// SearchFacts combines vector and full-text search using Reciprocal Rank Fusion.
 // If every attempted backend fails the error is returned. If only some fail,
 // the surviving results are returned together with an error wrapping
 // types.ErrPartialSearch so callers can detect degraded results.
@@ -323,12 +523,12 @@ func (e *GraphEngine) SearchFacts(ctx context.Context, query string, opts ...typ
 		opt(o)
 	}
 
-	limit := o.Limit
-	if limit <= 0 {
-		limit = 20
+	if o.Limit <= 0 {
+		o.Limit = DefaultSearchLimit
 	}
+	limit := o.Limit
 
-	// Run vector search and BM25 search
+	// Run vector search and full-text search
 	var vectorResults []types.ScoredFact
 	var bm25Results []types.ScoredFact
 	var searchErrs []error
@@ -351,7 +551,7 @@ func (e *GraphEngine) SearchFacts(ctx context.Context, query string, opts ...typ
 		}
 	}
 
-	// BM25 text search
+	// Full-text search
 	attempted++
 	var err error
 	bm25Results, err = e.store.SearchByText(ctx, query, o)
@@ -396,8 +596,12 @@ func reciprocalRankFusion(listA, listB []types.ScoredFact, limit int) []types.Fa
 	for uuid, s := range scores {
 		ranked = append(ranked, scored{uuid, s})
 	}
+	// Ties break on UUID so equal scores rank the same way on every call.
 	sort.Slice(ranked, func(i, j int) bool {
-		return ranked[i].score > ranked[j].score
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].uuid < ranked[j].uuid
 	})
 
 	if limit > len(ranked) {
@@ -421,7 +625,10 @@ func (e *GraphEngine) GetNode(ctx context.Context, id string, depth int) (*types
 	return e.store.GetNode(ctx, id, depth)
 }
 
-// GetFactProvenance returns the episodes that sourced a given fact.
+// GetFactProvenance returns the episodes that sourced a given fact, oldest
+// first. Stores that implement types.EpisodeLinker return the episodes that
+// asserted the relation; other stores may approximate it from entity
+// mentions.
 func (e *GraphEngine) GetFactProvenance(ctx context.Context, factUUID string) ([]types.Episode, error) {
 	return e.store.GetFactProvenance(ctx, factUUID)
 }

@@ -20,6 +20,5 @@ You are an impartial evaluator comparing two responses to the same input.
    - 0.5 = Both are equal
    - 1.0 = Response B is clearly better
 
-Output your evaluation in exactly this format:
-REASONING: <your reasoning>
-SCORE: <0.0-1.0>
+Reply with only a JSON object in exactly this shape:
+{"reasoning": "<your reasoning>", "score": <0.0-1.0>}

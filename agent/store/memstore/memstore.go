@@ -4,6 +4,10 @@
 // use. Unlike pgstore it offers no crash durability (data lives only for the
 // lifetime of the process), but it mirrors the full types.Store contract so
 // persistence and tree-reconstruction paths can be exercised without Postgres.
+//
+// Its write semantics match pgstore: a node write whose Version is lower than
+// the stored version fails with tree.ErrVersionConflict, and a write at the
+// stored version is a no-op.
 package memstore
 
 import (
@@ -12,12 +16,16 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 )
 
 var (
-	_ types.Store   = (*Store)(nil)
-	_ types.StoreTx = (*storeTx)(nil)
+	_ types.Store             = (*Store)(nil)
+	_ types.StoreTx           = (*storeTx)(nil)
+	_ tree.ActiveBranchWriter = (*Store)(nil)
+	_ tree.ActiveBranchReader = (*Store)(nil)
+	_ tree.ActiveBranchWriter = (*storeTx)(nil)
 )
 
 // Store is an in-memory implementation of types.Store.
@@ -30,6 +38,7 @@ type Store struct {
 	childOrder  map[types.NodeID][]types.NodeID // parent -> children in insertion order
 	branches    map[types.BranchID]types.NodeID
 	checkpoints map[types.CheckpointID]types.Checkpoint
+	active      types.BranchID
 }
 
 // New creates an empty in-memory Store.
@@ -57,10 +66,31 @@ func cloneNode(n *types.Node) *types.Node {
 	return &cp
 }
 
+// checkVersion reports whether node should be written over the stored node
+// with the same ID: true for a new node or a newer version, false for the same
+// version, and tree.ErrVersionConflict for a stale version. Caller must hold
+// the lock.
+func (s *Store) checkVersion(node *types.Node) (bool, error) {
+	if node.ID == "" {
+		return false, fmt.Errorf("memstore: node ID is empty")
+	}
+	existing, ok := s.nodes[node.ID]
+	switch {
+	case !ok || node.Version > existing.Version:
+		return true, nil
+	case node.Version == existing.Version:
+		return false, nil
+	default:
+		return false, fmt.Errorf("%w: node %s version %d is older than stored version %d",
+			tree.ErrVersionConflict, node.ID, node.Version, existing.Version)
+	}
+}
+
 // saveNode is the shared write path used by both Store and storeTx.
 func (s *Store) saveNode(node *types.Node) error {
-	if node.ID == "" {
-		return fmt.Errorf("memstore: node ID is empty")
+	write, err := s.checkVersion(node)
+	if err != nil || !write {
+		return err
 	}
 	_, existed := s.nodes[node.ID]
 	s.nodes[node.ID] = cloneNode(node)
@@ -71,6 +101,7 @@ func (s *Store) saveNode(node *types.Node) error {
 }
 
 // SaveNode persists a node, preserving child insertion order on first write.
+// A stale Version returns tree.ErrVersionConflict; the same Version is a no-op.
 func (s *Store) SaveNode(_ context.Context, node *types.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +193,34 @@ func (s *Store) SaveCheckpoint(_ context.Context, cp types.Checkpoint) error {
 	return nil
 }
 
+// SaveActiveBranch records the branch a reloaded tree should make active.
+func (s *Store) SaveActiveBranch(_ context.Context, branch types.BranchID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active = branch
+	return nil
+}
+
+// LoadActiveBranch returns the saved active branch, or "" when none was saved.
+func (s *Store) LoadActiveBranch(_ context.Context) (types.BranchID, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.active, nil
+}
+
+// DeleteConversation removes every node, branch, checkpoint and the active
+// branch. A memstore holds one conversation, so this empties the store.
+func (s *Store) DeleteConversation(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nodes = make(map[types.NodeID]*types.Node)
+	s.childOrder = make(map[types.NodeID][]types.NodeID)
+	s.branches = make(map[types.BranchID]types.NodeID)
+	s.checkpoints = make(map[types.CheckpointID]types.Checkpoint)
+	s.active = ""
+	return nil
+}
+
 // LoadCheckpoint retrieves a checkpoint by ID.
 func (s *Store) LoadCheckpoint(_ context.Context, id types.CheckpointID) (types.Checkpoint, error) {
 	s.mu.RLock()
@@ -237,15 +296,43 @@ func (s *Store) LoadTree(_ context.Context, rootID types.NodeID) ([]*types.Node,
 type storeTx struct {
 	store       *Store
 	nodes       []*types.Node
+	versions    map[types.NodeID]uint64 // highest version buffered per node
 	branches    map[types.BranchID]types.NodeID
 	checkpoints []types.Checkpoint
+	active      *types.BranchID
 }
 
+// SaveNode buffers a node write. A stale version fails immediately, against
+// both the store and earlier writes in this transaction, so callers see the
+// conflict on the call that caused it.
 func (t *storeTx) SaveNode(_ context.Context, node *types.Node) error {
 	if node.ID == "" {
 		return fmt.Errorf("memstore: node ID is empty")
 	}
+	if v, ok := t.versions[node.ID]; ok {
+		if node.Version < v {
+			return fmt.Errorf("%w: node %s version %d is older than version %d in this transaction",
+				tree.ErrVersionConflict, node.ID, node.Version, v)
+		}
+		if node.Version == v {
+			return nil
+		}
+	} else {
+		t.store.mu.RLock()
+		write, err := t.store.checkVersion(node)
+		t.store.mu.RUnlock()
+		if err != nil || !write {
+			return err
+		}
+	}
+	t.versions[node.ID] = node.Version
 	t.nodes = append(t.nodes, cloneNode(node))
+	return nil
+}
+
+// SaveActiveBranch buffers the active-branch pointer.
+func (t *storeTx) SaveActiveBranch(_ context.Context, branch types.BranchID) error {
+	t.active = &branch
 	return nil
 }
 
@@ -261,10 +348,12 @@ func (t *storeTx) SaveCheckpoint(_ context.Context, cp types.Checkpoint) error {
 
 // Tx runs fn against a buffered transaction, applying its writes atomically on
 // success. On error nothing is persisted, giving all-or-nothing semantics that
-// match pgstore's database transaction.
+// match pgstore's database transaction. A node that a concurrent writer made
+// stale fails the whole commit with tree.ErrVersionConflict.
 func (s *Store) Tx(ctx context.Context, fn func(types.StoreTx) error) error {
 	tx := &storeTx{
 		store:    s,
+		versions: make(map[types.NodeID]uint64),
 		branches: make(map[types.BranchID]types.NodeID),
 	}
 	if err := fn(tx); err != nil {
@@ -274,9 +363,18 @@ func (s *Store) Tx(ctx context.Context, fn func(types.StoreTx) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, n := range tx.nodes {
+		if existing, ok := s.nodes[n.ID]; ok && n.Version < existing.Version {
+			return fmt.Errorf("%w: node %s version %d is older than stored version %d",
+				tree.ErrVersionConflict, n.ID, n.Version, existing.Version)
+		}
+	}
+	for _, n := range tx.nodes {
 		if err := s.saveNode(n); err != nil {
 			return err
 		}
+	}
+	if tx.active != nil {
+		s.active = *tx.active
 	}
 	for b, tip := range tx.branches {
 		s.branches[b] = tip

@@ -243,8 +243,14 @@ func TestApplyOntology(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if eng.ontology != ont {
-		t.Error("ontology not stored")
+	got := eng.currentOntology()
+	if got == nil || len(got.EntityTypes) != 1 || got.EntityTypes[0].Name != "Person" {
+		t.Fatalf("ontology not stored: %+v", got)
+	}
+	// The engine keeps its own copy.
+	ont.EntityTypes[0].Name = "Changed"
+	if eng.currentOntology().EntityTypes[0].Name != "Person" {
+		t.Error("caller mutation leaked into the applied ontology")
 	}
 }
 
@@ -337,7 +343,7 @@ func TestIngestEpisode_DuplicateRelationSkipped(t *testing.T) {
 	store := newMockStore()
 	store.findRelsBetween = func(_ context.Context, _, _ string) ([]types.Relation, error) {
 		return []types.Relation{
-			{UUID: "existing", Fact: "Alice works at Acme", ValidAt: time.Now()},
+			{UUID: "existing", SourceUUID: "entity-Alice", TargetUUID: "entity-Acme", Fact: "Alice works at Acme", ValidAt: time.Now()},
 		}, nil
 	}
 
@@ -873,5 +879,46 @@ func TestReciprocalRankFusion_LimitApplied(t *testing.T) {
 	facts := reciprocalRankFusion(list, nil, 2)
 	if len(facts) != 2 {
 		t.Errorf("facts = %d, want 2", len(facts))
+	}
+}
+
+// docDeleterMockStore is a mockStore that can delete by document.
+type docDeleterMockStore struct {
+	*mockStore
+	deleted []string
+}
+
+func (m *docDeleterMockStore) DeleteDocumentEpisodes(_ context.Context, groupID, documentID string) error {
+	m.deleted = append(m.deleted, groupID+"/"+documentID)
+	return nil
+}
+
+func TestSupportsDocumentDeletion(t *testing.T) {
+	tests := []struct {
+		name    string
+		store   types.Store
+		want    bool
+		wantErr bool
+	}{
+		{name: "no store", store: nil, want: false, wantErr: true},
+		{name: "store without document deletion", store: newMockStore(), want: false, wantErr: true},
+		{name: "store with document deletion", store: &docDeleterMockStore{mockStore: newMockStore()}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var e *GraphEngine
+			if tt.store == nil {
+				e = New()
+			} else {
+				e = New(WithStore(tt.store))
+			}
+			if got := e.SupportsDocumentDeletion(); got != tt.want {
+				t.Errorf("SupportsDocumentDeletion() = %v, want %v", got, tt.want)
+			}
+			err := e.DeleteDocumentEpisodes(context.Background(), "g", "doc")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeleteDocumentEpisodes() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }

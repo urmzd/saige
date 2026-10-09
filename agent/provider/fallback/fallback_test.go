@@ -327,9 +327,9 @@ func TestFallbackProvider_WithSchemaMidStreamErrorBeforeContent(t *testing.T) {
 	failing := &scriptProvider{deltas: []types.Delta{
 		types.ErrorDelta{Error: &types.ProviderError{Provider: "bad", Kind: types.ErrorKindTransient, Err: errors.New("overloaded")}},
 	}}
-	good := &mockProvider{response: "from-backup"}
+	good := &schemaProvider{mockProvider{response: "from-backup"}}
 
-	fb := New(failing, good)
+	fb := New(&schemaScriptProvider{failing}, good)
 	ch, err := fb.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -474,5 +474,51 @@ func TestFallbackProvider_Name(t *testing.T) {
 	fb := New()
 	if fb.Name() != "fallback" {
 		t.Errorf("Name() = %q, want %q", fb.Name(), "fallback")
+	}
+}
+
+// schemaProvider is a mockProvider that can enforce a response schema.
+type schemaProvider struct{ mockProvider }
+
+func (p *schemaProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+	return p.ChatStream(ctx, msgs, tools)
+}
+
+// schemaScriptProvider is a scriptProvider that can enforce a response schema.
+type schemaScriptProvider struct{ *scriptProvider }
+
+func (p *schemaScriptProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+	return p.ChatStream(ctx, msgs, tools)
+}
+
+// A RouteDelta before content (routers and splits send one per attempt) must
+// not latch the no-fallback gate, alone or together with a usage preamble.
+func TestFallbackProvider_RoutePreambleStillFallsBack(t *testing.T) {
+	fail := types.ErrorDelta{Error: &types.ProviderError{Provider: "bad", Kind: types.ErrorKindUnavailable, Err: errors.New("down")}}
+	tests := []struct {
+		name     string
+		preamble []types.Delta
+	}{
+		{name: "route only", preamble: []types.Delta{types.RouteDelta{Profile: "a"}}},
+		{name: "route and usage", preamble: []types.Delta{types.RouteDelta{Profile: "a"}, types.UsageDelta{PromptTokens: 3}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failing := &scriptProvider{deltas: append(append([]types.Delta{}, tt.preamble...), fail)}
+			good := &scriptProvider{deltas: []types.Delta{
+				types.TextStartDelta{}, types.TextContentDelta{Content: "from-backup"}, types.TextEndDelta{},
+			}}
+			ch, err := New(failing, good).ChatStream(context.Background(), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text, errDeltas := collect(ch)
+			if text != "from-backup" || len(errDeltas) != 0 {
+				t.Errorf("text = %q, errors = %v; want the backup's answer and no error", text, errDeltas)
+			}
+			if good.callCount() != 1 {
+				t.Errorf("backup calls = %d, want 1", good.callCount())
+			}
+		})
 	}
 }

@@ -81,8 +81,15 @@ func (AllowAllGate) Check(context.Context, ToolDef, map[string]any) GateDecision
 	return Allow()
 }
 
-// Gates runs gates in order and returns the first non-allow decision, so the
-// most restrictive verdict wins regardless of ordering. An empty chain allows.
+// Gates composes gates so the most restrictive verdict wins regardless of
+// ordering: Deny over RequireApproval over Allow. Every gate runs unless one
+// denies, which ends the chain at once. An empty chain allows.
+//
+// Each gate judges the arguments as rewritten by the gates before it, so a
+// clamp applied early is what later policies see, and the final rewrite is
+// returned in ModifiedArgs. When several gates require approval, their
+// reasons are joined and the first custom Marker is kept, so a single human
+// decision covers every reason the call was held.
 //
 // Composing this way keeps each gate single-purpose: an allow-list, an
 // approval rule, and an argument clamp are three gates, not one function with
@@ -90,6 +97,11 @@ func (AllowAllGate) Check(context.Context, ToolDef, map[string]any) GateDecision
 func Gates(gates ...ToolGate) ToolGate {
 	return GateFunc(func(ctx context.Context, def ToolDef, args map[string]any) GateDecision {
 		merged := args
+		var (
+			approval bool
+			reasons  []string
+			marker   *Marker
+		)
 		for _, g := range gates {
 			d := g.Check(ctx, def, merged)
 			if d.ModifiedArgs != nil {
@@ -97,11 +109,26 @@ func Gates(gates ...ToolGate) ToolGate {
 				// by an early gate could be evaluated only against the original.
 				merged = d.ModifiedArgs
 			}
-			if d.Outcome != GateAllow {
-				if d.ModifiedArgs == nil && merged != nil {
-					d.ModifiedArgs = merged
-				}
+			switch d.Outcome {
+			case GateDeny:
+				d.ModifiedArgs = merged
 				return d
+			case GateRequireApproval:
+				approval = true
+				if d.Reason != "" {
+					reasons = append(reasons, d.Reason)
+				}
+				if marker == nil && d.Marker != nil {
+					marker = d.Marker
+				}
+			}
+		}
+		if approval {
+			return GateDecision{
+				Outcome:      GateRequireApproval,
+				Reason:       strings.Join(reasons, "; "),
+				Marker:       marker,
+				ModifiedArgs: merged,
 			}
 		}
 		if merged != nil {
@@ -148,10 +175,13 @@ func PrefixApprovalGate(reason string, prefixes ...string) ToolGate {
 	return GateFunc(func(_ context.Context, def ToolDef, _ map[string]any) GateDecision {
 		for _, p := range prefixes {
 			if strings.HasPrefix(def.Name, p) {
-				if reason == "" {
-					reason = "tool " + def.Name + " requires approval"
+				// A local copy: gates run concurrently, and the default
+				// reason must name the tool being checked, not the first one.
+				r := reason
+				if r == "" {
+					r = "tool " + def.Name + " requires approval"
 				}
-				return RequireApproval(reason)
+				return RequireApproval(r)
 			}
 		}
 		return Allow()

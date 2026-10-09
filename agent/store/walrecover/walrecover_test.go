@@ -226,3 +226,70 @@ func TestRecoverWALCompactsFileWAL(t *testing.T) {
 	}
 	verifyStore(t, s, tr, cpID)
 }
+
+// TestRecoverWALSkipsSupersededNodeWrites replays a log into a store that
+// already holds a newer version of a node, as happens when a live process
+// wrote through to the store before crashing. The stale op is skipped rather
+// than failing recovery, and the newer state survives.
+func TestRecoverWALSkipsSupersededNodeWrites(t *testing.T) {
+	ctx := context.Background()
+	wal := memwal.New()
+	tr, cpID := buildTree(t, wal)
+	tip, _ := tr.Tip("main")
+
+	s := memstore.New()
+	if err := s.SaveNode(ctx, tip); err != nil { // archived, version 2
+		t.Fatal(err)
+	}
+	if _, err := walrecover.RecoverWAL(ctx, wal, s); err != nil {
+		t.Fatalf("RecoverWAL: %v", err)
+	}
+	verifyStore(t, s, tr, cpID)
+}
+
+// TestRecoverWALRestoresActiveBranch checks that the active-branch op in the
+// log reaches a store that can hold it, so a reload picks the right branch.
+func TestRecoverWALRestoresActiveBranch(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		wal  func(t *testing.T) types.WAL
+	}{
+		{"memwal", func(*testing.T) types.WAL { return memwal.New() }},
+		{"filewal", func(t *testing.T) types.WAL {
+			w, err := filewal.New(filepath.Join(t.TempDir(), "wal.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = w.Close() })
+			return w
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wal := tc.wal(t)
+			tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+			if err != nil {
+				t.Fatal(err)
+			}
+			side, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.NewUserMessage("alt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tr.SetActive(side); err != nil {
+				t.Fatal(err)
+			}
+
+			s := memstore.New()
+			if _, err := walrecover.RecoverWAL(ctx, wal, s); err != nil {
+				t.Fatalf("RecoverWAL: %v", err)
+			}
+			reloaded, err := tree.LoadFromStore(ctx, s, tr.Root().ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Active() != side {
+				t.Errorf("reloaded active = %s, want %s", reloaded.Active(), side)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,16 +20,31 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func childIndex(ctx context.Context, q querier, parentUUID string) (int, error) {
+// ErrConversationMismatch reports a node write for a UUID that another
+// conversation already owns.
+var ErrConversationMismatch = errors.New("pgstore: node belongs to another conversation")
+
+// childIndex returns the next sibling position under parentUUID. It takes a
+// transaction-scoped advisory lock on the parent first, so concurrent writers
+// adding the first children of one parent get distinct positions. q must be a
+// transaction.
+func childIndex(ctx context.Context, q querier, conversationID, parentUUID string) (int, error) {
+	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"saige.agent_node.children:"+parentUUID); err != nil {
+		return 0, err
+	}
 	var idx int
 	err := q.QueryRow(ctx,
-		`SELECT COALESCE(MAX(child_index), -1) + 1 FROM agent_node WHERE parent_uuid = $1`,
-		parentUUID,
+		`SELECT COALESCE(MAX(child_index), -1) + 1 FROM agent_node WHERE parent_uuid = $1 AND conversation_id = $2`,
+		parentUUID, conversationID,
 	).Scan(&idx)
 	return idx, err
 }
 
-func saveNode(ctx context.Context, q querier, node *types.Node) error {
+// saveNode upserts node within conversationID. A write at a version lower than
+// the stored one returns tree.ErrVersionConflict; a write at the stored
+// version is a no-op. q must be a transaction.
+func saveNode(ctx context.Context, q querier, conversationID string, node *types.Node) error {
 	msgBytes, err := tree.MarshalMessage(node.Message)
 	if err != nil {
 		return fmt.Errorf("marshal node %s: %w", node.ID, err)
@@ -39,12 +55,12 @@ func saveNode(ctx context.Context, q querier, node *types.Node) error {
 		summaryOf[i] = string(s)
 	}
 
-	cidx, err := childIndex(ctx, q, string(node.ParentID))
+	cidx, err := childIndex(ctx, q, conversationID, string(node.ParentID))
 	if err != nil {
 		return fmt.Errorf("child index for %s: %w", node.ID, err)
 	}
 
-	_, err = q.Exec(ctx, nodeUpsertSQL,
+	tag, err := q.Exec(ctx, nodeUpsertSQL,
 		string(node.ID),
 		string(node.ParentID),
 		string(node.Message.Role()),
@@ -59,9 +75,30 @@ func saveNode(ctx context.Context, q querier, node *types.Node) error {
 		node.UpdatedAt,
 		node.ArchivedAt,
 		node.ArchivedBy,
+		conversationID,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert node %s: %w", node.ID, err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	// The upsert skipped the row: find out whether it was a same-version
+	// rewrite (fine), a stale write, or another conversation's node.
+	var (
+		owner  string
+		stored int64
+	)
+	if err := q.QueryRow(ctx, nodeVersionSQL, string(node.ID)).Scan(&owner, &stored); err != nil {
+		return fmt.Errorf("check node %s version: %w", node.ID, err)
+	}
+	switch {
+	case owner != conversationID:
+		return fmt.Errorf("%w: node %s", ErrConversationMismatch, node.ID)
+	case uint64(stored) > node.Version: //nolint:gosec // version stored as int64 in DB, always non-negative
+		return fmt.Errorf("%w: node %s version %d is older than stored version %d",
+			tree.ErrVersionConflict, node.ID, node.Version, stored)
 	}
 	return nil
 }
@@ -130,14 +167,16 @@ func scanNodes(rows pgx.Rows) ([]*types.Node, error) {
 	return nodes, rows.Err()
 }
 
-// SaveNode persists a node with optimistic version checking.
+// SaveNode persists a node within this store's conversation. A stale Version
+// returns tree.ErrVersionConflict, the stored Version is a no-op, and a UUID
+// owned by another conversation returns ErrConversationMismatch.
 func (s *Store) SaveNode(ctx context.Context, node *types.Node) error {
-	return saveNode(ctx, s.pool, node)
+	return s.Tx(ctx, func(tx types.StoreTx) error { return tx.SaveNode(ctx, node) })
 }
 
-// LoadNode retrieves a single node by ID.
+// LoadNode retrieves a single node by ID within this store's conversation.
 func (s *Store) LoadNode(ctx context.Context, id types.NodeID) (*types.Node, error) {
-	row := s.pool.QueryRow(ctx, nodeGetSQL, string(id))
+	row := s.pool.QueryRow(ctx, nodeGetSQL, string(id), s.conversationID)
 	n, err := scanNode(row)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -150,7 +189,7 @@ func (s *Store) LoadNode(ctx context.Context, id types.NodeID) (*types.Node, err
 
 // LoadChildren returns direct children of a node, ordered by child_index.
 func (s *Store) LoadChildren(ctx context.Context, parentID types.NodeID) ([]*types.Node, error) {
-	rows, err := s.pool.Query(ctx, nodeChildrenSQL, string(parentID))
+	rows, err := s.pool.Query(ctx, nodeChildrenSQL, string(parentID), s.conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +198,7 @@ func (s *Store) LoadChildren(ctx context.Context, parentID types.NodeID) ([]*typ
 
 // LoadPath returns all nodes from root to the given node.
 func (s *Store) LoadPath(ctx context.Context, toNodeID types.NodeID) ([]*types.Node, error) {
-	rows, err := s.pool.Query(ctx, nodePathSQL, string(toNodeID))
+	rows, err := s.pool.Query(ctx, nodePathSQL, string(toNodeID), s.conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +207,7 @@ func (s *Store) LoadPath(ctx context.Context, toNodeID types.NodeID) ([]*types.N
 
 // LoadTree returns all nodes and branches for a tree rooted at rootID.
 func (s *Store) LoadTree(ctx context.Context, rootID types.NodeID) ([]*types.Node, map[types.BranchID]types.NodeID, error) {
-	rows, err := s.pool.Query(ctx, nodeTreeSQL, string(rootID))
+	rows, err := s.pool.Query(ctx, nodeTreeSQL, string(rootID), s.conversationID)
 	if err != nil {
 		return nil, nil, err
 	}

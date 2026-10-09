@@ -36,8 +36,11 @@ var relationInvalidateSQL string
 //go:embed sql/relation_find_between.sql
 var relationFindBetweenSQL string
 
-//go:embed sql/relation_neighbors.sql
-var relationNeighborsSQL string
+//go:embed sql/relation_neighbors_batch.sql
+var relationNeighborsBatchSQL string
+
+//go:embed sql/relation_episode_link.sql
+var relationEpisodeLinkSQL string
 
 // Graph queries.
 //
@@ -58,16 +61,16 @@ var episodeMentionSQL string
 //go:embed sql/episode_delete_group.sql
 var episodeDeleteGroupSQL string
 
+//go:embed sql/episode_delete_document.sql
+var episodeDeleteDocumentSQL string
+
+//go:embed sql/entity_delete_orphans.sql
+var entityDeleteOrphansSQL string
+
 // Search queries.
 //
-//go:embed sql/search_embedding_group.sql
-var searchEmbeddingGroupSQL string
-
 //go:embed sql/search_embedding.sql
 var searchEmbeddingSQL string
-
-//go:embed sql/search_text_group.sql
-var searchTextGroupSQL string
 
 //go:embed sql/search_text.sql
 var searchTextSQL string

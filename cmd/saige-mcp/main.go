@@ -28,7 +28,14 @@ func main() {
 	dbDSN := flag.String("db", os.Getenv("SAIGE_DB"), "PostgreSQL DSN (for KG tools) [$SAIGE_DB]")
 	searxngURL := flag.String("searxng-url", os.Getenv("SEARXNG_URL"), "SearXNG base URL [$SEARXNG_URL]")
 	root := flag.String("root", ".", "Root directory for file search/read tools")
+	readOnly := flag.Bool("read-only", false, "Omit every mutating tool (store_knowledge, kg_ingest)")
+	approval := flag.String("approval", string(approvalElicit), "How marked tools run (every marker kind needs approval): elicit (ask through the MCP client), host (rely on the client's own permission prompt), deny")
 	flag.Parse()
+
+	mode, err := parseApprovalMode(*approval)
+	if err != nil {
+		log.Fatalf("saige-mcp: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -39,7 +46,6 @@ func main() {
 	var pool *pgxpool.Pool
 	needsDB := packs["kg"] || packs["research"]
 	if needsDB && *dbDSN != "" {
-		var err error
 		pool, err = pgxpool.New(ctx, *dbDSN)
 		if err != nil {
 			log.Fatalf("connect to database: %v", err)
@@ -58,14 +64,22 @@ func main() {
 		if pool != nil {
 			graph = mustGraph(ctx, pool)
 		}
-		for _, t := range research.NewTools(client, graph, *root) {
+		var opts []research.Option
+		if *readOnly {
+			opts = append(opts, research.ReadOnly())
+		}
+		for _, t := range research.NewTools(client, graph, *root, opts...) {
 			registry.Register(t)
 		}
 	}
 
 	if packs["kg"] && pool != nil {
 		graph := mustGraph(ctx, pool)
-		for _, t := range kgtool.NewTools(graph) {
+		var opts []kgtool.Option
+		if *readOnly {
+			opts = append(opts, kgtool.ReadOnly())
+		}
+		for _, t := range kgtool.NewTools(graph, opts...) {
 			registry.Register(t)
 		}
 	}
@@ -81,9 +95,10 @@ func main() {
 		Version: version,
 	}, nil)
 
+	b := bridge{approval: mode}
 	for _, def := range defs {
 		tool, _ := registry.Get(def.Name)
-		registerTool(server, tool)
+		b.register(server, tool)
 	}
 
 	log.Printf("saige-mcp: serving %d tools over stdio", len(defs))

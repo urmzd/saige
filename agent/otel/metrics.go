@@ -23,6 +23,7 @@ var _ types.Metrics = (*Metrics)(nil)
 type Metrics struct {
 	tokenUsage        metric.Int64Histogram
 	operationDuration metric.Float64Histogram
+	timeToFirstChunk  metric.Float64Histogram
 }
 
 // NewMetrics creates an OTel-backed Metrics implementation.
@@ -43,9 +44,18 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, err
 	}
 
+	timeToFirstChunk, err := meter.Float64Histogram("gen_ai.client.operation.time_to_first_chunk",
+		metric.WithDescription("Time from request start to the first streamed content chunk"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Metrics{
 		tokenUsage:        tokenUsage,
 		operationDuration: operationDuration,
+		timeToFirstChunk:  timeToFirstChunk,
 	}, nil
 }
 
@@ -64,6 +74,34 @@ func (m *Metrics) RecordTokenUsage(ctx context.Context, operationName, provider 
 		attribute.String("gen_ai.token.type", "output"),
 	}, baseAttrs...)
 	m.tokenUsage.Record(ctx, int64(output), metric.WithAttributes(outputAttrs...))
+}
+
+// RecordCacheTokenUsage records prompt tokens served from and written to a
+// provider-side prompt cache, as cache_read and cache_creation token types.
+// Zero counts are skipped.
+func (m *Metrics) RecordCacheTokenUsage(ctx context.Context, operationName, provider string, cacheRead, cacheWrite int) {
+	for _, c := range []struct {
+		kind  string
+		count int
+	}{{"cache_read", cacheRead}, {"cache_creation", cacheWrite}} {
+		if c.count <= 0 {
+			continue
+		}
+		m.tokenUsage.Record(ctx, int64(c.count), metric.WithAttributes(
+			attribute.String("gen_ai.token.type", c.kind),
+			attribute.String("gen_ai.operation.name", operationName),
+			attribute.String("gen_ai.provider.name", provider),
+		))
+	}
+}
+
+// RecordTimeToFirstChunk records how long a streaming call took to produce its
+// first content chunk.
+func (m *Metrics) RecordTimeToFirstChunk(ctx context.Context, operationName, provider string, d time.Duration) {
+	m.timeToFirstChunk.Record(ctx, d.Seconds(), metric.WithAttributes(
+		attribute.String("gen_ai.operation.name", operationName),
+		attribute.String("gen_ai.provider.name", provider),
+	))
 }
 
 func (m *Metrics) RecordToolCall(ctx context.Context, toolName string, duration time.Duration, err error) {
@@ -89,9 +127,19 @@ func (m *Metrics) RecordProviderCall(ctx context.Context, operationName, provide
 }
 
 func (m *Metrics) RecordAgentInvocation(ctx context.Context, agentID string, duration time.Duration) {
+	m.RecordAgentOutcome(ctx, agentID, duration, nil)
+}
+
+// RecordAgentOutcome records an agent run like RecordAgentInvocation, and adds
+// error.type when the run failed, so a failure rate can be computed from the
+// duration histogram.
+func (m *Metrics) RecordAgentOutcome(ctx context.Context, agentID string, duration time.Duration, err error) {
 	attrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", "invoke_agent"),
 		attribute.String("gen_ai.agent.name", agentID),
+	}
+	if err != nil {
+		attrs = append(attrs, attribute.String("error.type", errorType(err)))
 	}
 	m.operationDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 }

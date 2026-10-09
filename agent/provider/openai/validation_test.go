@@ -16,6 +16,10 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// finishedStream is the smallest complete chat completion stream: one chunk
+// carrying a finish reason, then the terminator.
+const finishedStream = `data: {"id":"c1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n"
+
 type requestTransport func(*http.Request) (*http.Response, error)
 
 func (f requestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -89,7 +93,7 @@ func TestAcceptedSettingsReachWire(t *testing.T) {
 						t.Errorf("unexpected %s", k)
 					}
 				}
-				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n")), Request: r}, nil
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(finishedStream)), Request: r}, nil
 			})}))
 			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hello")}, nil)
 			if err != nil {

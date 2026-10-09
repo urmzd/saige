@@ -2,6 +2,7 @@ package embeddingcache_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -208,4 +209,101 @@ func TestMissingEmbeddingFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing vector reported success")
 	}
+}
+
+type inputCounter struct {
+	calls  int
+	inputs int
+}
+
+func (c *inputCounter) Embed(_ context.Context, variants []types.ContentVariant) ([][]float32, error) {
+	c.calls++
+	c.inputs += len(variants)
+	out := make([][]float32, len(variants))
+	for i, v := range variants {
+		out[i] = []float32{float32(len(v.Text)), 1}
+	}
+	return out, nil
+}
+
+func TestCacheKeyIgnoresIdentifiers(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name       string
+		first      types.ContentVariant
+		second     types.ContentVariant
+		wantInputs int
+	}{
+		{
+			name:       "different variant and section UUIDs hit",
+			first:      types.ContentVariant{UUID: "a", SectionUUID: "s1", ContentType: types.ContentText, Text: "same"},
+			second:     types.ContentVariant{UUID: "b", SectionUUID: "s2", ContentType: types.ContentText, Text: "same"},
+			wantInputs: 1,
+		},
+		{
+			name:       "different text misses",
+			first:      types.ContentVariant{UUID: "a", ContentType: types.ContentText, Text: "one"},
+			second:     types.ContentVariant{UUID: "a", ContentType: types.ContentText, Text: "two"},
+			wantInputs: 2,
+		},
+		{
+			name:       "different metadata misses",
+			first:      types.ContentVariant{ContentType: types.ContentText, Text: "x", Metadata: map[string]string{"k": "1"}},
+			second:     types.ContentVariant{ContentType: types.ContentText, Text: "x", Metadata: map[string]string{"k": "2"}},
+			wantInputs: 2,
+		},
+		{
+			name:       "different MIME type misses",
+			first:      types.ContentVariant{ContentType: types.ContentImage, MIMEType: "image/png", Data: []byte{1}},
+			second:     types.ContentVariant{ContentType: types.ContentImage, MIMEType: "image/jpeg", Data: []byte{1}},
+			wantInputs: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner := &inputCounter{}
+			c := embeddingcache.New(inner)
+			if _, err := c.Embed(ctx, []types.ContentVariant{tt.first}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Embed(ctx, []types.ContentVariant{tt.second}); err != nil {
+				t.Fatal(err)
+			}
+			if inner.inputs != tt.wantInputs {
+				t.Errorf("inner embedded %d inputs, want %d", inner.inputs, tt.wantInputs)
+			}
+		})
+	}
+}
+
+func TestCacheKeySeparatesEmbedPurpose(t *testing.T) {
+	inner := &inputCounter{}
+	c := embeddingcache.New(inner)
+	v := []types.ContentVariant{{ContentType: types.ContentText, Text: "what is rag"}}
+
+	docCtx := types.WithEmbedPurpose(context.Background(), types.PurposeDocument)
+	queryCtx := types.WithEmbedPurpose(context.Background(), types.PurposeQuery)
+	for _, ctx := range []context.Context{docCtx, queryCtx, docCtx, queryCtx} {
+		if _, err := c.Embed(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if inner.inputs != 2 {
+		t.Errorf("inner embedded %d inputs, want 2 (one per purpose)", inner.inputs)
+	}
+}
+
+func TestMalformedEmbeddingFails(t *testing.T) {
+	_, err := embeddingcache.New(nilVectorEmbedder{}).Embed(context.Background(), []types.ContentVariant{{Text: "a"}, {Text: "b"}})
+	if !errors.Is(err, types.ErrEmbeddingShape) {
+		t.Fatalf("expected ErrEmbeddingShape, got %v", err)
+	}
+}
+
+type nilVectorEmbedder struct{}
+
+func (nilVectorEmbedder) Embed(_ context.Context, variants []types.ContentVariant) ([][]float32, error) {
+	out := make([][]float32, len(variants))
+	out[0] = []float32{1}
+	return out, nil
 }

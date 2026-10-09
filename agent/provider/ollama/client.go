@@ -5,14 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // Client is an HTTP client for the Ollama API.
@@ -21,7 +24,11 @@ type Client struct {
 	Model          string
 	EmbeddingModel string
 	HTTP           *http.Client
-	Logger         *log.Logger
+	// Logger receives a debug line per call. Nil, the default, logs
+	// nothing: a library must not write to stderr unasked, and an
+	// interactive host's screen would be corrupted by it. Set it, for
+	// example with WithLogger(log.Default()), to trace calls.
+	Logger *log.Logger
 
 	// ChatOptions is sent as the `options` object on every chat request. It is
 	// how callers set num_ctx, temperature, num_predict, and the rest. Nil
@@ -35,6 +42,53 @@ type Client struct {
 	// Think toggles the thinking phase on reasoning models for chat requests.
 	// Nil leaves the model's default in place.
 	Think *bool
+
+	// StreamIdleTimeout ends a chat stream when no line arrives for this
+	// long. It bounds a stalled connection without capping how long a healthy
+	// stream may run. Zero uses DefaultStreamIdleTimeout; a negative value
+	// disables the check.
+	StreamIdleTimeout time.Duration
+}
+
+const (
+	// DefaultResponseHeaderTimeout bounds the wait for response headers, which
+	// covers loading the model into memory before the first token.
+	DefaultResponseHeaderTimeout = 5 * time.Minute
+	// DefaultStreamIdleTimeout bounds the gap between two streamed lines.
+	DefaultStreamIdleTimeout = 2 * time.Minute
+
+	// maxLineBytes caps one NDJSON line. A single chunk can carry a whole
+	// tool call, so the 64KB scanner default is too small.
+	maxLineBytes = 8 << 20
+	// maxErrorBodyBytes caps how much of an error response is read.
+	maxErrorBodyBytes = 8 << 10
+)
+
+// ErrStreamIdle reports a stream that stopped sending lines for longer than
+// StreamIdleTimeout. It wraps context.DeadlineExceeded, so it classifies as a
+// transient timeout.
+var ErrStreamIdle = fmt.Errorf("ollama stream idle timeout: %w", context.DeadlineExceeded)
+
+// StatusError is returned for a non-200 response. Body holds at most the
+// first 8KB of the response, trimmed.
+type StatusError struct {
+	Code   int
+	Body   string
+	Header http.Header
+}
+
+func (e *StatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("ollama returned %d", e.Code)
+	}
+	return fmt.Sprintf("ollama returned %d: %s", e.Code, e.Body)
+}
+
+// statusError reads a bounded error body and closes it.
+func statusError(resp *http.Response) *StatusError {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	_ = resp.Body.Close()
+	return &StatusError{Code: resp.StatusCode, Body: strings.TrimSpace(string(body)), Header: resp.Header}
 }
 
 // Option configures a Client.
@@ -57,8 +111,28 @@ func WithThink(think bool) Option {
 	return func(c *Client) { c.Think = &think }
 }
 
+// WithStreamIdleTimeout sets Client.StreamIdleTimeout.
+func WithStreamIdleTimeout(d time.Duration) Option {
+	return func(c *Client) { c.StreamIdleTimeout = d }
+}
+
+// WithLogger sets Client.Logger, which traces every call. Without it the
+// client logs nothing.
+func WithLogger(l *log.Logger) Option {
+	return func(c *Client) { c.Logger = l }
+}
+
+// logf writes one debug line when a Logger is set.
+func (c *Client) logf(format string, args ...any) {
+	if c.Logger != nil {
+		c.Logger.Printf(format, args...)
+	}
+}
+
 // WithHTTPClient replaces the underlying HTTP client, for callers that need a
-// custom transport or timeout.
+// custom transport or timeout. Avoid http.Client.Timeout for streaming: it
+// bounds the whole response body, so it cuts off long but healthy streams.
+// StreamIdleTimeout bounds a stalled stream instead.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) { c.HTTP = h }
 }
@@ -86,15 +160,20 @@ func NewClient(host, model, embeddingModel string, opts ...Option) *Client {
 		Host:           host,
 		Model:          model,
 		EmbeddingModel: embeddingModel,
-		HTTP: &http.Client{
-			Timeout: 300 * time.Second,
-		},
-		Logger: log.Default(),
+		HTTP:           defaultHTTPClient(),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	return c
+}
+
+// defaultHTTPClient bounds the wait for response headers but not the body, so
+// a stream may run as long as it keeps producing lines.
+func defaultHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+	return &http.Client{Transport: transport}
 }
 
 // Generate sends a non-streaming generate request.
@@ -104,7 +183,7 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 
 // GenerateWithModel sends a non-streaming generate request with a specific model.
 func (c *Client) GenerateWithModel(ctx context.Context, prompt, model string, format, options any) (string, error) {
-	c.Logger.Printf("[ollama] generate model=%s prompt_len=%d", model, len(prompt))
+	c.logf("[ollama] generate model=%s prompt_len=%d", model, len(prompt))
 
 	req := GenerateRequest{
 		Model:   model,
@@ -132,20 +211,25 @@ func (c *Client) GenerateWithModel(ctx context.Context, prompt, model string, fo
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		c.Logger.Printf("[ollama] generate failed: %d %s", resp.StatusCode, string(respBody))
-		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(respBody))
+		statusErr := statusError(resp)
+		c.logf("[ollama] generate failed: %d %s", statusErr.Code, statusErr.Body)
+		return "", statusErr
 	}
 
 	var result GenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode ollama response: %w", err)
 	}
+	if types.IsTruncationFinishReason(result.DoneReason) {
+		// A cut-off reply parsed as complete is worse than an error: callers
+		// such as extractors would read half a JSON document as the answer.
+		return "", &types.ResponseTruncatedError{FinishReason: types.FinishReasonMaxTokens, OutputTokens: result.EvalCount}
+	}
 	response := result.Response
 	if response == "" && result.Thinking != "" {
 		response = result.Thinking
 	}
-	c.Logger.Printf("[ollama] generate done, response_len=%d", len(response))
+	c.logf("[ollama] generate done, response_len=%d", len(response))
 	return response, nil
 }
 
@@ -179,24 +263,36 @@ func (c *Client) GenerateStream(ctx context.Context, prompt string) (<-chan stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
 		close(ch)
-		return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
+		return ch, statusError(resp)
 	}
 
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 
+		// The channel carries text only, so a read error or a server error
+		// line can only be logged here. Use ChatStream when errors matter.
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
+		defer func() {
+			if err := scanner.Err(); err != nil {
+				c.logf("[ollama] generate stream read failed: %v", err)
+			}
+		}()
 		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
+			line := scanner.Bytes()
+			if len(line) == 0 {
 				continue
 			}
 			var chunk GenerateResponse
-			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				continue
+			if err := json.Unmarshal(line, &chunk); err != nil {
+				c.logf("[ollama] generate stream: malformed line: %v", err)
+				return
+			}
+			if chunk.Error != "" {
+				c.logf("[ollama] generate stream error: %s", chunk.Error)
+				return
 			}
 			if chunk.Response != "" {
 				select {
@@ -216,7 +312,7 @@ func (c *Client) GenerateStream(ctx context.Context, prompt string) (<-chan stri
 
 // Embed generates embeddings for the given text.
 func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
-	c.Logger.Printf("[ollama] embed text_len=%d", len(text))
+	c.logf("[ollama] embed text_len=%d", len(text))
 
 	req := EmbedRequest{
 		Model: c.EmbeddingModel,
@@ -234,15 +330,16 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Failures are classified like chat errors, so a retrying caller sees a
+	// 429, a 503 or a dropped connection as transient.
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ollama embed: %w", err)
+		return nil, classifyOllamaError(c.EmbeddingModel, fmt.Errorf("ollama embed: %w", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama embed returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, classifyOllamaError(c.EmbeddingModel, fmt.Errorf("ollama embed: %w", statusError(resp)))
 	}
 
 	var result EmbedResponse
@@ -294,8 +391,13 @@ func (c *Client) ChatStreamWithFormat(ctx context.Context, messages []ChatMessag
 }
 
 // doChatStream executes the chat streaming HTTP request.
+//
+// The returned channel ends with a chunk whose Done is true on success. On
+// failure the last chunk carries Error (a server error line) or Err (a read
+// failure, a malformed line, or an idle timeout). A channel that closes with
+// neither was cut off, most often by caller cancellation.
 func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan ChatChunk, error) {
-	c.Logger.Printf("[ollama] chat_stream model=%s msgs=%d tools=%d", c.Model, len(req.Messages), len(req.Tools))
+	c.logf("[ollama] chat_stream model=%s msgs=%d tools=%d", c.Model, len(req.Messages), len(req.Tools))
 
 	ch := make(chan ChatChunk, 64)
 
@@ -305,8 +407,11 @@ func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan Chat
 		return ch, fmt.Errorf("marshal chat request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.Host+"/api/chat", bytes.NewReader(body))
+	// reqCtx lets the idle timer abort a stalled body read.
+	reqCtx, cancel := context.WithCancel(ctx)
+	httpReq, err := http.NewRequestWithContext(reqCtx, "POST", c.Host+"/api/chat", bytes.NewReader(body))
 	if err != nil {
+		cancel()
 		close(ch)
 		return ch, fmt.Errorf("create request: %w", err)
 	}
@@ -314,6 +419,7 @@ func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan Chat
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
+		cancel()
 		close(ch)
 		return ch, fmt.Errorf("ollama chat_stream: %w", err)
 	}
@@ -321,40 +427,81 @@ func (c *Client) doChatStream(ctx context.Context, req ChatRequest) (<-chan Chat
 	if resp.StatusCode != http.StatusOK {
 		// The body carries the actionable part ("model not found, try pulling
 		// it"); dropping it leaves the caller with a bare status code.
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		cancel()
 		close(ch)
-		detail := strings.TrimSpace(string(respBody))
-		c.Logger.Printf("[ollama] chat_stream failed: %d %s", resp.StatusCode, detail)
-		if detail == "" {
-			return ch, fmt.Errorf("ollama returned %d", resp.StatusCode)
-		}
-		return ch, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, detail)
+		statusErr := statusError(resp)
+		c.logf("[ollama] chat_stream failed: %d %s", statusErr.Code, statusErr.Body)
+		return ch, statusErr
+	}
+
+	idle := c.StreamIdleTimeout
+	if idle == 0 {
+		idle = DefaultStreamIdleTimeout
+	}
+	var idleExpired atomic.Bool
+	var timer *time.Timer
+	if idle > 0 {
+		timer = time.AfterFunc(idle, func() {
+			idleExpired.Store(true)
+			cancel()
+		})
 	}
 
 	go func() {
+		defer cancel()
 		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
+		if timer != nil {
+			defer timer.Stop()
+		}
+
+		send := func(chunk ChatChunk) bool {
+			select {
+			case ch <- chunk:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
+			// The timer measures the server's silence, not the consumer's
+			// pace: it is paused while a chunk waits to be delivered.
+			if timer != nil {
+				timer.Stop()
+			}
+			line := scanner.Bytes()
+			if len(bytes.TrimSpace(line)) == 0 {
+				if timer != nil {
+					timer.Reset(idle)
+				}
 				continue
 			}
 			var chunk ChatChunk
-			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				continue
-			}
-			done := chunk.Done
-			select {
-			case ch <- chunk:
-			case <-ctx.Done():
+			if err := json.Unmarshal(line, &chunk); err != nil {
+				send(ChatChunk{Err: fmt.Errorf("ollama chat_stream: malformed line: %w", err)})
 				return
 			}
-			if done {
+			if !send(chunk) || chunk.Done || chunk.Error != "" {
 				return
 			}
+			if timer != nil {
+				timer.Reset(idle)
+			}
+		}
+		err := scanner.Err()
+		if idleExpired.Load() {
+			err = ErrStreamIdle
+		}
+		if err != nil && ctx.Err() == nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				err = fmt.Errorf("ollama chat_stream: line exceeds %d bytes: %w", maxLineBytes, err)
+			} else {
+				err = fmt.Errorf("ollama chat_stream: %w", err)
+			}
+			send(ChatChunk{Err: err})
 		}
 	}()
 

@@ -16,7 +16,11 @@ type pgStoreTx struct {
 }
 
 func (t *pgStoreTx) SaveNode(ctx context.Context, node *types.Node) error {
-	return saveNode(ctx, t.tx, node)
+	return saveNode(ctx, t.tx, t.conversationID, node)
+}
+
+func (t *pgStoreTx) SaveActiveBranch(ctx context.Context, branch types.BranchID) error {
+	return saveActiveBranch(ctx, t.tx, t.conversationID, branch)
 }
 
 func (t *pgStoreTx) SaveBranch(ctx context.Context, branch types.BranchID, tipID types.NodeID) error {

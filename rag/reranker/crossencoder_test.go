@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/urmzd/saige/rag/types"
 	"github.com/urmzd/saige/rag/reranker"
+	"github.com/urmzd/saige/rag/types"
 )
 
 type mockScorer struct{}

@@ -46,6 +46,7 @@ func (a *Adapter) CreateContextCache(ctx context.Context, prefix []types.Message
 	}
 	resource, err := a.client.Caches.Create(ctx, a.model, &genai.CreateCachedContentConfig{
 		TTL: ttl, Contents: contents, SystemInstruction: config.SystemInstruction, Tools: config.Tools,
+		ToolConfig: config.ToolConfig,
 	})
 	if err != nil {
 		return ContextCache{}, err
@@ -76,11 +77,14 @@ func (a *Adapter) DeleteContextCache(ctx context.Context, cache ContextCache) er
 }
 
 func cacheFingerprint(contents []*genai.Content, config *genai.GenerateContentConfig) (string, error) {
+	// ToolConfig is omitted when unset so handles created before it existed
+	// keep their fingerprint.
 	raw, err := json.Marshal(struct {
-		Contents []*genai.Content
-		System   *genai.Content
-		Tools    []*genai.Tool
-	}{contents, config.SystemInstruction, config.Tools})
+		Contents   []*genai.Content
+		System     *genai.Content
+		Tools      []*genai.Tool
+		ToolConfig *genai.ToolConfig `json:",omitempty"`
+	}{contents, config.SystemInstruction, config.Tools, config.ToolConfig})
 	if err != nil {
 		return "", err
 	}
@@ -113,6 +117,17 @@ func (a *Adapter) cachedRequest(messages []types.Message, tools []types.ToolDef)
 		return nil, nil, fmt.Errorf("google: system instructions cannot change after the cached prefix")
 	}
 	config.CachedContent = cache.Name
-	config.Tools = nil // tools and system instructions belong to the resource
+	config.Tools = nil // tools, tool config and system instructions belong to the resource
+	config.ToolConfig = nil
 	return contents, config, nil
+}
+
+// RouteLocks reports "context_cache" while a context cache handle is bound.
+// A router reads it to avoid moving a conversation off the profile whose
+// provider-side cache holds its prefix.
+func (a *Adapter) RouteLocks() []string {
+	if a.contextCache == nil {
+		return nil
+	}
+	return []string{"context_cache"}
 }

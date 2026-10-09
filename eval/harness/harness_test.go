@@ -130,8 +130,71 @@ func TestLoadCorpusMissingTurnZero(t *testing.T) {
 }
 
 func TestLoadCorpusEmpty(t *testing.T) {
-	if _, err := LoadCorpus(t.TempDir()); err == nil || !strings.Contains(err.Error(), "no experiments") {
-		t.Fatalf("err = %v, want no experiments", err)
+	if _, err := LoadCorpus(t.TempDir()); err == nil || !strings.Contains(err.Error(), "no scripts") {
+		t.Fatalf("err = %v, want no scripts", err)
+	}
+}
+
+func TestLoadCorpusConfigFiles(t *testing.T) {
+	tests := []struct {
+		name       string
+		files      map[string]string
+		wantFormat string
+	}{
+		{
+			name:       "script.json",
+			files:      map[string]string{"script.json": `{"format":"text/html"}`},
+			wantFormat: "text/html",
+		},
+		{
+			name:       "legacy experiment.json",
+			files:      map[string]string{"experiment.json": `{"format":"application/json"}`},
+			wantFormat: "application/json",
+		},
+		{
+			name: "script.json wins over experiment.json",
+			files: map[string]string{
+				"script.json":     `{"format":"text/html"}`,
+				"experiment.json": `{"format":"application/json"}`,
+			},
+			wantFormat: "text/html",
+		},
+		{
+			name:       "no config",
+			files:      map[string]string{},
+			wantFormat: "text/markdown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "001")
+			writeFixture(t, filepath.Join(dir, "system.md"), "System.")
+			writeFixture(t, filepath.Join(dir, "turn-0.md"), "Create.")
+			for name, content := range tt.files {
+				writeFixture(t, filepath.Join(dir, name), content)
+			}
+			scripts, err := LoadCorpus(root)
+			if err != nil {
+				t.Fatalf("LoadCorpus: %v", err)
+			}
+			if scripts[0].Format != tt.wantFormat {
+				t.Errorf("format = %q, want %q", scripts[0].Format, tt.wantFormat)
+			}
+			if scripts[0].Systems["base"] != "System." {
+				t.Errorf("systems = %#v", scripts[0].Systems)
+			}
+		})
+	}
+}
+
+func TestLoadCorpusBadConfigNamesFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "001")
+	writeFixture(t, filepath.Join(dir, "turn-0.md"), "Create.")
+	writeFixture(t, filepath.Join(dir, "script.json"), `{`)
+	if _, err := LoadCorpus(root); err == nil || !strings.Contains(err.Error(), "parse script.json") {
+		t.Fatalf("err = %v, want parse script.json", err)
 	}
 }
 
@@ -534,19 +597,35 @@ func TestComputeReliability(t *testing.T) {
 	}
 }
 
-func TestFilterExperiments(t *testing.T) {
-	experiments := []Experiment{{ID: "001-a"}, {ID: "002-b"}, {ID: "010-c"}}
-	if got := FilterExperiments(experiments, "00", 0); len(got) != 2 {
-		t.Fatalf("prefix filter = %#v", got)
+func TestFilterScripts(t *testing.T) {
+	scripts := []Script{{ID: "001-a"}, {ID: "002-b"}, {ID: "010-c"}}
+	tests := []struct {
+		name   string
+		prefix string
+		count  int
+		want   []string
+	}{
+		{"prefix", "00", 0, []string{"001-a", "002-b"}},
+		{"count", "", 2, []string{"001-a", "002-b"}},
+		{"no match", "zzz", 0, nil},
+		{"no-op", "", 0, []string{"001-a", "002-b", "010-c"}},
 	}
-	if got := FilterExperiments(experiments, "", 2); len(got) != 2 || got[1].ID != "002-b" {
-		t.Fatalf("count filter = %#v", got)
-	}
-	if got := FilterExperiments(experiments, "zzz", 0); len(got) != 0 {
-		t.Fatalf("no-match filter = %#v", got)
-	}
-	if got := FilterExperiments(experiments, "", 0); len(got) != 3 {
-		t.Fatalf("no-op filter = %#v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FilterScripts(scripts, tt.prefix, tt.count)
+			var ids []string
+			for _, s := range got {
+				ids = append(ids, s.ID)
+			}
+			if strings.Join(ids, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("FilterScripts = %v, want %v", ids, tt.want)
+			}
+			// The deprecated name keeps working through the alias.
+			legacy := FilterExperiments(scripts, tt.prefix, tt.count)
+			if len(legacy) != len(got) {
+				t.Errorf("FilterExperiments = %d scripts, want %d", len(legacy), len(got))
+			}
+		})
 	}
 }
 

@@ -30,6 +30,9 @@ func NewCompressing(llm types.LLM, maxTokens int) *CompressingAssembler {
 // Assemble compresses each hit's text via the LLM and builds context with citations.
 // Phase 1 compresses all hits in parallel; phase 2 applies the token budget sequentially.
 func (a *CompressingAssembler) Assemble(ctx context.Context, query string, hits []types.SearchHit) (*types.AssembledContext, error) {
+	// Repeated passages would be compressed and cited twice.
+	hits = uniqueByText(hits)
+
 	// Phase 1: Parallel LLM compression.
 	compressedTexts := make([]string, len(hits))
 	g, gctx := errgroup.WithContext(ctx)

@@ -1,11 +1,11 @@
 // Command validation exercises SAIGE's agent-layer features against a live
-// OpenAI model (gpt-4o-mini by default) and writes a Markdown report so users can
+// OpenAI model (gpt-6-luna by default) and writes a Markdown report so users can
 // see real, end-to-end sample runs. It is a manual validation tool, not a unit
 // test: it makes real API calls and is skipped automatically when OPENAI_API_KEY
 // is unset.
 //
 //	OPENAI_API_KEY=... go run ./examples/validation
-//	SAIGE_VALIDATION_MODEL=gpt-4o-mini go run ./examples/validation
+//	SAIGE_VALIDATION_MODEL=gpt-6-luna go run ./examples/validation
 //
 // Output: examples/validation/results/validation-report.md
 package main
@@ -27,6 +27,7 @@ import (
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/provider/cache"
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -34,7 +35,7 @@ func model() string {
 	if m := os.Getenv("SAIGE_VALIDATION_MODEL"); m != "" {
 		return m
 	}
-	return "gpt-4o-mini"
+	return "gpt-6-luna"
 }
 
 // result captures one feature check's outcome.
@@ -51,7 +52,10 @@ func main() {
 		fmt.Println("OPENAI_API_KEY not set, skipping live validation.")
 		return
 	}
-	newProvider := func() types.Provider { return openai.NewAdapter(apiKey, model()) }
+	// The SDK client makes one attempt per call; retry.Provider adds backoff.
+	newProvider := func() types.Provider {
+		return retry.New(openai.NewAdapter(apiKey, model()), retry.DefaultConfig())
+	}
 
 	checks := []struct {
 		name string

@@ -24,6 +24,8 @@ type Output interface {
 	Result(v any) error
 
 	// StreamDeltas consumes an agent delta channel and renders progress.
+	// A terminal error is returned in VerboseResult.Err for the caller to
+	// report once with Error.
 	StreamDeltas(header AgentHeader, ch <-chan types.Delta) VerboseResult
 
 	// Error renders an error message.

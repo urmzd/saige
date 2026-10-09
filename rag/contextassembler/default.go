@@ -10,6 +10,9 @@ import (
 )
 
 // DefaultAssembler builds context with numbered citations from exact source text.
+// Hits whose trimmed text repeats an earlier hit's text produce no second
+// block, so expanded parent sections and duplicate passages do not spend the
+// token budget twice.
 type DefaultAssembler struct {
 	MaxTokens int
 }
@@ -19,8 +22,8 @@ func (a *DefaultAssembler) Assemble(_ context.Context, query string, hits []type
 	var parts []string
 	tokenCount := 0
 
-	for i, hit := range hits {
-		citation := fmt.Sprintf("[%d]", i+1)
+	for _, hit := range uniqueByText(hits) {
+		citation := fmt.Sprintf("[%d]", len(blocks)+1)
 		text := hit.Variant.Text
 
 		tokens := tokenizer.CountTokens(text)
@@ -49,4 +52,22 @@ func (a *DefaultAssembler) Assemble(_ context.Context, query string, hits []type
 		Blocks:     blocks,
 		TokenCount: tokenCount,
 	}, nil
+}
+
+// uniqueByText returns hits without those whose trimmed text equals the text
+// of an earlier hit. Hits with empty text are kept. Order is preserved.
+func uniqueByText(hits []types.SearchHit) []types.SearchHit {
+	seen := make(map[string]bool, len(hits))
+	out := make([]types.SearchHit, 0, len(hits))
+	for _, hit := range hits {
+		text := strings.TrimSpace(hit.Variant.Text)
+		if text != "" {
+			if seen[text] {
+				continue
+			}
+			seen[text] = true
+		}
+		out = append(out, hit)
+	}
+	return out
 }

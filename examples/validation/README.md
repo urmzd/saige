@@ -7,7 +7,7 @@ deterministic micro-benchmarks. The committed sample outputs under
 ## What it validates
 
 The harness ([`main.go`](main.go)) runs each agent-layer feature against
-`gpt-4o-mini` and writes a Markdown report:
+`gpt-6-luna` and writes a Markdown report:
 
 | Check | Proves |
 |-------|--------|
@@ -28,12 +28,12 @@ just validate                 # or: go run ./examples/validation
 just bench-report             # regenerate results/benchmarks.txt
 ```
 
-Override the model with `SAIGE_VALIDATION_MODEL=gpt-4o-mini`. With no
+Override the model with `SAIGE_VALIDATION_MODEL=gpt-6-luna`. With no
 `OPENAI_API_KEY` the harness prints a notice and exits cleanly (CI-safe).
 
 ## Sample outputs (committed)
 
-- [`results/validation-report.md`](results/validation-report.md): last live run (8/8 passing on `gpt-4o-mini`).
+- [`results/validation-report.md`](results/validation-report.md): a recorded live run (8/8 passing on `gpt-4o-mini`).
 - [`results/benchmarks.txt`](results/benchmarks.txt): `go test -bench` numbers for the agent loop, durable path, and cache.
 
 ## Benchmarks

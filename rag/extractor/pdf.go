@@ -9,6 +9,7 @@ import (
 
 	"github.com/dslipak/pdf"
 	"github.com/google/uuid"
+	"github.com/urmzd/saige/rag/internal/textclean"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -64,7 +65,7 @@ func (e *PDF) Extract(_ context.Context, raw *types.RawDocument) (*types.Documen
 		title = titleFromText(sections[0].Variants[0].Text)
 	}
 
-	return &types.Document{
+	out := &types.Document{
 		UUID:      docUUID,
 		SourceURI: raw.SourceURI,
 		Title:     title,
@@ -72,5 +73,7 @@ func (e *PDF) Extract(_ context.Context, raw *types.RawDocument) (*types.Documen
 		Sections:  sections,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, nil
+	}
+	textclean.Document(out)
+	return out, nil
 }

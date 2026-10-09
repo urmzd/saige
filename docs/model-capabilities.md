@@ -54,9 +54,9 @@ for its own model. Do not share temperature across a chat/reasoning fallback and
 honored. Explicit zero, false and empty effort remain explicit; omitted values preserve defaults.
 
 ```sh
-go run ./cmd/saige models o3 --provider openai
-go run ./cmd/saige models gpt-5.2 --provider openai --format json
-go run ./cmd/saige models gemini-2.5-pro --provider google --format json
+go run ./cmd/saige models gpt-6-luna --provider openai
+go run ./cmd/saige models gpt-6.1-sol --provider openai --format json
+go run ./cmd/saige models gemini-3.1-flash-lite --provider google --format json
 ```
 
 Request shape is checked too: all four adapters require streaming, tools when definitions are
@@ -160,7 +160,9 @@ read and stops a write on the same tool, waves through nine of an MCP server's
 tools and gates the tenth, or clamps an argument instead of refusing the call.
 
 `Gates(...)` composes them so the most restrictive verdict wins regardless of
-ordering, and a rewrite by an early gate is seen by later ones.
+ordering: deny over approval over allow. A rewrite by an early gate is seen by
+later ones. When a person approves a call with edited arguments, the edited
+arguments are checked again by the gate before the tool runs.
 
 ### 5. `ToolContext` and `Deps`
 
@@ -205,7 +207,9 @@ a bounded `ApprovalGrant`, not an unlimited run.
 rather than replacing one; resolution takes the latest unless pinned; `Pin`
 freezes a name; `Rollback` steps back one revision.
 
-- `agent/provider/catalog` is the **model registry**, backed by it. Rows encode
+- `agent/provider/catalog` is the **model registry**, backed by it. Its rows
+  are installed from the embedded `data/default.json` and any layers a host
+  adds (see [model catalog and presets](catalog.md)). Rows encode
   third-party facts that change without warning, so a price correction is a new
   revision, a deployment whose cost model was validated against a particular
   rate card pins it, and a bad correction is one `Rollback` away.
@@ -252,8 +256,12 @@ extraction.
 
 **4. Google errors were always permanent.** Every failure was classified
 `ErrorKindPermanent`, so a 429 or 503 from Gemini defeated the retry and
-fallback decorators entirely -- they act on transient errors by default. Now
-classified from the HTTP status.
+fallback decorators entirely. Now classified from the HTTP status. Retry
+retries transient errors only (`types.IsTransient`), with full jitter and a
+floor at the provider's Retry-After. Fallback, by default
+(`fallback.DefaultFallbackOn`), tries the next member on every error except
+cancellation, `ErrInvalidModelConfig`, `ErrorKindInvalidRequest` and budget
+errors, which no other member can fix.
 
 **5. Text deltas were emitted per chunk.** The Google adapter sent a full
 Start/Content/End triple per network chunk, so downstream aggregators saw many
@@ -309,18 +317,33 @@ isolation, context-varying keys, staleness bounds, and single-flight collapse.
 
 ### Still open
 
-**A. Stale CLI defaults.** `cmd/saige/provider.go` still defaults Google to
-`gemini-2.0-flash`, which the vendor has deprecated, and OpenAI to `gpt-4o`.
-Left unchanged deliberately: changing a default model changes behaviour for
-every existing user and is your call, not a side effect of this branch. The
-catalog flags `gemini-2.0` as deprecated so `saige models` shows it.
+**A. CLI defaults are catalog presets.** The CLI no longer has a table of
+default models. Without `--model` it runs the first usable entry of the
+catalog's `default_preset`, or the preset named by `--provider` (`anthropic`,
+`openai`, `google`, `vertex`, `ollama`).
+The shipped presets use the cheapest current model per vendor
+(`claude-haiku-5-5`, `gpt-6-luna`, `gemini-3.1-flash-lite`) and `qwen3`, and
+`<vendor>-quality` presets use `claude-sonnet-5-5`, `gpt-6.1-sol` and
+`gemini-3.8-flash`. See [model catalog and presets](catalog.md).
 
-**B. Anthropic and OpenAI server-side tools are declared but not wired.** The
-capability table says both support web search and remote MCP, and
-`types.ServerTool` describes them, but only the Google adapter translates them.
-OpenAI's require the Responses API, which the adapter does not use. Until
-wired, `ValidateServerTools` will pass and nothing will happen -- the one place
-in this design where a declaration outruns the implementation.
+**B. OpenAI server-side tools are declared but not wired.** Google search
+grounding and code execution (`google.WithServerTools`) and Anthropic web
+search and code execution (`anthropic.WithServerTools`) are sent and their
+calls stream back as `ServerToolCallDelta` and `ServerToolResultDelta`.
+Anthropic remote MCP is rejected, because it needs the MCP connector. OpenAI's
+server tools need the Responses API, which the adapter does not use, and the
+`provider.Build` factory rejects server tools for OpenAI and Ollama.
+
+**Tool choice per adapter.** Each adapter takes a tool choice at construction
+(`WithToolChoice`) and per request through `types.OptionsProvider`
+(`ChatStreamWithOptions`), which is how the agent forces a call for one turn.
+Anthropic maps auto, none, required (`any`) and named (`tool`); OpenAI maps
+auto, none, required and a named function; Google maps AUTO, NONE, ANY and ANY
+with `AllowedFunctionNames`. Ollama has no tool_choice field, so the choice is
+emulated by filtering the tools sent: none and named only, and required is
+rejected. Because of that emulation, the Ollama adapter reports `tool_choice`
+for every model that declares tool calling, even though the catalog row does
+not.
 
 **C. Cache accounting needs complete tariffs.** `UsageDelta` now reports cache
 reads and writes. OpenAI, Anthropic, and Google populate those fields.
@@ -329,7 +352,8 @@ prices still need a complete rate model. See [cache contracts](cache-contracts.m
 
 **D. Pricing coverage is incomplete.** Claude 5 and Gemini 3 rows are
 deliberately unpriced rather than guessed. A `Budget` refuses to run against
-them unless `AllowUnpriced` is set. Supply rates with `catalog.Register`, which
+them unless `AllowUnpriced` is set. Supply rates in a catalog layer (see
+[model catalog and presets](catalog.md)) or with `catalog.Register`; either
 appends a revision.
 
 **E. Tiered pricing is flattened.** Gemini 2.5 Pro charges more above a prompt

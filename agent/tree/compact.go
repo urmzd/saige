@@ -82,11 +82,13 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 		return branch, nil
 	}
 
-	// Compact the first half of candidates (or at least 1).
-	compactCount := len(candidates) / 2
-	if compactCount < 1 {
-		compactCount = 1
+	// Compact the older half of candidates, moved so a tool result stays
+	// with its call.
+	candidateMsgs := make([]types.Message, len(candidates))
+	for i, c := range candidates {
+		candidateMsgs[i] = c.node.Message
 	}
+	compactCount := CompactCount(candidateMsgs)
 	toCompact := candidates[:compactCount]
 
 	// Summarize the run via provider.
@@ -106,7 +108,7 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	first := toCompact[0]
 	last := toCompact[len(toCompact)-1]
 
-	newBranchID := types.BranchID(fmt.Sprintf("compact-%s-%s", branch, types.NewID()[:8]))
+	newBranchID := types.BranchID(fmt.Sprintf("%s%s-%s", compactPrefix, baseBranchName(branch), types.NewID()[:8]))
 
 	// The summary is stored as a user+assistant pair: the summary text is
 	// model-generated, so it belongs on an assistant turn, but some providers
@@ -178,9 +180,13 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	for _, n := range newNodes {
 		ops = append(ops, types.TxOp{Kind: types.TxOpAddNode, NodeID: n.ID, ParentID: n.ParentID, Node: n})
 	}
-	ops = append(ops, types.TxOp{Kind: types.TxOpSetBranch, BranchID: newBranchID, TipID: newTipID})
-	if err := t.walTx(ctx, ops...); err != nil {
-		return "", err
+	ops = append(ops,
+		types.TxOp{Kind: types.TxOpSetBranch, BranchID: newBranchID, TipID: newTipID},
+		types.TxOp{Kind: TxOpSetActive, BranchID: newBranchID},
+	)
+	walErr := t.walTx(ctx, ops...)
+	if !applied(walErr) {
+		return "", walErr
 	}
 
 	for _, n := range newNodes {
@@ -191,7 +197,71 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	t.branches[newBranchID] = newTipID
 	t.active = newBranchID
 
-	return newBranchID, nil
+	return newBranchID, walErr
+}
+
+// compactPrefix starts the ID of every branch Compact creates.
+const compactPrefix = "compact-"
+
+// baseBranchName strips the names earlier compactions added, so compacting
+// a compacted branch yields "compact-main-<id>" rather than nesting.
+func baseBranchName(branch types.BranchID) string {
+	name := string(branch)
+	for strings.HasPrefix(name, compactPrefix) {
+		rest := strings.TrimPrefix(name, compactPrefix)
+		i := strings.LastIndex(rest, "-")
+		if i <= 0 || len(rest)-i-1 != 8 {
+			break
+		}
+		name = rest[:i]
+	}
+	return name
+}
+
+// CompactCount returns how many of the leading messages in candidates
+// Compact summarizes: the older half, at least one. A tool result must follow
+// its call, so the boundary never leaves a tool result first in the kept
+// suffix. It moves forward past the results that answer the last summarized
+// call; if that would summarize everything, it moves back before the call
+// instead, when that still leaves something to summarize.
+func CompactCount(candidates []types.Message) int {
+	n := len(candidates)
+	if n == 0 {
+		return 0
+	}
+	count := max(1, n/2)
+	forward := count
+	for forward < n && hasToolResult(candidates[forward]) {
+		forward++
+	}
+	if forward < n || n == 1 {
+		return forward
+	}
+	for back := count; back >= 1; back-- {
+		if !hasToolResult(candidates[back]) {
+			return back
+		}
+	}
+	return forward
+}
+
+// hasToolResult reports whether msg carries a tool result.
+func hasToolResult(msg types.Message) bool {
+	switch v := msg.(type) {
+	case types.SystemMessage:
+		for _, c := range v.Content {
+			if _, ok := c.(types.ToolResultContent); ok {
+				return true
+			}
+		}
+	case types.UserMessage:
+		for _, c := range v.Content {
+			if _, ok := c.(types.ToolResultContent); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sharedNodesUnlocked returns the set of node IDs reachable from any branch

@@ -6,6 +6,12 @@ MCP server binary that exposes saige tool packs over the [Model Context Protocol
 go install github.com/urmzd/saige/cmd/saige-mcp@latest
 ```
 
+Or install a pre-built, checksum-verified binary (Linux and macOS, amd64 and arm64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/urmzd/saige/main/install.sh | BIN=saige-mcp bash
+```
+
 ## Usage
 
 ```bash
@@ -27,6 +33,23 @@ saige-mcp --tools all --db "$SAIGE_DB" --searxng-url http://localhost:8080
 | `--db` | `SAIGE_DB` | PostgreSQL DSN for KG tools |
 | `--searxng-url` | `SEARXNG_URL` | SearXNG base URL for web search |
 | `--root` | | Root directory for file search/read (default: `.`) |
+| `--read-only` | | Omit every mutating tool (`store_knowledge`, `kg_ingest`) |
+| `--approval` | | How marked tools run: `elicit` (default), `host`, or `deny` |
+
+## Approval and annotations
+
+`store_knowledge` and `kg_ingest` write to the knowledge graph, so saige marks them for human approval.
+Inside a saige agent the loop pauses for that approval. Over MCP the server enforces it, according to `--approval`.
+The server treats a marker of any kind, such as `audit` or `rate_limit`, as needing approval, because it has no agent loop to resolve the marker otherwise.
+
+| Mode | Behavior |
+|------|----------|
+| `elicit` | Asks the user through MCP elicitation and runs the tool only on an explicit yes. A client without elicitation gets a refusal that names the other modes. |
+| `host` | Runs the tool and relies on the client's own per-tool permission prompt. |
+| `deny` | Refuses every marked tool. |
+
+Every tool is published with MCP annotations. Read-only tools such as `read_file` carry `readOnlyHint`, and marked tools carry `destructiveHint`, so a client can decide which calls to confirm.
+Use `--read-only` to remove the mutating tools entirely.
 
 ## Tool Packs
 
@@ -84,6 +107,8 @@ Add to `~/.gemini/settings.json`:
 ```
 
 ## Related
+
+- [MCP client](../../docs/mcp-client.md): connecting a saige agent to other MCP servers
 
 - [`saige` CLI](../saige/README.md): interactive chat and standalone RAG/KG operations
 - [Root README](../../README.md): project overview and installation

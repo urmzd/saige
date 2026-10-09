@@ -12,17 +12,67 @@ import (
 
 // ScriptedProvider replays predefined delta sequences, one per ChatStream call.
 // Thread-safe for concurrent use.
+//
+// It implements types.OptionsProvider, so per-request controls such as a tool
+// choice reach it, and it records every request in Calls.
 type ScriptedProvider struct {
 	mu        sync.Mutex
 	call      int
 	Responses [][]types.Delta
+	// Errors, when set, makes call i fail with Errors[i] before streaming.
+	// A nil entry streams Responses[i] as usual.
+	Errors []error
+	// Calls records each request in order.
+	Calls []ScriptedCall
 }
 
-func (p *ScriptedProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+// ScriptedCall is one request a ScriptedProvider received.
+type ScriptedCall struct {
+	Messages []types.Message
+	Tools    []types.ToolDef
+	Options  *types.RequestOptions // nil for a plain ChatStream call
+}
+
+func (p *ScriptedProvider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	return p.stream(ctx, messages, tools, nil)
+}
+
+// ChatStreamWithOptions implements types.OptionsProvider.
+func (p *ScriptedProvider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
+	return p.stream(ctx, messages, tools, &opts)
+}
+
+// CallCount returns how many requests the provider has received.
+func (p *ScriptedProvider) CallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.call
+}
+
+// Requests returns a copy of the recorded requests.
+func (p *ScriptedProvider) Requests() []ScriptedCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]ScriptedCall(nil), p.Calls...)
+}
+
+func (p *ScriptedProvider) stream(_ context.Context, messages []types.Message, tools []types.ToolDef, opts *types.RequestOptions) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	idx := p.call
 	p.call++
+	p.Calls = append(p.Calls, ScriptedCall{
+		Messages: append([]types.Message(nil), messages...),
+		Tools:    append([]types.ToolDef(nil), tools...),
+		Options:  opts,
+	})
+	var err error
+	if idx < len(p.Errors) {
+		err = p.Errors[idx]
+	}
 	p.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
 	ch := make(chan types.Delta, 64)
 	go func() {
@@ -49,7 +99,7 @@ func TextResponse(text string) []types.Delta {
 func ToolCallResponse(id, name string, args map[string]any) []types.Delta {
 	return []types.Delta{
 		types.ToolCallStartDelta{ID: id, Name: name},
-		types.ToolCallEndDelta{Arguments: args},
+		types.ToolCallEndDelta{ID: id, Arguments: args},
 	}
 }
 

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	agentsdk "github.com/urmzd/saige/agent"
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/provider/ollama"
+	"github.com/urmzd/saige/agent/types"
 )
 
 func main() {

@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -10,16 +11,59 @@ import (
 
 // ToolDef describes a tool's schema for the LLM.
 type ToolDef struct {
-	Name        string
-	Description string
-	Parameters  ParameterSchema
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  ParameterSchema `json:"parameters"`
+	// Capability classifies the tool's side effects so a policy can allow,
+	// ask, or deny by class. It is never sent to the provider. The zero value
+	// is treated as ToolCapabilityUnknown.
+	Capability ToolCapability `json:"capability,omitempty"`
 }
 
-// ParameterSchema is a JSON-Schema-like definition for tool parameters.
+// ToolCapability classifies what a tool can change.
+type ToolCapability string
+
+const (
+	// ToolCapabilityUnknown means the side effects are not declared. Policies
+	// should treat it like the most dangerous class they handle (fail closed).
+	ToolCapabilityUnknown ToolCapability = "unknown"
+	// ToolCapabilityRead reads state and changes nothing.
+	ToolCapabilityRead ToolCapability = "read"
+	// ToolCapabilityWrite creates or changes state that can be restored.
+	ToolCapabilityWrite ToolCapability = "write"
+	// ToolCapabilityDestructive deletes data, spends money, or has effects
+	// outside this process that cannot be undone.
+	ToolCapabilityDestructive ToolCapability = "destructive"
+)
+
+// Effective maps the zero value and unrecognized values to ToolCapabilityUnknown.
+func (c ToolCapability) Effective() ToolCapability {
+	switch c {
+	case ToolCapabilityRead, ToolCapabilityWrite, ToolCapabilityDestructive:
+		return c
+	default:
+		return ToolCapabilityUnknown
+	}
+}
+
+// JSON Schema type names for ParameterSchema.Type and PropertyDef.Type.
+const (
+	SchemaObject  = "object"
+	SchemaString  = "string"
+	SchemaInteger = "integer"
+	SchemaNumber  = "number"
+	SchemaBoolean = "boolean"
+	SchemaArray   = "array"
+	SchemaNull    = "null"
+)
+
+// ParameterSchema is a JSON-Schema-like definition for tool parameters. Its
+// json tags match JSON Schema keywords, so a standard object schema
+// unmarshals into it; keywords it does not model are ignored.
 type ParameterSchema struct {
-	Type       string
-	Required   []string
-	Properties map[string]PropertyDef
+	Type       string                 `json:"type"`
+	Required   []string               `json:"required,omitempty"`
+	Properties map[string]PropertyDef `json:"properties,omitempty"`
 }
 
 // PropertyDef describes a single parameter property using JSON Schema fields.
@@ -37,6 +81,10 @@ type PropertyDef struct {
 }
 
 // Tool is the base interface all tools implement.
+//
+// Execute must be safe for concurrent use unless the agent uses
+// WithSequentialTools: two calls in one turn run on the same instance
+// concurrently.
 type Tool interface {
 	Definition() ToolDef
 	Execute(ctx context.Context, args map[string]any) (string, error)
@@ -150,6 +198,51 @@ func (r *ToolRegistry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tools[t.Definition().Name] = t
+}
+
+// ErrToolExists reports a registration whose name is already taken.
+var ErrToolExists = errors.New("tool already registered")
+
+// RegisterUnique adds a tool unless a tool with the same name is registered.
+// The check and the insert happen under one lock, so two concurrent callers
+// cannot both register the name. The error wraps ErrToolExists and names the
+// tool.
+func (r *ToolRegistry) RegisterUnique(t Tool) error {
+	name := t.Definition().Name
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.tools[name]; ok {
+		return fmt.Errorf("%w: %s", ErrToolExists, name)
+	}
+	r.tools[name] = t
+	return nil
+}
+
+// Unregister removes the named tool and reports whether it was registered.
+func (r *ToolRegistry) Unregister(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.tools[name]
+	delete(r.tools, name)
+	return ok
+}
+
+// As finds the first tool of type T in the chain that starts at t and
+// follows Unwrap() Tool methods, as decorators such as tracing and caching
+// implement. It reports false when no tool in the chain has type T.
+func As[T any](t Tool) (T, bool) {
+	for t != nil {
+		if v, ok := t.(T); ok {
+			return v, true
+		}
+		u, ok := t.(interface{ Unwrap() Tool })
+		if !ok {
+			break
+		}
+		t = u.Unwrap()
+	}
+	var zero T
+	return zero, false
 }
 
 // Definitions returns all tool definitions.

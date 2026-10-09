@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -84,5 +85,37 @@ func TestCollectStreamTimingMultipleUsage(t *testing.T) {
 	}
 	if timing.OutputTokens != 15 {
 		t.Errorf("expected 15 output tokens, got %d", timing.OutputTokens)
+	}
+}
+
+func TestCollectStreamTimingFrom(t *testing.T) {
+	tests := []struct {
+		name    string
+		delay   time.Duration
+		wantMin int64
+		errs    int
+	}{
+		{name: "clock starts before collection", delay: 50 * time.Millisecond, wantMin: 50},
+		{name: "error delta is flagged", errs: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := make(chan types.Delta, 4)
+			start := time.Now()
+			time.Sleep(tt.delay)
+			ch <- types.TextContentDelta{Content: "x"}
+			for range tt.errs {
+				ch <- types.ErrorDelta{Error: errors.New("boom")}
+			}
+			close(ch)
+
+			timing, _, _ := CollectStreamTimingFrom(start, ch)
+			if timing.TTFTMs < tt.wantMin {
+				t.Errorf("TTFTMs %d, want >= %d", timing.TTFTMs, tt.wantMin)
+			}
+			if len(timing.Errors) != tt.errs || timing.Failed() != (tt.errs > 0) {
+				t.Errorf("Errors: got %v, want %d", timing.Errors, tt.errs)
+			}
+		})
 	}
 }

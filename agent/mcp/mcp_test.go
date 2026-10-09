@@ -176,6 +176,15 @@ func TestServerToolValidationCatchesProviderSideMistakes(t *testing.T) {
 		{"remote mcp complete", types.ServerTool{
 			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "https://y"},
 		}, true},
+		{"remote mcp over plain http", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "http://y"},
+		}, false},
+		{"remote mcp without host", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "https:///path"},
+		}, false},
+		{"remote mcp not a url", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "y.example/mcp"},
+		}, false},
 		{"unknown kind", types.ServerTool{Kind: "teleport"}, false},
 		{"negative max uses", types.ServerTool{Kind: types.ServerToolWebSearch, MaxUses: -1}, false},
 	}
@@ -194,7 +203,7 @@ func TestServerToolsAreValidatedAgainstDeclaredCapabilities(t *testing.T) {
 	supported := types.ModelCapabilities{
 		Caps:        map[types.Capability]bool{types.CapWebSearch: true},
 		ServerTools: []types.ServerToolKind{types.ServerToolWebSearch},
-		Provider:    "anthropic", Model: "claude-sonnet-4-5",
+		Provider:    "anthropic", Model: "claude-haiku-5-5",
 	}
 	if err := types.ValidateServerTools(supported, []types.ServerTool{types.WebSearchTool(3)}); err != nil {
 		t.Errorf("a supported server tool must validate: %v", err)

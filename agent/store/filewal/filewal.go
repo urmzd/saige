@@ -19,8 +19,9 @@
 // Recover returns transactions that have a commit record but no applied
 // record, in file (= commit) order. Pair with
 // agent/store/walrecover.RecoverWAL to heal a store after a crash between WAL
-// commit and store write; RecoverWAL calls MarkApplied so healed transactions
-// are not replayed again.
+// commit and store write. RecoverWAL reads the log once through RecoverOps and
+// marks each batch of healed transactions applied with one fsync
+// (MarkAppliedBatch), so recovery cost is linear in the log size.
 //
 // Node messages are serialized with the same envelope mechanism the tree and
 // pgstore use (tree.MarshalMessage / tree.UnmarshalMessage).
@@ -49,11 +50,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/agent/store/walrecover"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 )
 
-var _ types.WAL = (*WAL)(nil)
+var (
+	_ types.WAL               = (*WAL)(nil)
+	_ walrecover.OpsRecoverer = (*WAL)(nil)
+	_ walrecover.BatchApplier = (*WAL)(nil)
+	_ walrecover.Compactor    = (*WAL)(nil)
+)
 
 // record is one JSONL line.
 type record struct {
@@ -216,6 +223,8 @@ type WAL struct {
 	// errors: appending after the corruption would poison the whole log,
 	// because readRecords rejects bad lines anywhere but the tail.
 	failed error
+	// reads counts full log parses; tests use it to bound recovery cost.
+	reads int
 }
 
 // New opens (creating if necessary) the JSONL WAL at path. A torn final line
@@ -329,6 +338,21 @@ func (w *WAL) MarkApplied(_ context.Context, txID types.TxID) error {
 	return w.writeRecord(record{Kind: recordApplied, Tx: string(txID)})
 }
 
+// MarkAppliedBatch records that every listed transaction was applied, with a
+// single write and a single fsync.
+func (w *WAL) MarkAppliedBatch(_ context.Context, txIDs []types.TxID) error {
+	if len(txIDs) == 0 {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	recs := make([]record, len(txIDs))
+	for i, id := range txIDs {
+		recs[i] = record{Kind: recordApplied, Tx: string(id)}
+	}
+	return w.writeRecords(recs...)
+}
+
 // writeRecord appends one JSONL record and fsyncs. A short or failed write is
 // rolled back by truncating to the pre-write size, so the log always ends at
 // a record boundary; without the rollback the next successful append would
@@ -337,14 +361,24 @@ func (w *WAL) MarkApplied(_ context.Context, txID types.TxID) error {
 // fails, the WAL is marked failed and refuses all further writes. Caller must
 // hold the lock.
 func (w *WAL) writeRecord(rec record) error {
+	return w.writeRecords(rec)
+}
+
+// writeRecords appends records as one write followed by one fsync, with the
+// same rollback guarantees as writeRecord. Caller must hold the lock.
+func (w *WAL) writeRecords(recs ...record) error {
 	if w.failed != nil {
 		return fmt.Errorf("filewal: wal disabled by unrecoverable write failure: %w", w.failed)
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return fmt.Errorf("filewal: marshal record: %w", err)
+	var line []byte
+	for _, rec := range recs {
+		enc, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("filewal: marshal record: %w", err)
+		}
+		line = append(line, enc...)
+		line = append(line, '\n')
 	}
-	line = append(line, '\n')
 
 	info, err := w.f.Stat()
 	if err != nil {
@@ -479,6 +513,49 @@ func (w *WAL) Recover(_ context.Context) ([]types.TxID, error) {
 	return out, nil
 }
 
+// RecoverOps returns every committed transaction with no applied record, with
+// its decoded ops, in commit order. It reads the log once, unlike Recover
+// followed by one Replay per transaction.
+func (w *WAL) RecoverOps(_ context.Context) ([]walrecover.Transaction, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	recs, err := w.readRecords()
+	if err != nil {
+		return nil, err
+	}
+	applied := make(map[string]bool)
+	for _, r := range recs {
+		if r.Kind == recordApplied {
+			applied[r.Tx] = true
+		}
+	}
+	var out []walrecover.Transaction
+	for _, r := range recs {
+		if r.Kind != recordCommit || applied[r.Tx] {
+			continue
+		}
+		ops, err := decodeOps(r.Ops)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, walrecover.Transaction{ID: types.TxID(r.Tx), Ops: ops})
+	}
+	return out, nil
+}
+
+func decodeOps(encoded []walOp) ([]types.TxOp, error) {
+	ops := make([]types.TxOp, 0, len(encoded))
+	for _, enc := range encoded {
+		op, err := decodeOp(enc)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
+}
+
 // Replay returns the ops of a committed transaction.
 func (w *WAL) Replay(_ context.Context, txID types.TxID) ([]types.TxOp, error) {
 	w.mu.Lock()
@@ -492,15 +569,7 @@ func (w *WAL) Replay(_ context.Context, txID types.TxID) ([]types.TxOp, error) {
 		if r.Kind != recordCommit || r.Tx != string(txID) {
 			continue
 		}
-		ops := make([]types.TxOp, 0, len(r.Ops))
-		for _, enc := range r.Ops {
-			op, err := decodeOp(enc)
-			if err != nil {
-				return nil, err
-			}
-			ops = append(ops, op)
-		}
-		return ops, nil
+		return decodeOps(r.Ops)
 	}
 	return nil, fmt.Errorf("filewal: transaction not found: %s", txID)
 }
@@ -509,6 +578,7 @@ func (w *WAL) Replay(_ context.Context, txID types.TxID) ([]types.TxOp, error) {
 // as a torn write from a crash mid-Commit and ignored; corruption anywhere
 // else is an error. Caller must hold the lock.
 func (w *WAL) readRecords() ([]record, error) {
+	w.reads++
 	f, err := os.Open(w.path)
 	if err != nil {
 		return nil, fmt.Errorf("filewal: open for read: %w", err)

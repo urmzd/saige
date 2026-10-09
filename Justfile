@@ -8,6 +8,15 @@ default:
 test:
     go test ./...
 
+# Run all tests under the race detector
+test-race:
+    go test -race -count=1 ./...
+
+# Run the Postgres-backed tests (no Ollama needed) against integration-up's database
+test-postgres:
+    SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
+    go test -count=1 -p 1 ./integration/... ./agent/pgstore/... ./rag/pgstore/... ./rag/knowledge/pgstore/... ./agent/durable/duraturo/... ./cmd/saige/
+
 # Run tests with coverage report
 test-cover:
     go test -coverprofile=coverage.out -covermode=atomic ./...
@@ -25,13 +34,14 @@ vet:
 fmt:
     gofmt -w .
 
-# Install CLI binary to $GOPATH/bin
+# Install CLI binaries to $GOPATH/bin
 install:
-    CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" ./cmd/saige
+    CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" ./cmd/saige ./cmd/saige-mcp
 
-# Build CLI binary to bin/
+# Build CLI binaries to bin/
 build:
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/saige ./cmd/saige
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/saige-mcp ./cmd/saige-mcp
 
 # Run govulncheck
 vuln:
@@ -63,7 +73,7 @@ fuzz PACKAGE FUNC DURATION="30s":
 # docker compose plugin or standalone docker-compose, whichever is installed
 compose := `docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose"`
 
-# Start local integration infra (pgvector Postgres on :5433)
+# Start local integration infra (Postgres 18 with pgvector and pg_search on :5433)
 integration-up:
     {{compose}} -f integration/docker-compose.yml up -d --wait postgres
 
@@ -71,7 +81,7 @@ integration-up:
 integration-down:
     {{compose}} -f integration/docker-compose.yml down -v
 
-# Run end-to-end integration tests (Ollama + Postgres + DBOS); see integration/README.md
+# Run end-to-end integration tests (Ollama + Postgres); see integration/README.md
 test-integration:
     SAIGE_TEST_OLLAMA_HOST="${SAIGE_TEST_OLLAMA_HOST:-http://localhost:11434}" \
     SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \

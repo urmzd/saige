@@ -6,7 +6,7 @@ import "context"
 // operation. On first execution it runs fn and records the result; on workflow
 // replay (after a crash/restart) it returns the recorded result WITHOUT
 // re-executing fn. This is the seam that lets the agent loop run inside a durable
-// workflow engine (e.g. DBOS) without the core package depending on it.
+// workflow engine without the core package depending on it.
 //
 // The default behavior is provided by NoopStepRunner, which simply calls fn
 // inline: preserving non-durable, streaming behavior exactly.
@@ -14,8 +14,7 @@ type StepRunner interface {
 	// RunStep executes (or replays) a named step returning a serializable
 	// result. name must be stable and unique within a single loop run so the
 	// runner can correlate replays to recorded results. fn takes a plain
-	// context.Context (NOT a durable context) to match the dbos.Step shape and
-	// to keep this interface free of any engine type.
+	// context.Context to keep this interface free of any engine type.
 	RunStep(ctx context.Context, name string, fn func(ctx context.Context) (StepResult, error)) (StepResult, error)
 }
 

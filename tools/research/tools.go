@@ -8,6 +8,12 @@ import (
 	"github.com/urmzd/saige/rag/source/searxng"
 )
 
+// Argument names shared by the research tools.
+const (
+	argPath  = "path"
+	argQuery = "query"
+)
+
 // config controls how NewTools assembles the research tool set.
 type config struct {
 	readOnly bool

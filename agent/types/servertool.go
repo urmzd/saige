@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+)
 
 // ServerToolKind names a tool the *provider* executes, not this process.
 //
@@ -70,7 +73,8 @@ type ServerTool struct {
 type RemoteMCPServer struct {
 	// Name identifies the server in tool names and logs.
 	Name string
-	// URL is the server endpoint.
+	// URL is the server endpoint: an https URL with a host. Validate
+	// rejects any other scheme.
 	URL string
 	// AuthorizationToken is forwarded to the provider, which presents it to the
 	// server. Prefer the local path (agent/mcp) when a token must not leave
@@ -100,6 +104,11 @@ func (s ServerTool) Validate() error {
 		}
 		if s.MCPServer.URL == "" {
 			return fmt.Errorf("server tool %s: MCPServer.URL is required", s.Kind)
+		}
+		// The provider connects to this URL with the caller's token, so it
+		// must be an https endpoint on a named host.
+		if u, err := url.Parse(s.MCPServer.URL); err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			return fmt.Errorf("server tool %s: MCPServer.URL must be an https URL with a host", s.Kind)
 		}
 		if s.MCPServer.Name == "" {
 			return fmt.Errorf("server tool %s: MCPServer.Name is required", s.Kind)

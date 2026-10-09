@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"unicode"
 )
 
 // ContentQuality holds deterministic text comparison metrics.
@@ -37,7 +38,8 @@ func SequenceSimilarity(a, b string) float64 {
 	return 2.0 * float64(lcs) / float64(len(a)+len(b))
 }
 
-// TokenF1 computes word-token-level F1 between two texts.
+// TokenF1 computes word-token-level F1 between two texts. Case and
+// punctuation are ignored.
 func TokenF1(a, b string) float64 {
 	aToks := tokenize(a)
 	bToks := tokenize(b)
@@ -78,7 +80,7 @@ func TokenF1(a, b string) float64 {
 }
 
 // RougeL computes the ROUGE-L F1 score using longest common subsequence
-// at the word-token level.
+// at the word-token level. Case and punctuation are ignored.
 func RougeL(a, b string) float64 {
 	aToks := tokenize(a)
 	bToks := tokenize(b)
@@ -161,10 +163,13 @@ func extractTextPair(obs Observation) (string, string, error) {
 	return output, gt, nil
 }
 
-// tokenize splits text into lowercase word tokens.
+// tokenize splits text into lowercase word tokens. Punctuation separates
+// tokens and is dropped, so "Paris." and "paris" are the same token, the
+// normalization the SQuAD-style token F1 and ROUGE-L both assume.
 func tokenize(s string) []string {
-	fields := strings.Fields(strings.ToLower(s))
-	return fields
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
 }
 
 // lcsLength computes the length of the longest common subsequence of two strings.

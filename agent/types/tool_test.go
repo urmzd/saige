@@ -117,3 +117,52 @@ func TestToolRegistryConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// unwrapTool decorates a tool and exposes it through Unwrap.
+type unwrapTool struct{ Tool }
+
+func (u unwrapTool) Unwrap() Tool { return u.Tool }
+
+func TestAs(t *testing.T) {
+	base := &ToolFunc{Def: ToolDef{Name: "base"}}
+	marked := WithMarkers(base, Marker{Kind: "approval"})
+	tests := []struct {
+		name string
+		tool Tool
+		want bool
+	}{
+		{"direct", marked, true},
+		{"through one decorator", unwrapTool{marked}, true},
+		{"through two decorators", unwrapTool{unwrapTool{marked}}, true},
+		{"absent", unwrapTool{base}, false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := As[*MarkedTool](tt.tool)
+			if ok != tt.want || (ok && got != marked) {
+				t.Fatalf("As = %v, %v; want %v", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestRegistryUniqueAndUnregister(t *testing.T) {
+	r := NewToolRegistry()
+	a := &ToolFunc{Def: ToolDef{Name: "a"}}
+	if err := r.RegisterUnique(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterUnique(&ToolFunc{Def: ToolDef{Name: "a"}}); !errors.Is(err, ErrToolExists) {
+		t.Fatalf("duplicate = %v, want ErrToolExists", err)
+	}
+	if got, _ := r.Get("a"); got != Tool(a) {
+		t.Fatal("a duplicate replaced the registered tool")
+	}
+	if !r.Unregister("a") || r.Unregister("a") {
+		t.Fatal("Unregister must report presence once")
+	}
+	if _, ok := r.Get("a"); ok {
+		t.Fatal("tool still registered")
+	}
+}

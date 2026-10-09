@@ -45,3 +45,7 @@ linters:
           - gosec
           - errcheck
           - gocyclo
+          - goconst
+      - path: (^|/)storetest/
+        linters:
+          - goconst

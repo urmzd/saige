@@ -6,6 +6,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/urmzd/saige/agent/types"
 	topeval "github.com/urmzd/saige/eval"
 )
 
@@ -92,4 +93,49 @@ func TestTurnCountScorer(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertClose(t, "turns", score.Value, 5.0, 0.001)
+}
+
+func TestToolSuccessRateScorerExecState(t *testing.T) {
+	tests := []struct {
+		name  string
+		calls []ToolCallRecord
+		want  float64
+	}{
+		{"finished calls succeed", []ToolCallRecord{{Name: "a", Exec: ExecFinished}, {Name: "b"}}, 1},
+		{"unfinished call fails", []ToolCallRecord{{Name: "a", Exec: ExecFinished}, {Name: "b", Exec: ExecUnfinished}}, 0.5},
+		{"call that never ran is left out", []ToolCallRecord{{Name: "a", Exec: ExecFinished}, {Name: "b", Exec: ExecNotRun}}, 1},
+		{"refused call that never ran fails", []ToolCallRecord{{Name: "a", Exec: ExecFinished}, {Name: "b", Exec: ExecNotRun, ArgumentsError: "bad json"}}, 0.5},
+		{"only calls that never ran", []ToolCallRecord{{Name: "a", Exec: ExecNotRun}}, 1},
+		{"only an unfinished call", []ToolCallRecord{{Name: "a", Exec: ExecUnfinished}}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			callsJSON, _ := json.Marshal(tt.calls)
+			obs := topeval.Observation{ID: "x", Annotations: map[string]json.RawMessage{AnnotationToolCalls: callsJSON}}
+			score, err := ToolSuccessRateScorer().Score(context.Background(), obs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertClose(t, tt.name, score.Value, tt.want, 0.001)
+		})
+	}
+}
+
+// TestToolSuccessRateScorerCollectedHang checks a collected run whose tool
+// started and never ended: it is a failure, not a success.
+func TestToolSuccessRateScorerCollectedHang(t *testing.T) {
+	run := CollectAgentRun(feed(
+		types.ToolCallStartDelta{ID: "c1", Name: "slow"},
+		types.ToolCallEndDelta{ID: "c1"},
+		types.ToolExecStartDelta{ToolCallID: "c1", Name: "slow"},
+	))
+	var obs topeval.Observation
+	if err := AnnotateObservation(&obs, run); err != nil {
+		t.Fatal(err)
+	}
+	score, err := ToolSuccessRateScorer().Score(context.Background(), obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertClose(t, "tool_success_rate", score.Value, 0, 0.001)
 }

@@ -7,8 +7,8 @@ import (
 
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/tui"
+	"github.com/urmzd/saige/agent/types"
 )
 
 func TestStreamVerbose(t *testing.T) {

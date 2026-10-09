@@ -154,3 +154,16 @@ func TestMarkedToolDelegates(t *testing.T) {
 		t.Fatal("expected non-empty output")
 	}
 }
+
+func TestToolsDeclareCapability(t *testing.T) {
+	want := map[string]agenttypes.ToolCapability{
+		"kg_search": agenttypes.ToolCapabilityRead,
+		"kg_ingest": agenttypes.ToolCapabilityWrite,
+	}
+	for _, tl := range tool.NewTools(stubGraph{}) {
+		def := tl.Definition()
+		if def.Capability != want[def.Name] {
+			t.Errorf("%s capability = %q, want %q", def.Name, def.Capability, want[def.Name])
+		}
+	}
+}

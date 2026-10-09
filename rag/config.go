@@ -2,6 +2,7 @@
 package rag
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -25,6 +26,10 @@ type Config struct {
 	Chunker          ragtypes.Chunker
 	Embedders        ragtypes.EmbedderRegistry
 	Graph            knowledgetypes.Graph
+	// GraphNamespace is the knowledge-graph group (tenant scope) that
+	// ingested documents go into and that graph search is limited to. Empty
+	// means the default group.
+	GraphNamespace   string
 	DedupBehavior    ragtypes.DedupBehavior
 	StoreOriginals   bool
 	Logger           *slog.Logger
@@ -32,6 +37,12 @@ type Config struct {
 	Retrievers       []ragtypes.Retriever
 	Reranker         ragtypes.Reranker
 	ContextAssembler ragtypes.ContextAssembler
+	// Scope fixes the pipeline to one scope. See WithScope.
+	Scope string
+	// Fuser merges retriever lists. Nil means fusion.RRF. See WithFuser.
+	Fuser ragtypes.Fuser
+	// Observer receives spans and metrics. See WithObserver.
+	Observer ragtypes.Observer
 
 	// Internal flags for convenience options.
 	bm25Config        *bm25retriever.Config
@@ -75,10 +86,45 @@ func WithEmbedders(reg ragtypes.EmbedderRegistry) Option {
 // WithGraph sets the knowledge graph. Ingested documents are enriched into
 // the graph, a graph retriever is registered into the search fusion set, and
 // document deletes remove the graph episodes derived from the document (when
-// the graph implements ragtypes.GraphEpisodeDeleter). Do not also pass a
+// the graph implements ragtypes.GraphDocumentDeleter or
+// ragtypes.GraphEpisodeDeleter). Do not also pass a
 // graphretriever via WithRetrievers, or graph results will be fused twice.
 func WithGraph(g knowledgetypes.Graph) Option {
 	return func(c *Config) { c.Graph = g }
+}
+
+// WithGraphNamespace sets the knowledge-graph group that this pipeline's
+// documents are ingested into and that the graph retriever searches. The
+// host supplies it as the tenant scope; entities are deduplicated within it,
+// so one entity named in several documents is a single node.
+func WithGraphNamespace(ns string) Option {
+	return func(c *Config) { c.GraphNamespace = ns }
+}
+
+// WithScope fixes the pipeline to one scope, such as a tenant. Documents
+// ingested through it go into scope, searches see only scope, requests that
+// name another scope fail with ragtypes.ErrScopeMismatch, and Lookup,
+// Update, Delete, and Reconstruct treat documents of other scopes as
+// missing. Deduplication matches only within the scope. When no graph
+// namespace is set, the scope is also the knowledge-graph namespace.
+//
+// Without WithScope a pipeline serves every scope: each RawDocument names
+// its own scope and each search names one with ragtypes.WithScope.
+func WithScope(scope string) Option {
+	return func(c *Config) { c.Scope = scope }
+}
+
+// WithFuser sets how the lists of several retrievers and queries are
+// merged. The default is Reciprocal Rank Fusion (fusion.RRF); fusion.Weighted
+// trusts some retrievers more than others.
+func WithFuser(f ragtypes.Fuser) Option {
+	return func(c *Config) { c.Fuser = f }
+}
+
+// WithObserver sets the receiver of the pipeline's spans and metrics. The
+// rag/otel package adapts OpenTelemetry to it. The default records nothing.
+func WithObserver(o ragtypes.Observer) Option {
+	return func(c *Config) { c.Observer = o }
 }
 
 // WithDedupBehavior sets the deduplication behavior.
@@ -117,6 +163,14 @@ func WithContextAssembler(a ragtypes.ContextAssembler) Option {
 }
 
 // WithBM25 adds a BM25 lexical retriever to the pipeline. If cfg is nil, defaults are used.
+//
+// When the store implements ragtypes.KeywordSearcher, as pgstore does with
+// ParadeDB pg_search, the retriever searches through the store: the index
+// lives with the data, survives restarts, and is shared by every process,
+// and cfg is ignored because the store does its own scoring. Otherwise, as
+// with memstore, the index lives in process memory and starts empty; over a
+// persistent store without keyword search, call RebuildIndex after
+// NewPipeline so documents ingested by an earlier process are found.
 func WithBM25(cfg *bm25retriever.Config) Option {
 	return func(c *Config) {
 		if cfg == nil {
@@ -192,6 +246,9 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.GraphNamespace == "" {
+		cfg.GraphNamespace = cfg.Scope
+	}
 
 	// Auto-wire chunker from convenience options.
 	if cfg.Chunker == nil {
@@ -234,13 +291,18 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 
 	// Add BM25 retriever if configured.
 	if cfg.bm25Config != nil {
-		retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
+		if ks, ok := cfg.Store.(ragtypes.KeywordSearcher); ok {
+			retrievers = append(retrievers, storeKeywordRetriever{ks})
+		} else {
+			retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
+		}
 	}
 
 	// Add a graph retriever so WithGraph contributes to search fusion, not
 	// just ingest-time enrichment.
 	if cfg.Graph != nil {
-		retrievers = append(retrievers, graphretriever.New(cfg.Graph, cfg.Store))
+		retrievers = append(retrievers, graphretriever.New(cfg.Graph, cfg.Store,
+			graphretriever.WithGroupID(cfg.GraphNamespace)))
 	}
 
 	// Wrap retrievers with parent context if enabled.
@@ -258,6 +320,7 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 		Chunker:          cfg.Chunker,
 		Embedders:        cfg.Embedders,
 		Graph:            cfg.Graph,
+		GraphNamespace:   cfg.GraphNamespace,
 		DedupBehavior:    cfg.DedupBehavior,
 		StoreOriginals:   cfg.StoreOriginals,
 		Logger:           cfg.Logger,
@@ -265,5 +328,51 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 		Retrievers:       retrievers,
 		Reranker:         cfg.Reranker,
 		ContextAssembler: cfg.ContextAssembler,
+		Scope:            cfg.Scope,
+		Fuser:            cfg.Fuser,
+		Observer:         cfg.Observer,
 	}), nil
 }
+
+// SyncSource reconciles src with pipe's store by source URI: new URIs are
+// ingested, changed content replaces the URI's document in place, unchanged
+// content is skipped, and with opts.Prune, URIs the source no longer returns
+// are deleted. Pass the returned Cursor as opts.Since on the next call to
+// skip documents the source reports as not modified since then.
+//
+// It returns ragtypes.ErrSyncUnsupported when pipe does not implement
+// ragtypes.SourceSyncer or its store does not implement
+// ragtypes.SourceLister. See ragtypes.SourceSyncer for the error contract.
+func SyncSource(ctx context.Context, pipe ragtypes.Pipeline, src ragtypes.Source, opts ragtypes.SyncOptions) (*ragtypes.SyncResult, error) {
+	syncer, ok := pipe.(ragtypes.SourceSyncer)
+	if !ok {
+		return nil, ragtypes.ErrSyncUnsupported
+	}
+	return syncer.SyncSource(ctx, src, opts)
+}
+
+// RebuildIndex rebuilds every in-memory retriever index of pipe, such as the
+// one added by WithBM25, from the pipeline's store. Call it once after
+// creating a pipeline over a store that already holds documents. It is a
+// no-op for a pipeline without such indexes, and it returns an error when
+// the store cannot list its documents.
+func RebuildIndex(ctx context.Context, pipe ragtypes.Pipeline) error {
+	rebuilder, ok := pipe.(ragtypes.IndexRebuilder)
+	if !ok {
+		return nil
+	}
+	return rebuilder.RebuildIndex(ctx)
+}
+
+// storeKeywordRetriever runs BM25 search through a store that keeps its own
+// keyword index. It reports the same name as bm25retriever so fusion
+// weights keyed by "bm25" apply to either backend.
+type storeKeywordRetriever struct {
+	searcher ragtypes.KeywordSearcher
+}
+
+func (r storeKeywordRetriever) Retrieve(ctx context.Context, query string, opts *ragtypes.SearchOptions) ([]ragtypes.SearchHit, error) {
+	return r.searcher.SearchByKeyword(ctx, query, opts)
+}
+
+func (storeKeywordRetriever) Name() string { return "bm25" }

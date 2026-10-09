@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS vector
----
 CREATE EXTENSION IF NOT EXISTS pg_trgm
 ---
 CREATE TABLE IF NOT EXISTS kg_entity (
@@ -58,6 +56,7 @@ CREATE TABLE IF NOT EXISTS kg_episode (
     body       TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT '',
     group_id   TEXT NOT NULL DEFAULT '',
+    document_id TEXT NOT NULL DEFAULT '',
     metadata   JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
@@ -73,6 +72,20 @@ CREATE TABLE IF NOT EXISTS kg_mention (
 )
 ---
 CREATE INDEX IF NOT EXISTS idx_kg_mention_entity ON kg_mention(entity_id)
+---
+ALTER TABLE kg_episode ADD COLUMN IF NOT EXISTS document_id TEXT NOT NULL DEFAULT ''
+---
+CREATE INDEX IF NOT EXISTS idx_kg_episode_group_document ON kg_episode(group_id, document_id)
+---
+CREATE TABLE IF NOT EXISTS kg_relation_episode (
+    relation_id BIGINT NOT NULL REFERENCES kg_relation(id) ON DELETE CASCADE,
+    episode_id  BIGINT NOT NULL REFERENCES kg_episode(id) ON DELETE CASCADE,
+    PRIMARY KEY (relation_id, episode_id)
+)
+---
+CREATE INDEX IF NOT EXISTS idx_kg_relation_episode_episode ON kg_relation_episode(episode_id)
+---
+CREATE INDEX IF NOT EXISTS idx_kg_relation_fact_search ON kg_relation USING GIN (to_tsvector('english', coalesce(fact, '') || ' ' || replace(coalesce(type, ''), '_', ' ')))
 ---
 UPDATE kg_entity e
 SET group_id = grp.group_id
@@ -113,6 +126,12 @@ CREATE TABLE IF NOT EXISTS rag_document (
 ---
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rag_document_fingerprint ON rag_document(fingerprint) WHERE fingerprint != ''
 ---
+ALTER TABLE rag_document ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT ''
+---
+ALTER TABLE rag_document ADD COLUMN IF NOT EXISTS source_modified_at TIMESTAMPTZ
+---
+CREATE INDEX IF NOT EXISTS idx_rag_document_scope_source ON rag_document(scope, source_uri)
+---
 CREATE TABLE IF NOT EXISTS rag_original (
     document_id BIGINT PRIMARY KEY REFERENCES rag_document(id) ON DELETE CASCADE,
     data        BYTEA NOT NULL
@@ -143,6 +162,8 @@ CREATE TABLE IF NOT EXISTS rag_variant (
 CREATE INDEX IF NOT EXISTS idx_rag_variant_section ON rag_variant(section_id)
 ---
 CREATE INDEX IF NOT EXISTS idx_rag_variant_embedding ON rag_variant USING hnsw (embedding vector_cosine_ops)
+---
+CREATE INDEX IF NOT EXISTS idx_rag_variant_bm25 ON rag_variant USING bm25 (id, text) WITH (key_field = 'id')
 ---
 CREATE TABLE IF NOT EXISTS agent_node (
     id          BIGSERIAL PRIMARY KEY,
@@ -226,3 +247,52 @@ SET conversation_id = nr.root_uuid
 FROM node_root nr
 WHERE c.conversation_id = ''
   AND c.node_uuid = nr.uuid
+---
+CREATE TABLE IF NOT EXISTS agent_conversation (
+    conversation_id TEXT PRIMARY KEY,
+    active_branch   TEXT NOT NULL DEFAULT '',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+---
+ALTER TABLE agent_node ADD COLUMN IF NOT EXISTS conversation_id TEXT NOT NULL DEFAULT ''
+---
+CREATE INDEX IF NOT EXISTS idx_agent_node_conv_parent ON agent_node(conversation_id, parent_uuid, child_index)
+---
+WITH RECURSIVE ancestry AS (
+    SELECT b.conversation_id, n.uuid, n.parent_uuid
+    FROM agent_branch b
+    JOIN agent_node n ON n.uuid = b.tip_uuid
+    WHERE b.conversation_id != '' AND n.conversation_id = ''
+    UNION
+    SELECT a.conversation_id, n.uuid, n.parent_uuid
+    FROM agent_node n
+    JOIN ancestry a ON n.uuid = a.parent_uuid
+    WHERE n.conversation_id = ''
+)
+UPDATE agent_node n
+SET conversation_id = owner.conversation_id
+FROM (
+    SELECT uuid, min(conversation_id) AS conversation_id
+    FROM ancestry
+    GROUP BY uuid
+    HAVING count(DISTINCT conversation_id) = 1
+) owner
+WHERE n.uuid = owner.uuid
+  AND n.conversation_id = ''
+---
+WITH RECURSIVE descendants AS (
+    SELECT c.uuid, p.conversation_id
+    FROM agent_node c
+    JOIN agent_node p ON c.parent_uuid = p.uuid
+    WHERE c.conversation_id = '' AND p.conversation_id != ''
+    UNION
+    SELECT n.uuid, d.conversation_id
+    FROM agent_node n
+    JOIN descendants d ON n.parent_uuid = d.uuid
+    WHERE n.conversation_id = ''
+)
+UPDATE agent_node n
+SET conversation_id = d.conversation_id
+FROM descendants d
+WHERE n.uuid = d.uuid
+  AND n.conversation_id = ''

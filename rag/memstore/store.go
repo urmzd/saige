@@ -3,6 +3,7 @@ package memstore
 
 import (
 	"context"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -13,8 +14,13 @@ import (
 )
 
 var (
-	_ types.Store            = (*Store)(nil)
-	_ types.DocumentReplacer = (*Store)(nil)
+	_ types.Store                = (*Store)(nil)
+	_ types.DocumentReplacer     = (*Store)(nil)
+	_ types.VariantRecordGetter  = (*Store)(nil)
+	_ types.VariantRecordsGetter = (*Store)(nil)
+	_ types.DocumentLister       = (*Store)(nil)
+	_ types.SourceFinder         = (*Store)(nil)
+	_ types.SourceLister         = (*Store)(nil)
 )
 
 // Store is a thread-safe in-memory document store with brute-force cosine similarity search.
@@ -34,9 +40,15 @@ func New() *Store {
 	}
 }
 
+// CreateDocument stores doc. It returns types.ErrDuplicateDocument, and
+// stores nothing, when another document already holds doc's non-empty
+// fingerprint, matching the unique fingerprint index of the PostgreSQL store.
 func (s *Store) CreateDocument(_ context.Context, doc *types.Document) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if owner, ok := s.fingerprints[doc.Fingerprint]; ok && doc.Fingerprint != "" && owner != doc.UUID {
+		return types.ErrDuplicateDocument
+	}
 	s.docs[doc.UUID] = doc
 	if doc.Fingerprint != "" {
 		s.fingerprints[doc.Fingerprint] = doc.UUID
@@ -67,9 +79,15 @@ func (s *Store) FindByFingerprint(_ context.Context, fingerprint string) (*types
 // ReplaceDocument atomically swaps the document identified by oldUUID for doc
 // under a single lock, implementing types.DocumentReplacer: readers never
 // observe a state where the old document is gone but the new one is absent.
+//
+// It returns types.ErrDuplicateDocument, leaving both documents untouched,
+// when doc's fingerprint belongs to a third document.
 func (s *Store) ReplaceDocument(_ context.Context, oldUUID string, doc *types.Document) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if owner, ok := s.fingerprints[doc.Fingerprint]; ok && doc.Fingerprint != "" && owner != oldUUID && owner != doc.UUID {
+		return types.ErrDuplicateDocument
+	}
 	if old, ok := s.docs[oldUUID]; ok {
 		delete(s.fingerprints, old.Fingerprint)
 		delete(s.docs, oldUUID)
@@ -185,6 +203,152 @@ func (s *Store) GetVariant(_ context.Context, variantUUID string) (*types.Conten
 	return nil, nil, types.ErrVariantNotFound
 }
 
+// GetVariantRecord returns the variant with its provenance and the owning
+// document's metadata and timestamp, implementing types.VariantRecordGetter.
+func (s *Store) GetVariantRecord(_ context.Context, variantUUID string) (*types.VariantRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, doc := range s.docs {
+		for _, sec := range doc.Sections {
+			for _, v := range sec.Variants {
+				if v.UUID != variantUUID {
+					continue
+				}
+				return &types.VariantRecord{
+					Variant: v,
+					Provenance: types.Provenance{
+						DocumentUUID:   doc.UUID,
+						DocumentTitle:  doc.Title,
+						SourceURI:      doc.SourceURI,
+						SectionUUID:    sec.UUID,
+						SectionHeading: sec.Heading,
+						SectionIndex:   sec.Index,
+					},
+					DocumentMetadata: maps.Clone(doc.Metadata),
+					Timestamp:        doc.EffectiveTime(),
+					Scope:            doc.Scope,
+				}, nil
+			}
+		}
+	}
+	return nil, types.ErrVariantNotFound
+}
+
+// GetVariantRecords returns the records for many variants in one pass over
+// the store, implementing types.VariantRecordsGetter. UUIDs with no stored
+// variant are absent from the result.
+func (s *Store) GetVariantRecords(_ context.Context, variantUUIDs []string) (map[string]*types.VariantRecord, error) {
+	want := make(map[string]bool, len(variantUUIDs))
+	for _, u := range variantUUIDs {
+		want[u] = true
+	}
+	out := make(map[string]*types.VariantRecord, len(variantUUIDs))
+	if len(want) == 0 {
+		return out, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, doc := range s.docs {
+		for _, sec := range doc.Sections {
+			for _, v := range sec.Variants {
+				if !want[v.UUID] {
+					continue
+				}
+				out[v.UUID] = &types.VariantRecord{
+					Variant: v,
+					Provenance: types.Provenance{
+						DocumentUUID:   doc.UUID,
+						DocumentTitle:  doc.Title,
+						SourceURI:      doc.SourceURI,
+						SectionUUID:    sec.UUID,
+						SectionHeading: sec.Heading,
+						SectionIndex:   sec.Index,
+					},
+					DocumentMetadata: maps.Clone(doc.Metadata),
+					Timestamp:        doc.EffectiveTime(),
+					Scope:            doc.Scope,
+				}
+				if len(out) == len(want) {
+					return out, nil
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// ListDocumentUUIDs returns the UUID of every stored document in a stable
+// order, implementing types.DocumentLister.
+func (s *Store) ListDocumentUUIDs(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	uuids := make([]string, 0, len(s.docs))
+	for uuid := range s.docs {
+		uuids = append(uuids, uuid)
+	}
+	sort.Strings(uuids)
+	return uuids, nil
+}
+
+// FindBySourceURI returns the documents of scope with the given source URI,
+// most recently updated first, implementing types.SourceFinder.
+func (s *Store) FindBySourceURI(_ context.Context, scope, sourceURI string) ([]types.SourceDocument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []types.SourceDocument{}
+	for _, doc := range s.docs {
+		if doc.Scope == scope && doc.SourceURI == sourceURI {
+			out = append(out, sourceDocument(doc))
+		}
+	}
+	sortSourceDocuments(out)
+	return out, nil
+}
+
+// ListSourceDocuments returns the documents of scope whose source URI starts
+// with uriPrefix, implementing types.SourceLister.
+func (s *Store) ListSourceDocuments(_ context.Context, scope, uriPrefix string) ([]types.SourceDocument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []types.SourceDocument{}
+	for _, doc := range s.docs {
+		if doc.Scope == scope && strings.HasPrefix(doc.SourceURI, uriPrefix) {
+			out = append(out, sourceDocument(doc))
+		}
+	}
+	sortSourceDocuments(out)
+	return out, nil
+}
+
+func sourceDocument(doc *types.Document) types.SourceDocument {
+	return types.SourceDocument{
+		UUID:             doc.UUID,
+		Scope:            doc.Scope,
+		SourceURI:        doc.SourceURI,
+		Fingerprint:      doc.Fingerprint,
+		SourceModifiedAt: doc.SourceModifiedAt,
+		UpdatedAt:        docTimestamp(doc),
+	}
+}
+
+// sortSourceDocuments orders by source URI, then most recently updated
+// first, then UUID for a stable order.
+func sortSourceDocuments(docs []types.SourceDocument) {
+	sort.Slice(docs, func(i, j int) bool {
+		a, b := docs[i], docs[j]
+		if a.SourceURI != b.SourceURI {
+			return a.SourceURI < b.SourceURI
+		}
+		if !a.UpdatedAt.Equal(b.UpdatedAt) {
+			return a.UpdatedAt.After(b.UpdatedAt)
+		}
+		return a.UUID < b.UUID
+	})
+}
+
+// SearchByEmbedding scores every embedded variant by cosine similarity.
+// Scope, time range, content-type, metadata, and min-score conditions are
+// applied before the result is cut to the limit.
 func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *types.SearchOptions) ([]types.SearchHit, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -192,6 +356,9 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 	limit := 10
 	if opts != nil && opts.Limit > 0 {
 		limit = opts.Limit
+	}
+	if opts == nil {
+		opts = &types.SearchOptions{}
 	}
 
 	typeFilter := make(map[types.ContentType]bool)
@@ -203,6 +370,9 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 
 	var results []types.SearchHit
 	for _, doc := range s.docs {
+		if doc.Scope != opts.Scope || !opts.InTimeRange(doc.EffectiveTime()) {
+			continue
+		}
 		for _, sec := range doc.Sections {
 			for _, v := range sec.Variants {
 				if len(typeFilter) > 0 && !typeFilter[v.ContentType] {
@@ -230,7 +400,7 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 				results = append(results, types.SearchHit{
 					Variant:   v,
 					Score:     score,
-					Timestamp: docTimestamp(doc),
+					Timestamp: doc.EffectiveTime(),
 					Provenance: types.Provenance{
 						DocumentUUID:   doc.UUID,
 						DocumentTitle:  doc.Title,

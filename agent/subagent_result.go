@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type SubAgentResult struct {
 	Trace       json.RawMessage `json:"trace"`
 	Output      string          `json:"output"`
 	Error       string          `json:"error,omitempty"`
+	// StopToolCallID is set when a StopAtTools tool ended the child run. Its
+	// result, not an assistant turn, is then the child's answer.
+	StopToolCallID string `json:"stop_tool_call_id,omitempty"`
 }
 
 // Tree restores an independent tree. Editing it cannot change the child or
@@ -92,6 +96,49 @@ func (r SubAgentResult) FinalAssistant() (types.AssistantMessage, error) {
 	return msg, nil
 }
 
+// StopToolResult returns the result of the tool call that ended the run
+// through StopAtTools.
+func (r SubAgentResult) StopToolResult() (types.ToolResultContent, error) {
+	if r.Error != "" {
+		return types.ToolResultContent{}, errors.New(r.Error)
+	}
+	if r.StopToolCallID == "" {
+		return types.ToolResultContent{}, errors.New("subagent did not stop at a tool")
+	}
+	msgs, err := r.Messages()
+	if err != nil {
+		return types.ToolResultContent{}, err
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		for _, res := range toolResultsOf(msgs[i]) {
+			if res.ToolCallID == r.StopToolCallID {
+				return res, nil
+			}
+		}
+	}
+	return types.ToolResultContent{}, fmt.Errorf("subagent stop tool result %q not found", r.StopToolCallID)
+}
+
+// toolResultsOf returns the tool results a message carries.
+func toolResultsOf(m types.Message) []types.ToolResultContent {
+	var out []types.ToolResultContent
+	switch v := m.(type) {
+	case types.SystemMessage:
+		for _, c := range v.Content {
+			if res, ok := c.(types.ToolResultContent); ok {
+				out = append(out, res)
+			}
+		}
+	case types.UserMessage:
+		for _, c := range v.Content {
+			if res, ok := c.(types.ToolResultContent); ok {
+				out = append(out, res)
+			}
+		}
+	}
+	return out
+}
+
 // SubAgentResultPolicy selects the data returned to the parent as a tool
 // result. It can validate structured JSON, select messages, or return a stored
 // artifact reference. It must not treat child text as trusted instructions.
@@ -105,10 +152,15 @@ type SubAgentResultFunc func(SubAgentResult) (string, error)
 func (f SubAgentResultFunc) Select(r SubAgentResult) (string, error) { return f(r) }
 
 // FinalAssistantText is the default result policy. Intermediate assistant text
-// and nested delegation output are excluded.
+// and nested delegation output are excluded. A child that ended at a
+// StopAtTools tool returns that tool's result text.
 type FinalAssistantText struct{}
 
 func (FinalAssistantText) Select(r SubAgentResult) (string, error) {
+	if r.StopToolCallID != "" {
+		res, err := r.StopToolResult()
+		return res.Text, err
+	}
 	msg, err := r.FinalAssistant()
 	if err != nil {
 		return "", err
@@ -120,6 +172,47 @@ func (FinalAssistantText) Select(r SubAgentResult) (string, error) {
 		}
 	}
 	return text.String(), nil
+}
+
+// SchemaResult returns the child's answer as compact JSON after checking it
+// against Schema. The answer is the final text, or the result of the tool
+// that ended the run, such as final_answer. An answer with no JSON, or JSON
+// that does not match, fails the delegation, so the parent never receives
+// unchecked output as success. It is the default policy for a SubAgentDef
+// with a ResponseSchema.
+type SchemaResult struct {
+	Schema *types.ParameterSchema
+	// Extract pulls the JSON out of the answer. nil uses ExtractJSON.
+	Extract func(string) (string, error)
+}
+
+func (p SchemaResult) Select(r SubAgentResult) (string, error) {
+	text, err := FinalAssistantText{}.Select(r)
+	if err != nil {
+		return "", err
+	}
+	extract := p.Extract
+	if extract == nil {
+		extract = ExtractJSON
+	}
+	raw, err := extract(text)
+	if err != nil {
+		return "", err
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrNoJSON, err)
+	}
+	if p.Schema != nil {
+		if err := types.ValidateJSON(*p.Schema, value); err != nil {
+			return "", err
+		}
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(raw)); err != nil {
+		return "", err
+	}
+	return compact.String(), nil
 }
 
 // SubAgentResultSink retains a completed result for an upstream service. Save
@@ -144,6 +237,7 @@ func (a *Agent) captureSubAgent(ctx context.Context, stream *EventStream, runErr
 	r := capture.result
 	r.CompletedAt = time.Now().UTC()
 	r.Branch = stream.branch
+	r.StopToolCallID = stream.stopToolCallID
 	var trace bytes.Buffer
 	if err := tree.Print(&trace, a.cfg.Tree); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("subagent trace: %w", err))
@@ -195,16 +289,35 @@ func (s *EventStream) SubAgentResult() (SubAgentResult, error) {
 
 // InvokeSubAgent lets a service invoke a configured child without asking the
 // parent model to call a tool. The returned stream supports SubAgentResult.
-// No parent conversation messages are appended by this operation.
+// No parent conversation messages are appended by this operation, and the
+// child starts with the task alone whatever its Context mode, since there is
+// no delegating turn to copy from. It works for delegate and spawn
+// definitions alike; the caller owns the returned stream either way.
 func (a *Agent) InvokeSubAgent(ctx context.Context, name, task string) (*EventStream, error) {
-	tool, ok := a.tools.Get("delegate_to_" + name)
-	if !ok {
-		return nil, fmt.Errorf("unknown subagent %q", name)
-	}
-	child, ok := tool.(*subAgentTool)
-	if !ok {
-		return nil, fmt.Errorf("tool for %q is not a registered subagent", name)
+	child, err := a.subAgentTool(name)
+	if err != nil {
+		return nil, err
 	}
 	id := types.NewID()
-	return child.invokeWithRunner(ctx, task, a.childStepRunner(id), id), nil
+	frame := callFrame{agents: append(slices.Clone(frameFrom(ctx).agents), a.cfg.Name), callIDs: []string{id}}
+	return child.start(ctx, childRun{task: task, runner: a.childStepRunner(id), id: id, frame: frame})
+}
+
+// subAgentTool finds the registered tool for the sub-agent name, in either
+// mode.
+func (a *Agent) subAgentTool(name string) (*subAgentTool, error) {
+	for _, prefix := range []string{"delegate_to_", "spawn_"} {
+		tool, ok := a.tools.Get(prefix + name)
+		if !ok {
+			continue
+		}
+		switch t := tool.(type) {
+		case *subAgentTool:
+			return t, nil
+		case *spawnTool:
+			return t.subAgentTool, nil
+		}
+		return nil, fmt.Errorf("tool for %q is not a registered subagent", name)
+	}
+	return nil, fmt.Errorf("unknown subagent %q", name)
 }

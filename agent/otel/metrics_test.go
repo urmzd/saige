@@ -3,18 +3,32 @@ package otel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // recordEvent captures one Record call on a spy histogram.
 type recordEvent struct {
 	instrument string
 	operation  string // gen_ai.operation.name attribute, if present
+	tokenType  string // gen_ai.token.type attribute, if present
+	errorType  string // error.type attribute, if present
+	value      float64
+}
+
+func newRecordEvent(instrument string, value float64, opts []metric.RecordOption) recordEvent {
+	attrs := metric.NewRecordConfig(opts).Attributes()
+	op, _ := attrs.Value(attribute.Key("gen_ai.operation.name"))
+	tt, _ := attrs.Value(attribute.Key("gen_ai.token.type"))
+	et, _ := attrs.Value(attribute.Key("error.type"))
+	return recordEvent{instrument: instrument, operation: op.AsString(), tokenType: tt.AsString(), errorType: et.AsString(), value: value}
 }
 
 // spyHistogram records the operation.name attribute for each Record call onto a
@@ -25,10 +39,8 @@ type spyHistogram struct {
 	log        *[]recordEvent
 }
 
-func (h spyHistogram) Record(_ context.Context, _ float64, opts ...metric.RecordOption) {
-	attrs := metric.NewRecordConfig(opts).Attributes()
-	op, _ := attrs.Value(attribute.Key("gen_ai.operation.name"))
-	*h.log = append(*h.log, recordEvent{instrument: h.instrument, operation: op.AsString()})
+func (h spyHistogram) Record(_ context.Context, v float64, opts ...metric.RecordOption) {
+	*h.log = append(*h.log, newRecordEvent(h.instrument, v, opts))
 }
 
 type spyInt64Histogram struct {
@@ -37,10 +49,8 @@ type spyInt64Histogram struct {
 	log        *[]recordEvent
 }
 
-func (h spyInt64Histogram) Record(_ context.Context, _ int64, opts ...metric.RecordOption) {
-	attrs := metric.NewRecordConfig(opts).Attributes()
-	op, _ := attrs.Value(attribute.Key("gen_ai.operation.name"))
-	*h.log = append(*h.log, recordEvent{instrument: h.instrument, operation: op.AsString()})
+func (h spyInt64Histogram) Record(_ context.Context, v int64, opts ...metric.RecordOption) {
+	*h.log = append(*h.log, newRecordEvent(h.instrument, float64(v), opts))
 }
 
 // spyMeter tracks every instrument name requested and hands back spy
@@ -134,5 +144,49 @@ func TestMetrics_RecordTokenUsage(t *testing.T) {
 	}
 	if tokenRecords != 2 {
 		t.Errorf("token.usage Record calls = %d, want 2 (input + output)", tokenRecords)
+	}
+}
+
+func TestMetrics_OptionalRecorders(t *testing.T) {
+	tests := []struct {
+		name   string
+		record func(m *Metrics)
+		want   []recordEvent
+	}{
+		{
+			name:   "agent outcome success has no error type",
+			record: func(m *Metrics) { m.RecordAgentOutcome(context.Background(), "a", time.Second, nil) },
+			want:   []recordEvent{{instrument: "gen_ai.client.operation.duration", operation: "invoke_agent", value: 1}},
+		},
+		{
+			name: "agent outcome failure carries error type",
+			record: func(m *Metrics) {
+				m.RecordAgentOutcome(context.Background(), "a", time.Second, &types.ProviderError{Kind: types.ErrorKindRateLimit, Err: errors.New("x")})
+			},
+			want: []recordEvent{{instrument: "gen_ai.client.operation.duration", operation: "invoke_agent", errorType: "rate_limit", value: 1}},
+		},
+		{
+			name:   "cache tokens skip zero counts",
+			record: func(m *Metrics) { m.RecordCacheTokenUsage(context.Background(), "chat", "p", 50, 0) },
+			want:   []recordEvent{{instrument: "gen_ai.client.token.usage", operation: "chat", tokenType: "cache_read", value: 50}},
+		},
+		{
+			name:   "time to first chunk",
+			record: func(m *Metrics) { m.RecordTimeToFirstChunk(context.Background(), "chat", "p", 250*time.Millisecond) },
+			want:   []recordEvent{{instrument: "gen_ai.client.operation.time_to_first_chunk", operation: "chat", value: 0.25}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var log []recordEvent
+			m, err := NewMetrics(spyMeter{created: new([]string), log: &log})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.record(m)
+			if fmt.Sprint(log) != fmt.Sprint(tt.want) {
+				t.Errorf("records = %+v, want %+v", log, tt.want)
+			}
+		})
 	}
 }

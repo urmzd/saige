@@ -76,7 +76,7 @@ type Config struct {
 
 // Tool wraps a tool with policy-driven caching. It implements types.RichTool so
 // rich results survive the cache, and forwards types.Cacheable so the policy
-// stays visible through the decorator.
+// stays visible through the decorator. Unwrap returns the wrapped tool.
 type Tool struct {
 	inner  types.Tool
 	policy types.CachePolicy
@@ -105,11 +105,9 @@ var (
 // New wraps a tool with caching. It returns the tool unchanged when the
 // resolved policy is disabled, so wiring code can wrap unconditionally.
 func New(inner types.Tool, cfg Config) (types.Tool, error) {
-	// A cache wrapped OUTSIDE markers hides them: the agent loop finds markers
-	// with a *types.MarkedTool type assertion, and a decorator in front of one
-	// makes that assertion fail, so the human-approval prompt is silently
-	// skipped. The composition that works is markers outside, cache inside;
-	// WrapAll does that rewrap automatically.
+	// Markers belong outside the cache, so the marked tool is the outermost
+	// layer that MCP servers, gates and other hosts inspect. WrapAll does
+	// that rewrap automatically.
 	if _, ok := inner.(*types.MarkedTool); ok {
 		return nil, fmt.Errorf("toolcache: tool %q is marked for human approval; wrap the cache INSIDE the markers (types.WithMarkers(cached, markers...)), not around them, or the approval prompt is skipped", inner.Definition().Name)
 	}
@@ -178,6 +176,10 @@ func New(inner types.Tool, cfg Config) (types.Tool, error) {
 	}, nil
 }
 
+// Unwrap returns the wrapped tool, so an optional interface behind the cache
+// can still be found by walking the decorator chain.
+func (t *Tool) Unwrap() types.Tool { return t.inner }
+
 // Definition delegates to the wrapped tool: caching is invisible to the model.
 func (t *Tool) Definition() types.ToolDef { return t.inner.Definition() }
 
@@ -209,7 +211,11 @@ func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.Tool
 	}
 	now := t.cfg.Now()
 
-	if entry, found, err := t.cfg.Cache.Get(ctx, key); err == nil && found {
+	entry, found, getErr := t.cfg.Cache.Get(ctx, key)
+	if getErr != nil {
+		t.logGetError(getErr)
+	}
+	if getErr == nil && found {
 		if entry.Fresh(now) {
 			t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_hit", 0, nil)
 			return t.replay(entry)
@@ -231,6 +237,16 @@ func (t *Tool) ExecuteRich(ctx context.Context, args map[string]any) (types.Tool
 
 	t.cfg.Metrics.RecordToolCall(ctx, t.Definition().Name+".cache_miss", 0, nil)
 	return t.refresh(ctx, key, args)
+}
+
+// logGetError reports a cache read failure. A broken cache otherwise shows up
+// only as a lower hit rate, which nobody investigates.
+func (t *Tool) logGetError(err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	t.cfg.Logger.Warn("toolcache: cache read failed", "tool", t.Definition().Name, "error", err)
+	t.cfg.Metrics.RecordToolCall(context.Background(), t.Definition().Name+".cache_error", 0, err)
 }
 
 // replay returns a cached entry, restoring a cached error as an error result.
@@ -266,14 +282,26 @@ func (t *Tool) refresh(ctx context.Context, key string, args map[string]any) (ty
 				return types.ToolResult{}, ctx.Err()
 			}
 		}
-		// A previous leader may have committed after this caller's first Get.
-		if entry, found, err := t.cfg.Cache.Get(ctx, key); err == nil && found && entry.Fresh(t.cfg.Now()) {
-			t.mu.Unlock()
-			return t.replay(entry)
-		}
+		// Become the leader before touching the cache, so the re-check below
+		// runs without t.mu held. A slow or remote cache would otherwise
+		// serialize every miss on this tool, across all keys, behind one Get.
 		c := &call{done: make(chan struct{})}
 		t.inflight[key] = c
 		t.mu.Unlock()
+
+		// A previous leader may have committed after this caller's first Get.
+		entry, found, getErr := t.cfg.Cache.Get(ctx, key)
+		if getErr != nil {
+			t.logGetError(getErr)
+		}
+		if getErr == nil && found && entry.Fresh(t.cfg.Now()) {
+			c.res, c.err = t.replay(entry)
+			t.mu.Lock()
+			delete(t.inflight, key)
+			t.mu.Unlock()
+			close(c.done)
+			return detachedResult(c.res, c.err)
+		}
 
 		c.res, c.err = t.execute(ctx, args)
 		if detached, cloneErr := cloneResult(c.res); cloneErr != nil {

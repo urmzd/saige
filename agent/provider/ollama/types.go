@@ -77,6 +77,13 @@ type ChatChunk struct {
 	TotalDuration      int64       `json:"total_duration,omitempty"`
 	PromptEvalDuration int64       `json:"prompt_eval_duration,omitempty"`
 	EvalDuration       int64       `json:"eval_duration,omitempty"`
+
+	// Error is set when the server reports a failure mid-stream, for example
+	// when the model runner crashes. It ends the stream.
+	Error string `json:"error,omitempty"`
+	// Err is set by the client, never by the server: it ends a stream that
+	// failed to read, held a malformed line, or went idle.
+	Err error `json:"-"`
 }
 
 type GenerateRequest struct {
@@ -92,6 +99,10 @@ type GenerateResponse struct {
 	Response string `json:"response"`
 	Thinking string `json:"thinking,omitempty"`
 	Done     bool   `json:"done"`
+	// DoneReason is "length" when num_predict cut the response short.
+	DoneReason string `json:"done_reason,omitempty"`
+	EvalCount  int    `json:"eval_count,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type EmbedRequest struct {

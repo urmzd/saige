@@ -121,6 +121,30 @@ const (
 	StructuredOutputToolCall StructuredOutputMode = "tool_call"
 )
 
+// ChatCompletionsTools says when OpenAI's Chat Completions API accepts tool
+// definitions for a model. Some reasoning models accept tools there only with
+// reasoning effort "none", and some only through the Responses API.
+type ChatCompletionsTools string
+
+const (
+	// ChatToolsAny: tools are accepted with any reasoning setting.
+	ChatToolsAny ChatCompletionsTools = ""
+	// ChatToolsNoReasoning: tools are accepted only with reasoning effort
+	// "none".
+	ChatToolsNoReasoning ChatCompletionsTools = "no_reasoning"
+	// ChatToolsResponsesOnly: tools need the Responses API.
+	ChatToolsResponsesOnly ChatCompletionsTools = "responses_only"
+)
+
+// stricterChatTools returns the more restrictive of two rules.
+func stricterChatTools(a, b ChatCompletionsTools) ChatCompletionsTools {
+	rank := map[ChatCompletionsTools]int{ChatToolsAny: 0, ChatToolsNoReasoning: 1, ChatToolsResponsesOnly: 2}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
+}
+
 // ModelCapabilities is the declared capability surface of one (provider, model)
 // pair: the flags it accepts, the features it supports, and its hard limits.
 //
@@ -171,6 +195,13 @@ type ModelCapabilities struct {
 	ZeroReasoningBudget    bool
 	// These knobs are supported conditionally, only with reasoning disabled.
 	SamplingRequiresNoReasoning []Capability
+	// RejectsForcedToolChoice means the API refuses a required or named tool
+	// choice for this model, whatever the other settings. Auto and none stay
+	// valid. Schema output that forces a hidden tool is refused with it.
+	RejectsForcedToolChoice bool
+	// ChatCompletionsTools restricts tool calling on OpenAI's Chat
+	// Completions surface. The Responses API is not affected.
+	ChatCompletionsTools ChatCompletionsTools
 
 	// StructuredOutput records how schema constraint is achieved.
 	StructuredOutput StructuredOutputMode
@@ -242,11 +273,16 @@ func (mc ModelCapabilities) With(caps ...Capability) ModelCapabilities {
 	return out
 }
 
-// Without returns a copy with the given capabilities removed.
+// Without returns a copy with the given capabilities removed. Removing
+// CapStructuredOutput also clears the StructuredOutput mode, so the flag and
+// the mode never disagree.
 func (mc ModelCapabilities) Without(caps ...Capability) ModelCapabilities {
 	out := mc.clone()
 	for _, c := range caps {
 		delete(out.Caps, c)
+		if c == CapStructuredOutput {
+			out.StructuredOutput = StructuredOutputNone
+		}
 	}
 	return out
 }
@@ -303,10 +339,12 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 		ReasoningDefaultEnabled: mc.ReasoningDefaultEnabled || other.ReasoningDefaultEnabled ||
 			(mc.DefaultReasoningEffort != "" && mc.DefaultReasoningEffort != reasoningEffortNone) ||
 			(other.DefaultReasoningEffort != "" && other.DefaultReasoningEffort != reasoningEffortNone),
-		DynamicReasoningBudget: mc.DynamicReasoningBudget && other.DynamicReasoningBudget,
-		ZeroReasoningBudget:    mc.ZeroReasoningBudget && other.ZeroReasoningBudget,
-		Known:                  mc.Known && other.Known,
-		Media:                  ContentSupport{NativeTypes: map[MediaType]bool{}},
+		DynamicReasoningBudget:  mc.DynamicReasoningBudget && other.DynamicReasoningBudget,
+		ZeroReasoningBudget:     mc.ZeroReasoningBudget && other.ZeroReasoningBudget,
+		RejectsForcedToolChoice: mc.RejectsForcedToolChoice || other.RejectsForcedToolChoice,
+		ChatCompletionsTools:    stricterChatTools(mc.ChatCompletionsTools, other.ChatCompletionsTools),
+		Known:                   mc.Known && other.Known,
+		Media:                   ContentSupport{NativeTypes: map[MediaType]bool{}},
 	}
 	if mc.DefaultReasoningEffort == other.DefaultReasoningEffort {
 		out.DefaultReasoningEffort = mc.DefaultReasoningEffort

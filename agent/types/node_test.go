@@ -70,9 +70,9 @@ func TestTreePathIsAncestorOf(t *testing.T) {
 	}{
 		{TreePath{0}, TreePath{0, 1}, true},
 		{TreePath{0, 1}, TreePath{0, 1, 2}, true},
-		{TreePath{0, 1}, TreePath{0, 1}, false},      // not strict prefix
-		{TreePath{0, 1, 2}, TreePath{0, 1}, false},    // longer
-		{TreePath{1}, TreePath{0, 1}, false},           // different path
+		{TreePath{0, 1}, TreePath{0, 1}, false},    // not strict prefix
+		{TreePath{0, 1, 2}, TreePath{0, 1}, false}, // longer
+		{TreePath{1}, TreePath{0, 1}, false},       // different path
 	}
 	for _, tt := range tests {
 		if got := tt.a.IsAncestorOf(tt.b); got != tt.want {
@@ -93,12 +93,12 @@ func TestNodeStates(t *testing.T) {
 func TestNodeFields(t *testing.T) {
 	now := time.Now()
 	n := Node{
-		ID:       "test-id",
-		ParentID: "parent-id",
-		State:    NodeActive,
-		Version:  1,
-		Depth:    3,
-		BranchID: "main",
+		ID:        "test-id",
+		ParentID:  "parent-id",
+		State:     NodeActive,
+		Version:   1,
+		Depth:     3,
+		BranchID:  "main",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

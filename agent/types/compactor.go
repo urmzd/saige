@@ -19,6 +19,9 @@ const (
 	CompactNone          CompactStrategy = "none"
 	CompactSlidingWindow CompactStrategy = "sliding_window"
 	CompactSummarize     CompactStrategy = "summarize"
+	// CompactClearToolResults replaces older tool results with a short stub.
+	// It needs no model call.
+	CompactClearToolResults CompactStrategy = "clear_tool_results"
 )
 
 // CompactConfig is a serialisable description of a compaction strategy.
@@ -27,6 +30,22 @@ type CompactConfig struct {
 	WindowSize int // for sliding_window
 	Threshold  int // for summarize: message count excluding a previous summary pair
 	KeepLast   int // recent messages to preserve during summarize (default 4)
+
+	// MaxInputTokens switches the trigger from message count to input-token
+	// pressure. When set, the loop compacts before a turn whose input would
+	// exceed it, measured as the larger of the previous turn's reported
+	// prompt tokens and a local estimate of the current history. Summarize
+	// (and an empty strategy) then summarize the older half of the branch,
+	// with the boundary moved to keep tool calls with their results, instead
+	// of applying Threshold and KeepLast. None never makes a summary call.
+	// 0 keeps the message-count trigger.
+	MaxInputTokens int
+
+	// KeepToolResults is how many of the most recent tool results
+	// clear_tool_results leaves intact (default 3).
+	KeepToolResults int
+	// ExcludeTools names tools whose results clear_tool_results never clears.
+	ExcludeTools []string
 }
 
 // ToCompactor converts the config into a Compactor implementation.
@@ -36,6 +55,8 @@ func (cc CompactConfig) ToCompactor() Compactor {
 		return NewSlidingWindowCompactor(cc.WindowSize)
 	case CompactSummarize:
 		return NewSummarizeCompactor(cc.Threshold, cc.KeepLast)
+	case CompactClearToolResults:
+		return NewClearToolResultsCompactor(cc.KeepToolResults, cc.ExcludeTools...)
 	default:
 		return NoopCompactor{}
 	}

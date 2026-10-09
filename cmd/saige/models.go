@@ -27,6 +27,10 @@ func newModelsCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cf := persistentFlagVars
+			// Install the merged catalog layers, so user rows show up.
+			if _, err := cf.catalog(); err != nil {
+				return err
+			}
 			if len(args) == 1 {
 				return describeModel(cf.resolvedProvider(), args[0], cf.isJSON())
 			}

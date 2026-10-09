@@ -1,19 +1,31 @@
 package openai
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
+
+// providerName identifies this adapter in errors, the catalog and metrics.
+const providerName = "openai"
+
+// defaultPDFName is the filename sent with an inline PDF that has none;
+// OpenAI requires one alongside inline file data.
+const defaultPDFName = "document.pdf"
 
 // Compile-time interface checks.
 var (
@@ -23,14 +35,31 @@ var (
 	_ types.ModelSwitcher            = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 	_ types.ContentNegotiator        = (*Adapter)(nil)
+	_ types.OptionsReporter          = (*Adapter)(nil)
 )
 
 // Option configures the OpenAI adapter.
 type Option func(*config)
 
 type config struct {
-	baseURL string
-	params  genParams
+	baseURL     string
+	maxRetries  *int
+	requestOpts []option.RequestOption
+	params      genParams
+}
+
+// clientOptions builds the SDK options shared by the chat adapter and the
+// embedder. defaultRetries applies when WithMaxRetries was not given; a nil
+// default keeps the SDK's own retry count.
+func (c *config) clientOptions(apiKey string, defaultRetries *int) []option.RequestOption {
+	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if c.baseURL != "" {
+		opts = append(opts, option.WithBaseURL(c.baseURL))
+	}
+	if n := cmp.Or(c.maxRetries, defaultRetries); n != nil {
+		opts = append(opts, option.WithMaxRetries(*n))
+	}
+	return append(opts, c.requestOpts...)
 }
 
 // genParams holds the generation knobs. Every field is a pointer or a slice so
@@ -48,6 +77,7 @@ type genParams struct {
 	stop             []string
 	reasoningEffort  *string
 	parallelTools    *bool
+	toolChoice       *types.ToolChoice
 }
 
 // WithBaseURL overrides the default OpenAI API base URL. This is also how an
@@ -57,6 +87,27 @@ type genParams struct {
 // capabilities resolve to the conservative baseline.
 func WithBaseURL(url string) Option {
 	return func(c *config) { c.baseURL = url }
+}
+
+// WithMaxRetries sets how many times the SDK itself retries a failed request.
+//
+// For the chat adapter the default is 0: retries belong to retry.Provider,
+// which counts every attempt, honors Retry-After, and reports RetryError. SDK
+// retries run inside one call, hidden from that accounting, and stack under an
+// outer retry decorator. Set a positive value only for a bare adapter with no
+// retry decorator.
+//
+// The embedder keeps the SDK default, since no retry decorator wraps
+// embedders. Pass 0 to disable it when the caller retries embeddings itself.
+func WithMaxRetries(n int) Option {
+	return func(c *config) { n = max(n, 0); c.maxRetries = &n }
+}
+
+// WithRequestOptions appends SDK request options to every call, for settings
+// this package does not wrap (custom headers, an HTTP client, middleware).
+// They apply after the adapter's own options, so they can override them.
+func WithRequestOptions(opts ...option.RequestOption) Option {
+	return func(c *config) { c.requestOpts = append(c.requestOpts, opts...) }
 }
 
 // WithMaxTokens caps generated tokens. It is sent as max_completion_tokens,
@@ -126,12 +177,8 @@ func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	for _, o := range opts {
 		o(cfg)
 	}
-	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
-	if cfg.baseURL != "" {
-		clientOpts = append(clientOpts, option.WithBaseURL(cfg.baseURL))
-	}
 	return &Adapter{
-		client: openai.NewClient(clientOpts...),
+		client: openai.NewClient(cfg.clientOptions(apiKey, new(int))...),
 		model:  openai.ChatModel(model),
 		params: cfg.params,
 	}
@@ -171,16 +218,23 @@ func (a *Adapter) applyParams(p *openai.ChatCompletionNewParams) {
 // Validate checks configured controls against the currently selected model.
 // WithModel preserves options, so switching models revalidates on every call.
 func (a *Adapter) Validate() error {
-	return a.Capabilities().ValidateOptions(types.RequestOptions{
+	return a.Capabilities().ValidateOptions(a.EffectiveOptions())
+}
+
+// EffectiveOptions implements types.OptionsReporter: the configured controls
+// as request options.
+func (a *Adapter) EffectiveOptions() types.RequestOptions {
+	return types.RequestOptions{
 		Temperature: a.params.temperature, TopP: a.params.topP, Seed: a.params.seed,
 		MaxOutputTokens: a.params.maxTokens, StopSequences: a.params.stop,
 		FrequencyPenalty: a.params.frequencyPenalty, PresencePenalty: a.params.presencePenalty,
 		ReasoningEffort: a.params.reasoningEffort, ParallelTools: a.params.parallelTools,
-	})
+		ToolChoice: a.params.toolChoice,
+	}.Clone()
 }
 
 // Name implements types.NamedProvider.
-func (a *Adapter) Name() string { return "openai" }
+func (a *Adapter) Name() string { return providerName }
 
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
@@ -197,7 +251,7 @@ func (a *Adapter) WithModel(model string) types.Provider {
 // response text. It is the simple generation seam used by eval judges, HyDE,
 // context compression, and KG extraction.
 func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
-	return types.GenerateText(ctx, a, prompt)
+	return generate.Text(ctx, a, prompt)
 }
 
 // ChatStream implements types.Provider.
@@ -227,7 +281,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 // model against the shared catalog so callers can check whether a flag (e.g.
 // reasoning) is supported before building a request that would be rejected.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
-	return catalog.MustLookup("openai", string(a.model))
+	return catalog.MustLookup(providerName, string(a.model))
 }
 
 // ContentSupport implements types.ContentNegotiator.
@@ -250,6 +304,13 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 	if err := a.Capabilities().ValidateRequest(tools, rf != nil); err != nil {
 		return nil, err
 	}
+	if err := a.checkToolChoice(tools); err != nil {
+		return nil, err
+	}
+	toolsEffortNone, err := a.checkChatTools(tools)
+	if err != nil {
+		return nil, err
+	}
 
 	params := openai.ChatCompletionNewParams{
 		Model:    a.model,
@@ -267,28 +328,107 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 	oTools := toOpenAITools(tools)
 	if len(oTools) > 0 {
 		params.Tools = oTools
+		a.applyToolChoice(&params)
+		if toolsEffortNone {
+			params.ReasoningEffort = shared.ReasoningEffort("none")
+		}
 	}
 	if rf != nil {
 		params.ResponseFormat = *rf
 	}
 
 	stream := a.client.Chat.Completions.NewStreaming(ctx, params)
+	return a.consumeStream(stream, rf != nil), nil
+}
 
+// toolCallState tracks one streamed tool call by its choice index.
+type toolCallState struct {
+	id, name string
+	args     strings.Builder
+	pending  []string // argument fragments that arrived before the call ID
+	started  bool
+	ended    bool
+}
+
+// consumeStream translates the chunk stream into deltas.
+//
+// Tool calls are tracked by index. A call closes when a later call starts,
+// when the choice finishes, or when the stream ends. Its arguments are decoded
+// at close. A call whose JSON does not decode and that the model finished
+// writing (a later call started, or the choice finished for a reason other
+// than "length") closes with ToolCallEndDelta.ArgumentsError set and nil
+// Arguments, so the loop refuses it and the model can correct it. The last
+// call of a response stopped at "length", or of a stream that ended without a
+// finish reason, is never closed: the failure is reported after the stream
+// ends as a truncation or an incomplete stream. A structured-output response
+// that stopped at "length" is also a truncation, since its JSON is incomplete.
+//
+//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
+func (a *Adapter) consumeStream(stream interface {
+	Next() bool
+	Current() openai.ChatCompletionChunk
+	Err() error
+}, structured bool) <-chan types.Delta {
+	model := string(a.model)
+	maxTokens := 0
+	if a.params.maxTokens != nil {
+		maxTokens = int(*a.params.maxTokens)
+	}
 	out := make(chan types.Delta, 64)
 	go func() {
 		defer close(out)
 
-		acc := openai.ChatCompletionAccumulator{}
 		textStarted := false
-		startedToolCalls := make(map[int64]bool)
+		emitted := false
+		emit := func(d types.Delta) {
+			if _, usage := d.(types.UsageDelta); !usage {
+				emitted = true
+			}
+			out <- d
+		}
+		endText := func() {
+			if textStarted {
+				emit(types.TextEndDelta{})
+				textStarted = false
+			}
+		}
+
+		calls := map[int64]*toolCallState{}
+		var order []int64
+		var argsFailure streamcheck.ArgsFailure
+		// finishReason is read by closeCall, so it is declared before it.
+		var finishReason string
+		// closeCall closes c. complete reports that the model finished
+		// writing c: a later call started, or the choice finished for a
+		// reason other than the output limit.
+		closeCall := func(c *toolCallState, complete bool) {
+			if c.ended || !c.started {
+				return
+			}
+			c.ended = true
+			args, err := streamcheck.DecodeArguments(c.args.String())
+			switch {
+			case err == nil:
+				emit(types.ToolCallEndDelta{ID: c.id, Arguments: args})
+			case complete:
+				emit(types.ToolCallEndDelta{ID: c.id, ArgumentsError: err.Error()})
+			default:
+				argsFailure.Set(c.id, c.name, err)
+			}
+		}
+		closeAll := func() {
+			complete := finishReason != "" && !types.IsTruncationFinishReason(finishReason) && !types.IsContentFilterFinishReason(finishReason)
+			for _, idx := range order {
+				closeCall(calls[idx], complete)
+			}
+		}
 
 		var responseID string
 		var responseModel string
-		var finishReason string
+		var outputTokens int
 
 		for stream.Next() {
 			chunk := stream.Current()
-			acc.AddChunk(chunk)
 
 			if chunk.ID != "" {
 				responseID = chunk.ID
@@ -297,7 +437,70 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 				responseModel = chunk.Model
 			}
 
+			if len(chunk.Choices) > 0 {
+				choice := chunk.Choices[0]
+				delta := choice.Delta
+
+				if delta.Content != "" {
+					// Text after a call means the model finished writing it.
+					for _, idx := range order {
+						closeCall(calls[idx], true)
+					}
+					if !textStarted {
+						emit(types.TextStartDelta{})
+						textStarted = true
+					}
+					emit(types.TextContentDelta{Content: delta.Content})
+				}
+
+				for _, tc := range delta.ToolCalls {
+					c := calls[tc.Index]
+					if c == nil {
+						c = &toolCallState{}
+						calls[tc.Index] = c
+						order = append(order, tc.Index)
+					}
+					if c.ended {
+						continue
+					}
+					c.name += tc.Function.Name
+					if tc.Function.Arguments != "" {
+						c.args.WriteString(tc.Function.Arguments)
+						if !c.started {
+							c.pending = append(c.pending, tc.Function.Arguments)
+						}
+					}
+					if !c.started && tc.ID != "" {
+						endText()
+						// The model writes calls in sequence, so a new call
+						// means every earlier one is complete.
+						for _, idx := range order {
+							if idx != tc.Index {
+								closeCall(calls[idx], true)
+							}
+						}
+						c.id, c.started = tc.ID, true
+						emit(types.ToolCallStartDelta{ID: c.id, Name: c.name})
+						for _, frag := range c.pending {
+							emit(types.ToolCallArgumentDelta{ID: c.id, Content: frag})
+						}
+						c.pending = nil
+						continue
+					}
+					if c.started && tc.Function.Arguments != "" {
+						emit(types.ToolCallArgumentDelta{ID: c.id, Content: tc.Function.Arguments})
+					}
+				}
+
+				if string(choice.FinishReason) != "" {
+					finishReason = string(choice.FinishReason)
+					endText()
+					closeAll()
+				}
+			}
+
 			if chunk.Usage.TotalTokens > 0 {
+				outputTokens = int(chunk.Usage.CompletionTokens)
 				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:       int(chunk.Usage.PromptTokens),
 					CachedPromptTokens: int(chunk.Usage.PromptTokensDetails.CachedTokens),
@@ -309,72 +512,32 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 				if finishReason != "" {
 					ud.FinishReasons = []string{finishReason}
 				}
-				out <- ud
-			}
-
-			if len(chunk.Choices) == 0 {
-				continue
-			}
-
-			choice := chunk.Choices[0]
-			if string(choice.FinishReason) != "" {
-				finishReason = string(choice.FinishReason)
-			}
-			delta := choice.Delta
-
-			if delta.Content != "" {
-				if !textStarted {
-					out <- types.TextStartDelta{}
-					textStarted = true
-				}
-				out <- types.TextContentDelta{Content: delta.Content}
-			}
-
-			for _, tc := range delta.ToolCalls {
-				idx := tc.Index
-				if !startedToolCalls[idx] {
-					if textStarted {
-						out <- types.TextEndDelta{}
-						textStarted = false
-					}
-					if tc.ID != "" {
-						startedToolCalls[idx] = true
-						out <- types.ToolCallStartDelta{ID: tc.ID, Name: tc.Function.Name}
-					}
-				}
-				if tc.Function.Arguments != "" {
-					out <- types.ToolCallArgumentDelta{Content: tc.Function.Arguments}
-				}
-			}
-
-			// FinishedChatCompletionToolCall embeds ChatCompletionMessageFunctionToolCallFunction
-			// which has Arguments and Name fields directly.
-			if finishedTC, ok := acc.JustFinishedToolCall(); ok {
-				var args map[string]any
-				if finishedTC.Arguments != "" {
-					_ = json.Unmarshal([]byte(finishedTC.Arguments), &args)
-				}
-				out <- types.ToolCallEndDelta{Arguments: args}
-			}
-
-			if _, ok := acc.JustFinishedContent(); ok {
-				if textStarted {
-					out <- types.TextEndDelta{}
-					textStarted = false
-				}
+				emit(ud)
 			}
 		}
 
-		if err := stream.Err(); err != nil {
-			out <- types.ErrorDelta{Error: classifyOpenAIError(err)}
+		err := stream.Err()
+		endText()
+		if err == nil {
+			// Close calls left open by a stream that ended without a finish
+			// reason, so their decode failures are reported below.
+			closeAll()
 		}
-
-		if textStarted {
-			out <- types.TextEndDelta{}
+		switch {
+		case err != nil:
+			out <- types.ErrorDelta{Error: classifyOpenAIError(model, err, !emitted)}
+		case finishReason == "":
+			out <- types.ErrorDelta{Error: streamcheck.StreamError(providerName, model, streamcheck.ErrIncompleteStream, !emitted)}
+		case types.IsContentFilterFinishReason(finishReason):
+			out <- types.ErrorDelta{Error: streamcheck.Refused(providerName, model, finishReason)}
+		case argsFailure.Failed():
+			out <- types.ErrorDelta{Error: argsFailure.Error(providerName, model, finishReason, outputTokens, maxTokens)}
+		case structured && types.IsTruncationFinishReason(finishReason):
+			out <- types.ErrorDelta{Error: streamcheck.Truncated(providerName, model, finishReason, outputTokens, maxTokens)}
 		}
 	}()
 
-	return out, nil
+	return out
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
@@ -517,18 +680,48 @@ func fileContentToPart(fc types.FileContent) openai.ChatCompletionContentPartUni
 		// requires a filename alongside inline file_data.
 		name := fc.Filename
 		if name == "" {
-			name = "document.pdf"
+			name = defaultPDFName
 		}
 		return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
 			FileData: openai.String(fmt.Sprintf("data:%s;base64,%s", fc.MediaType, base64.StdEncoding.EncodeToString(fc.Data))),
 			Filename: openai.String(name),
 		})
 	}
+	if format, ok := audioFormat(fc.MediaType); ok && fc.Data != nil {
+		// Audio-input models take base64 audio in an input_audio part. Sent
+		// as text, the raw bytes would reach the model as noise.
+		return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+			Data:   base64.StdEncoding.EncodeToString(fc.Data),
+			Format: format,
+		})
+	}
 	desc := fmt.Sprintf("[File: %s, type: %s]", fc.Filename, fc.MediaType)
-	if fc.Data != nil {
+	if fc.Data != nil && isTextType(fc.MediaType) {
 		desc = fmt.Sprintf("[File: %s, type: %s]\n%s", fc.Filename, fc.MediaType, string(fc.Data))
 	}
 	return openai.TextContentPart(desc)
+}
+
+// audioFormat returns the input_audio format name for a media type.
+func audioFormat(mt types.MediaType) (string, bool) {
+	switch mt {
+	case types.MediaWAV:
+		return "wav", true
+	case types.MediaMP3:
+		return "mp3", true
+	}
+	return "", false
+}
+
+// isTextType reports whether inline file bytes can be sent as text. Other
+// binary payloads (video, office documents) are described by a placeholder
+// instead, since their bytes are not readable text.
+func isTextType(mt types.MediaType) bool {
+	switch mt {
+	case types.MediaText, types.MediaCSV, types.MediaJSON, types.MediaHTML, "":
+		return true
+	}
+	return strings.HasPrefix(string(mt), "text/")
 }
 
 func isImageType(mt types.MediaType) bool {
@@ -623,19 +816,29 @@ func propertyToSchema(p types.PropertyDef) map[string]any {
 	return p.JSONSchema()
 }
 
-func classifyOpenAIError(err error) error {
+// classifyOpenAIError maps an error to a ProviderError. An HTTP API error is
+// classified by status, message, and Retry-After. An error event inside the
+// stream is classified by its error type or code. Anything else is a transport
+// failure, transient only while no output has reached the consumer.
+func classifyOpenAIError(model string, err error, beforeOutput bool) error {
 	var apiErr *openai.Error
 	if errors.As(err, &apiErr) {
-		return &types.ProviderError{
-			Provider: "openai",
-			Kind:     types.ClassifyHTTPStatus(apiErr.StatusCode),
-			Code:     apiErr.StatusCode,
-			Err:      err,
+		var header http.Header
+		if apiErr.Response != nil {
+			header = apiErr.Response.Header
 		}
+		msg := apiErr.Message
+		if msg == "" {
+			msg = apiErr.RawJSON()
+		}
+		if apiErr.Code != "" {
+			msg = apiErr.Code + ": " + msg
+		}
+		return streamcheck.HTTPError(providerName, model, apiErr.StatusCode, header, msg, err)
 	}
-	return &types.ProviderError{
-		Provider: "openai",
-		Kind:     types.ErrorKindPermanent,
-		Err:      err,
+	var streamErr *ssestream.StreamError
+	if errors.As(err, &streamErr) {
+		return streamcheck.EventError(providerName, model, string(streamErr.Event.Data), err)
 	}
+	return streamcheck.StreamError(providerName, model, err, beforeOutput)
 }

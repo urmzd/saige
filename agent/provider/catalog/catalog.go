@@ -23,11 +23,19 @@
 //
 // # Maintenance
 //
-// This table is data about the outside world and goes stale on the vendors'
-// release schedule, not this repo's. Limits are only declared where they are
-// solid; a zero ContextWindow or MaxOutputTokens means undeclared, never
-// unlimited. Register lets callers add or override entries at runtime without
-// waiting for an SDK release.
+// The table is data about the outside world and goes stale on the vendors'
+// release schedule, not this repo's, so it ships as JSON (data/default.json)
+// rather than code. Limits are only declared where they are solid; a zero
+// ContextWindow or MaxOutputTokens means undeclared, never unlimited. Hosts
+// layer their own catalogs from any Source and install them with Use or
+// Install; Register adds or overrides single entries at runtime.
+//
+// # Presets
+//
+// A catalog also names presets: ordered chains of complete provider
+// configurations. Resolve applies the option precedence to every chain entry
+// and validates each against its own model. Presets never become global
+// state; package preset builds them into providers.
 package catalog
 
 import (
@@ -51,6 +59,22 @@ type Entry struct {
 	// Caps is the capability surface, minus Provider/Model/Family/Known, which
 	// Lookup fills in from the match.
 	Caps types.ModelCapabilities
+	// Tier places the family on a price and quality ladder within its
+	// provider. Empty means unranked.
+	Tier Tier
+	// SupersededBy names the prefix of the family the vendor recommends
+	// instead. Empty means the family is current.
+	SupersededBy string
+	// ServerToolFees holds per-use charges for provider-executed tools, which
+	// are billed on top of tokens. A kind absent from the map is unpriced,
+	// not free.
+	ServerToolFees map[types.ServerToolKind]Fee
+	// Defaults are the model-level option defaults a preset entry starts
+	// from. Nil means none.
+	Defaults *OptionsSpec
+
+	// removed marks a tombstone: a row a later Install no longer declares.
+	removed bool
 }
 
 // models is the revisioned store behind the table, keyed by "provider/prefix".
@@ -84,6 +108,14 @@ func Register(e Entry, opts ...registry.Option) registry.Entry[Entry] {
 // catalog boundaries rather than assuming the generic registry clones values.
 func cloneEntry(e Entry) Entry {
 	e.Caps = e.Caps.ForModel(e.Caps.Model)
+	if e.ServerToolFees != nil {
+		fees := make(map[types.ServerToolKind]Fee, len(e.ServerToolFees))
+		for k, v := range e.ServerToolFees {
+			fees[k] = v
+		}
+		e.ServerToolFees = fees
+	}
+	e.Defaults = e.Defaults.clone()
 	return e
 }
 
@@ -138,32 +170,30 @@ func RegisterBaseline(provider string, caps types.ModelCapabilities) {
 func Lookup(provider, model string) (types.ModelCapabilities, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
+	return globalView().lookup(provider, model)
+}
 
-	want := normalize(model)
-	var best Entry
-	bestLen := -1
-	for _, re := range models.All() {
-		e := re.Value
-		if e.Provider != provider {
-			continue
-		}
-		p := normalize(e.Prefix)
-		// Exact tag/path declarations override a normalized family with the
-		// same length; otherwise registering pinned local weights would lose
-		// to their shorter family name after normalization.
-		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
-			best, bestLen = e, len(p)
-			break
-		}
-		if !strings.HasPrefix(want, p) {
-			continue
-		}
-		if len(p) > bestLen {
-			best, bestLen = e, len(p)
+// view is a set of resolved rows and baselines to match against: the global
+// registry, or one catalog value that has not been installed.
+type view struct {
+	entries   []Entry // sorted by key
+	baselines map[string]types.ModelCapabilities
+}
+
+// globalView snapshots the registry. The caller holds mu.
+func globalView() view {
+	all := models.All()
+	v := view{entries: make([]Entry, 0, len(all)), baselines: baseline}
+	for _, re := range all {
+		if !re.Value.removed {
+			v.entries = append(v.entries, re.Value)
 		}
 	}
+	return v
+}
 
-	if bestLen >= 0 {
+func (v view) lookup(provider, model string) (types.ModelCapabilities, bool) {
+	if best, ok := v.match(provider, model); ok {
 		out := best.Caps.ForModel(model)
 		out.Provider = provider
 		out.Family = best.Prefix
@@ -176,7 +206,7 @@ func Lookup(provider, model string) (types.ModelCapabilities, bool) {
 		return out, out.Known
 	}
 
-	if b, ok := baseline[provider]; ok {
+	if b, ok := v.baselines[provider]; ok {
 		out := b.ForModel(model)
 		out.Provider = provider
 		out.Family = ""
@@ -184,6 +214,51 @@ func Lookup(provider, model string) (types.ModelCapabilities, bool) {
 		return out, false
 	}
 	return types.ModelCapabilities{Provider: provider, Model: model}, false
+}
+
+// match returns the row that serves a model: an exact declaration first,
+// otherwise the longest matching prefix.
+func (v view) match(provider, model string) (Entry, bool) {
+	want := normalize(model)
+	var best Entry
+	bestLen := -1
+	for _, e := range v.entries {
+		if e.Provider != provider {
+			continue
+		}
+		p := normalize(e.Prefix)
+		// Exact tag/path declarations override a normalized family with the
+		// same length; otherwise registering pinned local weights would lose
+		// to their shorter family name after normalization.
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
+			return e, true
+		}
+		if !strings.HasPrefix(want, p) {
+			continue
+		}
+		if len(p) > bestLen {
+			best, bestLen = e, len(p)
+		}
+	}
+	return best, bestLen >= 0
+}
+
+// match returns the global row that serves a model. The caller holds mu.
+func match(provider, model string) (Entry, bool) {
+	return globalView().match(provider, model)
+}
+
+// Describe returns the row that serves a model, including the row-level
+// metadata Lookup does not carry (Tier, SupersededBy, ServerToolFees). The
+// bool is false when only the provider baseline applies.
+func Describe(provider, model string) (Entry, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	e, ok := match(provider, model)
+	if !ok {
+		return Entry{}, false
+	}
+	return cloneEntry(e), true
 }
 
 // MustLookup is Lookup without the found flag, for callers that already treat
@@ -198,10 +273,12 @@ func MustLookup(provider, model string) types.ModelCapabilities {
 // Families returns the registered prefixes for a provider, sorted. Useful for
 // `saige models` style listings and for tests that assert coverage.
 func Families(provider string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
 	var out []string
-	for _, re := range models.All() {
-		if re.Value.Provider == provider {
-			out = append(out, re.Value.Prefix)
+	for _, e := range globalView().entries {
+		if e.Provider == provider {
+			out = append(out, e.Prefix)
 		}
 	}
 	sort.Strings(out)
@@ -213,8 +290,8 @@ func Providers() []string {
 	mu.RLock()
 	defer mu.RUnlock()
 	seen := map[string]bool{}
-	for _, re := range models.All() {
-		seen[re.Value.Provider] = true
+	for _, e := range globalView().entries {
+		seen[e.Provider] = true
 	}
 	for p := range baseline {
 		seen[p] = true
@@ -239,23 +316,4 @@ func normalize(s string) string {
 		s = s[:i]
 	}
 	return s
-}
-
-// caps is a small constructor for table rows: it turns a capability list into
-// the map form and leaves Provider/Model/Family/Known for Lookup to fill.
-func caps(list ...types.Capability) types.ModelCapabilities {
-	m := make(map[types.Capability]bool, len(list))
-	for _, c := range list {
-		m[c] = true
-	}
-	return types.ModelCapabilities{Caps: m}
-}
-
-// media builds a ContentSupport set for a row.
-func media(list ...types.MediaType) types.ContentSupport {
-	m := make(map[types.MediaType]bool, len(list))
-	for _, mt := range list {
-		m[mt] = true
-	}
-	return types.ContentSupport{NativeTypes: m}
 }

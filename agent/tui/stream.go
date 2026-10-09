@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -90,208 +89,18 @@ func PopulateEnv(h *AgentHeader) {
 	}
 }
 
-// ── Activity log ────────────────────────────────────────────────────
-
-type activityKind int
-
-const (
-	activityToolCall    activityKind = iota // ⚙ tool call started
-	activityToolResult                      // tool call completed
-	activityAgentStart                      // ▶ delegating to sub-agent
-	activityAgentOutput                     // streaming sub-agent text (accumulates)
-	activityAgentDone                       // ✓/✗ sub-agent complete
-	activityMarker                          // ⚠ approval required
-	activityText                            // coordinator streaming text (accumulates)
-	activityUsage                           // ⏱ token usage
-)
-
-type activityEntry struct {
-	kind      activityKind
-	agentName string
-	toolName  string
-	content   *strings.Builder // for activityAgentOutput and activityText
-	status    agentStatus      // for agent entries
-	errMsg    string
-	usage     *types.UsageDelta // for activityUsage
-}
-
-// ── Agent tracking ──────────────────────────────────────────────────
-
-type agentStatus int
-
-const (
-	agentPending agentStatus = iota
-	agentRunning
-	agentDone
-	agentError
-)
-
-// ── Shared renderLog ────────────────────────────────────────────────
-
-// logRenderer holds state needed for rendering the activity log.
-type logRenderer struct {
-	log          []activityEntry
-	spinner      spinner.Model
-	synthesizing bool
-	streaming    bool     // true while deltas are still arriving (show spinner/partial text)
-	template     Template // controls which activity kinds are rendered
-}
-
-// renderLog builds the activity log content.
-func (lr logRenderer) renderLog() string {
-	var b strings.Builder
-
-	for _, entry := range lr.log {
-		lr.renderEntry(&b, entry)
-	}
-
-	if len(lr.log) == 0 && lr.streaming && lr.template.ShowSpinner {
-		fmt.Fprintf(&b, "  %s %s\n", lr.spinner.View(), thinkingStyle.Render("Thinking..."))
-	}
-
-	return b.String()
-}
-
-func (lr logRenderer) renderEntry(b *strings.Builder, entry activityEntry) {
-	switch entry.kind {
-	case activityToolCall:
-		lr.renderToolCall(b, entry)
-	case activityToolResult:
-		lr.renderToolResult(b, entry)
-	case activityAgentStart:
-		lr.renderAgentStart(b, entry)
-	case activityAgentOutput:
-		lr.renderAgentOutput(b, entry)
-	case activityAgentDone:
-		lr.renderAgentDone(b, entry)
-	case activityMarker:
-		lr.renderMarker(b, entry)
-	case activityText:
-		lr.renderText(b, entry)
-	case activityUsage:
-		lr.renderUsage(b, entry)
-	}
-}
-
-func (lr logRenderer) renderToolCall(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowToolCalls {
-		return
-	}
-	fmt.Fprintf(b, "  %s %s\n",
-		toolCallStyle.Render(iconTool),
-		toolCallStyle.Render(entry.toolName))
-}
-
-func (lr logRenderer) renderToolResult(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowToolCalls {
-		return
-	}
-	if entry.errMsg != "" {
-		fmt.Fprintf(b, "  %s %s %s\n",
-			statusError.Render(iconError),
-			toolCallStyle.Render(entry.toolName),
-			statusError.Render(entry.errMsg))
-	} else {
-		fmt.Fprintf(b, "  %s %s\n",
-			statusDone.Render(iconDone),
-			toolCallStyle.Render(entry.toolName))
-	}
-}
-
-func (lr logRenderer) renderAgentStart(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowAgents {
-		return
-	}
-	fmt.Fprintf(b, "  %s %s\n",
-		agentDelegateStyle.Render(iconAgent),
-		agentDelegateStyle.Render(entry.agentName))
-}
-
-func (lr logRenderer) renderAgentOutput(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowAgents {
-		return
-	}
-	if entry.content != nil && entry.content.Len() > 0 {
-		text := entry.content.String()
-		lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-		prefix := agentPrefixStyle.Render(fmt.Sprintf("    [%s] ", entry.agentName))
-		for _, line := range lines {
-			if strings.TrimSpace(line) != "" {
-				fmt.Fprintf(b, "%s%s\n", prefix, agentOutputStyle.Render(line))
-			}
-		}
-	}
-	if entry.status == agentRunning {
-		fmt.Fprintf(b, "    %s %s\n", lr.spinner.View(),
-			statusRunning.Render(entry.agentName+"..."))
-	}
-}
-
-func (lr logRenderer) renderAgentDone(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowAgents {
-		return
-	}
-	if entry.status == agentError {
-		fmt.Fprintf(b, "  %s %s %s\n",
-			statusError.Render(iconError),
-			agentDelegateStyle.Render(entry.agentName),
-			statusError.Render(entry.errMsg))
-	} else {
-		fmt.Fprintf(b, "  %s %s\n",
-			statusDone.Render(iconDone),
-			agentDelegateStyle.Render(entry.agentName))
-	}
-}
-
-func (lr logRenderer) renderMarker(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowMarkers {
-		return
-	}
-	fmt.Fprintf(b, "  %s %s\n",
-		markerStyle.Render(iconMarker),
-		markerStyle.Render(fmt.Sprintf("Approval required: %s", entry.toolName)))
-}
-
-func (lr logRenderer) renderText(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowStreamText {
-		return
-	}
-	if entry.content != nil && entry.content.Len() > 0 {
-		if lr.synthesizing {
-			fmt.Fprintf(b, "\n  %s %s\n", lr.spinner.View(),
-				thinkingStyle.Render("Synthesizing..."))
-		}
-		text := entry.content.String()
-		lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-		start := 0
-		if lr.streaming && len(lines) > 5 {
-			start = len(lines) - 5
-		}
-		for _, line := range lines[start:] {
-			fmt.Fprintf(b, "    %s\n", line)
-		}
-	}
-}
-
-func (lr logRenderer) renderUsage(b *strings.Builder, entry activityEntry) {
-	if !lr.template.ShowUsage {
-		return
-	}
-	if entry.usage != nil {
-		fmt.Fprintf(b, "  %s %s\n",
-			usageStyle.Render(iconUsage),
-			usageStyle.Render(fmt.Sprintf("%d prompt + %d completion tokens, %s",
-				entry.usage.PromptTokens, entry.usage.CompletionTokens, entry.usage.Latency)))
-	}
-}
-
 // ── Bubbletea messages ──────────────────────────────────────────────
 
+// deltaMsg carries one delta from stream generation gen. A model ignores
+// deltas from a generation it is no longer reading, so a late delta from a
+// finished run can never leak into the next one.
 type deltaMsg struct {
+	gen   int
 	delta types.Delta
 }
 
-type streamDoneMsg struct{}
+// streamDoneMsg reports that the delta channel of generation gen closed.
+type streamDoneMsg struct{ gen int }
 
 // ── StreamModel ─────────────────────────────────────────────────────
 
@@ -299,48 +108,50 @@ type streamDoneMsg struct{}
 // a saige EventStream and displays real-time progress for tool calls
 // and sub-agent executions using a scrollable activity log.
 type StreamModel struct {
-	header      AgentHeader
-	template    Template
-	deltaCh     <-chan types.Delta
-	finalReport *strings.Builder
-	spinner     spinner.Model
-	viewport    viewport.Model
-	err         error
-	ready       bool // viewport sized
-	width       int
+	header   AgentHeader
+	template Template
+	deltaCh  <-chan types.Delta
+	cancel   func()
+	spinner  spinner.Model
+	viewport viewport.Model
+	err      error
+	ready    bool // viewport sized
+	width    int
+	height   int
+	done     bool
 
-	// Activity log
-	log          []activityEntry
-	toolCallIdx  map[string]int // toolCallID → index in log for agent output entries
-	hasAgents    bool           // true once any ToolExecStartDelta seen
-	synthesizing bool           // true once coordinator text starts after agents
+	act activity
 }
 
 // NewStreamModel creates a StreamModel that reads deltas from ch and
 // displays the given header info. An optional template controls which
 // activity kinds are rendered; zero value uses TemplateDefault.
 func NewStreamModel(header AgentHeader, ch <-chan types.Delta, tmpl ...Template) StreamModel {
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 	t := TemplateDefault
 	if len(tmpl) > 0 && tmpl[0].Name != "" {
 		t = tmpl[0]
 	}
 	return StreamModel{
-		header:      header,
-		template:    t,
-		deltaCh:     ch,
-		finalReport: &strings.Builder{},
-		spinner:     s,
-		viewport:    viewport.New(80, 20),
-		toolCallIdx: make(map[string]int),
+		header:   header,
+		template: t,
+		deltaCh:  ch,
+		spinner:  newSpinner(),
+		viewport: viewport.New(80, 20),
+		act:      newActivity(header.SubAgents),
 	}
+}
+
+// WithCancel returns a copy of m that calls cancel when the user quits before
+// the stream ends, typically the stream's Cancel method. Without it, quitting
+// only stops rendering and the run keeps going in the background.
+func (m StreamModel) WithCancel(cancel func()) StreamModel {
+	m.cancel = cancel
+	return m
 }
 
 // FinalReport returns the accumulated coordinator output text.
 func (m StreamModel) FinalReport() string {
-	return m.finalReport.String()
+	return m.act.text()
 }
 
 // Err returns any error encountered during the stream.
@@ -348,11 +159,18 @@ func (m StreamModel) Err() error {
 	return m.err
 }
 
+func newSpinner() spinner.Model {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	return s
+}
+
 // ── tea.Model implementation ────────────────────────────────────────
 
 func (m StreamModel) Init() tea.Cmd {
 	return tea.Batch(
-		listenForDelta(m.deltaCh),
+		listenForDelta(0, m.deltaCh),
 		m.spinner.Tick,
 	)
 }
@@ -360,24 +178,28 @@ func (m StreamModel) Init() tea.Cmd {
 func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" || msg.String() == "q" {
+		if msg.String() == keyCtrlC || msg.String() == "q" {
+			if !m.done && m.cancel != nil {
+				m.cancel()
+			}
 			return m, tea.Quit
 		}
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.viewport.Width = msg.Width
-		headerH := lipgloss.Height(renderHeader(m.header, msg.Width))
-		m.viewport.Height = msg.Height - headerH - 1
+		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
+		m.refresh()
 		return m, nil
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		m.refresh()
 		return m, cmd
 
 	case streamDoneMsg:
+		m.done = true
+		m.act.finish()
 		return m, tea.Quit
 
 	case deltaMsg:
@@ -390,137 +212,90 @@ func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m StreamModel) handleDelta(d types.Delta) (tea.Model, tea.Cmd) {
+	m.act.apply(d)
 	switch d := d.(type) {
-	case types.ToolCallStartDelta:
-		m.log = append(m.log, activityEntry{
-			kind:     activityToolCall,
-			toolName: d.Name,
-		})
-
-	case types.ToolExecStartDelta:
-		m.hasAgents = true
-		m.log = append(m.log, activityEntry{
-			kind:      activityAgentStart,
-			agentName: d.Name,
-		})
-		idx := len(m.log)
-		m.log = append(m.log, activityEntry{
-			kind:      activityAgentOutput,
-			agentName: d.Name,
-			content:   &strings.Builder{},
-			status:    agentRunning,
-		})
-		m.toolCallIdx[d.ToolCallID] = idx
-
-	case types.ToolExecDelta:
-		if idx, ok := m.toolCallIdx[d.ToolCallID]; ok {
-			entry := &m.log[idx]
-			if inner, ok := d.Inner.(types.TextContentDelta); ok {
-				entry.content.WriteString(inner.Content)
-			}
-		}
-
-	case types.ToolExecEndDelta:
-		if idx, ok := m.toolCallIdx[d.ToolCallID]; ok {
-			entry := &m.log[idx]
-			if d.Error != "" {
-				entry.status = agentError
-				entry.errMsg = d.Error
-			} else {
-				entry.status = agentDone
-			}
-			m.log = append(m.log, activityEntry{
-				kind:      activityAgentDone,
-				agentName: entry.agentName,
-				status:    entry.status,
-				errMsg:    entry.errMsg,
-			})
-		}
-
-	case types.ToolCallEndDelta:
-		// Find the matching tool call entry and mark it done
-		for i := len(m.log) - 1; i >= 0; i-- {
-			if m.log[i].kind == activityToolCall {
-				m.log = append(m.log, activityEntry{
-					kind:     activityToolResult,
-					toolName: m.log[i].toolName,
-				})
-				break
-			}
-		}
-
-	case types.MarkerDelta:
-		m.log = append(m.log, activityEntry{
-			kind:     activityMarker,
-			toolName: d.ToolName,
-		})
-
-	case types.UsageDelta:
-		usage := d // copy
-		m.log = append(m.log, activityEntry{
-			kind:  activityUsage,
-			usage: &usage,
-		})
-
-	case types.TextContentDelta:
-		m.finalReport.WriteString(d.Content)
-		if m.hasAgents {
-			m.synthesizing = true
-		}
-		if len(m.log) > 0 && m.log[len(m.log)-1].kind == activityText {
-			m.log[len(m.log)-1].content.WriteString(d.Content)
-		} else {
-			entry := activityEntry{
-				kind:    activityText,
-				content: &strings.Builder{},
-			}
-			entry.content.WriteString(d.Content)
-			m.log = append(m.log, entry)
-		}
-
 	case types.ErrorDelta:
 		m.err = d.Error
+		m.done = true
+		m.act.finish()
+		m.refresh()
 		return m, tea.Quit
-
 	case types.DoneDelta:
+		m.done = true
+		m.act.finish()
+		m.refresh()
 		return m, tea.Quit
 	}
+	m.refresh()
+	return m, listenForDelta(0, m.deltaCh)
+}
 
-	lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing, streaming: true, template: m.template}
-	m.viewport.SetContent(lr.renderLog())
-	m.viewport.GotoBottom()
+// refresh sizes the viewport and sets its content, following the bottom
+// unless the user has scrolled up.
+func (m *StreamModel) refresh() {
+	if m.ready {
+		m.viewport.Width = m.width
+		m.viewport.Height = viewportHeight(m.height, m.headerView(), "")
+	}
+	follow := m.viewport.AtBottom()
+	m.viewport.SetContent(m.logView())
+	if follow {
+		m.viewport.GotoBottom()
+	}
+}
 
-	return m, listenForDelta(m.deltaCh)
+func (m StreamModel) logView() string {
+	lr := logRenderer{entries: m.act.entries, spinner: m.spinner, template: m.template, thinking: !m.done && len(m.act.entries) == 0}
+	return lr.renderLog()
+}
+
+func (m StreamModel) headerView() string {
+	if !m.template.ShowHeader {
+		return ""
+	}
+	return renderHeader(m.header, m.width)
 }
 
 func (m StreamModel) View() string {
 	var b strings.Builder
-
-	if m.template.ShowHeader {
-		b.WriteString(renderHeader(m.header, m.width))
+	if h := m.headerView(); h != "" {
+		b.WriteString(h)
 		b.WriteString("\n")
 	}
-
-	lr := logRenderer{log: m.log, spinner: m.spinner, synthesizing: m.synthesizing, streaming: true, template: m.template}
 	if m.ready {
-		m.viewport.SetContent(lr.renderLog())
 		b.WriteString(m.viewport.View())
 	} else {
-		b.WriteString(lr.renderLog())
+		b.WriteString(m.logView())
 	}
-
 	return b.String()
+}
+
+// viewportHeight is the height left for the scrolling log once header and
+// footer are drawn. It never drops below one line, so a short terminal shows
+// a cramped log instead of a negative-height viewport.
+func viewportHeight(total int, header, footer string) int {
+	h := total
+	if header != "" {
+		h -= lipgloss.Height(header)
+	}
+	if footer != "" {
+		h -= lipgloss.Height(footer)
+	}
+	if h < 1 {
+		h = 1
+	}
+	return h
 }
 
 // ── Delta bridge ────────────────────────────────────────────────────
 
-func listenForDelta(ch <-chan types.Delta) tea.Cmd {
+func listenForDelta(gen int, ch <-chan types.Delta) tea.Cmd {
 	return func() tea.Msg {
 		delta, ok := <-ch
 		if !ok {
-			return streamDoneMsg{}
+			return streamDoneMsg{gen: gen}
 		}
-		return deltaMsg{delta: delta}
+		return deltaMsg{gen: gen, delta: delta}
 	}
 }
 
@@ -576,12 +351,13 @@ func StreamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer) Verbo
 	return StreamVerboseWithTemplate(header, ch, w, TemplateDefault)
 }
 
-// StreamVerboseWithTemplate consumes deltas with template-controlled output.
 // verboseStreamer holds state for the verbose streaming output.
 type verboseStreamer struct {
 	w                    io.Writer
 	tmpl                 Template
-	agentNames           map[string]string // toolCallID → name
+	act                  activity          // classifies tool calls as sub-agent delegations
+	toolNames            map[string]string // toolCallID → tool name
+	agentNames           map[string]string // toolCallID → sub-agent name, for delegations only
 	agentNewLine         map[string]bool   // toolCallID → needs prefix on next chunk
 	agentStarted         map[string]bool   // toolCallID → has received any text
 	text                 strings.Builder
@@ -603,62 +379,143 @@ func (vs *verboseStreamer) handleTextContent(d types.TextContentDelta) {
 
 func (vs *verboseStreamer) handleToolCallStart(d types.ToolCallStartDelta) {
 	vs.ensureNewline()
+	vs.toolNames[d.ID] = d.Name
+	if _, isAgent := vs.act.agentToolName(d.Name); isAgent {
+		return // announced as a delegation when it starts executing
+	}
 	if vs.tmpl.ShowToolCalls {
 		fmt.Fprintln(vs.w, FormatToolCall(d.Name))
 	}
 }
 
+func (vs *verboseStreamer) handleToolCallEnd(d types.ToolCallEndDelta) {
+	if !vs.tmpl.ShowToolArgs || d.Arguments == nil {
+		return
+	}
+	vs.ensureNewline()
+	fmt.Fprintln(vs.w, usageStyle.Render("  "+summarizeArgs(d.Arguments, 200)))
+}
+
 func (vs *verboseStreamer) handleToolExecStart(d types.ToolExecStartDelta) {
 	vs.ensureNewline()
-	vs.agentNames[d.ToolCallID] = d.Name
-	vs.agentNewLine[d.ToolCallID] = true
-	vs.agentStarted[d.ToolCallID] = false
+	if d.Name != "" {
+		vs.toolNames[d.ToolCallID] = d.Name
+	}
+	name, isAgent := vs.act.agentToolName(vs.toolNames[d.ToolCallID])
+	if !isAgent {
+		return
+	}
+	vs.startAgent(d.ToolCallID, name)
+}
+
+// startAgent begins nested output for a delegation or a streaming tool.
+func (vs *verboseStreamer) startAgent(id, name string) {
+	vs.agentNames[id] = name
+	vs.agentNewLine[id] = true
+	vs.agentStarted[id] = false
 	if vs.tmpl.ShowAgents {
-		fmt.Fprintln(vs.w, FormatDelegateStart(d.Name))
+		fmt.Fprintln(vs.w, FormatDelegateStart(name))
 	}
 }
 
+// handleToolExecDelta prints output from inside a tool call. Nested
+// wrappers are flattened, so a sub-agent's own tool calls, its errors, and
+// deeper delegations are all attributed to the outermost call.
 func (vs *verboseStreamer) handleToolExecDelta(d types.ToolExecDelta) {
+	path, inner := types.FlattenDelta(d)
+	if len(path) == 0 {
+		return
+	}
+	id := path[0]
+	if _, ok := vs.agentNames[id]; !ok {
+		// A tool that streams nested output is shown like a delegation.
+		vs.ensureNewline()
+		name, _ := vs.act.agentToolName(vs.toolNames[id])
+		vs.startAgent(id, name)
+	}
 	if !vs.tmpl.ShowAgents {
 		return
 	}
-	inner, ok := d.Inner.(types.TextContentDelta)
-	if !ok {
+	switch in := inner.(type) {
+	case types.TextContentDelta:
+		vs.agentText(id, in.Content)
+	case types.ToolCallStartDelta:
+		vs.agentLine(id, iconTool+" "+in.Name)
+	case types.ToolExecEndDelta:
+		if in.Error != "" {
+			vs.agentLine(id, iconError+" "+in.Name+": "+in.Error)
+		}
+	case types.ErrorDelta:
+		vs.agentLine(id, iconError+" "+errorText(in.Error))
+	}
+}
+
+// agentText streams nested text, prefixing each new line with the name of
+// the outermost call.
+func (vs *verboseStreamer) agentText(id, content string) {
+	name := vs.agentNames[id]
+	vs.agentStarted[id] = true
+	if vs.agentNewLine[id] {
+		_, _ = fmt.Fprint(vs.w, FormatAgentOutput(name, ""))
+		vs.agentNewLine[id] = false
+	}
+	if !strings.Contains(content, "\n") {
+		fmt.Fprint(vs.w, content)
 		return
 	}
-	name := vs.agentNames[d.ToolCallID]
-	vs.agentStarted[d.ToolCallID] = true
-	content := inner.Content
+	prefix := FormatAgentOutput(name, "")
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			fmt.Fprint(vs.w, prefix)
+		}
+		fmt.Fprint(vs.w, line)
+		if i < len(lines)-1 {
+			fmt.Fprintln(vs.w)
+		}
+	}
+	if strings.HasSuffix(content, "\n") {
+		vs.agentNewLine[id] = true
+	}
+}
 
-	if vs.agentNewLine[d.ToolCallID] {
-		_, _ = fmt.Fprint(vs.w, FormatAgentOutput(name, ""))
-		vs.agentNewLine[d.ToolCallID] = false
+// agentLine prints one complete line of nested activity, such as a
+// sub-agent's tool call, on its own prefixed line.
+func (vs *verboseStreamer) agentLine(id, text string) {
+	if vs.agentStarted[id] && !vs.agentNewLine[id] {
+		fmt.Fprintln(vs.w)
 	}
-	if strings.Contains(content, "\n") {
-		prefix := FormatAgentOutput(name, "")
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			if i > 0 {
-				fmt.Fprint(vs.w, prefix)
-			}
-			fmt.Fprint(vs.w, line)
-			if i < len(lines)-1 {
-				fmt.Fprintln(vs.w)
-			}
-		}
-		if strings.HasSuffix(content, "\n") {
-			vs.agentNewLine[d.ToolCallID] = true
-		}
-	} else {
-		fmt.Fprint(vs.w, content)
-	}
+	fmt.Fprintln(vs.w, FormatAgentOutput(vs.agentNames[id], agentOutputStyle.Render(text)))
+	vs.agentStarted[id] = true
+	vs.agentNewLine[id] = true
 }
 
 func (vs *verboseStreamer) handleToolExecEnd(d types.ToolExecEndDelta) {
+	vs.ensureNewline()
+	name, isAgent := vs.agentNames[d.ToolCallID]
+	if !isAgent {
+		if !vs.tmpl.ShowToolCalls {
+			return
+		}
+		tool := d.Name
+		if tool == "" {
+			tool = vs.toolNames[d.ToolCallID]
+		}
+		if d.Error != "" {
+			fmt.Fprintln(vs.w, FormatToolError(tool, d.Error))
+			return
+		}
+		fmt.Fprintln(vs.w, FormatToolResult(tool))
+		if vs.tmpl.ShowToolResults && d.Result != "" {
+			for _, l := range headLines(d.Result, 5) {
+				fmt.Fprintln(vs.w, agentOutputStyle.Render("    "+l))
+			}
+		}
+		return
+	}
 	if !vs.tmpl.ShowAgents {
 		return
 	}
-	name := vs.agentNames[d.ToolCallID]
 	if vs.agentStarted[d.ToolCallID] && !vs.agentNewLine[d.ToolCallID] {
 		fmt.Fprintln(vs.w)
 	}
@@ -681,7 +538,23 @@ func (vs *verboseStreamer) handleMarker(d types.MarkerDelta) {
 	}
 }
 
+// StreamVerboseWithTemplate consumes deltas with template-controlled output.
 func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl Template) VerboseResult {
+	return StreamVerboseResolving(header, ch, w, tmpl, nil)
+}
+
+// StreamVerboseResolving is StreamVerboseWithTemplate with inline marker
+// resolution: each MarkerDelta is rendered and then passed to resolve before
+// the next delta is read. A nil resolve only renders markers, which leaves
+// the agent loop waiting until something else resolves them.
+func StreamVerboseResolving(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl Template, resolve MarkerResolver) VerboseResult {
+	return streamVerbose(header, ch, w, tmpl, resolve, true)
+}
+
+// streamVerbose renders ch on w. printErr writes a terminal ErrorDelta on w
+// as well as returning it; an Output passes false, because its caller
+// reports the returned error through Output.Error on the error writer.
+func streamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl Template, resolve MarkerResolver, printErr bool) VerboseResult {
 	if w == nil {
 		w = os.Stdout
 	}
@@ -694,6 +567,8 @@ func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.W
 	vs := &verboseStreamer{
 		w:            w,
 		tmpl:         tmpl,
+		act:          newActivity(header.SubAgents),
+		toolNames:    make(map[string]string),
 		agentNames:   make(map[string]string),
 		agentNewLine: make(map[string]bool),
 		agentStarted: make(map[string]bool),
@@ -707,12 +582,19 @@ func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.W
 			vs.handleTextContent(d)
 		case types.TextEndDelta:
 			vs.ensureNewline()
+		case types.ThinkingContentDelta:
+			if tmpl.ShowThinking {
+				_, _ = fmt.Fprint(w, thinkingStyle.Render(d.Content))
+				vs.coordinatorStreaming = true
+			}
+		case types.ThinkingEndDelta:
+			vs.ensureNewline()
 		case types.ToolCallStartDelta:
 			vs.handleToolCallStart(d)
 		case types.ToolCallArgumentDelta:
-			// argument JSON fragments: skip in verbose mode
+			// argument JSON fragments: the complete arguments arrive on ToolCallEndDelta
 		case types.ToolCallEndDelta:
-			// tool call fully parsed: logged at exec start
+			vs.handleToolCallEnd(d)
 		case types.ToolExecStartDelta:
 			vs.handleToolExecStart(d)
 		case types.ToolExecDelta:
@@ -721,14 +603,29 @@ func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.W
 			vs.handleToolExecEnd(d)
 		case types.MarkerDelta:
 			vs.handleMarker(d)
+			if resolve != nil {
+				resolve(d)
+			}
 		case types.UsageDelta:
 			if tmpl.ShowUsage {
 				vs.ensureNewline()
 				fmt.Fprintln(w, FormatUsage(d.PromptTokens, d.CompletionTokens, d.Latency.String()))
 			}
+		case types.HandoffDelta, types.RouteDelta, types.CitationDelta, types.InterruptedDelta:
+			if tmpl.ShowRouting {
+				var note activity
+				note.apply(d)
+				vs.ensureNewline()
+				fmt.Fprintln(w, usageStyle.Render(note.entries[0].text))
+			}
+		case types.TruncatedDelta:
+			vs.ensureNewline()
+			fmt.Fprintln(w, stoppedStyle.Render(iconStopped+" response cut short: "+d.Reason))
 		case types.ErrorDelta:
 			vs.ensureNewline()
-			fmt.Fprintln(w, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, d.Error)))
+			if printErr {
+				fmt.Fprintln(w, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, d.Error)))
+			}
 			return VerboseResult{Text: vs.text.String(), Err: d.Error}
 		case types.DoneDelta:
 			vs.ensureNewline()
@@ -741,20 +638,10 @@ func StreamVerboseWithTemplate(header AgentHeader, ch <-chan types.Delta, w io.W
 
 // ── Markdown rendering ──────────────────────────────────────────────
 
-// RenderMarkdown renders markdown text as styled terminal output using glamour.
+// RenderMarkdown renders markdown text as styled terminal output using glamour,
+// wrapped at 80 columns.
 func RenderMarkdown(md string) string {
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(80),
-	)
-	if err != nil {
-		return md
-	}
-	out, err := r.Render(md)
-	if err != nil {
-		return md
-	}
-	return out
+	return renderMarkdownWidth(md, 80)
 }
 
 // RenderReport renders a titled section with the report body formatted as markdown.

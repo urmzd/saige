@@ -13,10 +13,24 @@ type Metrics interface {
 	RecordAgentInvocation(ctx context.Context, agentID string, duration time.Duration)
 }
 
+// AgentOutcomeRecorder is an optional Metrics extension. The agent calls
+// RecordAgentOutcome in place of RecordAgentInvocation, with the run's
+// terminal error (nil on a clean finish).
+type AgentOutcomeRecorder interface {
+	RecordAgentOutcome(ctx context.Context, agentID string, duration time.Duration, err error)
+}
+
+// CacheUsageRecorder is an optional Metrics extension that receives the
+// prompt-cache token counts of each provider call: tokens read from the
+// cache and tokens written to it.
+type CacheUsageRecorder interface {
+	RecordCacheTokenUsage(ctx context.Context, operationName, provider string, cacheRead, cacheWrite int)
+}
+
 // NoopMetrics is a no-op implementation of Metrics.
 type NoopMetrics struct{}
 
-func (NoopMetrics) RecordTokenUsage(context.Context, string, string, int, int)              {}
+func (NoopMetrics) RecordTokenUsage(context.Context, string, string, int, int)               {}
 func (NoopMetrics) RecordToolCall(context.Context, string, time.Duration, error)             {}
 func (NoopMetrics) RecordProviderCall(context.Context, string, string, time.Duration, error) {}
 func (NoopMetrics) RecordAgentInvocation(context.Context, string, time.Duration)             {}

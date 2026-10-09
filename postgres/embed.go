@@ -18,3 +18,9 @@ func renderTemplate(tmpl *template.Template, data any) string {
 	}
 	return buf.String()
 }
+
+// notifySQL creates the tables behind Notifier and CacheStore. It is a plain
+// script, run after the templated migrations.
+//
+//go:embed sql/notify.sql
+var notifySQL string

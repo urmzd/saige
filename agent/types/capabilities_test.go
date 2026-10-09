@@ -94,6 +94,31 @@ func TestWithAndWithoutDoNotMutateReceiver(t *testing.T) {
 	}
 }
 
+func TestWithoutStructuredOutputClearsMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		remove   []Capability
+		wantCap  bool
+		wantMode StructuredOutputMode
+	}{
+		{"removing structured output clears the mode", []Capability{CapStructuredOutput}, false, StructuredOutputNone},
+		{"removing another capability keeps the mode", []Capability{CapTools}, true, StructuredOutputNative},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := mkCaps(CapTools, CapStructuredOutput)
+			base.StructuredOutput = StructuredOutputNative
+			got := base.Without(tt.remove...)
+			if got.Supports(CapStructuredOutput) != tt.wantCap || got.StructuredOutput != tt.wantMode {
+				t.Errorf("cap = %v mode = %q, want %v %q", got.Supports(CapStructuredOutput), got.StructuredOutput, tt.wantCap, tt.wantMode)
+			}
+			if base.StructuredOutput != StructuredOutputNative {
+				t.Error("Without must not mutate the receiver")
+			}
+		})
+	}
+}
+
 func TestForModelRetargets(t *testing.T) {
 	base := mkCaps(CapTools)
 	base.Model = "a"

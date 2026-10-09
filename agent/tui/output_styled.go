@@ -44,8 +44,15 @@ func (o *StyledOutput) Result(v any) error {
 	return nil
 }
 
+// StreamDeltas renders ch on W. A terminal error is returned, not printed:
+// the caller reports it once through Error, on the error writer.
 func (o *StyledOutput) StreamDeltas(header AgentHeader, ch <-chan types.Delta) VerboseResult {
-	return StreamVerboseWithTemplate(header, ch, o.W, o.Template)
+	return streamVerbose(header, ch, o.W, o.Template, nil, false)
+}
+
+// StreamDeltasResolving implements MarkerResolvingOutput.
+func (o *StyledOutput) StreamDeltasResolving(header AgentHeader, ch <-chan types.Delta, resolve MarkerResolver) VerboseResult {
+	return streamVerbose(header, ch, o.W, o.Template, resolve, false)
 }
 
 func (o *StyledOutput) Error(err error) {

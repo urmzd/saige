@@ -286,13 +286,12 @@ func TestPipelineUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Old document should be deleted.
-	_, err = store.GetDocument(ctx, r1.DocumentUUID)
-	if err != types.ErrDocumentNotFound {
-		t.Errorf("old document should be deleted after update, got err: %v", err)
+	// The document keeps its UUID so callers' handles stay valid.
+	if r2.DocumentUUID != r1.DocumentUUID {
+		t.Errorf("update changed the document UUID: got %s, want %s", r2.DocumentUUID, r1.DocumentUUID)
 	}
 
-	// New document should exist.
+	// The document now holds the new content, and the old content is gone.
 	doc, err := store.GetDocument(ctx, r2.DocumentUUID)
 	if err != nil {
 		t.Fatalf("new document should exist: %v", err)
@@ -838,6 +837,120 @@ func TestPipelineReplaceRemovesStaleGraphEpisodes(t *testing.T) {
 
 	if len(graph.deletedGroups) != 1 || graph.deletedGroups[0] != r1.DocumentUUID {
 		t.Errorf("expected stale episodes of %q deleted, got %v", r1.DocumentUUID, graph.deletedGroups)
+	}
+}
+
+// docDeleterGraph adds document deletion to mockGraph.
+type docDeleterGraph struct {
+	mockGraph
+	deletedDocs []string // "group/document" pairs
+}
+
+func (m *docDeleterGraph) DeleteDocumentEpisodes(_ context.Context, groupID, documentID string) error {
+	m.deletedDocs = append(m.deletedDocs, groupID+"/"+documentID)
+	return nil
+}
+
+// reportingDocDeleterGraph also reports whether document deletion can work,
+// like a graph whose backing store may lack the capability.
+type reportingDocDeleterGraph struct {
+	docDeleterGraph
+	supported bool
+}
+
+func (m *reportingDocDeleterGraph) SupportsDocumentDeletion() bool { return m.supported }
+
+func TestPipelineGraphLayoutFollowsDocumentDeletionSupport(t *testing.T) {
+	const docUUID = "test-doc" // simpleExtractor's document UUID
+
+	tests := []struct {
+		name        string
+		graph       knowledgetypes.Graph
+		namespace   string
+		wantGroup   string
+		wantDocs    []string
+		wantDeleted []string
+	}{
+		{
+			name:        "group deleter only uses per-document group",
+			graph:       &mockGraph{},
+			wantGroup:   docUUID,
+			wantDeleted: []string{docUUID},
+		},
+		{
+			name:        "document deleter uses namespace",
+			graph:       &docDeleterGraph{},
+			namespace:   "tenant",
+			wantGroup:   "tenant",
+			wantDocs:    []string{"tenant/" + docUUID},
+			wantDeleted: []string{docUUID},
+		},
+		{
+			name:        "document deleter without namespace uses default group",
+			graph:       &docDeleterGraph{},
+			wantGroup:   "",
+			wantDocs:    []string{"/" + docUUID},
+			wantDeleted: []string{docUUID},
+		},
+		{
+			name:        "reported support uses default group",
+			graph:       &reportingDocDeleterGraph{supported: true},
+			wantGroup:   "",
+			wantDocs:    []string{"/" + docUUID},
+			wantDeleted: []string{docUUID},
+		},
+		{
+			name:        "unsupported document deletion falls back to per-document group",
+			graph:       &reportingDocDeleterGraph{supported: false},
+			wantGroup:   docUUID,
+			wantDeleted: []string{docUUID},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			pipe := pipeline.New(pipeline.Config{
+				Store:            memstore.New(),
+				ContentExtractor: &simpleExtractor{},
+				Graph:            tt.graph,
+				GraphNamespace:   tt.namespace,
+			})
+			result, err := pipe.Ingest(ctx, &types.RawDocument{
+				SourceURI: "test://graph-layout",
+				Data:      []byte("document with graph facts"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := pipe.Delete(ctx, result.DocumentUUID); err != nil {
+				t.Fatal(err)
+			}
+
+			var base *mockGraph
+			var docs []string
+			switch g := tt.graph.(type) {
+			case *mockGraph:
+				base = g
+			case *docDeleterGraph:
+				base, docs = &g.mockGraph, g.deletedDocs
+			case *reportingDocDeleterGraph:
+				base, docs = &g.mockGraph, g.deletedDocs
+			}
+			if len(base.ingested) == 0 {
+				t.Fatal("expected episodes to be ingested")
+			}
+			for _, g := range base.ingested {
+				if g != tt.wantGroup {
+					t.Errorf("episode group = %q, want %q", g, tt.wantGroup)
+				}
+			}
+			if fmt.Sprint(docs) != fmt.Sprint(tt.wantDocs) {
+				t.Errorf("DeleteDocumentEpisodes calls = %v, want %v", docs, tt.wantDocs)
+			}
+			if fmt.Sprint(base.deletedGroups) != fmt.Sprint(tt.wantDeleted) {
+				t.Errorf("DeleteEpisodes calls = %v, want %v", base.deletedGroups, tt.wantDeleted)
+			}
+		})
 	}
 }
 

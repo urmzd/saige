@@ -51,20 +51,29 @@ jobs:
       # exist before the release is created and can be attached atomically. This
       # avoids uploading to an already-published release, which immutable
       # releases reject.
-      - name: Build static CLI binaries
+      - name: Build static binaries
         shell: bash
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
+          set -euo pipefail
           mkdir -p build/bin
-          build() {
-            CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath \
-              -ldflags "-s -w -X main.version=${VERSION}" \
-              -o "build/bin/$3" ./cmd/saige
-          }
-          build linux   amd64 saige-linux
-          build darwin  arm64 saige-darwin
-          build windows amd64 saige.exe
+          # Asset names follow <bin>-<goos>-<goarch>[.exe]. saige update and
+          # install.sh both derive the same names, so keep the three in sync.
+          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          for bin in saige saige-mcp; do
+            for target in $targets; do
+              goos="${target%/*}"
+              goarch="${target#*/}"
+              ext=""
+              if [ "$goos" = "windows" ]; then ext=".exe"; fi
+              CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "build/bin/${bin}-${goos}-${goarch}${ext}" "./cmd/${bin}"
+            done
+          done
+          (cd build/bin && sha256sum saige-* > SHA256SUMS)
+          cat build/bin/SHA256SUMS
 
       # release mode tags, creates the release, and uploads the artifacts as one
       # step, so assets are present when the release is published.
@@ -73,4 +82,15 @@ jobs:
         with:
           mode: release
           github-token: ${{ steps.app-token.outputs.token }}
-          artifacts: build/bin/saige-linux build/bin/saige-darwin build/bin/saige.exe
+          artifacts: >-
+            build/bin/saige-linux-amd64
+            build/bin/saige-linux-arm64
+            build/bin/saige-darwin-amd64
+            build/bin/saige-darwin-arm64
+            build/bin/saige-windows-amd64.exe
+            build/bin/saige-mcp-linux-amd64
+            build/bin/saige-mcp-linux-arm64
+            build/bin/saige-mcp-darwin-amd64
+            build/bin/saige-mcp-darwin-arm64
+            build/bin/saige-mcp-windows-amd64.exe
+            build/bin/SHA256SUMS

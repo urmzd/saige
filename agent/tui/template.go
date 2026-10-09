@@ -15,6 +15,12 @@ type Template struct {
 	ShowSpinner    bool // show spinner while thinking
 	ShowStreamText bool // show partial text during streaming
 
+	// Detail. Off in the default template, on in TemplateDetailed.
+	ShowThinking    bool // show reasoning text
+	ShowToolArgs    bool // show each tool call's arguments
+	ShowToolResults bool // show the first lines of each tool result
+	ShowRouting     bool // show handoffs, route choices, citations, and interrupts
+
 	// How to render final output
 	RenderMarkdown bool // render final output as glamour markdown
 }
@@ -49,18 +55,23 @@ var (
 		RenderMarkdown: false,
 	}
 
-	// TemplateDetailed shows everything including all activity log entries.
-	// Useful for debugging agent behavior.
+	// TemplateDetailed shows everything TemplateDefault does plus reasoning,
+	// tool arguments and results, handoffs, routes, and citations. Useful
+	// for debugging agent behavior.
 	TemplateDetailed = Template{
-		Name:           "detailed",
-		ShowHeader:     true,
-		ShowToolCalls:  true,
-		ShowAgents:     true,
-		ShowUsage:      true,
-		ShowMarkers:    true,
-		ShowSpinner:    true,
-		ShowStreamText: true,
-		RenderMarkdown: true,
+		Name:            "detailed",
+		ShowHeader:      true,
+		ShowToolCalls:   true,
+		ShowAgents:      true,
+		ShowUsage:       true,
+		ShowMarkers:     true,
+		ShowSpinner:     true,
+		ShowStreamText:  true,
+		ShowThinking:    true,
+		ShowToolArgs:    true,
+		ShowToolResults: true,
+		ShowRouting:     true,
+		RenderMarkdown:  true,
 	}
 )
 

@@ -9,6 +9,7 @@ import (
 	"github.com/urmzd/saige/rag/knowledge/internal/engine"
 	"github.com/urmzd/saige/rag/knowledge/pgstore"
 	"github.com/urmzd/saige/rag/knowledge/types"
+	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
 // Config holds configuration for creating a Graph.
@@ -18,6 +19,11 @@ type Config struct {
 	Embedder     types.Embedder
 	Logger       *slog.Logger
 	Store        types.Store
+	// StrictOntology drops extracted entities and relations whose type is
+	// not in the applied ontology.
+	StrictOntology bool
+	// Observer receives spans and metrics. See WithObserver.
+	Observer ragtypes.Observer
 }
 
 // Option configures kg.
@@ -48,6 +54,25 @@ func WithEmbedder(emb types.Embedder) Option {
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *Config) {
 		c.Logger = logger
+	}
+}
+
+// WithStrictOntology drops extracted entities and relations whose type is
+// not in the ontology passed to ApplyOntology. Without it, types that match
+// an ontology type ignoring case and punctuation are rewritten to the
+// ontology's spelling and other types are kept as extracted.
+func WithStrictOntology() Option {
+	return func(c *Config) {
+		c.StrictOntology = true
+	}
+}
+
+// WithObserver reports episode ingest, fact search, and deletion to
+// observer as spans, and each fact search as a retrieval metric. See
+// Observe. The rag/otel package adapts OpenTelemetry to ragtypes.Observer.
+func WithObserver(observer ragtypes.Observer) Option {
+	return func(c *Config) {
+		c.Observer = observer
 	}
 }
 
@@ -88,6 +113,9 @@ func NewGraph(ctx context.Context, opts ...Option) (types.Graph, error) {
 	if cfg.Logger != nil {
 		engineOpts = append(engineOpts, engine.WithLogger(cfg.Logger))
 	}
+	if cfg.StrictOntology {
+		engineOpts = append(engineOpts, engine.WithStrictOntology())
+	}
 
-	return engine.New(engineOpts...), nil
+	return Observe(engine.New(engineOpts...), cfg.Observer), nil
 }

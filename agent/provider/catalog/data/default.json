@@ -1,0 +1,2020 @@
+{
+  "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
+  "version": 1,
+  "revision": "2026-10-09.2",
+  "templates": {
+    "tool_use": {
+      "capabilities": [
+        "tools",
+        "parallel_tools",
+        "tool_choice",
+        "streaming",
+        "system_prompt"
+      ]
+    },
+    "embedding": {
+      "capabilities": [
+        "embeddings"
+      ],
+      "media": []
+    },
+    "anthropic.base": {
+      "extends": "tool_use",
+      "add_capabilities": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "stop_sequences",
+        "max_output_tokens",
+        "prompt_caching",
+        "prompt_cache_markers",
+        "structured_output",
+        "parallel_tool_control",
+        "assistant_prefill"
+      ],
+      "limits": {
+        "context_window": 200000,
+        "default_max_output_tokens": 4096
+      },
+      "structured_output": "tool_call",
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf"
+      ]
+    },
+    "anthropic.thinking": {
+      "extends": "anthropic.base",
+      "add_capabilities": [
+        "reasoning",
+        "reasoning_budget",
+        "reasoning_signature",
+        "server_tools",
+        "web_search",
+        "code_execution",
+        "citations",
+        "remote_mcp"
+      ],
+      "reasoning": {
+        "min_budget": 1024
+      },
+      "server_tools": [
+        "web_search",
+        "code_execution",
+        "remote_mcp"
+      ],
+      "server_tool_fees": {
+        "web_search": {
+          "currency": "USD",
+          "per_use": 0.01,
+          "as_of": "2026-07-24",
+          "source": "vendor list price"
+        }
+      },
+      "notes": [
+        "max_tokens is required on every request; the adapter defaults it to 4096",
+        "thinking blocks carry a signature that must round-trip or multi-turn tool use breaks",
+        "temperature and top_p may not be combined with thinking on all versions",
+        "server-side web search bills per search on top of tokens",
+        "server-side code execution bills by container time, not per use"
+      ]
+    },
+    "anthropic.adaptive": {
+      "extends": "anthropic.thinking",
+      "add_capabilities": [
+        "reasoning_effort"
+      ],
+      "remove_capabilities": [
+        "reasoning_budget",
+        "temperature",
+        "top_p",
+        "top_k",
+        "assistant_prefill"
+      ],
+      "reasoning": {
+        "min_budget": 0,
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_enabled": true
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API"
+      ]
+    },
+    "anthropic.legacy": {
+      "extends": "anthropic.base",
+      "notes": [
+        "no extended thinking: reasoning knobs are rejected"
+      ]
+    },
+    "openai.reasoning": {
+      "extends": "tool_use",
+      "add_capabilities": [
+        "max_output_tokens",
+        "structured_output",
+        "reasoning",
+        "reasoning_effort",
+        "prompt_caching",
+        "automatic_prompt_cache",
+        "parallel_tool_control",
+        "server_tools",
+        "web_search",
+        "citations",
+        "remote_mcp"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "required": true,
+        "default_effort": "medium"
+      },
+      "structured_output": "native",
+      "server_tools": [
+        "web_search",
+        "code_execution",
+        "remote_mcp"
+      ],
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf"
+      ],
+      "notes": [
+        "rejects temperature, top_p, frequency_penalty and presence_penalty",
+        "reasoning tokens are billed as output but are not returned as content",
+        "the chat-completions surface caps output with max_completion_tokens, not max_tokens",
+        "server-side tools and citations require the Responses API, which this adapter does not use yet"
+      ]
+    },
+    "openai.chat": {
+      "extends": "tool_use",
+      "add_capabilities": [
+        "temperature",
+        "top_p",
+        "stop_sequences",
+        "max_output_tokens",
+        "seed",
+        "frequency_penalty",
+        "presence_penalty",
+        "prompt_caching",
+        "automatic_prompt_cache",
+        "parallel_tool_control"
+      ],
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf"
+      ],
+      "notes": [
+        "no reasoning: reasoning_effort is not accepted"
+      ]
+    },
+    "openai.chat.structured": {
+      "extends": "openai.chat",
+      "add_capabilities": [
+        "structured_output"
+      ],
+      "structured_output": "native"
+    },
+    "google.gemini": {
+      "extends": "tool_use",
+      "add_capabilities": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "stop_sequences",
+        "max_output_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "safety_settings",
+        "structured_output",
+        "prompt_caching",
+        "automatic_prompt_cache",
+        "explicit_context_cache",
+        "server_tools",
+        "web_search",
+        "code_execution",
+        "citations"
+      ],
+      "structured_output": "native",
+      "server_tools": [
+        "web_search",
+        "code_execution"
+      ],
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf",
+        "audio/mpeg",
+        "audio/wav",
+        "video/mp4"
+      ]
+    },
+    "google.gemini3": {
+      "extends": "google.gemini",
+      "add_capabilities": [
+        "reasoning",
+        "reasoning_effort",
+        "reasoning_signature"
+      ],
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "required": true,
+        "default_effort": "high"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel, not a token budget",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "unpriced in this table: set Pricing via Register before enforcing a budget"
+      ]
+    },
+    "google.gemini25": {
+      "extends": "google.gemini",
+      "add_capabilities": [
+        "reasoning",
+        "reasoning_budget",
+        "reasoning_signature"
+      ],
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 65536
+      }
+    },
+    "ollama.local": {
+      "capabilities": [
+        "streaming",
+        "system_prompt",
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "stop_sequences",
+        "max_output_tokens",
+        "context_window_override",
+        "structured_output"
+      ],
+      "structured_output": "native",
+      "media": [],
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      },
+      "notes": [
+        "num_ctx defaults low and silently truncates: set it explicitly",
+        "the format grammar constrains thinking too, so schema output with thinking on can return empty content",
+        "no server-side tools: web search and code execution must be local tools"
+      ]
+    },
+    "ollama.tools": {
+      "extends": "ollama.local",
+      "add_capabilities": [
+        "tools",
+        "parallel_tools"
+      ]
+    },
+    "ollama.reasoning": {
+      "extends": "ollama.tools",
+      "add_capabilities": [
+        "reasoning",
+        "reasoning_toggle"
+      ],
+      "notes": [
+        "num_ctx defaults low and silently truncates: set it explicitly",
+        "the format grammar constrains thinking too, so schema output with thinking on can return empty content",
+        "no server-side tools: web search and code execution must be local tools",
+        "thinking is toggled with the think flag; no signature is returned to round-trip"
+      ]
+    },
+    "ollama.vision": {
+      "extends": "ollama.local",
+      "media": [
+        "image/jpeg",
+        "image/png"
+      ]
+    }
+  },
+  "models": [
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-5",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "superseded_by": "claude-opus-5-5",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-5-5",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true,
+        "forced_tool_choice": false,
+        "default_effort": "medium"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 4,
+        "output_per_mtok": 20,
+        "cached_input_per_mtok": 0.2,
+        "cache_write_per_mtok": 5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-sonnet-5",
+      "extends": "anthropic.adaptive",
+      "tier": "standard",
+      "superseded_by": "claude-sonnet-5-5",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-sonnet-5-5",
+      "extends": "anthropic.adaptive",
+      "tier": "standard",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true,
+        "forced_tool_choice": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 0.2,
+        "cache_write_per_mtok": 2.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-haiku-5",
+      "extends": "anthropic.adaptive",
+      "tier": "economy",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-haiku-5-5",
+      "extends": "anthropic.adaptive",
+      "tier": "economy",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "default_effort": "medium"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.1,
+        "output_per_mtok": 0.5,
+        "cached_input_per_mtok": 0.01,
+        "cache_write_per_mtok": 0.125,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "forced tool_choice (required or named) is accepted, including with adaptive thinking",
+        "list price is tiered by prompt length: prompts above 100K tokens bill $0.50 / $2.50; the shorter tier is declared here",
+        "supersedes claude-haiku-4-5"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-fable-5",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-fable-5-1",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true,
+        "forced_tool_choice": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 10,
+        "output_per_mtok": 50,
+        "cached_input_per_mtok": 0.25,
+        "cache_write_per_mtok": 12.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-mythos-5",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-mythos-5-1",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "required": true,
+        "forced_tool_choice": false
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 10,
+        "output_per_mtok": 50,
+        "cached_input_per_mtok": 0.25,
+        "cache_write_per_mtok": 12.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-4-7",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "superseded_by": "claude-opus-5-5",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "default_enabled": false
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-4-8",
+      "extends": "anthropic.adaptive",
+      "tier": "frontier",
+      "superseded_by": "claude-opus-5-5",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "default_enabled": false
+      },
+      "notes": [
+        "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
+        "non-default temperature, top_p and top_k are rejected by the API",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-4-6",
+      "extends": "anthropic.thinking",
+      "tier": "frontier",
+      "superseded_by": "claude-opus-5-5",
+      "add_capabilities": [
+        "reasoning_effort"
+      ],
+      "remove_capabilities": [
+        "assistant_prefill"
+      ],
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ]
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-sonnet-4-6",
+      "extends": "anthropic.thinking",
+      "tier": "standard",
+      "superseded_by": "claude-sonnet-5-5",
+      "add_capabilities": [
+        "reasoning_effort"
+      ],
+      "remove_capabilities": [
+        "assistant_prefill"
+      ],
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ]
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-opus-4",
+      "extends": "anthropic.thinking",
+      "tier": "frontier",
+      "superseded_by": "claude-opus-5-5",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 15,
+        "output_per_mtok": 75,
+        "cached_input_per_mtok": 1.5,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-sonnet-4",
+      "extends": "anthropic.thinking",
+      "tier": "standard",
+      "superseded_by": "claude-sonnet-5-5",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 3,
+        "output_per_mtok": 15,
+        "cached_input_per_mtok": 0.3,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-haiku-4",
+      "extends": "anthropic.thinking",
+      "tier": "economy",
+      "superseded_by": "claude-haiku-5-5",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 1,
+        "output_per_mtok": 5,
+        "cached_input_per_mtok": 0.1,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-3-7-sonnet",
+      "extends": "anthropic.thinking",
+      "tier": "standard",
+      "superseded_by": "claude-haiku-5-5",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 3,
+        "output_per_mtok": 15,
+        "cached_input_per_mtok": 0.3,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-3-5-sonnet",
+      "extends": "anthropic.legacy",
+      "tier": "standard",
+      "superseded_by": "claude-haiku-5-5",
+      "limits": {
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 3,
+        "output_per_mtok": 15,
+        "cached_input_per_mtok": 0.3,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-3-5-haiku",
+      "extends": "anthropic.legacy",
+      "tier": "economy",
+      "superseded_by": "claude-haiku-5-5",
+      "limits": {
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.8,
+        "output_per_mtok": 4,
+        "cached_input_per_mtok": 0.08,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-3-opus",
+      "extends": "anthropic.legacy",
+      "tier": "frontier",
+      "superseded_by": "claude-haiku-5-5",
+      "limits": {
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 15,
+        "output_per_mtok": 75,
+        "cached_input_per_mtok": 1.5,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "anthropic",
+      "prefix": "claude-3-haiku",
+      "extends": "anthropic.legacy",
+      "tier": "economy",
+      "superseded_by": "claude-haiku-5-5",
+      "limits": {
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 1.25,
+        "cached_input_per_mtok": 0.03,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-6-luna",
+      "extends": "openai.reasoning",
+      "tier": "economy",
+      "chat_completions_tools": "no_reasoning",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": false,
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.1,
+        "output_per_mtok": 0.5,
+        "cached_input_per_mtok": 0.01,
+        "cache_write_per_mtok": 0.125,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none (the default effort is medium)",
+        "Chat Completions accepts tools only with reasoning effort none: the chat adapter sends none when tools are offered and no effort is set, and rejects another effort",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-6-sol",
+      "extends": "openai.reasoning",
+      "tier": "standard",
+      "superseded_by": "gpt-6.1-sol",
+      "chat_completions_tools": "no_reasoning",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": false,
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 0.2,
+        "cache_write_per_mtok": 2.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none (the default effort is medium)",
+        "Chat Completions accepts tools only with reasoning effort none: the chat adapter sends none when tools are offered and no effort is set, and rejects another effort",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-6.1-sol",
+      "extends": "openai.reasoning",
+      "tier": "standard",
+      "chat_completions_tools": "responses_only",
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": true
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 0.1,
+        "cache_write_per_mtok": 2.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning effort none and minimal are not supported, so temperature, top_p and logprobs are never accepted",
+        "tool calling requires the Responses API: provider.Build serves this model through it",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-6-astra",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "chat_completions_tools": "responses_only",
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "required": true
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 10,
+        "output_per_mtok": 50,
+        "cached_input_per_mtok": 1,
+        "cache_write_per_mtok": 12.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning effort none is not supported, so temperature, top_p and logprobs are never accepted",
+        "tool calling requires the Responses API: provider.Build serves this model through it",
+        "the vendor page states no default effort; medium is assumed",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5.6-luna",
+      "extends": "openai.reasoning",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": false,
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.2,
+        "output_per_mtok": 1.2,
+        "cached_input_per_mtok": 0.02,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none (the default effort is medium)",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5.6-terra",
+      "extends": "openai.reasoning",
+      "tier": "standard",
+      "superseded_by": "gpt-6.1-sol",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": false,
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 12,
+        "cached_input_per_mtok": 0.2,
+        "cache_write_per_mtok": 2.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none (the default effort is medium)",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5.6-sol",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "gpt-6.1-sol",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 1050000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_effort": "medium",
+        "required": false,
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "media": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 4,
+        "output_per_mtok": 20,
+        "cached_input_per_mtok": 0.4,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none (the default effort is medium)",
+        "input is text and images; PDF input is not listed",
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "gpt-6.1-sol",
+      "limits": {
+        "context_window": 400000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 0.125,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5-mini",
+      "extends": "openai.reasoning",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 400000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "notes": [
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5-nano",
+      "extends": "openai.reasoning",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 400000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "notes": [
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5.1",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "gpt-6.1-sol",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 400000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "required": false,
+        "default_effort": "none",
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-5.2",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "gpt-6.1-sol",
+      "add_capabilities": [
+        "temperature",
+        "top_p"
+      ],
+      "limits": {
+        "context_window": 400000,
+        "max_output_tokens": 128000
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "required": false,
+        "default_effort": "none",
+        "sampling_requires_no_reasoning": [
+          "temperature",
+          "top_p"
+        ]
+      },
+      "notes": [
+        "temperature and top_p require reasoning effort none",
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "o1",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "o3",
+      "limits": {
+        "context_window": 200000,
+        "max_output_tokens": 100000
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 15,
+        "output_per_mtok": 60,
+        "cached_input_per_mtok": 7.5,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "o3",
+      "extends": "openai.reasoning",
+      "tier": "frontier",
+      "superseded_by": "gpt-6.1-sol",
+      "limits": {
+        "context_window": 200000,
+        "max_output_tokens": 100000
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 8,
+        "cached_input_per_mtok": 0.5,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "o4-mini",
+      "extends": "openai.reasoning",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 200000,
+        "max_output_tokens": 100000
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 1.1,
+        "output_per_mtok": 4.4,
+        "cached_input_per_mtok": 0.275,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4.1",
+      "extends": "openai.chat.structured",
+      "tier": "standard",
+      "superseded_by": "gpt-6.1-sol",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 8,
+        "cached_input_per_mtok": 0.5,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4.1-mini",
+      "extends": "openai.chat.structured",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.4,
+        "output_per_mtok": 1.6,
+        "cached_input_per_mtok": 0.1,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4.1-nano",
+      "extends": "openai.chat.structured",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 32768
+      },
+      "notes": [
+        "unpriced: supply a verified rate card"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4o",
+      "extends": "openai.chat.structured",
+      "tier": "standard",
+      "superseded_by": "gpt-6.1-sol",
+      "limits": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2.5,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 1.25,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4o-mini",
+      "extends": "openai.chat.structured",
+      "tier": "economy",
+      "superseded_by": "gpt-6-luna",
+      "limits": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.6,
+        "cached_input_per_mtok": 0.075,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "gpt-4-turbo",
+      "extends": "openai.chat",
+      "tier": "standard",
+      "superseded_by": "gpt-4o",
+      "limits": {
+        "context_window": 128000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 10,
+        "output_per_mtok": 30,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "no reasoning: reasoning_effort is not accepted",
+        "json_object mode only: no strict json_schema enforcement"
+      ]
+    },
+    {
+      "provider": "openai",
+      "prefix": "text-embedding-3",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.02,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "openai",
+      "prefix": "text-embedding-ada",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.02,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      }
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.8-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.75,
+        "output_per_mtok": 3.75,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel; minimal is rejected",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "the list price rises to $1.50 / $7.50 on 2027-01-01"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.7-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "superseded_by": "gemini-3.8-flash",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.75,
+        "output_per_mtok": 3.75,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel; minimal is rejected",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "the list price rises to $1.50 / $7.50 on 2027-01-01"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.5-flash-lite",
+      "extends": "google.gemini3",
+      "tier": "economy",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "minimal"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.3,
+        "output_per_mtok": 2.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel",
+        "thought signatures must round-trip or multi-turn function calling degrades"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.1-flash-lite",
+      "extends": "google.gemini3",
+      "tier": "economy",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "minimal"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.25,
+        "output_per_mtok": 1.5,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "the vendor thinking table does not list this model's levels; the flash-lite family's are declared"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.1-pro",
+      "extends": "google.gemini3",
+      "tier": "frontier",
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 2,
+        "output_per_mtok": 12,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel, not a token budget",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "list price is tiered by prompt length; the 200K-and-under tier is declared here"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3-pro",
+      "extends": "google.gemini3",
+      "tier": "frontier"
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.1-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "superseded_by": "gemini-3.1-flash-lite",
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "notes": [
+        "legacy: gemini-3-flash-preview is superseded by gemini-3.1-flash-lite",
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel, not a token budget",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "unpriced in this table: set Pricing via Register before enforcing a budget"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-2.5-pro",
+      "extends": "google.gemini25",
+      "tier": "frontier",
+      "superseded_by": "gemini-3.8-flash",
+      "reasoning": {
+        "required": true,
+        "min_budget": 128,
+        "max_budget": 32768,
+        "dynamic_budget": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10,
+        "cached_input_per_mtok": 0.31,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
+        "pro cannot disable thinking",
+        "list price is tiered by prompt length; the shorter-prompt tier is declared here"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-2.5-flash",
+      "extends": "google.gemini25",
+      "tier": "standard",
+      "superseded_by": "gemini-3.1-flash-lite",
+      "reasoning": {
+        "default_enabled": true,
+        "max_budget": 24576,
+        "dynamic_budget": true,
+        "zero_budget": true
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.3,
+        "output_per_mtok": 2.5,
+        "cached_input_per_mtok": 0.075,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
+        "budget 0 disables thinking on flash"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-2.5-flash-lite",
+      "extends": "google.gemini25",
+      "tier": "economy",
+      "superseded_by": "gemini-3.1-flash-lite",
+      "reasoning": {
+        "min_budget": 512,
+        "max_budget": 24576,
+        "dynamic_budget": true,
+        "zero_budget": true
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
+        "budget 0 disables thinking on flash"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-2.0",
+      "extends": "google.gemini",
+      "tier": "economy",
+      "superseded_by": "gemini-3.1-flash-lite",
+      "remove_capabilities": [
+        "automatic_prompt_cache"
+      ],
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.1,
+        "output_per_mtok": 0.4,
+        "cached_input_per_mtok": 0.025,
+        "as_of": "2026-07-24",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "no thinking support",
+        "shut down by the vendor on 2026-06-01: migrate to a 3.x model"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "text-embedding-004",
+      "extends": "embedding"
+    },
+    {
+      "provider": "google",
+      "prefix": "text-embedding-005",
+      "extends": "embedding"
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-embedding",
+      "extends": "embedding"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "qwen3",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "deepseek-r1",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "gpt-oss",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "magistral",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "llama3.1",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "llama3.2",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "llama3.3",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "mistral",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "qwen2.5",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "command-r",
+      "extends": "ollama.tools"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "llava",
+      "extends": "ollama.vision"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "gemma3",
+      "extends": "ollama.vision"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "qwen2.5vl",
+      "extends": "ollama.vision"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "minicpm-v",
+      "extends": "ollama.vision"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "nomic-embed",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      }
+    },
+    {
+      "provider": "ollama",
+      "prefix": "mxbai-embed",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      }
+    },
+    {
+      "provider": "ollama",
+      "prefix": "all-minilm",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      }
+    },
+    {
+      "provider": "ollama",
+      "prefix": "bge-m3",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      }
+    },
+    {
+      "provider": "ollama",
+      "prefix": "snowflake-arctic-embed",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "free": true,
+        "as_of": "2026-07-24",
+        "source": "local execution"
+      }
+    }
+  ],
+  "baselines": {
+    "anthropic": {
+      "extends": "anthropic.base",
+      "remove_capabilities": [
+        "assistant_prefill"
+      ],
+      "notes": [
+        "unrecognised Claude model: reasoning, server tools, prefill and pricing not assumed"
+      ]
+    },
+    "openai": {
+      "extends": "openai.chat",
+      "notes": [
+        "unrecognised OpenAI model: reasoning, strict schema and pricing not assumed"
+      ]
+    },
+    "google": {
+      "extends": "google.gemini",
+      "remove_capabilities": [
+        "automatic_prompt_cache",
+        "explicit_context_cache"
+      ],
+      "notes": [
+        "unrecognised Gemini model: thinking and pricing not assumed"
+      ]
+    },
+    "ollama": {
+      "extends": "ollama.local",
+      "notes": [
+        "num_ctx defaults low and silently truncates: set it explicitly",
+        "the format grammar constrains thinking too, so schema output with thinking on can return empty content",
+        "no server-side tools: web search and code execution must be local tools",
+        "unrecognised local model: tool calling, vision and thinking depend on the pulled weights"
+      ]
+    }
+  },
+  "default_preset": "default",
+  "presets": {
+    "default": {
+      "description": "The cheapest current model of each vendor: Anthropic, OpenAI, Google, then a local Ollama model. Without --preset the CLI runs only the first one available; naming this preset fails over across all of them",
+      "chain": [
+        {
+          "id": "anthropic",
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5",
+          "optional": true
+        },
+        {
+          "id": "openai",
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "optional": true
+        },
+        {
+          "id": "google",
+          "provider": "google",
+          "model": "gemini-3.1-flash-lite",
+          "optional": true
+        },
+        {
+          "id": "ollama",
+          "provider": "ollama",
+          "model": "qwen3",
+          "optional": true,
+          "retry": {
+            "disable": true
+          }
+        }
+      ]
+    },
+    "anthropic": {
+      "description": "Anthropic only, its cheapest current model",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "anthropic",
+          "model": "claude-haiku-5-5"
+        }
+      ]
+    },
+    "anthropic-quality": {
+      "description": "Anthropic only, its current mid tier",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "anthropic",
+          "model": "claude-sonnet-5-5"
+        }
+      ]
+    },
+    "openai": {
+      "description": "OpenAI only, its cheapest current model",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "openai",
+          "model": "gpt-6-luna"
+        }
+      ]
+    },
+    "openai-quality": {
+      "description": "OpenAI only, its current mid tier",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "openai",
+          "model": "gpt-6.1-sol"
+        }
+      ]
+    },
+    "google": {
+      "description": "Google only, its cheapest current model",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "google",
+          "model": "gemini-3.1-flash-lite"
+        }
+      ]
+    },
+    "google-quality": {
+      "description": "Google only, its current mid tier",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "google",
+          "model": "gemini-3.8-flash"
+        }
+      ]
+    },
+    "vertex": {
+      "description": "Google through Vertex AI, its cheapest current model. The project and location default from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION (then global)",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "google",
+          "model": "gemini-3.1-flash-lite",
+          "vertex": {}
+        }
+      ]
+    },
+    "ollama": {
+      "description": "Local Ollama only",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "ollama",
+          "model": "qwen3",
+          "retry": {
+            "disable": true
+          }
+        }
+      ]
+    }
+  }
+}

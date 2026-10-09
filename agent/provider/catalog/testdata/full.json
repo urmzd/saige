@@ -1,0 +1,84 @@
+{
+  "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
+  "version": 1,
+  "revision": "test.1",
+  "inherit_default": false,
+  "templates": {
+    "tool_use": { "capabilities": ["tools", "parallel_tools", "tool_choice", "streaming", "system_prompt"] },
+    "anthropic.base": {
+      "extends": "tool_use",
+      "add_capabilities": ["temperature", "top_p", "top_k", "stop_sequences", "max_output_tokens",
+        "prompt_caching", "prompt_cache_markers", "structured_output", "parallel_tool_control"],
+      "limits": { "context_window": 200000, "default_max_output_tokens": 4096 },
+      "structured_output": "tool_call",
+      "media": ["image/jpeg", "image/png", "application/pdf"]
+    },
+    "anthropic.thinking": {
+      "extends": "anthropic.base",
+      "add_capabilities": ["reasoning", "reasoning_budget", "reasoning_signature", "server_tools", "web_search"],
+      "reasoning": { "min_budget": 1024 },
+      "server_tools": ["web_search"],
+      "server_tool_fees": { "web_search": { "currency": "USD", "per_use": 0.01, "as_of": "2026-07-24", "source": "vendor list price" } }
+    }
+  },
+  "models": [
+    {
+      "provider": "openai", "prefix": "gpt-4.1", "extends": "tool_use", "tier": "standard",
+      "add_capabilities": ["temperature", "top_p", "stop_sequences", "max_output_tokens", "seed",
+        "frequency_penalty", "presence_penalty", "prompt_caching", "automatic_prompt_cache",
+        "parallel_tool_control", "structured_output"],
+      "structured_output": "native",
+      "limits": { "context_window": 1000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "USD", "input_per_mtok": 2, "output_per_mtok": 8, "cached_input_per_mtok": 0.5,
+        "as_of": "2026-07-24", "source": "vendor list price" },
+      "defaults": { "max_output_tokens": 4096 }
+    },
+    {
+      "provider": "anthropic", "prefix": "claude-sonnet-4-6", "extends": "anthropic.thinking",
+      "tier": "standard",
+      "add_capabilities": ["reasoning_effort"],
+      "reasoning": { "efforts": ["low", "medium", "high", "max"] }
+    },
+    {
+      "provider": "anthropic", "prefix": "claude-3-5-haiku", "extends": "anthropic.base", "tier": "economy",
+      "limits": { "max_output_tokens": 8192 },
+      "pricing": { "currency": "USD", "input_per_mtok": 0.8, "output_per_mtok": 4, "as_of": "2026-07-24" }
+    }
+  ],
+  "baselines": {
+    "openai": { "extends": "tool_use", "notes": ["unrecognised model"] }
+  },
+  "default_preset": "balanced",
+  "presets": {
+    "balanced": {
+      "description": "General assistant with cross-vendor failover",
+      "options": { "max_output_tokens": 8192, "stop": ["</answer>"] },
+      "tool_choice": "auto",
+      "output_mode": "auto",
+      "llm_timeout": "2m0s",
+      "retry": { "max_attempts": 3, "base_delay": "500ms", "max_delay": "10s" },
+      "routing": { "policy": "affinity" },
+      "chain": [
+        { "id": "primary", "provider": "anthropic", "model": "claude-sonnet-4-6",
+          "options": { "reasoning": { "effort": "medium" },
+                       "prompt_cache": { "mode": "markers", "ttl": "5m", "system": true, "tools": true } } },
+        { "id": "openai", "provider": "openai", "model": "gpt-4.1",
+          "options": { "temperature": 0.3, "seed": 7,
+                       "prompt_cache": { "mode": "automatic", "retention": "24h" } } }
+      ]
+    },
+    "deterministic-extract": {
+      "options": { "temperature": 0, "seed": 42, "max_output_tokens": 2048 },
+      "output_mode": "tool",
+      "require_declared": false,
+      "chain": [
+        { "provider": "openai", "model": "gpt-4.1" },
+        { "provider": "anthropic", "model": "claude-3-5-haiku", "unset": ["seed"] }
+      ]
+    },
+    "deterministic-extract-strict": {
+      "extends": "deterministic-extract",
+      "require_declared": true
+    }
+  }
+}

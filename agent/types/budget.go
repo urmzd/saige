@@ -42,6 +42,11 @@ type BudgetPolicy struct {
 	// PerCallCost and PerCallTokens are upper bounds for a configured request.
 	// Zero reserves all remaining capacity when the matching ceiling is enabled.
 	// Include retry/failover attempts in these bounds, or budget inside decorators.
+	// A call that fails without reporting usage is charged its whole
+	// reservation, so with a zero bound one such call spends everything that
+	// remains: set a bound when the provider may not report usage. A call
+	// that costs more than its bound is recorded at its real cost, and the
+	// overshoot is then handled by OnExceed like any other breach.
 	PerCallCost   Cost
 	PerCallTokens int
 	// Limit is the reported cost ceiling. Zero disables the cost ceiling;
@@ -110,6 +115,11 @@ type Budget struct {
 	currency map[string]string // per model, so a Report can name its unit
 	granted  Cost              // extra allowance bought by approvals
 	breaches int
+
+	// toolQuotas caps calls per tool name; toolCalls counts reserved calls.
+	// See ToolQuota.
+	toolQuotas map[string]int
+	toolCalls  map[string]int
 }
 
 // NewBudget returns a budget enforcing the policy. A zero policy tracks spend

@@ -28,7 +28,7 @@ func (s *Store) CreateRelation(ctx context.Context, rel *types.RelationInput) (s
 	}
 
 	_, err = s.pool.Exec(ctx, relationCreateSQL,
-		relUUID, srcID, tgtID, rel.Type, rel.Fact, validAt, rel.GroupID,
+		relUUID, srcID, tgtID, rel.Type, rel.Fact, validAt, rel.InvalidAt, rel.GroupID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("create relation: %w", err)
@@ -46,7 +46,9 @@ func (s *Store) InvalidateRelation(ctx context.Context, relUUID string, invalidA
 	return nil
 }
 
-// FindRelationsBetweenEntities returns all relations between two entities (bidirectional).
+// FindRelationsBetweenEntities returns all relations between two entities in
+// either direction, oldest first. Callers that care about direction compare
+// SourceUUID.
 func (s *Store) FindRelationsBetweenEntities(ctx context.Context, srcUUID, tgtUUID string) ([]types.Relation, error) {
 	rows, err := s.pool.Query(ctx, relationFindBetweenSQL, srcUUID, tgtUUID)
 	if err != nil {
@@ -69,55 +71,4 @@ func (s *Store) FindRelationsBetweenEntities(ctx context.Context, srcUUID, tgtUU
 // Close is a no-op; the pool is externally managed.
 func (s *Store) Close(_ context.Context) error {
 	return nil
-}
-
-// getNeighbors returns immediate neighbors and edges for an entity UUID.
-func (s *Store) getNeighbors(ctx context.Context, nodeUUID string) ([]types.GraphNode, []types.GraphEdge, error) {
-	nodeID, err := s.entityID(ctx, nodeUUID)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	rows, err := s.pool.Query(ctx, relationNeighborsSQL, nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-
-	var neighbors []types.GraphNode
-	var edges []types.GraphEdge
-	seen := make(map[string]bool)
-
-	for rows.Next() {
-		var (
-			rUUID, rType, rFact        string
-			rCreatedAt, rValidAt       time.Time
-			rInvalidAt                 *time.Time
-			nUUID, nName, nType, nSumm string
-			isOutgoing                 bool
-		)
-		if err := rows.Scan(&rUUID, &rType, &rFact, &rCreatedAt, &rValidAt, &rInvalidAt,
-			&nUUID, &nName, &nType, &nSumm, &isOutgoing); err != nil {
-			return nil, nil, err
-		}
-
-		if !seen[nUUID] {
-			seen[nUUID] = true
-			neighbors = append(neighbors, types.GraphNode{
-				ID: nUUID, Name: nName, Type: nType, Summary: nSumm,
-			})
-		}
-
-		src, tgt := nUUID, nodeUUID
-		if isOutgoing {
-			src, tgt = nodeUUID, nUUID
-		}
-		edges = append(edges, types.GraphEdge{
-			ID: rUUID, Source: src, Target: tgt,
-			Type: rType, Fact: rFact, Weight: 1.0,
-			CreatedAt: rCreatedAt, ValidAt: rValidAt, InvalidAt: rInvalidAt,
-		})
-	}
-
-	return neighbors, edges, rows.Err()
 }

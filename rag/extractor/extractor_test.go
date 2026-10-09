@@ -123,10 +123,10 @@ func TestAutoExtractor(t *testing.T) {
 	auto := extractor.NewAuto()
 
 	tests := []struct {
-		name     string
-		mime     string
-		data     string
-		wantErr  bool
+		name    string
+		mime    string
+		data    string
+		wantErr bool
 	}{
 		{"plain text", "text/plain", "hello world", false},
 		{"html", "text/html", "<p>hello</p>", false},

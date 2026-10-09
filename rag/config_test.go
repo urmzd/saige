@@ -119,3 +119,137 @@ func TestWithGraphDeleteRemovesEpisodes(t *testing.T) {
 		t.Errorf("expected DeleteEpisodes(%q), got %v", result.DocumentUUID, graph.deletedGroups)
 	}
 }
+
+func TestBM25IndexedThroughParentContext(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []rag.Option
+	}{
+		{name: "bm25 alone", opts: []rag.Option{rag.WithBM25(nil)}},
+		{name: "bm25 with parent context", opts: []rag.Option{rag.WithBM25(nil), rag.WithParentContext()}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			opts := append([]rag.Option{
+				rag.WithStore(memstore.New()),
+				rag.WithContentExtractor(&stubExtractor{}),
+			}, tt.opts...)
+			pipe, err := rag.NewPipeline(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pipe.Ingest(ctx, &ragtypes.RawDocument{Data: []byte("the zebra runs fast")}); err != nil {
+				t.Fatal(err)
+			}
+			result, err := pipe.Search(ctx, "zebra")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Hits) != 1 {
+				t.Errorf("got %d hits for %q, want 1", len(result.Hits), "zebra")
+			}
+		})
+	}
+}
+
+func TestBM25ThroughParentContextDeleteAndRebuild(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []rag.Option
+	}{
+		{name: "bm25 alone", opts: []rag.Option{rag.WithBM25(nil)}},
+		{name: "bm25 with parent context", opts: []rag.Option{rag.WithBM25(nil), rag.WithParentContext()}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memstore.New()
+			newPipe := func() ragtypes.Pipeline {
+				pipe, err := rag.NewPipeline(append([]rag.Option{
+					rag.WithStore(store),
+					rag.WithContentExtractor(&stubExtractor{}),
+				}, tt.opts...)...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return pipe
+			}
+			search := func(pipe ragtypes.Pipeline) int {
+				t.Helper()
+				result, err := pipe.Search(ctx, "zebra")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return len(result.Hits)
+			}
+
+			pipe := newPipe()
+			result, err := pipe.Ingest(ctx, &ragtypes.RawDocument{Data: []byte("the zebra runs fast")})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// A second pipeline over the same store starts with an empty
+			// index until it is rebuilt.
+			restarted := newPipe()
+			if n := search(restarted); n != 0 {
+				t.Fatalf("fresh index returned %d hits", n)
+			}
+			if err := rag.RebuildIndex(ctx, restarted); err != nil {
+				t.Fatal(err)
+			}
+			if n := search(restarted); n != 1 {
+				t.Fatalf("rebuilt index returned %d hits, want 1", n)
+			}
+
+			if err := pipe.Delete(ctx, result.DocumentUUID); err != nil {
+				t.Fatal(err)
+			}
+			if n := search(pipe); n != 0 {
+				t.Errorf("deleted document still returned %d hits", n)
+			}
+		})
+	}
+}
+
+// keywordStore is a memstore whose keyword search is served by the store, as
+// pgstore does with pg_search. It records the options each search received.
+type keywordStore struct {
+	*memstore.Store
+	queries []string
+	opts    []*ragtypes.SearchOptions
+}
+
+func (s *keywordStore) SearchByKeyword(_ context.Context, query string, opts *ragtypes.SearchOptions) ([]ragtypes.SearchHit, error) {
+	s.queries = append(s.queries, query)
+	s.opts = append(s.opts, opts)
+	return []ragtypes.SearchHit{{Variant: ragtypes.ContentVariant{UUID: "store-hit"}, Score: 1}}, nil
+}
+
+func TestBM25UsesStoreKeywordSearch(t *testing.T) {
+	ctx := context.Background()
+	store := &keywordStore{Store: memstore.New()}
+	pipe, err := rag.NewPipeline(
+		rag.WithStore(store),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing is ingested: an in-memory index would be empty.
+	result, err := pipe.Search(ctx, "zebra", ragtypes.WithScope("tenant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.queries) != 1 || store.queries[0] != "zebra" {
+		t.Fatalf("store keyword queries = %v, want [zebra]", store.queries)
+	}
+	if store.opts[0] == nil || store.opts[0].Scope != "tenant" {
+		t.Errorf("store keyword search scope = %+v, want tenant", store.opts[0])
+	}
+	if len(result.Retrievals) != 1 || result.Retrievals[0].Retriever != "bm25" {
+		t.Errorf("retrievals = %+v, want one bm25 call", result.Retrievals)
+	}
+}

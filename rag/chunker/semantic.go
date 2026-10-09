@@ -2,11 +2,11 @@ package chunker
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -43,52 +43,11 @@ func NewSemantic(embedders types.EmbedderRegistry, cfg *SemanticConfig) *Semanti
 
 // Chunk splits document sections using semantic similarity between sentences.
 func (c *SemanticChunker) Chunk(ctx context.Context, doc *types.Document) (*types.Document, error) {
-	var newSections []types.Section
-	idx := 0
-
-	for _, sec := range doc.Sections {
-		for _, v := range sec.Variants {
-			if v.ContentType != types.ContentText || estimateTokens(v.Text) <= c.cfg.MinTokens {
-				sec.Index = idx
-				newSections = append(newSections, sec)
-				idx++
-				continue
-			}
-
-			chunks, err := c.splitSemantic(ctx, v.Text)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, chunk := range chunks {
-				chunk = strings.TrimSpace(chunk)
-				if chunk == "" {
-					continue
-				}
-				secUUID := uuid.New().String()
-				varUUID := uuid.New().String()
-				newSections = append(newSections, types.Section{
-					UUID:         secUUID,
-					DocumentUUID: doc.UUID,
-					Index:        idx,
-					Heading:      sec.Heading,
-					Variants: []types.ContentVariant{{
-						UUID:        varUUID,
-						SectionUUID: secUUID,
-						ContentType: v.ContentType,
-						MIMEType:    v.MIMEType,
-						Text:        chunk,
-						Metadata:    v.Metadata,
-					}},
-				})
-				idx++
-			}
-		}
-	}
-
-	result := *doc
-	result.Sections = newSections
-	return &result, nil
+	return chunkDocument(doc, func(v types.ContentVariant) bool {
+		return estimateTokens(v.Text) > c.cfg.MinTokens
+	}, func(text string) ([]string, error) {
+		return c.splitSemantic(ctx, text)
+	})
 }
 
 func (c *SemanticChunker) splitSemantic(ctx context.Context, text string) ([]string, error) {
@@ -108,6 +67,10 @@ func (c *SemanticChunker) splitSemantic(ctx context.Context, text string) ([]str
 	embeddings, err := c.embedders.Embed(ctx, variants)
 	if err != nil {
 		return nil, err
+	}
+	if len(embeddings) != len(sentences) {
+		return nil, fmt.Errorf("semantic chunker: %w: got %d vectors for %d sentences",
+			types.ErrEmbeddingShape, len(embeddings), len(sentences))
 	}
 
 	// Compute similarities between consecutive sentences.
@@ -189,7 +152,7 @@ func (c *SemanticChunker) enforceTokenLimits(chunks []string) []string {
 	rc := NewRecursive(&Config{MaxTokens: c.cfg.MaxTokens, Overlap: 0, Separators: []string{". ", " "}})
 	for _, chunk := range merged {
 		if estimateTokens(chunk) > c.cfg.MaxTokens {
-			result = append(result, rc.splitRecursive(chunk, 0)...)
+			result = append(result, rc.split(chunk)...)
 		} else {
 			result = append(result, chunk)
 		}

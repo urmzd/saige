@@ -5,18 +5,36 @@
 //   - [Scorer]: an interface for computing a named metric from an Observation
 //   - [Subject]: a function that populates an Observation's output and annotations
 //
-// Subsystem-specific scorers live in sub-packages (ragscore, agentscore, kgscore)
-// and operate on well-known annotation keys set by their respective subjects.
+// On top of these, [Assertion] gates a suite, [Compare] and [CompareSuites]
+// compare two arms case by case, [Experiment] runs labeled [Variant]s over a
+// dataset, and [GroupBy] reduces results by [Labels]. The statistics behind
+// them live in the eval/analysis package.
+//
+// Deterministic check scorers ([JSONSchemaScorer], [RegexCountScorer],
+// [TokenBudgetScorer], and others) test output contracts without an LLM, and
+// a [Registry] builds scorers from a [ScorerSpec] by kind. Results are stored
+// as a [RunRecord] with one [Unit] per observation through the eval/store
+// package, stamped with the [Provenance] of the run.
+//
+// Subsystem-specific scorers live next to their subsystems, in agent/eval,
+// rag/eval, and rag/knowledge/eval, and operate on well-known annotation keys
+// set by their respective subjects.
 package eval
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 )
+
+// AnnotationSubjectError is the annotation key [PopulateAll] sets, as a JSON
+// string, when the subject failed for an observation. [Run] does not score
+// such an observation and counts it in [SuiteResult.SubjectErrors].
+const AnnotationSubjectError = "eval.subject_error"
 
 // Observation is the universal eval case. Input, Output, and GroundTruth use
 // json.RawMessage so the same structure works for RAG queries, agent
@@ -26,7 +44,11 @@ type Observation struct {
 	Turn int    `json:"turn"`
 	// Sample numbers the copies made by [Sampler.Replicate], from 1. Zero
 	// means the observation was not replicated.
-	Sample      int                        `json:"sample,omitempty"`
+	Sample int `json:"sample,omitempty"`
+	// Labels place the observation in the dataset and the experiment
+	// matrix, such as {"topic": "billing", "variant": "gpt/rag"}. They are
+	// what [Where], [GroupBy], and assertions select on.
+	Labels      Labels                     `json:"labels,omitempty"`
 	Input       json.RawMessage            `json:"input"`
 	Output      json.RawMessage            `json:"output"`
 	GroundTruth json.RawMessage            `json:"ground_truth,omitempty"`
@@ -42,6 +64,9 @@ type ObservationTiming struct {
 	MedianITL    float64 `json:"median_itl_ms,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
+	// CostUSD is what producing the output cost, in USD. Nil means the
+	// subject did not record a cost, which is not the same as free.
+	CostUSD *float64 `json:"cost_usd,omitempty"`
 }
 
 // Score is a single named metric value. If Error is non-empty, the scorer
@@ -55,6 +80,10 @@ type Score struct {
 	// Samples is set when the score came from a [Sampled] scorer: Value is
 	// then the reduced value and Samples describes the spread behind it.
 	Samples *SampleStats `json:"samples,omitempty"`
+	// Passed is set by [SuiteResult.Gate] when a per-case [Assertion]
+	// covers this score: true when every such assertion held, false when
+	// one failed or the score errored. Nil means no gate applied.
+	Passed *bool `json:"passed,omitempty"`
 }
 
 // ObservationResult pairs an observation with its scores.
@@ -65,15 +94,31 @@ type ObservationResult struct {
 
 // SuiteResult is the complete output of an evaluation run.
 type SuiteResult struct {
-	Name      string              `json:"name"`
+	Name string `json:"name"`
+	// Claim is the hypothesis of the [Experiment] that produced the suite.
+	Claim     string              `json:"claim,omitempty"`
 	CreatedAt time.Time           `json:"created_at"`
 	Results   []ObservationResult `json:"results"`
 	Aggregate map[string]float64  `json:"aggregate"`
 	// ErroredCases counts observations with at least one errored score.
 	ErroredCases int `json:"errored_cases,omitempty"`
 	// UnstableScores counts sampled scores whose spread exceeded the
-	// Sampler's tolerance: the verdicts that changed between samples.
+	// Sampler's tolerance, the verdicts that changed between samples, and
+	// scores whose samples reported themselves unstable, such as a pairwise
+	// judge that contradicted itself across the position swap.
 	UnstableScores int `json:"unstable_scores,omitempty"`
+	// SubjectErrors counts observations whose subject failed (see
+	// [AnnotationSubjectError]). They appear in Results with no scores.
+	SubjectErrors int `json:"subject_errors,omitempty"`
+	// Incomplete counts observations that were not scored because the
+	// context ended first. They are left out of Results, and Run returns
+	// the context's error alongside the partial suite.
+	Incomplete int `json:"incomplete,omitempty"`
+	// Outcome is the gate result set by [SuiteResult.Gate]; empty when the
+	// suite was never gated.
+	Outcome Outcome `json:"outcome,omitempty"`
+	// Violations lists the failed gates behind a failed Outcome.
+	Violations []Violation `json:"violations,omitempty"`
 }
 
 // Run executes an evaluation suite: for each observation, it runs all scorers
@@ -85,14 +130,16 @@ type SuiteResult struct {
 // [SuiteResult.ErroredCases]. If scorers errored and no score succeeded
 // anywhere in the suite, Run returns the suite result alongside a non-nil
 // error so callers can still inspect per-case failures.
+//
+// With [WithAssertions], the suite is gated after scoring; a failed gate sets
+// [SuiteResult.Outcome] and is not an error.
+//
+// If ctx ends before every observation is scored, Run returns the partial
+// suite with an error wrapping ctx.Err(). Unscored observations, including
+// those whose scorer was cut off by the cancellation, are left out of
+// Results and counted in [SuiteResult.Incomplete].
 func Run(ctx context.Context, name string, observations []Observation, scorers []Scorer, opts ...Option) (*SuiteResult, error) {
-	cfg := &Config{
-		Concurrency: 1,
-		Logger:      slog.Default(),
-	}
-	for _, o := range opts {
-		o(cfg)
-	}
+	cfg := newConfig(opts)
 
 	if cfg.Sampler.N > 1 {
 		sampled := make([]Scorer, len(scorers))
@@ -103,34 +150,59 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	}
 
 	results := make([]ObservationResult, len(observations))
+	done := make([]bool, len(observations))
 
 	sem := make(chan struct{}, cfg.Concurrency)
-
 	var wg sync.WaitGroup
+launch:
 	for i, obs := range observations {
+		// Take the slot before starting the goroutine so a large dataset
+		// does not park one goroutine per observation.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break launch
+		}
+		if ctx.Err() != nil {
+			<-sem
+			break
+		}
 		wg.Add(1)
 		go func(idx int, obs Observation) {
 			defer wg.Done()
-
-			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if ctx.Err() != nil {
+			if SubjectError(obs) != "" {
+				results[idx] = ObservationResult{Observation: obs}
+				done[idx] = true
 				return
 			}
-
-			results[idx] = ObservationResult{
-				Observation: obs,
-				Scores:      scoreObservation(ctx, obs, scorers, cfg.Logger),
+			scores, interrupted := scoreObservation(ctx, obs, scorers, cfg.Logger)
+			if interrupted {
+				return
 			}
+			results[idx] = ObservationResult{Observation: obs, Scores: scores}
+			done[idx] = true
 		}(i, obs)
 	}
 	wg.Wait()
 
+	completed := make([]ObservationResult, 0, len(results))
+	for i, r := range results {
+		if done[i] {
+			completed = append(completed, r)
+		}
+	}
+
 	erroredCases := 0
 	succeeded := 0
 	unstable := 0
-	for _, r := range results {
+	subjectErrors := 0
+	for _, r := range completed {
+		if SubjectError(r.Observation) != "" {
+			subjectErrors++
+			continue
+		}
 		cerr := false
 		for _, s := range r.Scores {
 			if s.Samples != nil && !s.Samples.Stable {
@@ -150,26 +222,48 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	suite := &SuiteResult{
 		Name:           name,
 		CreatedAt:      time.Now(),
-		Results:        results,
-		Aggregate:      Aggregate(results),
+		Results:        completed,
+		Aggregate:      Aggregate(completed),
 		ErroredCases:   erroredCases,
 		UnstableScores: unstable,
+		SubjectErrors:  subjectErrors,
+		Incomplete:     len(observations) - len(completed),
+	}
+	if len(cfg.Assertions) > 0 {
+		suite.Gate(cfg.Assertions...)
 	}
 
+	if suite.Incomplete > 0 {
+		cause := ctx.Err()
+		if cause == nil {
+			cause = context.Canceled
+		}
+		return suite, fmt.Errorf("eval suite %q: %d of %d observations incomplete: %w",
+			name, suite.Incomplete, len(observations), cause)
+	}
 	if erroredCases > 0 && succeeded == 0 {
 		return suite, fmt.Errorf("eval suite %q: all %d observations with scores errored", name, erroredCases)
+	}
+	if subjectErrors > 0 && subjectErrors == len(observations) {
+		return suite, fmt.Errorf("eval suite %q: subject failed on all %d observations", name, subjectErrors)
 	}
 	return suite, nil
 }
 
 // scoreObservation runs all scorers against a single observation. A scorer
 // error is recorded as an errored [Score] and does not stop the remaining
-// scorers.
-func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, logger *slog.Logger) []Score {
-	var scores []Score
+// scorers. interrupted reports that ctx ended while scoring, so the scores
+// are incomplete and must not be reported as a finished case.
+func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, logger *slog.Logger) (scores []Score, interrupted bool) {
 	for _, s := range scorers {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		score, err := s.Score(ctx, obs)
 		if err != nil {
+			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				return nil, true
+			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
 			scores = append(scores, Score{Name: s.Name(), Error: err.Error()})
 			continue
@@ -178,11 +272,12 @@ func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, lo
 			scores = append(scores, score)
 		}
 	}
-	return scores
+	return scores, false
 }
 
 // Populate runs a [Subject] against each observation, populating Output,
-// Annotations, and Timing fields in place.
+// Annotations, and Timing fields in place. It runs one observation at a time
+// and stops at the first subject error. Use [PopulateAll] to keep going.
 func Populate(ctx context.Context, observations []Observation, subject Subject) error {
 	for i := range observations {
 		if err := subject(ctx, &observations[i]); err != nil {
@@ -190,4 +285,71 @@ func Populate(ctx context.Context, observations []Observation, subject Subject) 
 		}
 	}
 	return nil
+}
+
+// PopulateAll runs a [Subject] against every observation, up to the
+// [WithConcurrency] limit at once. A subject error does not stop the others:
+// it is recorded on that observation under [AnnotationSubjectError], and
+// [Run] reports the observation without scoring it. PopulateAll returns the
+// joined subject errors, or nil when every subject succeeded. If ctx ends,
+// observations not yet started are marked with the context's error.
+func PopulateAll(ctx context.Context, observations []Observation, subject Subject, opts ...Option) error {
+	cfg := newConfig(opts)
+	errs := make([]error, len(observations))
+
+	sem := make(chan struct{}, cfg.Concurrency)
+	var wg sync.WaitGroup
+	for i := range observations {
+		acquired := false
+		select {
+		case sem <- struct{}{}:
+			acquired = true
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			if acquired {
+				<-sem
+			}
+			errs[i] = ctx.Err()
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			errs[i] = subject(ctx, &observations[i])
+		}(i)
+	}
+	wg.Wait()
+
+	var joined []error
+	for i, err := range errs {
+		obs := &observations[i]
+		if err == nil {
+			delete(obs.Annotations, AnnotationSubjectError)
+			continue
+		}
+		cfg.Logger.Error("subject failed", "observation", obs.ID, "error", err)
+		msg, _ := json.Marshal(err.Error())
+		if obs.Annotations == nil {
+			obs.Annotations = map[string]json.RawMessage{}
+		}
+		obs.Annotations[AnnotationSubjectError] = msg
+		joined = append(joined, fmt.Errorf("observation %q: %w", obs.ID, err))
+	}
+	return errors.Join(joined...)
+}
+
+// SubjectError returns the subject error [PopulateAll] recorded on obs, or
+// "" when there is none.
+func SubjectError(obs Observation) string {
+	raw, ok := obs.Annotations[AnnotationSubjectError]
+	if !ok {
+		return ""
+	}
+	var msg string
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return string(raw)
+	}
+	return msg
 }

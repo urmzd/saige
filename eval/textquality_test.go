@@ -74,3 +74,14 @@ func TestComputeContentQuality(t *testing.T) {
 	assertClose(t, "token_f1", q.TokenF1, 1.0, 0.001)
 	assertClose(t, "rouge_l", q.RougeL, 1.0, 0.001)
 }
+
+func TestTokenF1IgnoresPunctuationAndCase(t *testing.T) {
+	assertClose(t, "punctuation", TokenF1("Paris.", "paris"), 1.0, 0.001)
+	assertClose(t, "mixed", TokenF1("The answer is: Paris!", "the answer is paris"), 1.0, 0.001)
+	assertClose(t, "only punctuation", TokenF1("...", "!!!"), 1.0, 0.001)
+}
+
+func TestRougeLIgnoresPunctuationAndCase(t *testing.T) {
+	assertClose(t, "punctuation", RougeL("Hello, World!", "hello world"), 1.0, 0.001)
+	assertClose(t, "comma-joined", RougeL("red,green,blue", "Red Green Blue"), 1.0, 0.001)
+}

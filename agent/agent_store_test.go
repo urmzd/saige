@@ -184,3 +184,48 @@ func TestStorePersistsRootOnConstruction(t *testing.T) {
 		t.Fatalf("main tip = %s, want root %s", tip, rootID)
 	}
 }
+
+// TestStoreReloadLandsOnCompactedBranch runs a compaction on an agent whose
+// default tree writes through to the store, then reloads the tree without
+// naming a branch. The reload lands on the compacted branch, and the
+// history matches the live tree.
+func TestStoreReloadLandsOnCompactedBranch(t *testing.T) {
+	store := memstore.New()
+	script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.TextResponse("summary of the request"),
+		agenttest.TextResponse("done"),
+	}}
+	a := NewAgent(AgentConfig{
+		Provider:     script,
+		SystemPrompt: "sys",
+		Store:        store,
+		CompactCfg:   &types.CompactConfig{MaxInputTokens: 1},
+	})
+	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello there")})
+	agenttest.CollectDeltas(stream.Deltas())
+	if err := stream.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	live := a.Tree().Active()
+	if live == "main" {
+		t.Fatal("the run did not compact")
+	}
+	reloaded, err := LoadTreeFromStore(context.Background(), store, a.Tree().Root().ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Active() != live {
+		t.Fatalf("reloaded active = %q, want %q", reloaded.Active(), live)
+	}
+	want, err := a.Tree().FlattenBranch(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reloaded.FlattenBranch(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(flattenedText(t, got), "|") != strings.Join(flattenedText(t, want), "|") {
+		t.Fatalf("reloaded history = %v, want %v", flattenedText(t, got), flattenedText(t, want))
+	}
+}

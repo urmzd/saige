@@ -13,75 +13,46 @@ const (
 	AnnotationHits          = "rag.hits"           // []types.SearchHit
 	AnnotationRelevantUUIDs = "rag.relevant_uuids" // []string
 	AnnotationContextText   = "rag.context_text"   // string
+
+	// AnnotationRelevantKeys holds relevance labels of the kind named by
+	// AnnotationRelevanceKey. When present it takes precedence over
+	// AnnotationRelevantUUIDs.
+	AnnotationRelevantKeys = "rag.relevant_keys" // []string
+	AnnotationRelevanceKey = "rag.relevance_key" // RelevanceKey; default "variant"
 )
 
 // ContextPrecisionScorer wraps [ContextPrecision] as a [topeval.Scorer].
 func ContextPrecisionScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("context_precision", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
-		hits, uuids, err := extractRAGAnnotations(obs)
-		if err != nil {
-			return topeval.Score{}, err
-		}
-		if hits == nil {
-			return topeval.Score{}, nil
-		}
-		return topeval.Score{Name: "context_precision", Value: ContextPrecision(hits, uuids)}, nil
+		return retrievalScore(obs, "context_precision", 0, func(s RetrievalScores) float64 { return s.ContextPrecision })
 	})
 }
 
 // ContextRecallScorer wraps [ContextRecall] as a [topeval.Scorer].
 func ContextRecallScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("context_recall", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
-		hits, uuids, err := extractRAGAnnotations(obs)
-		if err != nil {
-			return topeval.Score{}, err
-		}
-		if hits == nil {
-			return topeval.Score{}, nil
-		}
-		return topeval.Score{Name: "context_recall", Value: ContextRecall(hits, uuids)}, nil
+		return retrievalScore(obs, "context_recall", 0, func(s RetrievalScores) float64 { return s.ContextRecall })
 	})
 }
 
 // NDCGScorer wraps [NDCG] as a [topeval.Scorer].
 func NDCGScorer(k int) topeval.Scorer {
 	return topeval.NewScorerFunc("ndcg", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
-		hits, uuids, err := extractRAGAnnotations(obs)
-		if err != nil {
-			return topeval.Score{}, err
-		}
-		if hits == nil {
-			return topeval.Score{}, nil
-		}
-		return topeval.Score{Name: "ndcg", Value: NDCG(hits, uuids, k)}, nil
+		return retrievalScore(obs, "ndcg", k, func(s RetrievalScores) float64 { return s.NDCG })
 	})
 }
 
 // MRRScorer wraps [MRR] as a [topeval.Scorer].
 func MRRScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("mrr", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
-		hits, uuids, err := extractRAGAnnotations(obs)
-		if err != nil {
-			return topeval.Score{}, err
-		}
-		if hits == nil {
-			return topeval.Score{}, nil
-		}
-		return topeval.Score{Name: "mrr", Value: MRR(hits, uuids)}, nil
+		return retrievalScore(obs, "mrr", 0, func(s RetrievalScores) float64 { return s.MRR })
 	})
 }
 
 // HitRateScorer wraps [HitRate] as a [topeval.Scorer].
 func HitRateScorer(k int) topeval.Scorer {
 	return topeval.NewScorerFunc("hit_rate", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
-		hits, uuids, err := extractRAGAnnotations(obs)
-		if err != nil {
-			return topeval.Score{}, err
-		}
-		if hits == nil {
-			return topeval.Score{}, nil
-		}
-		return topeval.Score{Name: "hit_rate", Value: HitRate(hits, uuids, k)}, nil
+		return retrievalScore(obs, "hit_rate", k, func(s RetrievalScores) float64 { return s.HitRate })
 	})
 }
 
@@ -151,20 +122,56 @@ func AnswerCorrectnessScorer(llm types.LLM) topeval.Scorer {
 	})
 }
 
-func extractRAGAnnotations(obs topeval.Observation) ([]types.SearchHit, []string, error) {
+// retrievalScore computes one retrieval metric from obs's annotations. It
+// returns an empty Score, which carries no signal, when the observation has
+// no hits annotation or no relevance labels.
+func retrievalScore(obs topeval.Observation, name string, k int, pick func(RetrievalScores) float64) (topeval.Score, error) {
+	hits, labels, key, err := extractRAGAnnotations(obs)
+	if err != nil {
+		return topeval.Score{}, err
+	}
+	if hits == nil {
+		return topeval.Score{}, nil
+	}
+	scores, ok := ScoreRetrieval(hits, labels, key, k)
+	if !ok {
+		return topeval.Score{}, nil
+	}
+	return topeval.Score{Name: name, Value: pick(scores)}, nil
+}
+
+func extractRAGAnnotations(obs topeval.Observation) ([]types.SearchHit, []string, RelevanceKey, error) {
 	var hits []types.SearchHit
 	if raw, ok := obs.Annotations[AnnotationHits]; ok {
 		if err := json.Unmarshal(raw, &hits); err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
+		}
+	}
+	if raw, ok := obs.Annotations[AnnotationRelevantKeys]; ok {
+		var keys []string
+		if err := json.Unmarshal(raw, &keys); err != nil {
+			return nil, nil, "", err
+		}
+		key := RelevanceVariant
+		if rawKey, ok := obs.Annotations[AnnotationRelevanceKey]; ok {
+			if err := json.Unmarshal(rawKey, &key); err != nil {
+				return nil, nil, "", err
+			}
+			if err := key.Validate(); err != nil {
+				return nil, nil, "", err
+			}
+		}
+		if len(keys) > 0 {
+			return hits, keys, key, nil
 		}
 	}
 	var uuids []string
 	if raw, ok := obs.Annotations[AnnotationRelevantUUIDs]; ok {
 		if err := json.Unmarshal(raw, &uuids); err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 	}
-	return hits, uuids, nil
+	return hits, uuids, RelevanceVariant, nil
 }
 
 func extractResponseAndContext(obs topeval.Observation) (string, string, error) {

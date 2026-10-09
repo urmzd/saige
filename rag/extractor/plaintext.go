@@ -5,8 +5,10 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/urmzd/saige/rag/internal/textclean"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -15,7 +17,7 @@ type PlainText struct{}
 
 // Extract splits raw text data into sections by double-newline paragraph boundaries.
 func (e *PlainText) Extract(_ context.Context, raw *types.RawDocument) (*types.Document, error) {
-	text := string(raw.Data)
+	text := textclean.String(string(raw.Data))
 	docUUID := uuid.New().String()
 	now := time.Now()
 
@@ -44,7 +46,7 @@ func (e *PlainText) Extract(_ context.Context, raw *types.RawDocument) (*types.D
 		})
 	}
 
-	return &types.Document{
+	doc := &types.Document{
 		UUID:      docUUID,
 		SourceURI: raw.SourceURI,
 		Title:     titleFromText(text),
@@ -52,7 +54,9 @@ func (e *PlainText) Extract(_ context.Context, raw *types.RawDocument) (*types.D
 		Sections:  sections,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, nil
+	}
+	textclean.Document(doc)
+	return doc, nil
 }
 
 func splitParagraphs(text string) []string {
@@ -69,7 +73,12 @@ func titleFromText(text string) string {
 	firstLine := strings.SplitN(strings.TrimSpace(text), "\n", 2)[0]
 	firstLine = strings.TrimSpace(firstLine)
 	if len(firstLine) > 100 {
-		firstLine = firstLine[:100] + "..."
+		// Cut on a rune boundary so the title stays valid UTF-8.
+		cut := 100
+		for cut > 0 && !utf8.RuneStart(firstLine[cut]) {
+			cut--
+		}
+		firstLine = firstLine[:cut] + "..."
 	}
 	return firstLine
 }

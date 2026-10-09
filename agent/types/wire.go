@@ -1,0 +1,936 @@
+package types
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+)
+
+// WireVersion is the envelope version this package writes. Readers reject
+// envelopes with a higher version instead of guessing at their meaning.
+const WireVersion = 1
+
+// Wire codec errors.
+var (
+	ErrWireVersion     = errors.New("unsupported wire version")
+	ErrUnknownWireKind = errors.New("unknown wire kind")
+)
+
+// Envelope is the versioned JSON frame for one streamed event: a Delta, an
+// Interrupt, or an InterruptReply. Kind discriminates Data. The producer owns
+// Seq (monotonic per stream, so a client can resume after a gap), RunID, and
+// Path (tool call IDs from the root run to the run that emitted the event).
+//
+//	{"v":1,"seq":42,"run_id":"r1","path":["call_9"],"kind":"text.delta","data":{"content":"hi"}}
+type Envelope struct {
+	V     int             `json:"v"`
+	Seq   uint64          `json:"seq,omitempty"`
+	RunID string          `json:"run_id,omitempty"`
+	Path  []string        `json:"path,omitempty"`
+	Kind  string          `json:"kind"`
+	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// Wire kinds. They are part of the wire contract: never rename one.
+const (
+	WireTextStart          = "text.start"
+	WireTextDelta          = "text.delta"
+	WireTextEnd            = "text.end"
+	WireReasoningStart     = "reasoning.start"
+	WireReasoningDelta     = "reasoning.delta"
+	WireReasoningEnd       = "reasoning.end"
+	WireToolCallStart      = "tool.call.start"
+	WireToolCallArgs       = "tool.call.args"
+	WireToolCallEnd        = "tool.call.end"
+	WireToolExecStart      = "tool.exec.start"
+	WireToolExecDelta      = "tool.exec.delta"
+	WireToolExecEnd        = "tool.exec.end"
+	WireMarker             = "marker"
+	WireHandoff            = "handoff"
+	WireCitation           = "citation"
+	WireError              = "error"
+	WireDone               = "done"
+	WireFeedback           = "feedback"
+	WireUsage              = "usage"
+	WireRoute              = "route"
+	WireTruncated          = "truncated"
+	WireQueued             = "queued"
+	WireInjected           = "injected"
+	WireInterrupted        = "interrupted"
+	WireServerToolCall     = "server_tool.call"
+	WireServerToolResult   = "server_tool.result"
+	WirePartialJSON        = "partial_json"
+	WireInterrupt          = "interrupt"
+	WireInterruptReplyKind = "interrupt.reply"
+)
+
+// ── Public API ───────────────────────────────────────────────────────
+
+// MarshalDelta encodes d as a JSON envelope with only v, kind, and data set.
+func MarshalDelta(d Delta) ([]byte, error) {
+	env, err := NewDeltaEnvelope(d)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(env)
+}
+
+// UnmarshalDelta decodes an envelope produced by MarshalDelta.
+func UnmarshalDelta(b []byte) (Delta, error) {
+	env, err := UnmarshalEnvelope(b)
+	if err != nil {
+		return nil, err
+	}
+	return env.Delta()
+}
+
+// MarshalInterrupt encodes an Interrupt as a JSON envelope.
+func MarshalInterrupt(in Interrupt) ([]byte, error) {
+	env, err := NewInterruptEnvelope(in)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(env)
+}
+
+// UnmarshalInterrupt decodes an envelope produced by MarshalInterrupt.
+func UnmarshalInterrupt(b []byte) (Interrupt, error) {
+	env, err := UnmarshalEnvelope(b)
+	if err != nil {
+		return Interrupt{}, err
+	}
+	return env.Interrupt()
+}
+
+// MarshalInterruptReply encodes an InterruptReply as a JSON envelope.
+func MarshalInterruptReply(r InterruptReply) ([]byte, error) {
+	env, err := NewInterruptReplyEnvelope(r)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(env)
+}
+
+// UnmarshalInterruptReply decodes an envelope produced by MarshalInterruptReply.
+func UnmarshalInterruptReply(b []byte) (InterruptReply, error) {
+	env, err := UnmarshalEnvelope(b)
+	if err != nil {
+		return InterruptReply{}, err
+	}
+	return env.InterruptReply()
+}
+
+// UnmarshalEnvelope decodes the frame and checks its version. Use it when the
+// kind is not known in advance, then call Delta, Interrupt, or InterruptReply.
+func UnmarshalEnvelope(b []byte) (Envelope, error) {
+	var env Envelope
+	if err := json.Unmarshal(b, &env); err != nil {
+		return Envelope{}, err
+	}
+	if env.V < 1 || env.V > WireVersion {
+		return Envelope{}, fmt.Errorf("%w: %d", ErrWireVersion, env.V)
+	}
+	return env, nil
+}
+
+// IsDelta reports whether the envelope carries a Delta.
+func (e Envelope) IsDelta() bool {
+	return e.Kind != WireInterrupt && e.Kind != WireInterruptReplyKind
+}
+
+// NewDeltaEnvelope builds the envelope for d. Seq, RunID, and Path are left
+// for the producer to fill.
+func NewDeltaEnvelope(d Delta) (Envelope, error) {
+	kind, data, err := encodeDelta(d)
+	if err != nil {
+		return Envelope{}, err
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode %s: %w", kind, err)
+	}
+	return Envelope{V: WireVersion, Kind: kind, Data: raw}, nil
+}
+
+// Delta decodes the envelope's payload.
+func (e Envelope) Delta() (Delta, error) {
+	return decodeDelta(e.Kind, e.Data)
+}
+
+// NewInterruptEnvelope builds the envelope for an Interrupt. RunID and Path
+// are copied from the interrupt.
+func NewInterruptEnvelope(in Interrupt) (Envelope, error) {
+	raw, err := json.Marshal(toWireInterrupt(in))
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode interrupt: %w", err)
+	}
+	return Envelope{V: WireVersion, RunID: in.RunID, Path: in.Path, Kind: WireInterrupt, Data: raw}, nil
+}
+
+// Interrupt decodes an interrupt envelope.
+func (e Envelope) Interrupt() (Interrupt, error) {
+	if e.Kind != WireInterrupt {
+		return Interrupt{}, fmt.Errorf("%w: %q is not %q", ErrUnknownWireKind, e.Kind, WireInterrupt)
+	}
+	var w wireInterrupt
+	if err := decodeStrict(e.Data, &w); err != nil {
+		return Interrupt{}, fmt.Errorf("decode interrupt: %w", err)
+	}
+	return fromWireInterrupt(w), nil
+}
+
+func toWireInterrupt(in Interrupt) wireInterrupt {
+	return wireInterrupt{
+		ID: in.ID, RunID: in.RunID, Path: in.Path, Kind: in.Kind, Payload: in.Payload,
+		Markers: toWireMarkers(in.Markers), Policy: in.Policy,
+		CreatedAt: timePtr(in.CreatedAt), ExpiresAt: timePtr(in.ExpiresAt),
+	}
+}
+
+func fromWireInterrupt(w wireInterrupt) Interrupt {
+	return Interrupt{
+		ID: w.ID, RunID: w.RunID, Path: w.Path, Kind: w.Kind, Payload: w.Payload,
+		Markers: fromWireMarkers(w.Markers), Policy: w.Policy,
+		CreatedAt: timeVal(w.CreatedAt), ExpiresAt: timeVal(w.ExpiresAt),
+	}
+}
+
+// NewInterruptReplyEnvelope builds the envelope for an InterruptReply.
+func NewInterruptReplyEnvelope(r InterruptReply) (Envelope, error) {
+	w := wireInterruptReply{
+		ID: r.ID, IdempotencyKey: r.IdempotencyKey, Answer: r.Answer,
+		Decision: wireDecision{Approved: r.Decision.Approved, ModifiedArgs: r.Decision.ModifiedArgs, Message: r.Decision.Message},
+	}
+	raw, err := json.Marshal(w)
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode interrupt reply: %w", err)
+	}
+	return Envelope{V: WireVersion, Kind: WireInterruptReplyKind, Data: raw}, nil
+}
+
+// InterruptReply decodes an interrupt reply envelope.
+func (e Envelope) InterruptReply() (InterruptReply, error) {
+	if e.Kind != WireInterruptReplyKind {
+		return InterruptReply{}, fmt.Errorf("%w: %q is not %q", ErrUnknownWireKind, e.Kind, WireInterruptReplyKind)
+	}
+	var w wireInterruptReply
+	if err := decodeStrict(e.Data, &w); err != nil {
+		return InterruptReply{}, fmt.Errorf("decode interrupt reply: %w", err)
+	}
+	return InterruptReply{
+		ID: w.ID, IdempotencyKey: w.IdempotencyKey, Answer: w.Answer,
+		Decision: ApprovalDecision{Approved: w.Decision.Approved, ModifiedArgs: w.Decision.ModifiedArgs, Message: w.Decision.Message},
+	}, nil
+}
+
+// FlattenDelta unwraps nested ToolExecDelta values and returns the tool call
+// IDs from the outermost to the innermost wrapper, plus the innermost delta.
+// A producer can put the path in Envelope.Path and send the inner delta, so a
+// client attributes sub-agent output without decoding recursive frames.
+func FlattenDelta(d Delta) ([]string, Delta) {
+	var path []string
+	for {
+		te, ok := d.(ToolExecDelta)
+		if !ok {
+			return path, d
+		}
+		path = append(path, te.ToolCallID)
+		d = te.Inner
+	}
+}
+
+// ── Errors on the wire ───────────────────────────────────────────────
+
+// RemoteError is an error decoded from the wire. It keeps the original
+// message, the ErrorKind, and the stable codes of the sentinel errors the
+// original matched, so errors.Is works across a process boundary.
+type RemoteError struct {
+	Message string
+	Kind    ErrorKind
+	Codes   []string // stable sentinel names, see ErrorCode
+	Err     error    // decoded cause, e.g. a *ProviderError; may be nil
+}
+
+func (e *RemoteError) Error() string { return e.Message }
+
+func (e *RemoteError) Unwrap() error { return e.Err }
+
+func (e *RemoteError) Is(target error) bool {
+	for _, c := range e.Codes {
+		if s, ok := sentinelByCode[c]; ok && s == target {
+			return true
+		}
+	}
+	return false
+}
+
+// wireSentinels lists the sentinel errors with a stable wire code, in match
+// order. Codes are part of the wire contract: never rename one.
+var wireSentinels = []struct {
+	code string
+	err  error
+}{
+	{"stream_canceled", ErrStreamCanceled},
+	{"context_canceled", context.Canceled},
+	{"deadline_exceeded", context.DeadlineExceeded},
+	{"max_iterations", ErrMaxIterations},
+	{"tool_not_found", ErrToolNotFound},
+	{"provider_failed", ErrProviderFailed},
+	{"context_length", ErrContextLength},
+	{"content_filtered", ErrContentFiltered},
+	{"auth", ErrAuth},
+	{"rate_limited", ErrRateLimited},
+	{"unavailable", ErrUnavailable},
+	{"invalid_request", ErrInvalidRequest},
+	{"response_truncated", ErrResponseTruncated},
+	{"invalid_model_config", ErrInvalidModelConfig},
+	{"unsupported_media_type", ErrUnsupportedMediaType},
+	{"resolver_not_found", ErrResolverNotFound},
+	{"suspended", ErrSuspended},
+	{"budget_exceeded", ErrBudgetExceeded},
+	{"budget_admission", ErrBudgetAdmission},
+	{"budget_busy", ErrBudgetBusy},
+	{"unpriced", ErrUnpriced},
+	{"interrupt_not_found", ErrInterruptNotFound},
+	{"interrupt_expired", ErrInterruptExpired},
+	{"no_interrupt_router", ErrNoInterruptRouter},
+}
+
+var sentinelByCode = func() map[string]error {
+	m := make(map[string]error, len(wireSentinels))
+	for _, s := range wireSentinels {
+		m[s.code] = s.err
+	}
+	return m
+}()
+
+// ErrorCodes returns the stable wire codes of every known sentinel err matches.
+func ErrorCodes(err error) []string {
+	if err == nil {
+		return nil
+	}
+	var codes []string
+	for _, s := range wireSentinels {
+		if errors.Is(err, s.err) {
+			codes = append(codes, s.code)
+		}
+	}
+	return codes
+}
+
+type wireError struct {
+	Message   string             `json:"message"`
+	Kind      string             `json:"kind"`
+	Retryable bool               `json:"retryable"`
+	Codes     []string           `json:"codes,omitempty"`
+	Provider  *wireProviderError `json:"provider,omitempty"`
+}
+
+type wireProviderError struct {
+	Name         string   `json:"name,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Kind         string   `json:"kind"`
+	Status       int      `json:"status,omitempty"`
+	RetryAfterMS *float64 `json:"retry_after_ms,omitempty"`
+	Cause        string   `json:"cause"`
+}
+
+func encodeError(err error) *wireError {
+	if err == nil {
+		return nil
+	}
+	w := &wireError{
+		Message:   err.Error(),
+		Kind:      KindOf(err).String(),
+		Retryable: IsTransient(err),
+		Codes:     ErrorCodes(err),
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		wp := &wireProviderError{Name: pe.Provider, Model: pe.Model, Kind: pe.Kind.String(), Status: pe.Code}
+		if pe.Err != nil {
+			wp.Cause = pe.Err.Error()
+		}
+		if pe.RetryAfter > 0 {
+			wp.RetryAfterMS = durationMS(pe.RetryAfter)
+		}
+		w.Provider = wp
+	}
+	return w
+}
+
+func decodeError(w *wireError) error {
+	if w == nil {
+		return nil
+	}
+	kind := ParseErrorKind(w.Kind)
+	if w.Provider == nil {
+		return &RemoteError{Message: w.Message, Kind: kind, Codes: w.Codes}
+	}
+	pk := ParseErrorKind(w.Provider.Kind)
+	pe := &ProviderError{
+		Provider: w.Provider.Name, Model: w.Provider.Model, Kind: pk, Code: w.Provider.Status,
+		Err: &RemoteError{Message: w.Provider.Cause, Kind: pk, Codes: w.Codes},
+	}
+	if w.Provider.RetryAfterMS != nil {
+		pe.RetryAfter = msDuration(*w.Provider.RetryAfterMS)
+	}
+	if pe.Error() == w.Message {
+		return pe
+	}
+	// The provider error was wrapped; keep the outer message and the cause.
+	return &RemoteError{Message: w.Message, Kind: kind, Codes: w.Codes, Err: pe}
+}
+
+// ── Payload shapes ───────────────────────────────────────────────────
+
+type wireEmpty struct{}
+
+type wireContent struct {
+	Content string `json:"content"`
+}
+
+type wireSignature struct {
+	Signature string `json:"signature,omitempty"`
+}
+
+type wireToolCall struct {
+	ID        string         `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+	// ArgumentsError carries ToolCallEndDelta.ArgumentsError.
+	ArgumentsError string `json:"arguments_error,omitempty"`
+}
+
+type wireToolExec struct {
+	ToolCallID string      `json:"tool_call_id"`
+	Name       string      `json:"name,omitempty"`
+	Result     string      `json:"result,omitempty"`
+	Error      string      `json:"error,omitempty"`
+	Blocks     []wireBlock `json:"blocks,omitempty"`
+	Inner      *Envelope   `json:"inner,omitempty"`
+}
+
+// wireBlock carries raw bytes too: a live consumer needs the image a tool
+// produced, even though tree persistence keeps only the URI.
+type wireBlock struct {
+	Kind      ToolResultBlockKind `json:"kind"`
+	Text      string              `json:"text,omitempty"`
+	MediaType MediaType           `json:"media_type,omitempty"`
+	URI       string              `json:"uri,omitempty"`
+	Filename  string              `json:"filename,omitempty"`
+	Data      []byte              `json:"data,omitempty"`
+	JSON      json.RawMessage     `json:"json,omitempty"`
+}
+
+type wireFile struct {
+	URI       string    `json:"uri,omitempty"`
+	MediaType MediaType `json:"media_type,omitempty"`
+	Filename  string    `json:"filename,omitempty"`
+	Data      []byte    `json:"data,omitempty"`
+}
+
+type wireMarker struct {
+	Kind    string         `json:"kind"`
+	Message string         `json:"message,omitempty"`
+	Meta    map[string]any `json:"meta,omitempty"`
+}
+
+type wireMarkerDelta struct {
+	ToolCallID string         `json:"tool_call_id"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	Arguments  map[string]any `json:"arguments,omitempty"`
+	Markers    []wireMarker   `json:"markers,omitempty"`
+	// Interrupt carries MarkerDelta.Interrupt, so a remote client can reply
+	// by interrupt ID and see the deadline.
+	Interrupt *wireInterrupt `json:"interrupt,omitempty"`
+}
+
+type wireHandoff struct {
+	From   string `json:"from,omitempty"`
+	To     string `json:"to"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type wireCitation struct {
+	Citation   Citation `json:"citation"`
+	ToolCallID string   `json:"tool_call_id,omitempty"`
+}
+
+type wireFeedback struct {
+	TargetNodeID string `json:"target_node_id"`
+	Rating       Rating `json:"rating"`
+	Comment      string `json:"comment,omitempty"`
+}
+
+type wireUsage struct {
+	AccountingID       string   `json:"accounting_id,omitempty"`
+	Cumulative         bool     `json:"cumulative,omitempty"`
+	PromptTokens       int      `json:"prompt_tokens"`
+	CachedPromptTokens int      `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int      `json:"cache_write_tokens,omitempty"`
+	CompletionTokens   int      `json:"completion_tokens"`
+	TotalTokens        int      `json:"total_tokens"`
+	LatencyMS          *float64 `json:"latency_ms,omitempty"`
+	ResponseModel      string   `json:"response_model,omitempty"`
+	ResponseID         string   `json:"response_id,omitempty"`
+	FinishReasons      []string `json:"finish_reasons,omitempty"`
+	CacheHit           bool     `json:"cache_hit,omitempty"`
+}
+
+type wireRoute struct {
+	Profile         string       `json:"profile,omitempty"`
+	Provider        string       `json:"provider,omitempty"`
+	Model           string       `json:"model,omitempty"`
+	Experiment      string       `json:"experiment,omitempty"`
+	Variant         string       `json:"variant,omitempty"`
+	Reason          string       `json:"reason,omitempty"`
+	Preset          string       `json:"preset,omitempty"`
+	ConfigHash      string       `json:"config_hash,omitempty"`
+	CatalogRevision string       `json:"catalog_revision,omitempty"`
+	Options         *wireOptions `json:"options,omitempty"`
+}
+
+func toWireRoute(r RouteDelta) wireRoute {
+	return wireRoute{Profile: r.Profile, Provider: r.Provider, Model: r.Model, Experiment: r.Experiment,
+		Variant: r.Variant, Reason: r.Reason, Preset: r.Preset, ConfigHash: r.ConfigHash,
+		CatalogRevision: r.CatalogRevision, Options: toWireOptions(r.Options)}
+}
+
+func (w wireRoute) delta() RouteDelta {
+	return RouteDelta{Profile: w.Profile, Provider: w.Provider, Model: w.Model, Experiment: w.Experiment,
+		Variant: w.Variant, Reason: w.Reason, Preset: w.Preset, ConfigHash: w.ConfigHash,
+		CatalogRevision: w.CatalogRevision, Options: w.Options.requestOptions()}
+}
+
+// wireOptions is the snake_case wire form of RequestOptions.
+type wireOptions struct {
+	Temperature      *float64    `json:"temperature,omitempty"`
+	TopP             *float64    `json:"top_p,omitempty"`
+	TopK             *float64    `json:"top_k,omitempty"`
+	FrequencyPenalty *float64    `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64    `json:"presence_penalty,omitempty"`
+	Seed             *int64      `json:"seed,omitempty"`
+	MaxOutputTokens  *int64      `json:"max_output_tokens,omitempty"`
+	StopSequences    []string    `json:"stop,omitempty"`
+	ParallelTools    *bool       `json:"parallel_tools,omitempty"`
+	ReasoningEnabled *bool       `json:"reasoning_enabled,omitempty"`
+	ReasoningEffort  *string     `json:"reasoning_effort,omitempty"`
+	ReasoningBudget  *int64      `json:"reasoning_budget,omitempty"`
+	ToolChoice       *ToolChoice `json:"tool_choice,omitempty"`
+}
+
+func toWireOptions(o *RequestOptions) *wireOptions {
+	if o == nil {
+		return nil
+	}
+	c := o.Clone()
+	return &wireOptions{Temperature: c.Temperature, TopP: c.TopP, TopK: c.TopK,
+		FrequencyPenalty: c.FrequencyPenalty, PresencePenalty: c.PresencePenalty, Seed: c.Seed,
+		MaxOutputTokens: c.MaxOutputTokens, StopSequences: c.StopSequences, ParallelTools: c.ParallelTools,
+		ReasoningEnabled: c.ReasoningEnabled, ReasoningEffort: c.ReasoningEffort, ReasoningBudget: c.ReasoningBudget,
+		ToolChoice: c.ToolChoice}
+}
+
+func (w *wireOptions) requestOptions() *RequestOptions {
+	if w == nil {
+		return nil
+	}
+	return &RequestOptions{Temperature: w.Temperature, TopP: w.TopP, TopK: w.TopK,
+		FrequencyPenalty: w.FrequencyPenalty, PresencePenalty: w.PresencePenalty, Seed: w.Seed,
+		MaxOutputTokens: w.MaxOutputTokens, StopSequences: w.StopSequences, ParallelTools: w.ParallelTools,
+		ReasoningEnabled: w.ReasoningEnabled, ReasoningEffort: w.ReasoningEffort, ReasoningBudget: w.ReasoningBudget,
+		ToolChoice: w.ToolChoice}
+}
+
+type wireRunControl struct {
+	NodeID       string `json:"node_id,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	SubmissionID string `json:"submission_id,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Position     int    `json:"position,omitempty"`
+}
+
+type wireServerTool struct {
+	ID      string          `json:"id"`
+	Kind    ServerToolKind  `json:"kind"`
+	Name    string          `json:"name,omitempty"`
+	Input   map[string]any  `json:"input,omitempty"`
+	Text    string          `json:"text,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	IsError bool            `json:"is_error,omitempty"`
+	Files   []wireFile      `json:"files,omitempty"`
+}
+
+type wirePartialJSON struct {
+	JSON json.RawMessage `json:"json"`
+}
+
+type wireInterrupt struct {
+	ID        string          `json:"id"`
+	RunID     string          `json:"run_id,omitempty"`
+	Path      []string        `json:"path,omitempty"`
+	Kind      InterruptKind   `json:"kind"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	Markers   []wireMarker    `json:"markers,omitempty"`
+	CreatedAt *time.Time      `json:"created_at,omitempty"`
+	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+	Policy    InterruptPolicy `json:"policy"`
+}
+
+type wireDecision struct {
+	Approved     bool           `json:"approved"`
+	ModifiedArgs map[string]any `json:"modified_args,omitempty"`
+	Message      string         `json:"message,omitempty"`
+}
+
+type wireInterruptReply struct {
+	ID             string          `json:"id"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	Decision       wireDecision    `json:"decision"`
+	Answer         json.RawMessage `json:"answer,omitempty"`
+}
+
+// ── Encoding ─────────────────────────────────────────────────────────
+
+//nolint:gocyclo // one case per wire kind
+func encodeDelta(d Delta) (string, any, error) {
+	switch v := d.(type) {
+	case TextStartDelta:
+		return WireTextStart, wireEmpty{}, nil
+	case TextContentDelta:
+		return WireTextDelta, wireContent(v), nil
+	case TextEndDelta:
+		return WireTextEnd, wireEmpty{}, nil
+	case ThinkingStartDelta:
+		return WireReasoningStart, wireEmpty{}, nil
+	case ThinkingContentDelta:
+		return WireReasoningDelta, wireContent(v), nil
+	case ThinkingEndDelta:
+		return WireReasoningEnd, wireSignature(v), nil
+	case ToolCallStartDelta:
+		return WireToolCallStart, wireToolCall{ID: v.ID, Name: v.Name}, nil
+	case ToolCallArgumentDelta:
+		return WireToolCallArgs, wireToolCall{ID: v.ID, Content: v.Content}, nil
+	case ToolCallEndDelta:
+		return WireToolCallEnd, wireToolCall{ID: v.ID, Arguments: v.Arguments, ArgumentsError: v.ArgumentsError}, nil
+	case ToolExecStartDelta:
+		return WireToolExecStart, wireToolExec{ToolCallID: v.ToolCallID, Name: v.Name}, nil
+	case ToolExecDelta:
+		if v.Inner == nil {
+			return "", nil, fmt.Errorf("encode %s: nil inner delta", WireToolExecDelta)
+		}
+		inner, err := NewDeltaEnvelope(v.Inner)
+		if err != nil {
+			return "", nil, err
+		}
+		return WireToolExecDelta, wireToolExec{ToolCallID: v.ToolCallID, Inner: &inner}, nil
+	case ToolExecEndDelta:
+		return WireToolExecEnd, wireToolExec{
+			ToolCallID: v.ToolCallID, Name: v.Name, Result: v.Result, Error: v.Error, Blocks: toWireBlocks(v.Blocks),
+		}, nil
+	case MarkerDelta:
+		w := wireMarkerDelta{
+			ToolCallID: v.ToolCallID, ToolName: v.ToolName, Arguments: v.Arguments, Markers: toWireMarkers(v.Markers),
+		}
+		if v.Interrupt != nil {
+			in := toWireInterrupt(*v.Interrupt)
+			w.Interrupt = &in
+		}
+		return WireMarker, w, nil
+	case HandoffDelta:
+		return WireHandoff, wireHandoff(v), nil
+	case CitationDelta:
+		return WireCitation, wireCitation(v), nil
+	case ErrorDelta:
+		w := encodeError(v.Error)
+		if w == nil {
+			return WireError, wireEmpty{}, nil
+		}
+		return WireError, w, nil
+	case DoneDelta:
+		return WireDone, wireEmpty{}, nil
+	case FeedbackDelta:
+		return WireFeedback, wireFeedback(v), nil
+	case UsageDelta:
+		w := wireUsage{
+			AccountingID: v.AccountingID, Cumulative: v.Cumulative,
+			PromptTokens: v.PromptTokens, CachedPromptTokens: v.CachedPromptTokens,
+			CacheWriteTokens: v.CacheWriteTokens, CompletionTokens: v.CompletionTokens, TotalTokens: v.TotalTokens,
+			ResponseModel: v.ResponseModel, ResponseID: v.ResponseID, FinishReasons: v.FinishReasons, CacheHit: v.CacheHit,
+		}
+		if v.Latency != 0 {
+			w.LatencyMS = durationMS(v.Latency)
+		}
+		return WireUsage, w, nil
+	case RouteDelta:
+		return WireRoute, toWireRoute(v), nil
+	case TruncatedDelta:
+		return WireTruncated, wireRunControl{NodeID: v.NodeID, Reason: v.Reason}, nil
+	case QueuedDelta:
+		return WireQueued, wireRunControl{SubmissionID: v.SubmissionID, Mode: v.Mode, Position: v.Position}, nil
+	case InjectedDelta:
+		return WireInjected, wireRunControl{SubmissionID: v.SubmissionID, Mode: v.Mode, NodeID: v.NodeID}, nil
+	case InterruptedDelta:
+		return WireInterrupted, wireRunControl{Reason: v.Reason, SubmissionID: v.SubmissionID}, nil
+	case ServerToolCallDelta:
+		return WireServerToolCall, wireServerTool{ID: v.ID, Kind: v.Kind, Name: v.Name, Input: v.Input}, nil
+	case ServerToolResultDelta:
+		return WireServerToolResult, wireServerTool{
+			ID: v.ID, Kind: v.Kind, Text: v.Text, Result: v.Result, IsError: v.IsError, Files: toWireFiles(v.Files),
+		}, nil
+	case PartialJSONDelta:
+		return WirePartialJSON, wirePartialJSON(v), nil
+	case nil:
+		return "", nil, fmt.Errorf("%w: nil delta", ErrUnknownWireKind)
+	default:
+		return "", nil, fmt.Errorf("%w: %T", ErrUnknownWireKind, d)
+	}
+}
+
+// ── Decoding ─────────────────────────────────────────────────────────
+
+//nolint:gocyclo // one case per wire kind
+func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
+	switch kind {
+	case WireTextStart:
+		return TextStartDelta{}, nil
+	case WireTextDelta:
+		w, err := decodeAs[wireContent](kind, data)
+		return TextContentDelta(w), err
+	case WireTextEnd:
+		return TextEndDelta{}, nil
+	case WireReasoningStart:
+		return ThinkingStartDelta{}, nil
+	case WireReasoningDelta:
+		w, err := decodeAs[wireContent](kind, data)
+		return ThinkingContentDelta(w), err
+	case WireReasoningEnd:
+		w, err := decodeAs[wireSignature](kind, data)
+		return ThinkingEndDelta(w), err
+	case WireToolCallStart:
+		w, err := decodeAs[wireToolCall](kind, data)
+		return ToolCallStartDelta{ID: w.ID, Name: w.Name}, err
+	case WireToolCallArgs:
+		w, err := decodeAs[wireToolCall](kind, data)
+		return ToolCallArgumentDelta{ID: w.ID, Content: w.Content}, err
+	case WireToolCallEnd:
+		w, err := decodeAs[wireToolCall](kind, data)
+		return ToolCallEndDelta{ID: w.ID, Arguments: w.Arguments, ArgumentsError: w.ArgumentsError}, err
+	case WireToolExecStart:
+		w, err := decodeAs[wireToolExec](kind, data)
+		return ToolExecStartDelta{ToolCallID: w.ToolCallID, Name: w.Name}, err
+	case WireToolExecDelta:
+		w, err := decodeAs[wireToolExec](kind, data)
+		if err != nil {
+			return nil, err
+		}
+		if w.Inner == nil {
+			return nil, fmt.Errorf("decode %s: missing inner envelope", kind)
+		}
+		inner, err := w.Inner.Delta()
+		if err != nil {
+			return nil, err
+		}
+		return ToolExecDelta{ToolCallID: w.ToolCallID, Inner: inner}, nil
+	case WireToolExecEnd:
+		w, err := decodeAs[wireToolExec](kind, data)
+		return ToolExecEndDelta{
+			ToolCallID: w.ToolCallID, Name: w.Name, Result: w.Result, Error: w.Error, Blocks: fromWireBlocks(w.Blocks),
+		}, err
+	case WireMarker:
+		w, err := decodeAs[wireMarkerDelta](kind, data)
+		if err != nil {
+			return nil, err
+		}
+		md := MarkerDelta{ToolCallID: w.ToolCallID, ToolName: w.ToolName, Arguments: w.Arguments, Markers: fromWireMarkers(w.Markers)}
+		if w.Interrupt != nil {
+			in := fromWireInterrupt(*w.Interrupt)
+			md.Interrupt = &in
+		}
+		return md, nil
+	case WireHandoff:
+		w, err := decodeAs[wireHandoff](kind, data)
+		return HandoffDelta(w), err
+	case WireCitation:
+		w, err := decodeAs[wireCitation](kind, data)
+		return CitationDelta(w), err
+	case WireError:
+		if isEmptyObject(data) {
+			return ErrorDelta{}, nil
+		}
+		w, err := decodeAs[wireError](kind, data)
+		if err != nil {
+			return nil, err
+		}
+		return ErrorDelta{Error: decodeError(&w)}, nil
+	case WireDone:
+		return DoneDelta{}, nil
+	case WireFeedback:
+		w, err := decodeAs[wireFeedback](kind, data)
+		return FeedbackDelta(w), err
+	case WireUsage:
+		w, err := decodeAs[wireUsage](kind, data)
+		u := UsageDelta{
+			AccountingID: w.AccountingID, Cumulative: w.Cumulative,
+			PromptTokens: w.PromptTokens, CachedPromptTokens: w.CachedPromptTokens,
+			CacheWriteTokens: w.CacheWriteTokens, CompletionTokens: w.CompletionTokens, TotalTokens: w.TotalTokens,
+			ResponseModel: w.ResponseModel, ResponseID: w.ResponseID, FinishReasons: w.FinishReasons, CacheHit: w.CacheHit,
+		}
+		if w.LatencyMS != nil {
+			u.Latency = msDuration(*w.LatencyMS)
+		}
+		return u, err
+	case WireRoute:
+		w, err := decodeAs[wireRoute](kind, data)
+		return w.delta(), err
+	case WireTruncated:
+		w, err := decodeAs[wireRunControl](kind, data)
+		return TruncatedDelta{NodeID: w.NodeID, Reason: w.Reason}, err
+	case WireQueued:
+		w, err := decodeAs[wireRunControl](kind, data)
+		return QueuedDelta{SubmissionID: w.SubmissionID, Mode: w.Mode, Position: w.Position}, err
+	case WireInjected:
+		w, err := decodeAs[wireRunControl](kind, data)
+		return InjectedDelta{SubmissionID: w.SubmissionID, Mode: w.Mode, NodeID: w.NodeID}, err
+	case WireInterrupted:
+		w, err := decodeAs[wireRunControl](kind, data)
+		return InterruptedDelta{Reason: w.Reason, SubmissionID: w.SubmissionID}, err
+	case WireServerToolCall:
+		w, err := decodeAs[wireServerTool](kind, data)
+		return ServerToolCallDelta{ID: w.ID, Kind: w.Kind, Name: w.Name, Input: w.Input}, err
+	case WireServerToolResult:
+		w, err := decodeAs[wireServerTool](kind, data)
+		return ServerToolResultDelta{
+			ID: w.ID, Kind: w.Kind, Text: w.Text, Result: w.Result, IsError: w.IsError, Files: fromWireFiles(w.Files),
+		}, err
+	case WirePartialJSON:
+		w, err := decodeAs[wirePartialJSON](kind, data)
+		return PartialJSONDelta(w), err
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrUnknownWireKind, kind)
+	}
+}
+
+// decodeAs decodes a payload with UseNumber, so numbers inside argument and
+// metadata maps keep their exact text as json.Number instead of becoming
+// float64. An absent payload decodes to the zero value.
+func decodeAs[T any](kind string, data json.RawMessage) (T, error) {
+	var v T
+	if err := decodeStrict(data, &v); err != nil {
+		return v, fmt.Errorf("decode %s: %w", kind, err)
+	}
+	return v, nil
+}
+
+func decodeStrict(data json.RawMessage, v any) error {
+	if len(data) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(v)
+}
+
+func isEmptyObject(data json.RawMessage) bool {
+	t := bytes.TrimSpace(data)
+	return len(t) == 0 || bytes.Equal(t, []byte("{}")) || bytes.Equal(t, []byte(jsonNull))
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+func toWireBlocks(bs []ToolResultBlock) []wireBlock {
+	if bs == nil {
+		return nil
+	}
+	out := make([]wireBlock, len(bs))
+	for i, b := range bs {
+		out[i] = wireBlock(b)
+	}
+	return out
+}
+
+func fromWireBlocks(ws []wireBlock) []ToolResultBlock {
+	if ws == nil {
+		return nil
+	}
+	out := make([]ToolResultBlock, len(ws))
+	for i, w := range ws {
+		out[i] = ToolResultBlock(w)
+	}
+	return out
+}
+
+func toWireFiles(fs []FileContent) []wireFile {
+	if fs == nil {
+		return nil
+	}
+	out := make([]wireFile, len(fs))
+	for i, f := range fs {
+		out[i] = wireFile{URI: f.URI, MediaType: f.MediaType, Filename: f.Filename, Data: f.Data}
+	}
+	return out
+}
+
+func fromWireFiles(ws []wireFile) []FileContent {
+	if ws == nil {
+		return nil
+	}
+	out := make([]FileContent, len(ws))
+	for i, w := range ws {
+		out[i] = FileContent{URI: w.URI, MediaType: w.MediaType, Filename: w.Filename, Data: w.Data}
+	}
+	return out
+}
+
+func toWireMarkers(ms []Marker) []wireMarker {
+	if ms == nil {
+		return nil
+	}
+	out := make([]wireMarker, len(ms))
+	for i, m := range ms {
+		out[i] = wireMarker(m)
+	}
+	return out
+}
+
+func fromWireMarkers(ws []wireMarker) []Marker {
+	if ws == nil {
+		return nil
+	}
+	out := make([]Marker, len(ws))
+	for i, w := range ws {
+		out[i] = Marker(w)
+	}
+	return out
+}
+
+func timePtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+func timeVal(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+// durationMS renders a duration as fractional milliseconds. Six decimal
+// places keep nanosecond precision for any realistic latency.
+func durationMS(d time.Duration) *float64 {
+	ms := float64(d) / float64(time.Millisecond)
+	return &ms
+}
+
+func msDuration(ms float64) time.Duration {
+	return time.Duration(math.Round(ms * float64(time.Millisecond)))
+}
