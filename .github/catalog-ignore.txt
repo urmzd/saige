@@ -1,0 +1,49 @@
+# Globs that saige catalog reconcile leaves out (--ignore-file). Each line
+# matches a model ID or a row prefix, bare or as provider/glob. Keep this to
+# models the catalog deliberately does not describe: it silences both the
+# "new model" and the "disappeared upstream" findings for a match.
+
+# OpenAI endpoints that are not chat or embedding models.
+openai/babbage-*
+openai/davinci-*
+openai/dall-e-*
+openai/tts-*
+openai/whisper-*
+openai/sora-*
+openai/omni-moderation-*
+openai/gpt-image-*
+openai/chatgpt-image-*
+openai/gpt-audio*
+openai/gpt-realtime*
+openai/gpt-live*
+openai/gpt-transcribe*
+openai/*-transcribe*
+openai/*-tts*
+openai/*-search-preview*
+
+# Aliases that move between models; pin a dated or named model instead.
+openai/chat-latest
+openai/chatgpt-4o-latest
+
+# Legacy chat models the catalog leaves to the provider baseline.
+openai/gpt-3.5-turbo*
+openai/gpt-4
+openai/gpt-4-0*
+openai/gpt-4-1106*
+
+# Google speech, live-audio and image endpoints, and the retired 1.5 line.
+google/gemini-live-*
+google/*-live-*
+google/*transcribe*
+google/*-translate-*
+google/gemini-nano-banana-*
+google/gemini-1.5-*
+
+# Access-gated rows: the Mythos models are not listed for general API keys,
+# so their absence from a listing is not a retirement. Check them by hand.
+anthropic/claude-mythos-5*
+
+# Gemini Omni Flash generates video. The vendor's model and price pages
+# document gemini-omni-1.1-flash, not this preview ID, and not as a chat
+# model, so the catalog leaves it out.
+google/gemini-omni-*

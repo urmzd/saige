@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 1,
-  "revision": "2026-10-09.2",
+  "revision": "2026-10-09.4",
   "templates": {
     "tool_use": {
       "capabilities": [
@@ -415,6 +415,7 @@
       "prefix": "claude-haiku-5",
       "extends": "anthropic.adaptive",
       "tier": "economy",
+      "superseded_by": "claude-haiku-5-5",
       "limits": {
         "context_window": 1000000,
         "max_output_tokens": 128000
@@ -1467,6 +1468,65 @@
         "reasoning depth is set with ThinkingConfig.ThinkingLevel; minimal is rejected",
         "thought signatures must round-trip or multi-turn function calling degrades",
         "the list price rises to $1.50 / $7.50 on 2027-01-01"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.6-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "superseded_by": "gemini-3.8-flash",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.75,
+        "output_per_mtok": 3.75,
+        "cached_input_per_mtok": 0.075,
+        "as_of": "2026-10-09",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "the list price rises to $1.50 / $7.50 (cached input $0.15) on 2027-01-01"
+      ]
+    },
+    {
+      "provider": "google",
+      "prefix": "gemini-3.5-flash",
+      "extends": "google.gemini3",
+      "tier": "standard",
+      "superseded_by": "gemini-3.8-flash",
+      "limits": {
+        "context_window": 1048576,
+        "max_output_tokens": 65536
+      },
+      "reasoning": {
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      },
+      "notes": [
+        "deprecated by the vendor: requests are routed to gemini-3.6-flash, whose thinking levels are declared here",
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel",
+        "thought signatures must round-trip or multi-turn function calling degrades",
+        "unpriced: the vendor price list no longer lists this model"
       ]
     },
     {
