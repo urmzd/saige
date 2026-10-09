@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os/exec"
 	"runtime"
 	"runtime/debug"
@@ -34,6 +35,40 @@ type Provenance struct {
 	// Catalog records the declared configurations that served the run, when
 	// its providers were built from a model catalog.
 	Catalog *CatalogProvenance `json:"catalog,omitempty"`
+	// Dials records, per dial name, what each requested value compiled to
+	// on the run's calls. See AddDial.
+	Dials map[string][]DialOutcome `json:"dials,omitempty"`
+}
+
+// DialOutcome is what one requested dial value compiled to across a run.
+type DialOutcome struct {
+	Requested string `json:"requested"`
+	// Sent lists the distinct raw parameters it was sent as, sorted, with
+	// "dropped" or "rejected" when nothing was sent.
+	Sent []string `json:"sent"`
+}
+
+// AddDial records that a dial requested as requested was sent as sent on
+// one call. Empty names are ignored.
+func (p *Provenance) AddDial(name, requested, sent string) {
+	if name == "" {
+		return
+	}
+	if p.Dials == nil {
+		p.Dials = map[string][]DialOutcome{}
+	}
+	outcomes := p.Dials[name]
+	i := slices.IndexFunc(outcomes, func(o DialOutcome) bool { return o.Requested == requested })
+	if i < 0 {
+		outcomes = append(outcomes, DialOutcome{Requested: requested})
+		slices.SortFunc(outcomes, func(a, b DialOutcome) int { return strings.Compare(a.Requested, b.Requested) })
+		i = slices.IndexFunc(outcomes, func(o DialOutcome) bool { return o.Requested == requested })
+	}
+	if !slices.Contains(outcomes[i].Sent, sent) {
+		outcomes[i].Sent = append(outcomes[i].Sent, sent)
+		slices.Sort(outcomes[i].Sent)
+	}
+	p.Dials[name] = outcomes
 }
 
 // CatalogProvenance identifies the catalog configurations behind a run.
@@ -72,15 +107,16 @@ func (p *Provenance) AddRoute(profile, preset, configHash, revision string) {
 	}
 }
 
-// ConfigDrift lists the differences between two runs' catalog
-// configurations that make their scores incomparable: the same profile ID
-// served with a different configuration hash, or a different catalog
-// revision. It is empty when either run has no catalog provenance.
+// ConfigDrift lists the differences between two runs' configurations that
+// make their scores incomparable: the same profile ID served with a
+// different configuration hash, a different catalog revision, or a dial
+// held at the same value in both runs that was sent as different raw
+// parameters. The catalog checks need catalog provenance on both runs.
 func ConfigDrift(base, exp Provenance) []string {
+	out := dialDrift(base, exp)
 	if base.Catalog == nil || exp.Catalog == nil {
-		return nil
+		return out
 	}
-	var out []string
 	if base.Catalog.Revision != exp.Catalog.Revision {
 		out = append(out, fmt.Sprintf("catalog revision differs: %q vs %q", base.Catalog.Revision, exp.Catalog.Revision))
 	}
@@ -92,6 +128,25 @@ func ConfigDrift(base, exp Provenance) []string {
 	for _, id := range ids {
 		if h, ok := exp.Catalog.Configs[id]; ok && h != base.Catalog.Configs[id] {
 			out = append(out, fmt.Sprintf("profile %s: configuration %s vs %s", id, base.Catalog.Configs[id], h))
+		}
+	}
+	return out
+}
+
+// dialDrift lists the dials both runs requested with the same value but
+// sent differently, such as creativity applied on one model and dropped on
+// the other.
+func dialDrift(base, exp Provenance) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(base.Dials)) {
+		for _, b := range base.Dials[name] {
+			i := slices.IndexFunc(exp.Dials[name], func(o DialOutcome) bool { return o.Requested == b.Requested })
+			if i < 0 {
+				continue
+			}
+			if e := exp.Dials[name][i]; !slices.Equal(b.Sent, e.Sent) {
+				out = append(out, fmt.Sprintf("dial %s %s: sent as %v vs %v", name, b.Requested, b.Sent, e.Sent))
+			}
 		}
 	}
 	return out

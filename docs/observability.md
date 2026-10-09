@@ -25,7 +25,7 @@ A `Metrics` sink set before the option keeps receiving every record next to the 
 
 | Span | Kind | Attributes |
 |------|------|------------|
-| `chat {model}` | client | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.request.*` options, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.response.time_to_first_chunk`, `saige.route.*` |
+| `chat {model}` | client | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.request.*` options, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.response.time_to_first_chunk`, `saige.route.*`, `saige.dials.*` |
 | `execute_tool {name}` | internal | `gen_ai.tool.name`, `gen_ai.tool.description`, `saige.tool.capability` |
 | `invoke_agent {name}` | internal | `gen_ai.agent.name` |
 
@@ -34,6 +34,8 @@ Usage is merged across the parts a provider streams and written once when the st
 `saige.route.profile`, `.provider`, `.model`, `.experiment`, `.variant` and `.reason` come from the last route a router or traffic split reported for the call. A profile built from a catalog preset also sets `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`.
 
 Each route is also recorded as a `saige.route.attempt` span event with its route attributes and the attempt's effective `gen_ai.request.*` options. When the call ends, the span's `gen_ai.request.*` attributes are set from the serving attempt's effective options: the profile's configured options merged with the per-call overrides. Without a route that reports options, they reflect the per-call overrides only.
+
+A call with [dials](dials.md) also records how they compiled: `saige.dials.requested` lists every dial as `name:value`, `saige.dials.mapped` the mapped ones as `name:from→to`, `saige.dials.dropped` the dropped ones, and `saige.dials.policy` the policy in force. A router reports them per attempt on its route, so they appear on each `saige.route.attempt` event and, for the serving attempt, on the span. For a single adapter that declares its capabilities, the traced call compiles the dials itself and records the effective options it sends.
 
 `gen_ai.response.time_to_first_chunk` is measured from before the provider call to the first text chunk, so it includes connection setup.
 

@@ -31,3 +31,20 @@ func TestCatalogProvenanceAndDrift(t *testing.T) {
 		t.Fatalf("comparison warnings %v", c.Warnings)
 	}
 }
+
+func TestDialProvenanceAndDrift(t *testing.T) {
+	var base, exp Provenance
+	base.AddDial("creativity", "focused", "temperature=0.3")
+	base.AddDial("creativity", "focused", "temperature=0.3")
+	base.AddDial("reasoning", "on:high", "effort=high")
+	exp.AddDial("creativity", "focused", "dropped")
+	exp.AddDial("reasoning", "on:high", "effort=high")
+	exp.AddDial("reasoning", "off", "effort=low")
+	if got := base.Dials["creativity"]; len(got) != 1 || len(got[0].Sent) != 1 {
+		t.Fatalf("dedup: %+v", got)
+	}
+	drift := ConfigDrift(base, exp)
+	if len(drift) != 1 || drift[0] != "dial creativity focused: sent as [temperature=0.3] vs [dropped]" {
+		t.Fatalf("drift: %v", drift)
+	}
+}
