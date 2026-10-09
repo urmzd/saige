@@ -193,6 +193,72 @@ Fusion is pluggable through `rag.WithFuser`. `fusion.RRF` is the default; `fusio
 rag.WithFuser(fusion.Weighted{Weights: map[string]float64{"vector": 2, "bm25": 1}})
 ```
 
+Weights and the RRF constant can also be set for a whole pipeline, with any fuser, and overridden per search. A search's weights override the pipeline's key by key:
+
+```go
+pipe, _ := rag.NewPipeline(
+    rag.WithStore(store), rag.WithEmbedders(embedders), rag.WithBM25(nil),
+    rag.WithFusionWeights(map[string]float64{"vector": 1, "bm25": 2}),
+    rag.WithFusionK(20),
+)
+
+// Trust lexical matches more for an identifier, and sharpen the ranks.
+res, _ := pipe.Search(ctx, "ERR_CONN_RESET",
+    types.WithFusionWeights(map[string]float64{"bm25": 4}),
+    types.WithFusionK(5))
+```
+
+By default `fusion.Weighted` fuses ranks. With a `Normalization` it fuses scores instead: each retriever's raw scores are rescaled per list, then weighted and summed, so a hit far ahead in one list keeps its lead.
+
+```go
+rag.WithFuser(fusion.Weighted{Normalization: fusion.NormalizeMinMax}) // each list to [0,1]
+rag.WithFuser(fusion.Weighted{Normalization: fusion.NormalizeZScore}) // each list to standard scores
+```
+
+### Keyword queries
+
+A plain search hands the BM25 arm the query text: it is tokenized like the index and any term matches. `types.WithKeywordQuery` runs a structured query instead. Every field is plain text; nothing is parsed as query syntax, and pgstore binds each value as a parameter.
+
+```go
+// Exact phrase, allowing one extra word in between.
+pipe.Search(ctx, "connection reset by peer",
+    types.WithKeywordQuery(types.KeywordQuery{Mode: types.KeywordPhrase, Slop: 1}))
+
+// Typo tolerance and prefixes: "okapy" matches "okapi", "postg" matches "postgres".
+types.WithKeywordQuery(types.KeywordQuery{Fuzziness: 1, Transpositions: true})
+types.WithKeywordQuery(types.KeywordQuery{Prefix: true, Mode: types.KeywordAll})
+
+// Boolean clauses: the query text and Must are required, Should raises the
+// score, MustNot excludes.
+types.WithKeywordQuery(types.KeywordQuery{
+    Must:    []types.KeywordClause{{Text: "postgres"}},
+    Should:  []types.KeywordClause{{Text: "hnsw ef_search", Mode: types.KeywordPhrase}},
+    MustNot: []types.KeywordClause{{Text: "mysql"}},
+})
+
+// Search the document title and section heading too, and weight them.
+types.WithKeywordQuery(types.KeywordQuery{
+    Fields: &types.FieldBoosts{Body: 1, Title: 3, Heading: 2},
+})
+
+// Return the matched words for citations.
+types.WithKeywordQuery(types.KeywordQuery{
+    Highlight: &types.HighlightOptions{StartTag: "**", EndTag: "**", MaxChars: 200},
+})
+```
+
+An empty `Text` takes the search query; the query transformer's rewrites each get the same settings. `Fuzziness` is an edit distance from 0 to 2. `Slop` counts position moves: one extra word costs 1, two swapped words cost 2. A one-word phrase matches like a plain term. A clause matches in any searched field, and each field is matched on its own, so `KeywordAll` needs every term in one field. An invalid query fails the BM25 arm with `types.ErrInvalidKeywordQuery`.
+
+With `Highlight`, pgstore sets `SearchHit.Highlight`: `Snippet` is the best fragment with matched words wrapped in the tags, and `Spans` are byte offsets of the matched words in `Variant.Text`. Parent and neighbor expansion move the spans into the widened text. pg_search does not highlight fuzzy or prefix matches, and a match only in the title or heading has no highlight.
+
+| Feature | pgstore (pg_search) | in-memory BM25 |
+|---------|--------------------|----------------|
+| Any, all, phrase with slop | yes | yes |
+| Prefix and fuzzy (with transpositions) | yes | yes |
+| Must, Should, MustNot | yes | yes |
+| Title and heading boosts | yes | body only |
+| Highlight | yes | no |
+
 Search options that shape the result:
 
 | Option | Effect |
@@ -201,10 +267,12 @@ Search options that shape the result:
 | `types.WithContentDedup()` | Collapse hits with identical trimmed text (or bytes), keeping the highest ranked |
 | `types.WithNeighborWindow(n)` | Widen each text hit with up to `n` neighboring sections; `Provenance.Window` records the range, and a hit already inside a higher-ranked window is dropped |
 | `types.WithScope(scope)` | Search one scope (see [Scopes](#scopes)) |
+| `types.WithKeywordQuery(q)` | Run a structured query in the BM25 arm (see [Keyword queries](#keyword-queries)) |
+| `types.WithFusionWeights(w)`, `types.WithFusionK(k)` | Per-search fusion weights and RRF constant |
 
 `SearchPipelineResult.Retrievals` reports each retriever call: name, query index, hit count, duration, and error, so a slow, empty, or failing arm is visible without tracing.
 
-On `pgstore`, `rag.WithBM25` searches the pg_search BM25 index in Postgres (`types.KeywordSearcher`): the index lives with the data, applies the same scope and filters as vector search, and needs no rebuild. On other stores the BM25 index lives in process memory. Indexing a document again replaces its postings, and a replaced or deleted document leaves the index. Over a persistent store without keyword search, call `rag.RebuildIndex(ctx, pipe)` after startup; it needs a store that implements `types.DocumentLister` (memstore and pgstore do). BM25 hits carry the document timestamp and filter on merged document and variant metadata when the store implements `types.VariantRecordsGetter` or `types.VariantRecordGetter` (memstore and pgstore implement both). BM25 resolves ranked candidates in batches, one store lookup per batch, and returns store errors other than a missing variant. Index and Remove calls made during `RebuildIndex` are replayed onto the new index before it is swapped in.
+On `pgstore`, `rag.WithBM25` searches the pg_search BM25 index in Postgres (`types.KeywordSearcher`): the index lives with the data, applies the same scope and filters as vector search, and needs no rebuild. A store decorator, such as a tracing wrapper, that does not implement `types.KeywordSearcher` itself should implement `Unwrap() types.Store` (`types.StoreUnwrapper`); `rag.WithBM25` follows it to the store's keyword search instead of falling back to an in-memory index. On other stores the BM25 index lives in process memory. Indexing a document again replaces its postings, and a replaced or deleted document leaves the index. Over a persistent store without keyword search, call `rag.RebuildIndex(ctx, pipe)` after startup; it needs a store that implements `types.DocumentLister` (memstore and pgstore do). BM25 hits carry the document timestamp and filter on merged document and variant metadata when the store implements `types.VariantRecordsGetter` or `types.VariantRecordGetter` (memstore and pgstore implement both). BM25 resolves ranked candidates in batches, one store lookup per batch, and returns store errors other than a missing variant. Index and Remove calls made during `RebuildIndex` are replayed onto the new index before it is swapped in.
 
 The graph retriever resolves each fact to the variant named by its asserting episode's `variant_uuid` metadata, then applies `ContentTypes` and metadata filters to that variant. A fact whose stored variant exists but fails the search's scope, time range, or filters is dropped. A fact that resolves to no variant becomes a text hit built from the fact, unless filters or a time range are set, `ContentTypes` excludes text, or the search names a scope other than the retriever's graph group; then it is dropped. A partial graph failure returns the surviving hits with `types.ErrPartialSearch`.
 
@@ -309,6 +377,8 @@ results, _ := eval.Evaluate(ctx, cases, pipeline,
     eval.WithJudgeRubric("Score helpfulness, accuracy, and completeness."),
 )
 ```
+
+`TestHybridRetrievalEval` (`rag/eval/hybrid_eval_test.go`) compares BM25 alone, vector search alone, and hybrid fusion (RRF, min-max, z-score) on a fixed corpus of 34 passages and 23 labeled queries, with recorded embeddings so it runs offline. Run it with `go test -run TestHybridRetrievalEval -v ./rag/eval/` to print the table; `SAIGE_EVAL_REGENERATE=1` with `OPENAI_API_KEY` records the embeddings again.
 
 ## Agent Tool Bindings
 
