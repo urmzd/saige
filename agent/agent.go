@@ -1938,6 +1938,13 @@ func (a *Agent) getAssistantMessage(
 			partial = interruptedPartial(agg)
 			return types.StepResult{Kind: types.StepKindLLM, Message: partial, Usage: liveUsage}, errTurnInterrupted
 		}
+		// A provider that reports no routes of its own, such as a single
+		// adapter, gets its dial decisions reported here, so the turn and
+		// evals record them as they do a router's.
+		localRoute := localDialRoute(provider, opts, toolDefs)
+		if localRoute != nil {
+			stream.send(*localRoute)
+		}
 		rx, llmErr := a.callProvider(stepCtx, provider, out, llmMessages, toolDefs, opts)
 		if llmErr != nil {
 			if interruptRequested(stepCtx) {
@@ -1947,7 +1954,7 @@ func (a *Agent) getAssistantMessage(
 			return types.StepResult{}, llmErr
 		}
 		var streamErr error
-		var lastRoute *types.RouteDelta
+		lastRoute := localRoute
 		for delta := range rx {
 			switch d := delta.(type) {
 			case types.UsageDelta:
@@ -2041,12 +2048,6 @@ func (a *Agent) getAssistantMessage(
 		if ok && lastRoute != nil {
 			// Metadata: stripped before the next provider call.
 			m.Content = append(m.Content, types.RouteContentFrom(*lastRoute))
-		} else if ok {
-			// A provider that reports no route still has its dial
-			// decisions recorded when one was not applied as asked.
-			if rc := localDialRoute(provider, opts, toolDefs); rc != nil {
-				m.Content = append(m.Content, *rc)
-			}
 		}
 		if ok {
 			msg = &m

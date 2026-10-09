@@ -266,21 +266,45 @@ func TestReloadRestoresDials(t *testing.T) {
 	}
 }
 
-// A single adapter reports no route, so the agent records the dial
-// decisions itself when one was not applied as asked.
-func TestLocalDialRouteRecordsDrops(t *testing.T) {
+// A single adapter reports no route, so the agent reports the dial
+// decisions itself: on the stream as a RouteDelta and on the turn, whether
+// or not a dial was changed.
+func TestSingleAdapterReportsDials(t *testing.T) {
 	focused := types.CreativityFocused
+	for _, tc := range []struct {
+		name   string
+		dials  types.Dials
+		dial   types.DialName
+		action types.DialAction
+	}{
+		{"dropped", types.Dials{Creativity: &focused}, types.DialCreativity, types.DialDropped},
+		{"applied", depthDial(types.DepthHigh), types.DialReasoning, types.DialApplied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
+			a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithDials(tc.dials))
+			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+			routes := routesOf(agenttest.CollectDeltas(stream.Deltas()))
+			if err := stream.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if len(routes) != 1 || routes[0].Dials == nil || routes[0].Provider != "anthropic" || routes[0].Options == nil {
+				t.Fatalf("routes: %+v", routes)
+			}
+			if d, _ := routes[0].Dials.Decision(tc.dial); d.Action != tc.action {
+				t.Fatalf("decision: %+v", d)
+			}
+			msgs, _ := a.Tree().FlattenBranch(a.Tree().Active())
+			last, _ := msgs[len(msgs)-1].(types.AssistantMessage)
+			if r := routeOf(&last); r == nil || r.Dials == nil {
+				t.Fatalf("no route on the turn: %+v", last)
+			}
+		})
+	}
+	// Without dials nothing is reported, as before.
 	p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
-	a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused}))
-	final, err := a.RunDurable(context.Background(), types.NoopStepRunner{}, []types.Message{types.NewUserMessage("hi")}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := routeOf(final)
-	if r == nil || r.Dials == nil {
-		t.Fatalf("no route recorded: %+v", final)
-	}
-	if d, _ := r.Dials.Decision(types.DialCreativity); d.Action != types.DialDropped {
-		t.Fatalf("decision: %+v", d)
+	stream := NewAgent(AgentConfig{Provider: p}).Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	if routes := routesOf(agenttest.CollectDeltas(stream.Deltas())); len(routes) != 0 {
+		t.Fatalf("routes without dials: %+v", routes)
 	}
 }

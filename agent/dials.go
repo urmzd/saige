@@ -172,25 +172,37 @@ func mergeLayers(layers []types.DialLayer) types.Dials {
 	return d
 }
 
-// localDialRoute records how a call's dials compiled when the provider
-// reports no route of its own, as a single adapter does. It is recorded
-// only when a dial was mapped, dropped or overridden.
-func localDialRoute(provider types.Provider, opts *types.RequestOptions, tools []types.ToolDef) *types.RouteContent {
-	if opts == nil || !opts.HasDials() {
+// localDialRoute describes how a call's dials compile when the provider
+// reports no routes of its own, as a single adapter does: the adapter
+// compiles the same dials the same way, so the route names what it sends.
+// It is nil for a call without dials, and for a router or another
+// multi-provider decorator, which reports each attempt itself.
+func localDialRoute(provider types.Provider, opts *types.RequestOptions, tools []types.ToolDef) *types.RouteDelta {
+	if _, multi := wrapper.As[wrapper.MultiWrapper](provider); multi {
 		return nil
 	}
 	caps, ok := types.ProviderCapabilities(provider)
 	if !ok {
 		return nil
 	}
-	configured, _ := types.ProviderEffectiveOptions(provider)
+	all, _ := types.ProviderEffectiveOptions(provider)
+	if opts != nil {
+		all = all.Merge(*opts)
+	}
+	if !all.HasDials() {
+		return nil
+	}
 	ctx := types.DialContext{Tools: len(tools) > 0}
 	if r, ok := wrapper.As[types.DialSurfaceReporter](provider); ok {
 		ctx.Surface = r.DialSurface()
 	}
-	eff, rep, err := types.CompileOptions(caps, configured.Merge(*opts), ctx)
-	if err != nil || rep == nil || !rep.Changed() {
+	eff, rep, err := types.CompileOptions(caps, all, ctx)
+	if rep == nil {
 		return nil
 	}
-	return &types.RouteContent{Provider: wrapper.InnermostName(provider), Model: types.ProviderModel(provider), Options: &eff, Dials: rep}
+	d := &types.RouteDelta{Provider: wrapper.InnermostName(provider), Model: types.ProviderModel(provider), Dials: rep}
+	if err == nil {
+		d.Options = &eff
+	}
+	return d
 }

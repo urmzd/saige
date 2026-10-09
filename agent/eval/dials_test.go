@@ -92,3 +92,25 @@ func TestEvalHoldsDialsAcrossModels(t *testing.T) {
 		t.Fatalf("drift: %v", drift)
 	}
 }
+
+// A single-provider subject has no router, yet its provenance records what
+// each dial was sent as.
+func TestSingleProviderSubjectRecordsDials(t *testing.T) {
+	p := catalogModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}},
+		caps: catalog.MustLookup("anthropic", "claude-haiku-5-5")}
+	focused := types.CreativityFocused
+	a := agent.NewAgent(agent.AgentConfig{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
+	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	run := CollectAgentRun(stream.Deltas())
+	if err := stream.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Routes) != 1 || run.Routes[0].Dials == nil || run.Routes[0].Model != "claude-haiku-5-5" {
+		t.Fatalf("routes: %+v", run.Routes)
+	}
+	var prov topeval.Provenance
+	run.AddProvenance(&prov)
+	if got := prov.Dials["creativity"]; len(got) != 1 || got[0].Sent[0] != "dropped" {
+		t.Fatalf("provenance: %+v", prov.Dials)
+	}
+}
