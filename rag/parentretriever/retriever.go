@@ -152,8 +152,15 @@ func expandHit(hit *types.SearchHit, sections []types.Section) {
 			continue
 		}
 		var texts []string
+		offset := -1
 		for _, v := range sec.Variants {
 			if v.Text != "" {
+				if v.UUID == hit.Variant.UUID {
+					offset = len(strings.Join(texts, "\n\n"))
+					if len(texts) > 0 {
+						offset += len("\n\n")
+					}
+				}
 				texts = append(texts, v.Text)
 			}
 		}
@@ -163,6 +170,13 @@ func expandHit(hit *types.SearchHit, sections []types.Section) {
 		}
 		hit.Variant.Text = joined
 		hit.Provenance.ExpandedFromVariantUUID = hit.Variant.UUID
+		if offset >= 0 {
+			hit.Highlight = hit.Highlight.Shifted(offset)
+		} else if hit.Highlight != nil {
+			// The matched text is not part of the section text, so its
+			// spans point nowhere in it.
+			hit.Highlight = &types.Highlight{Snippet: hit.Highlight.Snippet}
+		}
 		return
 	}
 }

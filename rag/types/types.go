@@ -187,6 +187,9 @@ type SearchHit struct {
 	// search and used by WithRecency and WithTimeRange. The zero value means
 	// "unknown".
 	Timestamp time.Time `json:"timestamp,omitempty"`
+	// Highlight is the matched part of the variant text, set by keyword
+	// searches that ask for it (see KeywordQuery.Highlight).
+	Highlight *Highlight `json:"highlight,omitempty"`
 }
 
 // FilterOp defines metadata filter comparison operations.
@@ -282,6 +285,12 @@ type SearchConfig struct {
 	// FusionK is the k constant for Reciprocal Rank Fusion. Zero means the
 	// pipeline default (60).
 	FusionK int
+	// FusionWeights overrides the fuser's per-retriever weights for this
+	// search. See WithFusionWeights.
+	FusionWeights map[string]float64
+
+	// Keyword shapes the keyword retrievers' query. See WithKeywordQuery.
+	Keyword *KeywordQuery
 
 	// Recency time-decay scoring. Enabled only when RecencyHalfLife > 0.
 	RecencyHalfLife time.Duration
@@ -319,6 +328,24 @@ func WithFusionK(k int) SearchOption {
 			c.FusionK = k
 		}
 	}
+}
+
+// WithFusionWeights weights each retriever's lists in fusion for this
+// search, keyed by retriever name (see Named), such as "bm25" and "vector".
+// A weight overrides the one the pipeline or fuser sets for that retriever;
+// retrievers not named keep theirs. A weight <= 0 leaves the retriever's
+// lists out of fusion.
+func WithFusionWeights(weights map[string]float64) SearchOption {
+	return func(c *SearchConfig) { c.FusionWeights = weights }
+}
+
+// WithKeywordQuery runs the keyword retrievers with q instead of a plain
+// text match: phrase, prefix, or fuzzy matching, boolean clauses, field
+// boosts, and highlighting. An empty q.Text means the search query. Other
+// retrievers ignore it. An invalid q fails the keyword retrievers with
+// ErrInvalidKeywordQuery.
+func WithKeywordQuery(q KeywordQuery) SearchOption {
+	return func(c *SearchConfig) { c.Keyword = &q }
 }
 
 // WithMinScore sets a minimum relevance in [0,1] for fused results. The
@@ -429,6 +456,24 @@ type SearchOptions struct {
 	// with an unknown time are excluded.
 	Since time.Time
 	Until time.Time
+	// Keyword, when set, is the structured query a keyword search runs. Its
+	// empty Text means the query text passed with the options. Vector
+	// search ignores it.
+	Keyword *KeywordQuery
+}
+
+// KeywordQueryFor returns the keyword query a search for text runs: opts'
+// Keyword with an empty Text filled in from text, or a plain query for text
+// when opts sets none.
+func KeywordQueryFor(text string, opts *SearchOptions) KeywordQuery {
+	if opts == nil || opts.Keyword == nil {
+		return PlainKeywordQuery(text)
+	}
+	q := *opts.Keyword
+	if q.Text == "" {
+		q.Text = text
+	}
+	return q
 }
 
 // --- Store interface ---
@@ -479,8 +524,38 @@ type DocumentReplacer interface {
 // store that implements it searches through the store instead of an
 // in-memory index, so the index survives restarts and is shared across
 // processes.
+//
+// When opts.Keyword is set, the search runs that structured query (see
+// KeywordQueryFor) and returns ErrInvalidKeywordQuery when it is invalid.
 type KeywordSearcher interface {
 	SearchByKeyword(ctx context.Context, query string, opts *SearchOptions) ([]SearchHit, error)
+}
+
+// StoreUnwrapper is implemented by Store decorators, such as tracing or
+// caching wrappers, to expose the store they wrap. The pipeline follows it
+// to find optional capabilities the wrapper does not implement itself, such
+// as KeywordSearcher. A wrapper that must see those calls implements the
+// capability itself instead.
+type StoreUnwrapper interface {
+	Unwrap() Store
+}
+
+// AsStore finds the first store of type T in the chain that starts at s and
+// follows StoreUnwrapper. T is usually an optional interface such as
+// KeywordSearcher. It reports false when no store in the chain has type T.
+func AsStore[T any](s Store) (T, bool) {
+	for s != nil {
+		if v, ok := s.(T); ok {
+			return v, true
+		}
+		u, ok := s.(StoreUnwrapper)
+		if !ok {
+			break
+		}
+		s = u.Unwrap()
+	}
+	var zero T
+	return zero, false
 }
 
 // GraphEpisodeDeleter is an optional interface for knowledge graphs that

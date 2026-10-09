@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +27,9 @@ func DefaultConfig() *Config {
 type posting struct {
 	variantUUID string
 	termFreq    float64
+	// positions are the term's token positions in the variant text, in
+	// ascending order, for phrase matching.
+	positions []int32
 }
 
 // ErrRebuildUnsupported is returned by RebuildIndex when the store cannot
@@ -110,16 +112,17 @@ func (r *Retriever) indexLocked(doc *types.Document) {
 			tokens := tokenize(v.Text)
 			dl := float64(len(tokens))
 
-			// Count term frequencies.
-			tf := make(map[string]float64)
-			for _, t := range tokens {
-				tf[t]++
+			// Record each term's positions; the frequency is their count.
+			positions := make(map[string][]int32)
+			for i, t := range tokens {
+				positions[t] = append(positions[t], int32(i))
 			}
 
-			for term, freq := range tf {
+			for term, pos := range positions {
 				r.index[term] = append(r.index[term], posting{
 					variantUUID: v.UUID,
-					termFreq:    freq,
+					termFreq:    float64(len(pos)),
+					positions:   pos,
 				})
 			}
 
@@ -258,6 +261,15 @@ func (r *Retriever) recomputeAvgDL() {
 
 // Retrieve computes BM25 scores for each variant matching the query terms.
 //
+// Without opts.Keyword, any query term matches. With it, Retrieve runs that
+// structured query (see types.KeywordQueryFor) over the variant text:
+// all-terms, phrase (with slop), prefix, and fuzzy matching, and Must,
+// Should, and MustNot clauses, with the same meaning as in pgstore. The
+// in-memory index holds only variant text, so field boosts other than Body
+// are ignored, a query whose Body boost is zero finds nothing, and hits
+// carry no Highlight. An invalid query returns an error wrapping
+// types.ErrInvalidKeywordQuery.
+//
 // Scope, time-range, content-type, and metadata filters run before the
 // result is cut to the limit, so a selective filter still returns a full page
 // when enough variants match. When the store implements types.VariantRecordsGetter or
@@ -269,33 +281,20 @@ func (r *Retriever) recomputeAvgDL() {
 // types.VariantRecordsGetter. A candidate
 // missing from the store is skipped; any other store error is returned.
 func (r *Retriever) Retrieve(ctx context.Context, query string, opts *types.SearchOptions) ([]types.SearchHit, error) {
-	r.mu.RLock()
-	queryTokens := tokenize(query)
-	if len(queryTokens) == 0 || r.docCount == 0 {
-		r.mu.RUnlock()
+	q := types.KeywordQueryFor(query, opts)
+	if err := q.Validate(); err != nil {
+		return nil, fmt.Errorf("bm25: %w", err)
+	}
+	if q.IsEmpty() || q.Boosts().Body == 0 {
 		return nil, nil
 	}
 
-	scores := make(map[string]float64)
-	N := float64(r.docCount)
-	k1 := r.cfg.K1
-	b := r.cfg.B
-
-	for _, term := range queryTokens {
-		postings, ok := r.index[term]
-		if !ok {
-			continue
-		}
-		df := float64(len(postings))
-		idf := math.Log(1 + (N-df+0.5)/(df+0.5))
-
-		for _, p := range postings {
-			dl := r.docLen[p.variantUUID]
-			tf := p.termFreq
-			score := idf * (tf * (k1 + 1)) / (tf + k1*(1-b+b*dl/r.avgDL))
-			scores[p.variantUUID] += score
-		}
+	r.mu.RLock()
+	if r.docCount == 0 {
+		r.mu.RUnlock()
+		return nil, nil
 	}
+	scores := r.evaluate(q)
 	r.mu.RUnlock()
 
 	limit := 10

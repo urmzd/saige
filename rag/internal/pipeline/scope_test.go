@@ -405,6 +405,33 @@ func TestPipelineNeighborWindow(t *testing.T) {
 	}
 }
 
+// TestPipelineNeighborWindowShiftsHighlight checks that a widened hit's
+// highlight spans still cover the matched word.
+func TestPipelineNeighborWindowShiftsHighlight(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	if _, err := pipeline.New(pipeline.Config{Store: store, ContentExtractor: sectionsExtractor{}}).
+		Ingest(ctx, &types.RawDocument{SourceURI: "h", Data: []byte("zero|the okapi|two")}); err != nil {
+		t.Fatal(err)
+	}
+	hit := types.SearchHit{
+		Variant:    types.ContentVariant{UUID: "h-s1-v", ContentType: types.ContentText, Text: "the okapi"},
+		Provenance: types.Provenance{DocumentUUID: "doc-h", SectionUUID: "h-s1", SectionIndex: 1},
+		Highlight:  &types.Highlight{Spans: []types.TextSpan{{Start: 4, End: 9}}},
+	}
+	p := pipeline.New(pipeline.Config{Store: store, ContentExtractor: sectionsExtractor{},
+		Retrievers: []types.Retriever{fixedListRetriever{name: "fixed", hits: []types.SearchHit{hit}}}})
+	res, err := p.Search(ctx, "okapi", types.WithNeighborWindow(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := res.Hits[0]
+	s := h.Highlight.Spans[0]
+	if got := h.Variant.Text[s.Start:s.End]; got != "okapi" {
+		t.Errorf("span covers %q in %q, want okapi", got, h.Variant.Text)
+	}
+}
+
 func TestPipelineRetrievalStatsAndFuser(t *testing.T) {
 	ctx := context.Background()
 	lexical := fixedListRetriever{name: "lexical", hits: []types.SearchHit{hitWithText("x", "x"), hitWithText("y", "y")}}
