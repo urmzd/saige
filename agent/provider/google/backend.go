@@ -21,6 +21,10 @@ type backend struct {
 	credentials *auth.Credentials
 }
 
+// quotaProjectHeader names the project a Google Cloud request is billed and
+// rate limited against.
+const quotaProjectHeader = "X-Goog-User-Project"
+
 // errVertexTarget reports a Vertex backend without a project or location.
 var errVertexTarget = errors.New("google: vertex backend requires both project and location")
 
@@ -56,6 +60,13 @@ func (b backend) newClient(ctx context.Context, apiKey string) (*genai.Client, e
 				return nil, err
 			}
 			cc.Credentials = creds
+			// Requests outside a project path, such as the publisher model
+			// list, are billed to the quota project only when it is named in
+			// a header; without it they fall to the OAuth client's project,
+			// which usually has Vertex AI disabled.
+			if qp, err := creds.QuotaProjectID(ctx); err == nil && qp != "" {
+				cc.HTTPOptions.Headers = http.Header{quotaProjectHeader: {qp}}
+			}
 		}
 	}
 	return genai.NewClient(ctx, cc)

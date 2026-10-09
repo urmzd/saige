@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -113,5 +115,50 @@ func TestVertexDetectsDefaultCredentials(t *testing.T) {
 	}
 	if _, err := NewEmbedder(context.Background(), "", "m", WithEmbedVertex("", "global")); !errors.Is(err, errVertexTarget) {
 		t.Fatalf("err = %v, want the missing-project error", err)
+	}
+}
+
+// TestVertexListModelsSendsQuotaProject checks that the publisher model list,
+// whose path names no project, carries the credentials' quota project, and
+// that listing parses the publisher model names.
+func TestVertexListModelsSendsQuotaProject(t *testing.T) {
+	var mu sync.Mutex
+	var got []http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Header.Clone())
+		mu.Unlock()
+		if !strings.HasSuffix(r.URL.Path, "/publishers/google/models") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"publisherModels":[{"name":"publishers/google/models/gemini-9-flash"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	target, _ := url.Parse(srv.URL)
+	redirect := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: staticToken("tok-3"),
+		QuotaProjectIDProvider: auth.CredentialsPropertyFunc(func(context.Context) (string, error) { return "quota-proj", nil })})
+	a, err := NewAdapter(context.Background(), "", "gemini-3.1-flash-lite", WithVertex("proj-1", "global"),
+		WithHTTPClient(&http.Client{Transport: redirect}), WithCredentials(creds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := a.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "gemini-9-flash" {
+		t.Fatalf("models = %+v", models)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) == 0 || got[0].Get("X-Goog-User-Project") != "quota-proj" || got[0].Get("Authorization") != "Bearer tok-3" {
+		t.Fatalf("headers = %v", got)
 	}
 }
