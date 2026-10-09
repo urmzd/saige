@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.23.0 (2026-10-09)
+
+### Features
+
+- model-neutral dials for generation settings (#69) ([d9811ff](https://github.com/urmzd/saige/commit/d9811ff207d770e58d943654da692d5eaaf92ae0))
+- **rag**: structured keyword queries, highlighting, and hybrid fusion tuning (#67) ([02eb420](https://github.com/urmzd/saige/commit/02eb4206a0b84a8195a808f16c6ecaa26150cafe))
+- **cli**: add catalog reconcile and a monthly catalog freshness check (#66) ([85c7c97](https://github.com/urmzd/saige/commit/85c7c97dbcb2781455afa7abf3749e78df0ada7d))
+
+### Misc
+
+- upgrade urmzd/sr action to v9 (#65) ([8a7c5e8](https://github.com/urmzd/saige/commit/8a7c5e86dd74b5ec322532abf2376d8d5afa2f95))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.22.0...v0.23.0)
+
+
 ## 0.22.0 (2026-10-09)
 
 ### Breaking
