@@ -10,6 +10,7 @@ The catalog is data. It declares what each model accepts (capabilities, limits, 
 - [Building a preset](#building-a-preset)
 - [Recording the serving configuration](#recording-the-serving-configuration)
 - [CLI](#cli)
+- [Freshness check](#freshness-check)
 
 ## File format
 
@@ -255,6 +256,7 @@ saige catalog validate --dry-build    # also build every adapter with a placehol
 saige catalog layers                  # paths, trust state and revisions
 saige catalog schema                  # the JSON Schema
 saige catalog export                  # the merged catalog as canonical JSON
+saige catalog reconcile               # compare provider model lists with the catalog
 ```
 
 The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
@@ -272,3 +274,61 @@ The shipped presets:
 `--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
 
 `--base-url` applies to the entries of the selected provider: `--provider` when given, otherwise the one provider the chain uses. On a chain that spans several vendors without `--provider` it is an error, never ignored.
+
+## Freshness check
+
+Vendors add and retire models on their own schedule, and no list endpoint reports prices. `saige catalog reconcile` compares what each provider lists with the active catalog, and a monthly workflow turns what it finds into a pull request.
+
+### Reconcile
+
+```
+saige catalog reconcile                                  # anthropic, openai, google
+saige catalog reconcile --providers openai,ollama        # ollama is checked only when named
+saige catalog reconcile --ignore-file .github/catalog-ignore.txt --write agent/provider/catalog/data/default.json
+saige --format json catalog reconcile                    # machine-readable report
+```
+
+A provider is checked when its credentials are set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. The report lists:
+
+| Finding | Meaning | Drift |
+| --- | --- | --- |
+| New models | Listed models that only the provider baseline covers. | yes |
+| Limit drift | The endpoint reports a context window or output cap that disagrees with the row (Anthropic and Google report limits; OpenAI does not). | yes |
+| Disappeared upstream | Rows no listed model matches and that set no `superseded_by`: candidates for `superseded_by` or removal. A model the key cannot access is missing too, so check before acting. Not reported for Ollama, which lists only pulled weights. | yes |
+| Pending review | Rows that still carry the note `needs review`. | yes |
+| Stale pricing | Prices and server tool fees whose `as_of` is older than `--stale-days` (90), or is not a date. | no, a reminder |
+
+Dated or tagged IDs that a family row covers (`gpt-6-luna-2026-09-01`) are inferred, not new. `--ignore` and `--ignore-file` take globs over model IDs and row prefixes, bare or as `provider/glob`, for models the catalog deliberately does not describe, such as speech, image and moderation endpoints.
+
+Exit status: `0` no drift, `1` drift, `2` error (a listing failed, no provider was configured, or a flag or file was invalid). The human report is Markdown, so it reads in a terminal and serves as a pull request body.
+
+`--write <path>` appends a stub row for each new model to a catalog file, or creates the file as an overlay layer when it does not exist. A stub has:
+
+- the provider baseline's capability fields (its `extends`, capability lists, limits and media), so it declares nothing the baseline does not already assume;
+- no tier, successor, defaults or price;
+- the note `needs review`.
+
+One stub covers the dated IDs that start with its prefix. Rows already in the file are skipped, the stubs are inserted before the closing bracket of the `models` array, and no existing byte of the file changes. Reconcile never edits an existing row's prices or capabilities. Once a stub is in the catalog, the exact model ID resolves with `Known` true, so a stub must be completed before it is merged; until its note is removed, every later run reports it as pending review.
+
+### The scheduled workflow
+
+`.github/workflows/catalog-check.yml` runs on the first of each month and on demand (`workflow_dispatch`):
+
+1. It checks each provider whose secret is set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) and posts a notice for each one it skips.
+2. It runs reconcile with `.github/catalog-ignore.txt` and `--write agent/provider/catalog/data/default.json`, and adds the report to the job summary.
+3. On drift with new stub rows, it commits them to the `catalog/reconcile` branch and opens a pull request whose body is a review checklist followed by the report. When that pull request is already open, it only refreshes the body, so a reviewer's edits on the branch are never overwritten.
+4. On drift with no stub rows to propose (only disappeared rows or limit drift), the job fails with the report in its summary, so the finding is not lost.
+
+The pull request is opened with the release app's token when `SR_RELEASER_PRIVATE_KEY` is set, so CI runs on it; otherwise with `GITHUB_TOKEN`, and CI must be started by hand (close and reopen the pull request, or push to the branch).
+
+### Reviewing a catalog pull request
+
+For each stub row:
+
+1. Look the model up on the vendor's model page. Set `tier`, `limits` and `extends` (a template such as `openai.reasoning` or `anthropic.adaptive` usually fits better than the baseline), then adjust capabilities with `add_capabilities` and `remove_capabilities`. Declare only what the vendor documents.
+2. Price it from the vendor's price list with `as_of` and `source`, or leave it unpriced; a budget refuses an unpriced model, which is the safe failure.
+3. Remove the `needs review` note. Keep a note for anything a caller should know.
+
+For each disappeared row, set `superseded_by` to the current family, or add the prefix to `.github/catalog-ignore.txt` when the key simply cannot see it. For limit drift, confirm the new limit on the vendor's page before changing the row. Refresh stale prices the same way, updating `as_of`.
+
+Then bump `revision`, regenerate the lookup golden file (`go test ./agent/provider/catalog -run TestDefaultLookupGolden -update`) and review its diff, run `saige catalog validate --dry-build`, and merge. CI fails while any row in the embedded catalog still carries `needs review`.

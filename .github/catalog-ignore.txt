@@ -1,0 +1,32 @@
+# Globs that saige catalog reconcile leaves out (--ignore-file). Each line
+# matches a model ID or a row prefix, bare or as provider/glob. Keep this to
+# models the catalog deliberately does not describe: it silences both the
+# "new model" and the "disappeared upstream" findings for a match.
+
+# OpenAI endpoints that are not chat or embedding models.
+openai/babbage-*
+openai/davinci-*
+openai/dall-e-*
+openai/tts-*
+openai/whisper-*
+openai/sora-*
+openai/omni-moderation-*
+openai/gpt-image-*
+openai/chatgpt-image-*
+openai/gpt-audio*
+openai/gpt-realtime*
+openai/gpt-live*
+openai/gpt-transcribe*
+openai/*-transcribe*
+openai/*-tts*
+openai/*-search-preview*
+
+# Aliases that move between models; pin a dated or named model instead.
+openai/chat-latest
+openai/chatgpt-4o-latest
+
+# Legacy chat models the catalog leaves to the provider baseline.
+openai/gpt-3.5-turbo*
+openai/gpt-4
+openai/gpt-4-0*
+openai/gpt-4-1106*
