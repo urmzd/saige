@@ -163,7 +163,33 @@ CREATE INDEX IF NOT EXISTS idx_rag_variant_section ON rag_variant(section_id)
 ---
 CREATE INDEX IF NOT EXISTS idx_rag_variant_embedding ON rag_variant USING hnsw (embedding vector_cosine_ops)
 ---
-CREATE INDEX IF NOT EXISTS idx_rag_variant_bm25 ON rag_variant USING bm25 (id, text) WITH (key_field = 'id')
+ALTER TABLE rag_variant ADD COLUMN IF NOT EXISTS section_heading TEXT NOT NULL DEFAULT ''
+---
+ALTER TABLE rag_variant ADD COLUMN IF NOT EXISTS document_title TEXT NOT NULL DEFAULT ''
+---
+DO $$
+BEGIN
+    -- An index created before section_heading and document_title were
+    -- indexed is replaced, after copying the heading and title onto every
+    -- variant. This runs once: the new index includes document_title.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+        WHERE i.indexrelid = to_regclass('idx_rag_variant_bm25') AND a.attname = 'document_title'
+    ) THEN
+        UPDATE rag_variant v
+        SET section_heading = s.heading, document_title = d.title
+        FROM rag_section s
+        JOIN rag_document d ON d.id = s.document_id
+        WHERE s.id = v.section_id
+          AND (v.section_heading IS DISTINCT FROM s.heading OR v.document_title IS DISTINCT FROM d.title);
+        DROP INDEX IF EXISTS idx_rag_variant_bm25;
+    END IF;
+END
+$$
+---
+CREATE INDEX IF NOT EXISTS idx_rag_variant_bm25 ON rag_variant USING bm25 (id, text, section_heading, document_title)
 ---
 CREATE TABLE IF NOT EXISTS agent_node (
     id          BIGSERIAL PRIMARY KEY,

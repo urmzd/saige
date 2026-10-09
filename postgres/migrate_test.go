@@ -184,3 +184,68 @@ func TestRunMigrationsCreatesSearchExtensions(t *testing.T) {
 		t.Error("idx_rag_variant_bm25 not created")
 	}
 }
+
+// TestRunMigrationsUpgradesKeywordIndex starts from the earlier schema, a
+// BM25 index over variant text alone, and checks that migrating copies each
+// variant's section heading and document title onto it and rebuilds the
+// index over them, once.
+func TestRunMigrationsUpgradesKeywordIndex(t *testing.T) {
+	pool := freshDatabase(t)
+	ctx := context.Background()
+	if err := RunMigrations(ctx, pool, MigrationOptions{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	for _, stmt := range []string{
+		`DROP INDEX idx_rag_variant_bm25`,
+		`CREATE INDEX idx_rag_variant_bm25 ON rag_variant USING bm25 (id, text)`,
+		`INSERT INTO rag_document (uuid, title) VALUES ('d', 'Okapi field guide')`,
+		`INSERT INTO rag_section (uuid, document_id, idx, heading) SELECT 's', id, 0, 'Grazing' FROM rag_document`,
+		`INSERT INTO rag_variant (uuid, section_id, content_type, text) SELECT 'v', id, 'text', 'they eat leaves' FROM rag_section`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := RunMigrations(ctx, pool, MigrationOptions{}); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	var heading, title string
+	if err := pool.QueryRow(ctx, `SELECT section_heading, document_title FROM rag_variant WHERE uuid = 'v'`).Scan(&heading, &title); err != nil {
+		t.Fatal(err)
+	}
+	if heading != "Grazing" || title != "Okapi field guide" {
+		t.Errorf("backfill = %q, %q; want the section heading and document title", heading, title)
+	}
+	indexDef := func() string {
+		t.Helper()
+		var def string
+		if err := pool.QueryRow(ctx, `SELECT pg_get_indexdef('idx_rag_variant_bm25'::regclass)`).Scan(&def); err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	def := indexDef()
+	for _, col := range []string{"section_heading", "document_title"} {
+		if !strings.Contains(def, col) {
+			t.Errorf("index %q does not cover %s", def, col)
+		}
+	}
+	var oid1, oid2 uint32
+	if err := pool.QueryRow(ctx, `SELECT 'idx_rag_variant_bm25'::regclass::oid`).Scan(&oid1); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, pool, MigrationOptions{}); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT 'idx_rag_variant_bm25'::regclass::oid`).Scan(&oid2); err != nil {
+		t.Fatal(err)
+	}
+	if oid1 != oid2 {
+		t.Error("a second run rebuilt the upgraded index")
+	}
+	var found bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM rag_variant WHERE id @@@ paradedb.match('document_title', 'okapi'))`).Scan(&found)
+	if err != nil || !found {
+		t.Errorf("title search after upgrade = %v, %v; want a match", found, err)
+	}
+}

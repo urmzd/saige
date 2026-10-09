@@ -41,6 +41,11 @@ type Config struct {
 	Scope string
 	// Fuser merges retriever lists. Nil means fusion.RRF. See WithFuser.
 	Fuser ragtypes.Fuser
+	// FusionK is the default rank constant. See WithFusionK.
+	FusionK int
+	// FusionWeights are the default per-retriever weights. See
+	// WithFusionWeights.
+	FusionWeights map[string]float64
 	// Observer receives spans and metrics. See WithObserver.
 	Observer ragtypes.Observer
 
@@ -121,6 +126,28 @@ func WithFuser(f ragtypes.Fuser) Option {
 	return func(c *Config) { c.Fuser = f }
 }
 
+// WithFusionK sets the Reciprocal Rank Fusion constant for every search
+// that does not set its own with ragtypes.WithFusionK. Smaller values favor
+// the top hits of each retriever. Values <= 0 keep the fuser's own
+// constant (60 by default).
+func WithFusionK(k int) Option {
+	return func(c *Config) {
+		if k > 0 {
+			c.FusionK = k
+		}
+	}
+}
+
+// WithFusionWeights sets per-retriever fusion weights for every search,
+// keyed by retriever name, such as "vector", "bm25", and "graph". They work
+// with any fuser that honors ragtypes.FuseOptions.Weights, as fusion.RRF and
+// fusion.Weighted do, and override the fuser's own weights. A search's
+// ragtypes.WithFusionWeights overrides them key by key. A weight <= 0 leaves
+// the retriever out of fusion.
+func WithFusionWeights(weights map[string]float64) Option {
+	return func(c *Config) { c.FusionWeights = weights }
+}
+
 // WithObserver sets the receiver of the pipeline's spans and metrics. The
 // rag/otel package adapts OpenTelemetry to it. The default records nothing.
 func WithObserver(o ragtypes.Observer) Option {
@@ -167,7 +194,9 @@ func WithContextAssembler(a ragtypes.ContextAssembler) Option {
 // When the store implements ragtypes.KeywordSearcher, as pgstore does with
 // ParadeDB pg_search, the retriever searches through the store: the index
 // lives with the data, survives restarts, and is shared by every process,
-// and cfg is ignored because the store does its own scoring. Otherwise, as
+// and cfg is ignored because the store does its own scoring. A store
+// decorator that does not implement KeywordSearcher itself is unwrapped
+// through ragtypes.StoreUnwrapper to find it (see ragtypes.AsStore). Otherwise, as
 // with memstore, the index lives in process memory and starts empty; over a
 // persistent store without keyword search, call RebuildIndex after
 // NewPipeline so documents ingested by an earlier process are found.
@@ -291,7 +320,7 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 
 	// Add BM25 retriever if configured.
 	if cfg.bm25Config != nil {
-		if ks, ok := cfg.Store.(ragtypes.KeywordSearcher); ok {
+		if ks, ok := ragtypes.AsStore[ragtypes.KeywordSearcher](cfg.Store); ok {
 			retrievers = append(retrievers, storeKeywordRetriever{ks})
 		} else {
 			retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
@@ -330,6 +359,8 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 		ContextAssembler: cfg.ContextAssembler,
 		Scope:            cfg.Scope,
 		Fuser:            cfg.Fuser,
+		FusionK:          cfg.FusionK,
+		FusionWeights:    cfg.FusionWeights,
 		Observer:         cfg.Observer,
 	}), nil
 }

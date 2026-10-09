@@ -21,6 +21,10 @@ type FuseOptions struct {
 	// K is the rank constant set by WithFusionK. Zero means the fuser's
 	// default.
 	K int
+	// Weights overrides the fuser's weight for each named retriever (see
+	// WithFusionWeights). Retrievers it does not name keep the fuser's
+	// weight. A weight <= 0 leaves the retriever's lists out.
+	Weights map[string]float64
 }
 
 // Fuser merges the ranked lists of every retriever and query into one list

@@ -33,12 +33,17 @@ func insertVariant(ctx context.Context, db execer, sectionID int64, variant *typ
 		emb = &v
 	}
 
-	_, err := db.Exec(ctx, variantCreateSQL,
+	// The insert copies the section heading and document title onto the
+	// variant, where the BM25 index can search them.
+	tag, err := db.Exec(ctx, variantCreateSQL,
 		variant.UUID, sectionID, string(variant.ContentType), variant.MIMEType,
 		variant.Data, variant.Text, emb, encodeMetadata(variant.Metadata),
 	)
 	if err != nil {
 		return fmt.Errorf("create variant: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("create variant: section %d: %w", sectionID, types.ErrDocumentNotFound)
 	}
 	return nil
 }
