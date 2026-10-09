@@ -315,3 +315,45 @@ func TestParentRetrieverSkipsSingleChunkSection(t *testing.T) {
 		t.Fatalf("ExpandedFromVariantUUID = %q, want empty: nothing was expanded", got)
 	}
 }
+
+// TestParentRetrieverShiftsHighlightSpans checks that a highlight's spans
+// still point at the matched words after the hit's text is widened to its
+// section.
+func TestParentRetrieverShiftsHighlightSpans(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	doc := &types.Document{
+		UUID: "doc1",
+		Sections: []types.Section{{
+			UUID: "sec1", DocumentUUID: "doc1",
+			Variants: []types.ContentVariant{
+				{UUID: "v1", SectionUUID: "sec1", ContentType: types.ContentText, Text: "First paragraph."},
+				{UUID: "v2", SectionUUID: "sec1", ContentType: types.ContentText, Text: "Second okapi."},
+			},
+		}},
+	}
+	if err := store.CreateDocument(ctx, doc); err != nil {
+		t.Fatal(err)
+	}
+	inner := &mockRetriever{hits: []types.SearchHit{{
+		Variant:    types.ContentVariant{UUID: "v2", Text: "Second okapi."},
+		Provenance: types.Provenance{DocumentUUID: "doc1", SectionUUID: "sec1"},
+		Highlight:  &types.Highlight{Snippet: "Second <b>okapi</b>.", Spans: []types.TextSpan{{Start: 7, End: 12}}},
+	}}}
+
+	hits, err := parentretriever.New(inner, store).Retrieve(ctx, "okapi", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := hits[0]
+	if len(h.Highlight.Spans) != 1 {
+		t.Fatalf("spans = %+v", h.Highlight.Spans)
+	}
+	s := h.Highlight.Spans[0]
+	if got := h.Variant.Text[s.Start:s.End]; got != "okapi" {
+		t.Errorf("span covers %q in %q, want okapi", got, h.Variant.Text)
+	}
+	if inner.hits[0].Highlight.Spans[0].Start != 7 {
+		t.Error("expansion modified the inner retriever's highlight")
+	}
+}

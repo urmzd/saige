@@ -148,3 +148,92 @@ func TestContentKey(t *testing.T) {
 		})
 	}
 }
+
+func scored(retriever string, pairs ...any) types.RankedList {
+	l := types.RankedList{Retriever: retriever}
+	for i := 0; i < len(pairs); i += 2 {
+		h := hit(pairs[i].(string))
+		h.Score = pairs[i+1].(float64)
+		l.Hits = append(l.Hits, h)
+	}
+	return l
+}
+
+func TestPerSearchWeights(t *testing.T) {
+	lists := []types.RankedList{list("vector", "a"), list("bm25", "b")}
+	opts := types.FuseOptions{K: 1, Weights: map[string]float64{"bm25": 4}}
+
+	got := scores(RRF{}.Fuse(lists, opts))
+	if !near(got["a"], 0.5) || !near(got["b"], 2) {
+		t.Errorf("RRF with weights = %v, want a 0.5, b 2", got)
+	}
+	if c := (RRF{}).MaxFusedScore(lists, opts); !near(c, 2.5) {
+		t.Errorf("RRF ceiling = %v, want 2.5", c)
+	}
+
+	w := Weighted{Weights: map[string]float64{"vector": 3, "bm25": 1}}
+	got = scores(w.Fuse(lists, opts))
+	if !near(got["a"], 1.5) || !near(got["b"], 2) {
+		t.Errorf("Weighted with overrides = %v, want a 1.5 (own weight), b 2 (override)", got)
+	}
+	off := types.FuseOptions{K: 1, Weights: map[string]float64{"vector": 0}}
+	if got := scores(w.Fuse(lists, off)); len(got) != 1 || !near(got["b"], 0.5) {
+		t.Errorf("zero override = %v, want only b", got)
+	}
+}
+
+func TestWeightedScoreNormalization(t *testing.T) {
+	lists := []types.RankedList{
+		scored("vector", "a", 0.9, "b", 0.7, "c", 0.5),
+		scored("bm25", "c", 12.0, "d", 2.0),
+	}
+	minmax := Weighted{Normalization: NormalizeMinMax, Weights: map[string]float64{"bm25": 2}}
+	got := scores(minmax.Fuse(lists, types.FuseOptions{}))
+	want := map[string]float64{"a": 1, "b": 0.5, "c": 0 + 2*1, "d": 0}
+	for id, w := range want {
+		if !near(got[id], w) {
+			t.Errorf("min-max %s = %v, want %v", id, got[id], w)
+		}
+	}
+	if c := minmax.MaxFusedScore(lists, types.FuseOptions{}); !near(c, 3) {
+		t.Errorf("min-max ceiling = %v, want 3", c)
+	}
+
+	z := Weighted{Normalization: NormalizeZScore}
+	got = scores(z.Fuse(lists, types.FuseOptions{}))
+	// vector: mean 0.7, std sqrt(0.08/3); bm25: mean 7, std 5.
+	std := math.Sqrt(0.08 / 3)
+	want = map[string]float64{"a": 0.2 / std, "b": 0, "c": -0.2/std + 1, "d": -1}
+	for id, w := range want {
+		if math.Abs(got[id]-w) > 1e-9 {
+			t.Errorf("z-score %s = %v, want %v", id, got[id], w)
+		}
+	}
+	if c := z.MaxFusedScore(lists, types.FuseOptions{}); math.Abs(c-(0.2/std+1)) > 1e-9 {
+		t.Errorf("z-score ceiling = %v", c)
+	}
+
+	flat := []types.RankedList{scored("bm25", "a", 3.0, "b", 3.0)}
+	if got := scores(minmax.Fuse(flat, types.FuseOptions{})); !near(got["a"], 2) || !near(got["b"], 2) {
+		t.Errorf("min-max of equal scores = %v, want each at the weight", got)
+	}
+	if got := scores(z.Fuse(flat, types.FuseOptions{})); got["a"] != 0 || got["b"] != 0 {
+		t.Errorf("z-score of equal scores = %v, want 0", got)
+	}
+
+	unknown := Weighted{K: 1, Normalization: "softmax"}
+	if got := scores(unknown.Fuse([]types.RankedList{list("bm25", "a")}, types.FuseOptions{})); !near(got["a"], 0.5) {
+		t.Errorf("unknown normalization = %v, want rank fusion", got)
+	}
+}
+
+func TestMergeDuplicateKeepsHighlight(t *testing.T) {
+	a := hit("x")
+	a.Score = 2
+	b := hit("x")
+	b.Score = 1
+	b.Highlight = &types.Highlight{Snippet: "<b>x</b>"}
+	if got := MergeDuplicate(a, b); got.Highlight == nil || got.Highlight.Snippet != "<b>x</b>" {
+		t.Errorf("merged highlight = %+v, want the lexical hit's", got.Highlight)
+	}
+}

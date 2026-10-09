@@ -14,16 +14,18 @@ import (
 
 // searchProjectionSQL is the column list and joins shared by vector and
 // keyword search; scanSearchHits reads rows in this order, with the score
-// last.
+// after the document time. Its verbs are the score expression, extra
+// columns after the score (empty, or highlight columns starting with a
+// comma), the match condition, and the scope placeholder.
 const searchProjectionSQL = `SELECT v.uuid, v.content_type, v.mime_type, v.data, v.text, v.embedding, v.metadata,
 	                 s.uuid, s.heading, s.idx,
 	                 d.uuid, d.title, d.source_uri, d.metadata,
 	                 ` + docTimeSQL + ` AS doc_ts,
-	                 %s AS score
+	                 %s AS score%s
 	          FROM rag_variant v
 	          JOIN rag_section s ON s.id = v.section_id
 	          JOIN rag_document d ON d.id = s.document_id
-	          WHERE %s AND d.scope = $2`
+	          WHERE %s AND d.scope = %s`
 
 // vectorScoreSQL is the cosine similarity between a variant and the query
 // embedding in $1.
@@ -31,7 +33,7 @@ const vectorScoreSQL = `1 - (v.embedding <=> $1)`
 
 // searchBaseSQL is the vector-search projection and joins; buildSearchSQL
 // appends filter clauses, ordering, and the limit.
-var searchBaseSQL = fmt.Sprintf(searchProjectionSQL, vectorScoreSQL, `v.embedding IS NOT NULL`)
+var searchBaseSQL = fmt.Sprintf(searchProjectionSQL, vectorScoreSQL, "", `v.embedding IS NOT NULL`, "$2")
 
 // docTimeSQL is the document's effective time, matching
 // types.Document.EffectiveTime.
@@ -54,20 +56,23 @@ const mergedMetadataSQL = `(COALESCE(d.metadata, '{}'::jsonb) || COALESCE(v.meta
 //
 // Unknown filter operators are ignored, matching the previous in-Go behavior.
 func buildSearchSQL(embedding any, opts *types.SearchOptions, limit int) (string, []any) {
-	return buildScopedSQL(searchBaseSQL, vectorScoreSQL, " ORDER BY v.embedding <=> $1", embedding, opts, limit)
+	return buildScopedSQL(searchBaseSQL, vectorScoreSQL, " ORDER BY v.embedding <=> $1", []any{embedding, scopeOf(opts)}, opts, limit)
+}
+
+// scopeOf returns the scope opts searches, the default scope for nil opts.
+func scopeOf(opts *types.SearchOptions) string {
+	if opts == nil {
+		return ""
+	}
+	return opts.Scope
 }
 
 // buildScopedSQL appends the filters shared by vector and keyword search to
-// base, whose $1 is first and whose $2 is the scope. scoreExpr is the score
-// that MinScore compares against, and orderBy ranks the rows before the
-// limit.
-func buildScopedSQL(base, scoreExpr, orderBy string, first any, opts *types.SearchOptions, limit int) (string, []any) {
+// base, whose placeholders are numbered by args, and returns the query and
+// its full argument list. scoreExpr is the score that MinScore compares
+// against, and orderBy ranks the rows before the limit.
+func buildScopedSQL(base, scoreExpr, orderBy string, args []any, opts *types.SearchOptions, limit int) (string, []any) {
 	query := base
-	scope := ""
-	if opts != nil {
-		scope = opts.Scope
-	}
-	args := []any{first, scope}
 
 	if opts != nil {
 		if !opts.Since.IsZero() {
@@ -147,7 +152,7 @@ func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts
 		return nil, err
 	}
 	if len(settings) == 0 {
-		return scanSearchHits(ctx, s.pool, query, args)
+		return scanSearchHits(ctx, s.pool, query, args, false)
 	}
 
 	var results []types.SearchHit
@@ -159,7 +164,7 @@ func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts
 			}
 		}
 		var err error
-		results, err = scanSearchHits(ctx, tx, query, args)
+		results, err = scanSearchHits(ctx, tx, query, args, false)
 		return err
 	})
 	if err != nil {
@@ -191,7 +196,9 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func scanSearchHits(ctx context.Context, q querier, query string, args []any) ([]types.SearchHit, error) {
+// scanSearchHits runs query and reads its rows. With highlight, each row
+// also carries a snippet and snippet byte positions after the score.
+func scanSearchHits(ctx context.Context, q querier, query string, args []any, highlight bool) ([]types.SearchHit, error) {
 	rows, err := q.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -207,14 +214,25 @@ func scanSearchHits(ctx context.Context, q querier, query string, args []any) ([
 			vMeta []byte
 			dMeta []byte
 		)
-		if err := rows.Scan(
+		dest := []any{
 			&hit.Variant.UUID, &ct, &hit.Variant.MIMEType,
 			&hit.Variant.Data, &hit.Variant.Text, &vEmb, &vMeta,
 			&hit.Provenance.SectionUUID, &hit.Provenance.SectionHeading, &hit.Provenance.SectionIndex,
 			&hit.Provenance.DocumentUUID, &hit.Provenance.DocumentTitle, &hit.Provenance.SourceURI,
 			&dMeta, &hit.Timestamp, &hit.Score,
-		); err != nil {
+		}
+		var (
+			snippet   *string
+			positions [][]int32
+		)
+		if highlight {
+			dest = append(dest, &snippet, &positions)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
+		}
+		if highlight {
+			hit.Highlight = newHighlight(snippet, positions, len(hit.Variant.Text))
 		}
 
 		hit.Variant.ContentType = types.ContentType(ct)

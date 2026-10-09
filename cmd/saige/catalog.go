@@ -239,7 +239,7 @@ func newCatalogCmd(ctx context.Context) *cobra.Command {
 			".saige/catalog.json in the project, $SAIGE_CATALOG, then each --catalog.",
 	}
 	cmd.AddCommand(newCatalogShowCmd(), newCatalogExplainCmd(), newCatalogValidateCmd(ctx), newCatalogLayersCmd(),
-		newCatalogSchemaCmd(), newCatalogExportCmd())
+		newCatalogSchemaCmd(), newCatalogExportCmd(), newCatalogReconcileCmd())
 	return cmd
 }
 

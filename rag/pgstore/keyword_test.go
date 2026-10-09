@@ -17,14 +17,10 @@ func TestBuildKeywordSQL(t *testing.T) {
 		MinScore:        0.5,
 		MetadataFilters: []types.MetadataFilter{{Key: "team", Op: types.FilterEq, Value: "core"}},
 	}
-	query, args := buildKeywordSQL("okapi", opts, 4)
+	query, args := buildKeywordSQL(types.PlainKeywordQuery("okapi"), opts, 4)
 
-	if !strings.HasPrefix(query, keywordBaseSQL) {
-		t.Error("query should start with the keyword base SQL")
-	}
 	for _, clause := range []string{
-		"v.text @@@ pdb.match($1)",
-		"d.scope = $2",
+		"v.id @@@ paradedb.match('text', $2) AND d.scope = $1",
 		" AND v.content_type = ANY($3)",
 		" AND " + keywordScoreSQL + " >= $4",
 		" AND " + mergedMetadataSQL + " ->> $5 = $6",
@@ -33,10 +29,13 @@ func TestBuildKeywordSQL(t *testing.T) {
 			t.Errorf("query missing %q:\n%s", clause, query)
 		}
 	}
+	if strings.Contains(query, "pdb.snippet") {
+		t.Error("query without highlight selects snippets")
+	}
 	if !strings.HasSuffix(query, " ORDER BY "+keywordScoreSQL+" DESC, v.uuid LIMIT $7") {
 		t.Errorf("unexpected suffix: %q", query)
 	}
-	want := []any{"okapi", "tenant", []string{"text"}, 0.5, "team", "core", 4}
+	want := []any{"tenant", "okapi", []string{"text"}, 0.5, "team", "core", 4}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("args = %v, want %v", args, want)
 	}
