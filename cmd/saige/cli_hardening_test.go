@@ -23,9 +23,9 @@ func TestBaseURLAppliesOnPresetPath(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	file := writeFile(t, filepath.Join(home, "c.json"), `{"version":1,"presets":{
-		"solo":{"chain":[{"id":"o","provider":"openai","model":"gpt-4.1"}]},
+		"solo":{"chain":[{"id":"o","provider":"openai","model":"gpt-6-luna"}]},
 		"derived":{"extends":"solo","description":"inherits the chain"},
-		"duo":{"chain":[{"id":"a","provider":"anthropic","model":"claude-3-5-haiku"},{"id":"o","provider":"openai","model":"gpt-4.1"}]}}}`)
+		"duo":{"chain":[{"id":"a","provider":"anthropic","model":"claude-haiku-5-5"},{"id":"o","provider":"openai","model":"gpt-6-luna"}]}}}`)
 	build := func(presetName, prov string) (map[string]string, error) {
 		cf := newTestFlags(prov, "", "", "")
 		*cf.catalogs = []string{file}

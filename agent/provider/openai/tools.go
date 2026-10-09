@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -25,6 +26,30 @@ func (a *Adapter) checkToolChoice(tools []types.ToolDef) error {
 		return nil
 	}
 	return a.Capabilities().ValidateToolChoice(a.params.toolChoice, tools)
+}
+
+// checkChatTools applies the model's Chat Completions tool rule to a request
+// that offers tools. A model that accepts tools there only with reasoning
+// effort "none" gets that effort when none is configured, so effortNone is
+// true; an explicit other effort fails locally, as the API would reject it.
+// A model whose tools need the Responses API fails locally; build it with
+// NewResponsesAdapter (provider.Build does so).
+func (a *Adapter) checkChatTools(tools []types.ToolDef) (effortNone bool, err error) {
+	if len(tools) == 0 {
+		return false, nil
+	}
+	caps := a.Capabilities()
+	switch caps.ChatCompletionsTools {
+	case types.ChatToolsResponsesOnly:
+		return false, caps.OptionError("tools", "this model calls tools only through the Responses API; use NewResponsesAdapter")
+	case types.ChatToolsNoReasoning:
+		if e := a.params.reasoningEffort; e != nil && *e != "none" {
+			return false, caps.OptionError("reasoning_effort",
+				fmt.Sprintf("%q with tools: Chat Completions accepts tools on this model only with effort \"none\"; use NewResponsesAdapter to keep reasoning", *e))
+		}
+		return a.params.reasoningEffort == nil, nil
+	}
+	return false, nil
 }
 
 // applyToolChoice encodes the configured choice. The caller has checked it.

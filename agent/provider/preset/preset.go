@@ -309,6 +309,13 @@ func credentials(e catalog.ResolvedEntry, getenv func(string) string) (string, b
 		return "", false
 	case e.Provider == provider.OpenAI && e.BaseURL != "":
 		return "", false
+	case e.Provider == provider.Google && (e.Vertex != nil || provider.VertexEnabled(getenv)):
+		// Vertex uses Application Default Credentials; it needs a project.
+		var v *provider.Vertex
+		if e.Vertex != nil {
+			v = &provider.Vertex{Project: e.Vertex.Project, Location: e.Vertex.Location}
+		}
+		return "", provider.ResolveVertex(v, getenv).Project == ""
 	}
 	for _, env := range provider.APIKeyEnv[e.Provider] {
 		if getenv(env) != "" {
@@ -322,12 +329,18 @@ func credentialHint(e catalog.ResolvedEntry) string {
 	if e.APIKeyEnv != "" {
 		return "set " + e.APIKeyEnv
 	}
+	if e.Provider == provider.Google && e.Vertex != nil {
+		return "set " + provider.EnvCloudProject + " (vertex)"
+	}
 	return "set " + strings.Join(provider.APIKeyEnv[e.Provider], " or ")
 }
 
 func config(e catalog.ResolvedEntry, key string, o Options) provider.Config {
 	cfg := provider.Config{Provider: e.Provider, Model: e.Model, APIKey: key, BaseURL: e.BaseURL,
 		HTTPClient: o.HTTPClient, Options: e.Options.Clone(), ServerTools: append([]types.ServerTool(nil), e.ServerTools...), Getenv: o.Getenv}
+	if e.Vertex != nil {
+		cfg.Vertex = &provider.Vertex{Project: e.Vertex.Project, Location: e.Vertex.Location}
+	}
 	if pc := e.PromptCache; pc != nil && pc.Mode != catalog.PromptCacheOff {
 		cfg.PromptCache = &provider.PromptCache{Mode: pc.Mode, TTL: pc.TTL, Tools: pc.Tools, System: pc.System,
 			Conversation: pc.Conversation, Retention: pc.Retention, Key: pc.Key}

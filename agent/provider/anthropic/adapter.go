@@ -196,10 +196,18 @@ func (a *Adapter) requestOptions() types.RequestOptions {
 		ReasoningBudget: a.thinking, ReasoningEffort: a.reasoningEffort, ToolChoice: a.toolChoice}
 }
 
-// reasoningActive reports whether requests from this adapter think: a manual
-// budget, an effort level, or the model's cataloged default.
-func (a *Adapter) reasoningActive() bool {
-	return catalog.MustLookup("anthropic", string(a.model)).ReasoningActive(a.requestOptions())
+// forcedToolBlocked reports why this adapter cannot send a forced tool
+// choice, or "" when it can. A manual thinking budget accepts only auto and
+// none, and some models reject forcing outright (RejectsForcedToolChoice).
+// Adaptive thinking alone does not block forcing: the API accepts it.
+func (a *Adapter) forcedToolBlocked(caps types.ModelCapabilities) string {
+	switch {
+	case a.thinking != nil:
+		return "extended thinking with a manual budget accepts only auto or none"
+	case caps.RejectsForcedToolChoice:
+		return "this model rejects a forced tool choice (required or named)"
+	}
+	return ""
 }
 
 // Validate rejects unsupported or incompatible controls before any request.
@@ -209,7 +217,7 @@ func (a *Adapter) Validate() error {
 	if err := caps.ValidateOptions(o); err != nil {
 		return err
 	}
-	if err := a.validateTools(caps, caps.ReasoningActive(o)); err != nil {
+	if err := a.validateTools(caps); err != nil {
 		return err
 	}
 	if a.temperature != nil && *a.temperature > 1 {
@@ -291,11 +299,14 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 // This adapter constrains output with a hidden tool and forces the model to call it.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	if schema != nil && a.reasoningActive() {
-		// The API rejects a forced tool choice while thinking, whether the
-		// thinking is manual, adaptive, or the model's default. This error is
-		// returned before any request, so fallback can try another member.
-		return nil, schemacheck.Unsupported(a, "forced-tool schema output is incompatible with thinking")
+	if schema != nil {
+		// Schema output forces a hidden tool, which the API rejects with a
+		// manual thinking budget and on models that refuse forcing. This
+		// error is returned before any request, so fallback can try another
+		// member.
+		if why := a.forcedToolBlocked(catalog.MustLookup("anthropic", string(a.model))); why != "" {
+			return nil, schemacheck.Unsupported(a, "forced-tool schema output: "+why)
+		}
 	}
 	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
 		return nil, err
@@ -587,16 +598,16 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 // model against the shared catalog so callers can check whether a flag (e.g.
 // reasoning) is supported before building a request that would be rejected.
 //
-// Extended thinking rejects a request that ends with an assistant turn or
-// forces a tool call, so an adapter that thinks does not report assistant
-// prefill or structured output.
+// Extended thinking rejects a request that ends with an assistant turn, so
+// an adapter that thinks does not report assistant prefill. Schema output
+// forces a tool call, so an adapter that cannot force one (a manual thinking
+// budget, or a model that rejects forcing) does not report structured output.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
 	caps := catalog.MustLookup("anthropic", string(a.model))
 	if a.thinking != nil || a.reasoningEffort != nil || caps.ReasoningDefaultEnabled {
 		caps = caps.Without(types.CapAssistantPrefill)
 	}
-	if caps.ReasoningActive(a.requestOptions()) {
-		// Schema output forces a tool call, which thinking does not allow.
+	if a.forcedToolBlocked(caps) != "" {
 		caps = caps.Without(types.CapStructuredOutput)
 	}
 	return caps
@@ -627,7 +638,11 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 			for _, c := range v.Content {
 				switch bc := c.(type) {
 				case types.TextContent:
-					system = append(system, anthropic.TextBlockParam{Text: bc.Text})
+					// The API rejects an empty text block, so a blank system
+					// prompt is dropped; with none left, no system is sent.
+					if strings.TrimSpace(bc.Text) != "" {
+						system = append(system, anthropic.TextBlockParam{Text: bc.Text})
+					}
 				case types.ToolResultContent:
 					out = appendMsg(out, "user", toToolResultBlock(bc))
 				}

@@ -15,14 +15,10 @@ import (
 // same tool instance runs concurrently across them. Run it with -race.
 func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 	const runs = 16
-	responses := make([][]types.Delta, 0, 2*runs)
-	for i := 0; i < runs; i++ {
-		responses = append(responses, agenttest.ToolCallResponse(fmt.Sprintf("c%d", i), "count", nil))
-	}
-	for i := 0; i < runs; i++ {
-		responses = append(responses, agenttest.TextResponse("done"))
-	}
-	provider := &agenttest.ScriptedProvider{Responses: responses}
+	// Each run answers from its own conversation, not from a shared script
+	// order: a run whose tool turn finishes first must not take another
+	// run's tool call, so the result does not depend on scheduling.
+	provider := branchScripted{}
 	var mu sync.Mutex
 	calls := 0
 	count := &types.ToolFunc{Def: types.ToolDef{Name: "count"}, Fn: func(context.Context, map[string]any) (string, error) {
@@ -75,4 +71,42 @@ func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 			t.Fatalf("branch %s ends with %T", b, tip.Message)
 		}
 	}
+}
+
+// branchScripted calls the count tool on a conversation's first turn and
+// answers once that call has a result, whatever order concurrent runs reach
+// it in.
+type branchScripted struct{}
+
+func (branchScripted) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	deltas := agenttest.TextResponse("done")
+	if !hasToolResult(messages) {
+		deltas = agenttest.ToolCallResponse(fmt.Sprintf("c%d", len(messages)), "count", nil)
+	}
+	ch := make(chan types.Delta, len(deltas))
+	for _, d := range deltas {
+		ch <- d
+	}
+	close(ch)
+	return ch, nil
+}
+
+func hasToolResult(messages []types.Message) bool {
+	for _, m := range messages {
+		switch v := m.(type) {
+		case types.SystemMessage:
+			for _, c := range v.Content {
+				if _, ok := c.(types.ToolResultContent); ok {
+					return true
+				}
+			}
+		case types.UserMessage:
+			for _, c := range v.Content {
+				if _, ok := c.(types.ToolResultContent); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

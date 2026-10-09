@@ -13,25 +13,29 @@ func TestUntrustedLayerAllowlist(t *testing.T) {
 	tests := []struct {
 		name, doc, path string
 	}{
-		{"preset options", `{"version":1,"presets":{"p":{"options":{` + mcp + `},"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`,
+		{"preset options", `{"version":1,"presets":{"p":{"options":{` + mcp + `},"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`,
 			"presets.p.options.server_tools[0].mcp_server"},
-		{"entry options", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-4.1","options":{` + mcp + `}}]}}}`,
+		{"entry options", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-6-luna","options":{` + mcp + `}}]}}}`,
 			"presets.p.chain[0].options.server_tools[0].mcp_server"},
-		{"model defaults", `{"version":1,"models":[{"provider":"openai","prefix":"gpt-4.1","defaults":{` + mcp + `}}]}`,
+		{"model defaults", `{"version":1,"models":[{"provider":"openai","prefix":"gpt-6-luna","defaults":{` + mcp + `}}]}`,
 			"models[0].defaults.server_tools[0].mcp_server"},
 		{"template defaults", `{"version":1,"templates":{"t":{"defaults":{` + mcp + `}}}}`,
 			"templates.t.defaults.server_tools[0].mcp_server"},
 		{"baseline defaults", `{"version":1,"baselines":{"openai":{"defaults":{` + mcp + `}}}}`,
 			"baselines.openai.defaults.server_tools[0].mcp_server"},
-		{"content filter failover", `{"version":1,"presets":{"p":{"routing":{"failover_on_content_filter":true},"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`,
+		{"content filter failover", `{"version":1,"presets":{"p":{"routing":{"failover_on_content_filter":true},"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`,
 			"presets.p.routing.failover_on_content_filter"},
-		{"auth failover", `{"version":1,"presets":{"p":{"routing":{"failover_on_auth":true},"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`,
+		{"auth failover", `{"version":1,"presets":{"p":{"routing":{"failover_on_auth":true},"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`,
 			"presets.p.routing.failover_on_auth"},
-		{"base url", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-4.1","base_url":"https://attacker.example"}]}}}`,
+		{"base url", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-6-luna","base_url":"https://attacker.example"}]}}}`,
 			"presets.p.chain[0].base_url"},
-		{"credential variable", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-4.1","api_key_env":"OTHER_KEY"}]}}}`,
+		{"credential variable", `{"version":1,"presets":{"p":{"chain":[{"provider":"openai","model":"gpt-6-luna","api_key_env":"OTHER_KEY"}]}}}`,
 			"presets.p.chain[0].api_key_env"},
 		{"drop trusted layers", `{"version":1,"inherit_default":false}`, "inherit_default"},
+		{"vertex project", `{"version":1,"presets":{"p":{"chain":[{"provider":"google","model":"gemini-3.1-flash-lite","vertex":{"project":"someone-else"}}]}}}`,
+			"presets.p.chain[0].vertex.project"},
+		{"vertex location", `{"version":1,"presets":{"p":{"chain":[{"provider":"google","model":"gemini-3.1-flash-lite","vertex":{"location":"us-east1"}}]}}}`,
+			"presets.p.chain[0].vertex.location"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,10 +49,11 @@ func TestUntrustedLayerAllowlist(t *testing.T) {
 			}
 		})
 	}
-	ok := `{"version":1,"revision":"r","default_preset":"p","models":[{"provider":"openai","prefix":"gpt-4.1","tier":"economy",
+	ok := `{"version":1,"revision":"r","default_preset":"p","models":[{"provider":"openai","prefix":"gpt-6-luna","tier":"economy",
 		"defaults":{"temperature":0.2,"server_tools":[{"kind":"web_search","max_uses":2}]}}],
 		"presets":{"p":{"routing":{"policy":"affinity","fail_threshold":2,"reprobe_after":3},"retry":{"max_attempts":2},
-		"chain":[{"id":"a","provider":"openai","model":"gpt-4.1","optional":true,"unset":["temperature"]}]}}}`
+		"chain":[{"id":"a","provider":"openai","model":"gpt-6-luna","optional":true,"unset":["temperature"]},
+		{"id":"g","provider":"google","model":"gemini-3.1-flash-lite","vertex":{}}]}}}`
 	c, err := catalog.Load(strings.NewReader(ok))
 	if err != nil {
 		t.Fatal(err)

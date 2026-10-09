@@ -54,9 +54,9 @@ for its own model. Do not share temperature across a chat/reasoning fallback and
 honored. Explicit zero, false and empty effort remain explicit; omitted values preserve defaults.
 
 ```sh
-go run ./cmd/saige models o3 --provider openai
-go run ./cmd/saige models gpt-5.2 --provider openai --format json
-go run ./cmd/saige models gemini-2.5-pro --provider google --format json
+go run ./cmd/saige models gpt-6-luna --provider openai
+go run ./cmd/saige models gpt-6.1-sol --provider openai --format json
+go run ./cmd/saige models gemini-3.1-flash-lite --provider google --format json
 ```
 
 Request shape is checked too: all four adapters require streaming, tools when definitions are
@@ -320,9 +320,11 @@ isolation, context-varying keys, staleness bounds, and single-flight collapse.
 **A. CLI defaults are catalog presets.** The CLI no longer has a table of
 default models. Without `--model` it runs the first usable entry of the
 catalog's `default_preset`, or the preset named by `--provider` (`anthropic`,
-`openai`, `google`, `ollama`).
-The shipped presets use `claude-sonnet-4-6`, `gpt-4.1`, `gemini-2.5-flash` and
-`qwen3`. See [model catalog and presets](catalog.md).
+`openai`, `google`, `vertex`, `ollama`).
+The shipped presets use the cheapest current model per vendor
+(`claude-haiku-5-5`, `gpt-6-luna`, `gemini-3.1-flash-lite`) and `qwen3`, and
+`<vendor>-quality` presets use `claude-sonnet-5-5`, `gpt-6.1-sol` and
+`gemini-3.8-flash`. See [model catalog and presets](catalog.md).
 
 **B. OpenAI server-side tools are declared but not wired.** Google search
 grounding and code execution (`google.WithServerTools`) and Anthropic web

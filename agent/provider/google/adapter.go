@@ -1,6 +1,7 @@
 package google
 
 import (
+	"cloud.google.com/go/auth"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -43,16 +44,23 @@ type Option func(*Adapter)
 // a model name.
 func WithVertex(project, location string) Option {
 	return func(a *Adapter) {
-		a.backend = genai.BackendVertexAI
-		a.project = project
-		a.location = location
+		a.backend.kind = genai.BackendVertexAI
+		a.backend.project = project
+		a.backend.location = location
 	}
 }
 
 // WithHTTPClient replaces the underlying HTTP client, for callers that need a
-// custom transport, timeout, or (on Vertex) their own credentials.
+// custom transport or timeout. On Vertex, a client given without
+// WithCredentials must authenticate by itself.
 func WithHTTPClient(h *http.Client) Option {
-	return func(a *Adapter) { a.httpClient = h }
+	return func(a *Adapter) { a.backend.httpClient = h }
+}
+
+// WithCredentials sets the Google Cloud credentials Vertex requests carry,
+// in place of Application Default Credentials.
+func WithCredentials(c *auth.Credentials) Option {
+	return func(a *Adapter) { a.backend.credentials = c }
 }
 
 // WithThinkingLevel sets ThinkingConfig.ThinkingLevel, the Gemini 3 way of
@@ -147,10 +155,7 @@ type Adapter struct {
 	client       *genai.Client
 	model        string
 
-	backend    genai.Backend
-	project    string
-	location   string
-	httpClient *http.Client
+	backend backend
 
 	thinking    *genai.ThinkingConfig
 	generation  GenerationConfig
@@ -164,12 +169,12 @@ type Adapter struct {
 // AI, in which case apiKey may be empty and Application Default Credentials are
 // used.
 func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Adapter, error) {
-	a := &Adapter{model: model, backend: genai.BackendGeminiAPI}
+	a := &Adapter{model: model, backend: backend{kind: genai.BackendGeminiAPI}}
 	for _, o := range opts {
 		o(a)
 	}
-	if a.backend == genai.BackendVertexAI && (a.project == "" || a.location == "") {
-		return nil, fmt.Errorf("google: vertex backend requires both project and location")
+	if a.backend.kind == genai.BackendVertexAI && (a.backend.project == "" || a.backend.location == "") {
+		return nil, errVertexTarget
 	}
 	if err := a.Validate(); err != nil {
 		return nil, err
@@ -179,13 +184,7 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 	if err := types.ValidateServerTools(catalog.MustLookup(providerName, model), a.serverTools); err != nil {
 		return nil, fmt.Errorf("google: %w", err)
 	}
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:     apiKey,
-		Backend:    a.backend,
-		Project:    a.project,
-		Location:   a.location,
-		HTTPClient: withHeaderTransport(a.httpClient),
-	})
+	client, err := a.backend.newClient(ctx, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +423,15 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 					case part.FunctionCall != nil:
 						endThinking()
 						endText()
+						if len(part.ThoughtSignature) > 0 {
+							// Gemini 3 signs the function call part itself and
+							// rejects a later request that returns the call
+							// without it. The signature travels as an empty,
+							// signed thinking block just before the call, and
+							// goes back on the call's part.
+							out <- types.ThinkingStartDelta{}
+							out <- types.ThinkingEndDelta{Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature)}
+						}
 						id := part.FunctionCall.ID
 						if id == "" {
 							id = types.NewID()
@@ -709,9 +717,24 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 
 		case types.AssistantMessage:
 			var parts []*genai.Part
+			// carried is the signature of an empty thinking block, which
+			// belongs on the part that follows it (a signed function call).
+			var carried []byte
+			add := func(part *genai.Part) {
+				if len(carried) > 0 && len(part.ThoughtSignature) == 0 {
+					part.ThoughtSignature, carried = carried, nil
+				}
+				parts = append(parts, part)
+			}
 			for _, c := range v.Content {
 				switch bc := c.(type) {
 				case types.ThinkingContent:
+					if bc.Thinking == "" {
+						if sig, err := base64.StdEncoding.DecodeString(bc.Signature); err == nil && len(sig) > 0 {
+							carried = sig
+						}
+						continue
+					}
 					// Thought parts must go back with their signature attached:
 					// Gemini 3 uses it to validate the reasoning chain across
 					// turns, and dropping it degrades multi-turn function
@@ -721,11 +744,11 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 					if sig, err := base64.StdEncoding.DecodeString(bc.Signature); err == nil && len(sig) > 0 {
 						part.ThoughtSignature = sig
 					}
-					parts = append(parts, part)
+					add(part)
 				case types.TextContent:
-					parts = append(parts, &genai.Part{Text: bc.Text})
+					add(&genai.Part{Text: bc.Text})
 				case types.ToolUseContent:
-					parts = append(parts, &genai.Part{
+					add(&genai.Part{
 						FunctionCall: &genai.FunctionCall{
 							Name: bc.Name,
 							Args: bc.Arguments,

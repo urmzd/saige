@@ -32,7 +32,7 @@ func TestMessageRoundTrip(t *testing.T) {
 			name: "server tool call and route",
 			msg: types.AssistantMessage{Content: []types.AssistantContent{
 				types.ServerToolContent{ID: "s1", Kind: types.ServerToolKind("web_search"), Name: "web_search", Text: "found"},
-				types.RouteContent{Profile: "fast", Provider: "openai", Model: "gpt-4o", Experiment: "e", Variant: "b"},
+				types.RouteContent{Profile: "fast", Provider: "openai", Model: "gpt-6-luna", Experiment: "e", Variant: "b"},
 			}},
 		},
 		{

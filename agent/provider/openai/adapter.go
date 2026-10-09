@@ -23,6 +23,10 @@ import (
 // providerName identifies this adapter in errors, the catalog and metrics.
 const providerName = "openai"
 
+// defaultPDFName is the filename sent with an inline PDF that has none;
+// OpenAI requires one alongside inline file data.
+const defaultPDFName = "document.pdf"
+
 // Compile-time interface checks.
 var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
@@ -303,6 +307,10 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 	if err := a.checkToolChoice(tools); err != nil {
 		return nil, err
 	}
+	toolsEffortNone, err := a.checkChatTools(tools)
+	if err != nil {
+		return nil, err
+	}
 
 	params := openai.ChatCompletionNewParams{
 		Model:    a.model,
@@ -321,6 +329,9 @@ func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tool
 	if len(oTools) > 0 {
 		params.Tools = oTools
 		a.applyToolChoice(&params)
+		if toolsEffortNone {
+			params.ReasoningEffort = shared.ReasoningEffort("none")
+		}
 	}
 	if rf != nil {
 		params.ResponseFormat = *rf
@@ -669,7 +680,7 @@ func fileContentToPart(fc types.FileContent) openai.ChatCompletionContentPartUni
 		// requires a filename alongside inline file_data.
 		name := fc.Filename
 		if name == "" {
-			name = "document.pdf"
+			name = defaultPDFName
 		}
 		return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
 			FileData: openai.String(fmt.Sprintf("data:%s;base64,%s", fc.MediaType, base64.StdEncoding.EncodeToString(fc.Data))),

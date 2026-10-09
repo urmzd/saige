@@ -24,7 +24,9 @@ func TestAcceptsTemperature(t *testing.T) {
 		{"o1-mini", false},
 		{"o4-mini", false},
 		{"gpt-5", false},
-		{"gpt-5.1", true}, // reasoning is off by default, so temperature is accepted
+		{"gpt-5.1", true},      // reasoning is off by default, so temperature is accepted
+		{"gpt-6-luna", false},  // temperature needs effort none; the default is medium
+		{"gpt-6.1-sol", false}, // no effort none, so temperature is never accepted
 		{"llama-3.1-8b-instant", true},
 	}
 	for _, tt := range tests {

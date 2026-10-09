@@ -7,6 +7,10 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// chatToolsAny is the file spelling of types.ChatToolsAny, which is empty in
+// memory; an empty field in a row means "inherit".
+const chatToolsAny = "any"
+
 // maxExtendsDepth bounds a template chain.
 const maxExtendsDepth = 4
 
@@ -38,6 +42,13 @@ func (s ModelSpec) apply(e *Entry) {
 	if s.SupersededBy != "" {
 		e.SupersededBy = s.SupersededBy
 	}
+	switch s.ChatCompletionsTools {
+	case "":
+	case chatToolsAny:
+		c.ChatCompletionsTools = types.ChatToolsAny
+	default:
+		c.ChatCompletionsTools = types.ChatCompletionsTools(s.ChatCompletionsTools)
+	}
 	if l := s.Limits; l != nil {
 		setInt(&c.ContextWindow, l.ContextWindow)
 		setInt(&c.MaxOutputTokens, l.MaxOutputTokens)
@@ -56,6 +67,9 @@ func (s ModelSpec) apply(e *Entry) {
 		setInt(&c.MaxReasoningBudget, r.MaxBudget)
 		setBool(&c.DynamicReasoningBudget, r.DynamicBudget)
 		setBool(&c.ZeroReasoningBudget, r.ZeroBudget)
+		if r.ForcedToolChoice != nil {
+			c.RejectsForcedToolChoice = !*r.ForcedToolChoice
+		}
 		if r.SamplingRequiresNoReasoning != nil {
 			c.SamplingRequiresNoReasoning = append([]types.Capability(nil), r.SamplingRequiresNoReasoning...)
 		}

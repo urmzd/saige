@@ -15,8 +15,9 @@ var _ catalog.ModelLister = (*Adapter)(nil)
 
 // WithToolChoice constrains whether and which tool the model calls: auto,
 // none, required (Anthropic "any") or a named tool. The model must declare
-// CapToolChoice, and extended thinking accepts only auto and none, so other
-// combinations fail locally.
+// CapToolChoice. A manual thinking budget accepts only auto and none, and a
+// model declaring RejectsForcedToolChoice refuses required and named, so
+// those combinations fail locally. Adaptive thinking accepts forcing.
 //
 // The choice applies to requests that offer tools, local or server. A request
 // without any tools sends no choice. A named choice must name a local tool.
@@ -35,9 +36,9 @@ func WithServerTools(tools ...types.ServerTool) Option {
 	return func(a *Adapter) { a.serverTools = append(a.serverTools, tools...) }
 }
 
-// validateTools checks the server tools and the tool-choice interaction with
-// thinking. Validate calls it after the generic option checks.
-func (a *Adapter) validateTools(caps types.ModelCapabilities, reasoning bool) error {
+// validateTools checks the server tools and whether a forced tool choice can
+// be sent. Validate calls it after the generic option checks.
+func (a *Adapter) validateTools(caps types.ModelCapabilities) error {
 	if err := types.ValidateServerTools(caps, a.serverTools); err != nil {
 		return caps.OptionError("server_tools", err.Error())
 	}
@@ -46,10 +47,9 @@ func (a *Adapter) validateTools(caps types.ModelCapabilities, reasoning bool) er
 			return caps.OptionError("server_tools", "remote MCP needs the MCP connector, which this adapter does not send")
 		}
 	}
-	if a.toolChoice != nil && reasoning {
-		switch a.toolChoice.Mode {
-		case types.ToolChoiceRequired, types.ToolChoiceNamed:
-			return caps.OptionError("tool_choice", "extended thinking accepts only auto or none")
+	if a.toolChoice != nil && a.toolChoice.Forced() {
+		if why := a.forcedToolBlocked(caps); why != "" {
+			return caps.OptionError("tool_choice", why)
 		}
 	}
 	return nil

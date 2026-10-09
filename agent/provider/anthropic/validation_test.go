@@ -100,8 +100,10 @@ func TestAdaptivePromptCache(t *testing.T) {
 }
 
 // TestSchemaWithThinkingIsRejected checks that a schema request is refused
-// before any network call whenever the adapter thinks, because the API
-// rejects a forced tool choice while thinking, and that capabilities say so.
+// before any network call where the API rejects the forced hidden tool: with
+// a manual thinking budget, and on models that reject forcing outright.
+// Adaptive thinking accepts a forced tool, so it keeps schema output.
+// Capabilities must agree.
 func TestSchemaWithThinkingIsRejected(t *testing.T) {
 	for _, tc := range []struct {
 		name, model string
@@ -109,9 +111,13 @@ func TestSchemaWithThinkingIsRejected(t *testing.T) {
 		reject      bool
 	}{
 		{"manual thinking", "claude-sonnet-4-5", []Option{WithThinking(1024)}, true},
-		{"adaptive thinking", "claude-opus-4-6", []Option{WithReasoningEffort("high")}, true},
-		{"thinking by default", "claude-fable-5", nil, true},
-		{"adaptive thinking by default", "claude-sonnet-5-5", nil, true},
+		{"adaptive thinking", "claude-opus-4-6", []Option{WithReasoningEffort("high")}, false},
+		{"adaptive thinking by default", "claude-haiku-5-5", nil, false},
+		{"adaptive effort on haiku", "claude-haiku-5-5", []Option{WithReasoningEffort("low")}, false},
+		{"model rejects forcing: sonnet", "claude-sonnet-5-5", nil, true},
+		{"model rejects forcing: opus", "claude-opus-5-5", nil, true},
+		{"model rejects forcing: fable", "claude-fable-5-1", nil, true},
+		{"model rejects forcing: mythos", "claude-mythos-5-1", nil, true},
 		{"no thinking", "claude-sonnet-4-5", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

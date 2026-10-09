@@ -74,7 +74,9 @@ type Config struct {
 	// BaseURL targets a gateway or compatible server for Anthropic and
 	// OpenAI, and is the host for Ollama. Google does not accept one.
 	BaseURL string
-	// HTTPClient replaces the transport for every adapter.
+	// HTTPClient replaces the transport for every adapter. On Vertex AI a
+	// client given here must authenticate its requests itself; without one,
+	// Application Default Credentials are attached.
 	HTTPClient *http.Client
 	// Options are applied through the adapter's own options.
 	Options types.RequestOptions
@@ -86,8 +88,65 @@ type Config struct {
 	// automatic maps to OpenAI's prompt cache key and retention; Google and
 	// Ollama accept only off.
 	PromptCache *PromptCache
+	// Vertex serves a Google model through Vertex AI instead of the Gemini
+	// API. It is also selected by GOOGLE_GENAI_USE_VERTEXAI=true. Empty
+	// fields default from GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION,
+	// and the location then defaults to "global". Vertex authenticates with
+	// Application Default Credentials, so no API key is read.
+	Vertex *Vertex
 	// Getenv reads the environment. Nil uses os.Getenv.
 	Getenv func(string) string
+}
+
+// Vertex names the Google Cloud project and location that serve a Google
+// model through Vertex AI.
+type Vertex struct {
+	Project  string
+	Location string
+}
+
+// Vertex environment variables, as the Gen AI SDK reads them.
+const (
+	EnvUseVertex       = "GOOGLE_GENAI_USE_VERTEXAI"
+	EnvCloudProject    = "GOOGLE_CLOUD_PROJECT"
+	EnvCloudLocation   = "GOOGLE_CLOUD_LOCATION"
+	DefaultVertexPlace = "global"
+)
+
+// VertexEnabled reports whether the environment selects Vertex AI for Google
+// models (GOOGLE_GENAI_USE_VERTEXAI set to true or 1).
+func VertexEnabled(getenv func(string) string) bool {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	v := strings.ToLower(strings.TrimSpace(getenv(EnvUseVertex)))
+	return v == "true" || v == "1"
+}
+
+// ResolveVertex returns the Vertex settings for a Google configuration, or
+// nil when it targets the Gemini API. Explicit fields win over the
+// environment, and the location defaults to "global".
+func ResolveVertex(v *Vertex, getenv func(string) string) *Vertex {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if v == nil && !VertexEnabled(getenv) {
+		return nil
+	}
+	out := Vertex{}
+	if v != nil {
+		out = *v
+	}
+	if out.Project == "" {
+		out.Project = strings.TrimSpace(getenv(EnvCloudProject))
+	}
+	if out.Location == "" {
+		out.Location = strings.TrimSpace(getenv(EnvCloudLocation))
+	}
+	if out.Location == "" {
+		out.Location = DefaultVertexPlace
+	}
+	return &out
 }
 
 // PromptCache is a provider-neutral prompt cache configuration.
@@ -162,16 +221,9 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	}
 
 	caps := catalog.MustLookup(name, model)
-	key := cfg.APIKey
-	for _, env := range APIKeyEnv[name] {
-		if key != "" {
-			break
-		}
-		key = getenv(env)
-	}
-	if key == "" && name != Ollama && (name != OpenAI || cfg.BaseURL == "") {
-		return nil, &types.ProviderError{Provider: name, Model: model, Kind: types.ErrorKindAuth,
-			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, strings.Join(APIKeyEnv[name], " or "))}
+	key, vertex, err := credentialsFor(caps, name, model, cfg, getenv)
+	if err != nil {
+		return nil, err
 	}
 	if name == Ollama && cfg.APIKey != "" {
 		return nil, caps.OptionError("api_key", "not sent by the ollama adapter")
@@ -183,17 +235,14 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 		return nil, err
 	}
 
-	var (
-		p   types.Provider
-		err error
-	)
+	var p types.Provider
 	switch name {
 	case Anthropic:
 		p, err = buildAnthropic(cfg, model, key, caps)
 	case OpenAI:
 		p, err = buildOpenAI(cfg, model, key, caps)
 	case Google:
-		p, err = buildGoogle(ctx, cfg, model, key, caps)
+		p, err = buildGoogle(ctx, cfg, model, key, vertex, caps)
 	case Ollama:
 		p, err = buildOllama(cfg, model, getenv, caps)
 	}
@@ -206,6 +255,41 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 		}
 	}
 	return p, nil
+}
+
+// credentialsFor resolves how the adapter authenticates: an API key, or for
+// Google on Vertex AI, the project and location used with Application
+// Default Credentials.
+func credentialsFor(caps types.ModelCapabilities, name, model string, cfg Config, getenv func(string) string) (string, *Vertex, error) {
+	var vertex *Vertex
+	switch {
+	case name == Google:
+		vertex = ResolveVertex(cfg.Vertex, getenv)
+	case cfg.Vertex != nil:
+		return "", nil, caps.OptionError("vertex", "applies only to google")
+	}
+	if vertex != nil {
+		if cfg.APIKey != "" {
+			return "", nil, caps.OptionError("api_key", "vertex authenticates with Application Default Credentials, not an API key")
+		}
+		if vertex.Project == "" {
+			return "", nil, &types.ProviderError{Provider: name, Model: model, Kind: types.ErrorKindAuth,
+				Err: fmt.Errorf("%w: vertex needs a project: set Config.Vertex.Project or %s", types.ErrAuth, EnvCloudProject)}
+		}
+		return "", vertex, nil
+	}
+	key := cfg.APIKey
+	for _, env := range APIKeyEnv[name] {
+		if key != "" {
+			break
+		}
+		key = getenv(env)
+	}
+	if key == "" && name != Ollama && (name != OpenAI || cfg.BaseURL == "") {
+		return "", nil, &types.ProviderError{Provider: name, Model: model, Kind: types.ErrorKindAuth,
+			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, strings.Join(APIKeyEnv[name], " or "))}
+	}
+	return key, nil, nil
 }
 
 // unsupported rejects a control the adapter has no option for.
@@ -320,10 +404,15 @@ func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities) (t
 	if pc := cfg.PromptCache; pc != nil && pc.Mode == catalog.PromptCacheAutomatic {
 		opts = append(opts, openai.WithPromptCache(pc.Key, pc.Retention))
 	}
+	if caps.ChatCompletionsTools == types.ChatToolsResponsesOnly {
+		// The model calls tools only through the Responses API, so it is
+		// served there for every request, not only those with tools.
+		return openai.NewResponsesAdapter(key, model, opts...), nil
+	}
 	return openai.NewAdapter(key, model, opts...), nil
 }
 
-func buildGoogle(ctx context.Context, cfg Config, model, key string, caps types.ModelCapabilities) (types.Provider, error) {
+func buildGoogle(ctx context.Context, cfg Config, model, key string, vertex *Vertex, caps types.ModelCapabilities) (types.Provider, error) {
 	o := cfg.Options
 	if cfg.BaseURL != "" {
 		return nil, unsupported(caps, "base_url")
@@ -354,6 +443,9 @@ func buildGoogle(ctx context.Context, cfg Config, model, key string, caps types.
 		g.MaxOutputTokens = n
 	}
 	opts := []google.Option{google.WithGenerationConfig(g)}
+	if vertex != nil {
+		opts = append(opts, google.WithVertex(vertex.Project, vertex.Location))
+	}
 	if cfg.HTTPClient != nil {
 		opts = append(opts, google.WithHTTPClient(cfg.HTTPClient))
 	}

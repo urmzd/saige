@@ -38,15 +38,15 @@ func serve(t *testing.T, s types.Provider) (string, error) {
 func TestFailoverOnAuthIsOptIn(t *testing.T) {
 	cat := overlay(t, `{"version":1,"presets":{
 		"strict":{"retry":{"disable":true},"chain":[
-			{"id":"a","provider":"openai","model":"gpt-4.1"},
-			{"id":"b","provider":"google","model":"gemini-2.5-flash"}]},
+			{"id":"a","provider":"openai","model":"gpt-6-luna"},
+			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"lenient":{"extends":"strict","routing":{"failover_on_auth":true}}}}`)
 	for _, tt := range []struct {
 		name   string
 		served string
-	}{{"strict", ""}, {"lenient", "gemini-2.5-flash"}} {
+	}{{"strict", ""}, {"lenient", "gemini-3.1-flash-lite"}} {
 		rec := newRecorder()
-		rec.scripts["gpt-4.1"] = fails(types.ErrorKindAuth)
+		rec.scripts["gpt-6-luna"] = fails(types.ErrorKindAuth)
 		b, err := preset.Build(context.Background(), cat, tt.name, nil, preset.Options{Getenv: everyone, Factory: rec.factory})
 		if err != nil {
 			t.Fatal(err)
@@ -66,8 +66,8 @@ func TestFailoverOnAuthIsOptIn(t *testing.T) {
 func TestReprobeReturnsToPrimary(t *testing.T) {
 	cat := overlay(t, `{"version":1,"presets":{
 		"sticky":{"retry":{"disable":true},"chain":[
-			{"id":"a","provider":"openai","model":"gpt-4.1"},
-			{"id":"b","provider":"google","model":"gemini-2.5-flash"}]},
+			{"id":"a","provider":"openai","model":"gpt-6-luna"},
+			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"returns":{"extends":"sticky","routing":{"fail_threshold":1,"reprobe_after":1}}}}`)
 	for _, tt := range []struct {
 		name        string
@@ -75,11 +75,11 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 	}{{"sticky", false}, {"returns", true}} {
 		rec := newRecorder()
 		// The primary fails once, then recovers.
-		rec.scripts["gpt-4.1"] = func(n int) (<-chan types.Delta, error) {
+		rec.scripts["gpt-6-luna"] = func(n int) (<-chan types.Delta, error) {
 			if n == 0 {
 				return nil, &types.ProviderError{Kind: types.ErrorKindTransient, Err: errors.New("overloaded")}
 			}
-			return text("ok gpt-4.1"), nil
+			return text("ok gpt-6-luna"), nil
 		}
 		b, err := preset.Build(context.Background(), cat, tt.name, nil, preset.Options{Getenv: everyone, Factory: rec.factory})
 		if err != nil {
@@ -94,8 +94,8 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 			}
 			served = append(served, got)
 		}
-		back := served[len(served)-1] == "gpt-4.1"
-		if served[0] != "gemini-2.5-flash" || back != tt.wantPrimary {
+		back := served[len(served)-1] == "gpt-6-luna"
+		if served[0] != "gemini-3.1-flash-lite" || back != tt.wantPrimary {
 			t.Fatalf("%s: served %v, want return to primary %v", tt.name, served, tt.wantPrimary)
 		}
 		_ = b.Close()
@@ -104,7 +104,7 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 
 func TestRoutingThresholdsRejectSticky(t *testing.T) {
 	layer, err := catalog.Load(strings.NewReader(`{"version":1,"presets":{"p":{"routing":{"policy":"sticky","reprobe_after":2},
-		"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`))
+		"chain":[{"provider":"openai","model":"gpt-6-luna"}]}}}`))
 	if err == nil {
 		_, err = catalog.Merge(catalog.Default(), layer)
 	}
@@ -115,7 +115,7 @@ func TestRoutingThresholdsRejectSticky(t *testing.T) {
 
 func TestOptionalOllamaDroppedWhenUnreachable(t *testing.T) {
 	cat := overlay(t, `{"version":1,"presets":{"p":{"chain":[
-		{"id":"cloud","provider":"openai","model":"gpt-4.1","optional":true},
+		{"id":"cloud","provider":"openai","model":"gpt-6-luna","optional":true},
 		{"id":"local","provider":"ollama","model":"qwen3","optional":true}]}}}`)
 	down := httptest.NewServer(http.NotFoundHandler())
 	down.Close()
@@ -156,7 +156,7 @@ func TestOptionalOllamaDroppedWhenUnreachable(t *testing.T) {
 }
 
 func TestAvailable(t *testing.T) {
-	rp, err := catalog.Default().ResolveModel("anthropic", "claude-sonnet-4-6")
+	rp, err := catalog.Default().ResolveModel("anthropic", "claude-haiku-5-5")
 	if err != nil {
 		t.Fatal(err)
 	}

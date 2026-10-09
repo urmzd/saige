@@ -9,7 +9,7 @@ import (
 
 func TestRouteDeltaWireCarriesProvenance(t *testing.T) {
 	temp, seed := 0.3, int64(7)
-	d := RouteDelta{Profile: "balanced/openai", Provider: "openai", Model: "gpt-4.1", Preset: "balanced",
+	d := RouteDelta{Profile: "balanced/openai", Provider: "openai", Model: "gpt-6-luna", Preset: "balanced",
 		ConfigHash: "0123456789abcdef", CatalogRevision: "2026-10-09.1",
 		Options: &RequestOptions{Temperature: &temp, Seed: &seed, ToolChoice: &ToolChoice{Mode: ToolChoiceNone}}}
 	b, err := MarshalDelta(d)

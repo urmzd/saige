@@ -17,6 +17,7 @@ import (
 	ragtool "github.com/urmzd/saige/rag/tool"
 	ragtypes "github.com/urmzd/saige/rag/types"
 
+	"github.com/urmzd/saige/agent/provider"
 	googleProvider "github.com/urmzd/saige/agent/provider/google"
 	ollamaProvider "github.com/urmzd/saige/agent/provider/ollama"
 	openaiProvider "github.com/urmzd/saige/agent/provider/openai"
@@ -84,7 +85,18 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		emb := openaiProvider.NewEmbedder(apiKey, embedModel, opts...)
 		return hostedEmbedder(emb.Embed), emb, nil
 
-	case providerGoogle:
+	case providerVertex, providerGoogle:
+		if name == providerVertex || provider.VertexEnabled(os.Getenv) {
+			v := provider.ResolveVertex(&provider.Vertex{}, os.Getenv)
+			if v.Project == "" {
+				return nil, nil, fmt.Errorf("%s is required for vertex embeddings", provider.EnvCloudProject)
+			}
+			emb, err := googleProvider.NewEmbedder(ctx, "", embedModel, googleProvider.WithEmbedVertex(v.Project, v.Location))
+			if err != nil {
+				return nil, nil, err
+			}
+			return hostedEmbedder(emb.Embed), emb, nil
+		}
 		apiKey := os.Getenv("GOOGLE_API_KEY")
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("GOOGLE_API_KEY is required")
@@ -99,7 +111,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		return nil, nil, fmt.Errorf("anthropic does not provide an embedding API; set --embed-provider to openai, google, or ollama")
 
 	default:
-		return nil, nil, fmt.Errorf("unknown embedding provider %q; --embed-provider must be one of openai, google, ollama", name)
+		return nil, nil, fmt.Errorf("unknown embedding provider %q; --embed-provider must be one of openai, google, vertex, ollama", name)
 	}
 }
 

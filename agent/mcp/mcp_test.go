@@ -203,7 +203,7 @@ func TestServerToolsAreValidatedAgainstDeclaredCapabilities(t *testing.T) {
 	supported := types.ModelCapabilities{
 		Caps:        map[types.Capability]bool{types.CapWebSearch: true},
 		ServerTools: []types.ServerToolKind{types.ServerToolWebSearch},
-		Provider:    "anthropic", Model: "claude-sonnet-4-5",
+		Provider:    "anthropic", Model: "claude-haiku-5-5",
 	}
 	if err := types.ValidateServerTools(supported, []types.ServerTool{types.WebSearchTool(3)}); err != nil {
 		t.Errorf("a supported server tool must validate: %v", err)

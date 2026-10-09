@@ -29,6 +29,9 @@ type gatedProvider struct {
 	hold      int
 	release   chan struct{}
 	calls     [][]types.Message
+	// called, when set, receives once per provider call, after the call is
+	// recorded, so a test can wait for a call instead of for time to pass.
+	called chan struct{}
 }
 
 func (p *gatedProvider) ChatStream(ctx context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
@@ -36,6 +39,9 @@ func (p *gatedProvider) ChatStream(ctx context.Context, msgs []types.Message, _ 
 	n := len(p.calls)
 	p.calls = append(p.calls, msgs)
 	p.mu.Unlock()
+	if p.called != nil {
+		p.called <- struct{}{}
+	}
 	if n < len(p.errs) && p.errs[n] != nil {
 		return nil, p.errs[n]
 	}
@@ -132,6 +138,31 @@ func (l *loop) until(desc string, cond func(runnerModel) bool) {
 	deadline := time.After(5 * time.Second)
 	for !cond(l.m) {
 		select {
+		case msg := <-l.msgs:
+			switch msg := msg.(type) {
+			case tea.BatchMsg:
+				for _, c := range msg {
+					l.run(c)
+				}
+			case tea.QuitMsg:
+				l.quit = true
+			case deltaMsg, streamDoneMsg, submitResultMsg:
+				l.send(msg)
+			}
+		case <-deadline:
+			l.t.Fatalf("timed out waiting for %s; entries: %+v", desc, l.m.act.entries)
+		}
+	}
+}
+
+// untilSignal processes messages until ch receives.
+func (l *loop) untilSignal(desc string, ch <-chan struct{}) {
+	l.t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case <-ch:
+			return
 		case msg := <-l.msgs:
 			switch msg := msg.(type) {
 			case tea.BatchMsg:
@@ -285,11 +316,16 @@ func TestRunnerQueueAndSteer(t *testing.T) {
 			p := &gatedProvider{
 				responses: [][]types.Delta{agenttest.TextResponse("first answer"), agenttest.TextResponse("second answer")},
 				release:   make(chan struct{}),
+				called:    make(chan struct{}, 4),
 			}
 			l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
 
 			l.typeText("first")
 			l.key(tea.KeyEnter)
+			// A steer submitted before the run's first safe point joins the
+			// first call; wait until that call is in flight so the steer
+			// lands after it and needs a second call.
+			l.untilSignal("first provider call", p.called)
 			l.typeText("follow up")
 			l.send(tt.key)
 			if len(l.m.pending) != 1 {
@@ -324,11 +360,14 @@ func TestRunnerQueueAndSteer(t *testing.T) {
 }
 
 func TestRunnerQueuedMessagesReturnToInputOnStop(t *testing.T) {
-	p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("never")}, release: make(chan struct{})}
+	p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("never")}, release: make(chan struct{}), called: make(chan struct{}, 4)}
 	l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
 
 	l.typeText("first")
 	l.key(tea.KeyEnter)
+	// Stop only once the first call is in flight, so the test checks that
+	// the queue is not sent, not whether the call started before the stop.
+	l.untilSignal("first provider call", p.called)
 	l.typeText("later")
 	l.key(tea.KeyEnter)
 	l.until("submission accepted", func(m runnerModel) bool {

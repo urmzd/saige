@@ -1,6 +1,7 @@
 package google
 
 import (
+	"cloud.google.com/go/auth"
 	"context"
 	"net/http"
 
@@ -11,10 +12,10 @@ import (
 
 // Embedder implements types.Embedder using the official Google GenAI SDK.
 type Embedder struct {
-	client     *genai.Client
-	model      string
-	taskType   string
-	httpClient *http.Client
+	client   *genai.Client
+	model    string
+	taskType string
+	backend  backend
 }
 
 // EmbedderOption configures an Embedder.
@@ -29,20 +30,33 @@ func WithTaskType(taskType string) EmbedderOption {
 
 // WithEmbedHTTPClient sets the HTTP client the embedder's SDK client uses.
 func WithEmbedHTTPClient(h *http.Client) EmbedderOption {
-	return func(e *Embedder) { e.httpClient = h }
+	return func(e *Embedder) { e.backend.httpClient = h }
 }
 
-// NewEmbedder creates a new Google embedder.
+// WithEmbedVertex targets Vertex AI instead of the Gemini Developer API, as
+// WithVertex does for the adapter. apiKey may then be empty.
+func WithEmbedVertex(project, location string) EmbedderOption {
+	return func(e *Embedder) {
+		e.backend.kind = genai.BackendVertexAI
+		e.backend.project = project
+		e.backend.location = location
+	}
+}
+
+// WithEmbedCredentials sets the Google Cloud credentials Vertex requests
+// carry, in place of Application Default Credentials.
+func WithEmbedCredentials(c *auth.Credentials) EmbedderOption {
+	return func(e *Embedder) { e.backend.credentials = c }
+}
+
+// NewEmbedder creates a new Google embedder. It targets the Gemini Developer
+// API unless WithEmbedVertex selects Vertex AI.
 func NewEmbedder(ctx context.Context, apiKey, model string, opts ...EmbedderOption) (*Embedder, error) {
-	e := &Embedder{model: model}
+	e := &Embedder{model: model, backend: backend{kind: genai.BackendGeminiAPI}}
 	for _, o := range opts {
 		o(e)
 	}
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:     apiKey,
-		Backend:    genai.BackendGeminiAPI,
-		HTTPClient: withHeaderTransport(e.httpClient),
-	})
+	client, err := e.backend.newClient(ctx, apiKey)
 	if err != nil {
 		return nil, err
 	}

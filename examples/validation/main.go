@@ -1,11 +1,11 @@
 // Command validation exercises SAIGE's agent-layer features against a live
-// OpenAI model (gpt-4o-mini by default) and writes a Markdown report so users can
+// OpenAI model (gpt-6-luna by default) and writes a Markdown report so users can
 // see real, end-to-end sample runs. It is a manual validation tool, not a unit
 // test: it makes real API calls and is skipped automatically when OPENAI_API_KEY
 // is unset.
 //
 //	OPENAI_API_KEY=... go run ./examples/validation
-//	SAIGE_VALIDATION_MODEL=gpt-4o-mini go run ./examples/validation
+//	SAIGE_VALIDATION_MODEL=gpt-6-luna go run ./examples/validation
 //
 // Output: examples/validation/results/validation-report.md
 package main
@@ -35,7 +35,7 @@ func model() string {
 	if m := os.Getenv("SAIGE_VALIDATION_MODEL"); m != "" {
 		return m
 	}
-	return "gpt-4o-mini"
+	return "gpt-6-luna"
 }
 
 // result captures one feature check's outcome.

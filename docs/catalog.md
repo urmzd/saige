@@ -30,15 +30,24 @@ A model row matches model IDs by longest prefix. Only an exact match is a declar
 
 ```json
 {
-  "provider": "openai", "prefix": "gpt-4.1", "extends": "openai.chat.structured", "tier": "standard",
-  "limits": { "context_window": 1000000, "max_output_tokens": 32768 },
-  "pricing": { "currency": "USD", "input_per_mtok": 2, "output_per_mtok": 8, "cached_input_per_mtok": 0.5,
-    "as_of": "2026-07-24", "source": "vendor list price" },
-  "defaults": { "max_output_tokens": 4096 }
+  "provider": "openai", "prefix": "gpt-6-luna", "extends": "openai.reasoning", "tier": "economy",
+  "chat_completions_tools": "no_reasoning", "add_capabilities": ["temperature", "top_p"],
+  "limits": { "context_window": 1050000, "max_output_tokens": 128000 },
+  "reasoning": { "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium",
+    "required": false, "sampling_requires_no_reasoning": ["temperature", "top_p"] },
+  "pricing": { "currency": "USD", "input_per_mtok": 0.1, "output_per_mtok": 0.5, "cached_input_per_mtok": 0.01,
+    "cache_write_per_mtok": 0.125, "as_of": "2026-10-09", "source": "vendor list price" }
 }
 ```
 
-Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults` and `notes`.
+Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults` and `notes`.
+
+Two fields describe request shapes a vendor rejects for one model:
+
+| Field | Meaning |
+| --- | --- |
+| `reasoning.forced_tool_choice: false` | The API rejects a `required` or named tool choice for the model (`ModelCapabilities.RejectsForcedToolChoice`). Validation rejects such a choice locally, the Anthropic adapter reports no forced-tool structured output, and auto output mode uses the `final_answer` tool with tool choice auto. Declared on claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1 and claude-mythos-5-1. |
+| `chat_completions_tools` | How OpenAI's Chat Completions API takes tools for the model: `any` (the default), `no_reasoning` (only with reasoning effort `none`; the chat adapter sends `none` when tools are offered and no effort is set, and rejects another effort) or `responses_only` (tools need the Responses API; `provider.Build` serves the model through `openai.NewResponsesAdapter`). |
 
 ### The options object
 
@@ -120,11 +129,11 @@ _, err := catalog.Use(ctx, catalog.Layered(catalog.EmbeddedSource(), s3src))
   "retry": { "max_attempts": 3, "base_delay": "500ms", "max_delay": "10s" },
   "routing": { "policy": "affinity" },
   "chain": [
-    { "id": "primary", "provider": "anthropic", "model": "claude-sonnet-4-6",
+    { "id": "primary", "provider": "anthropic", "model": "claude-sonnet-5-5",
       "options": { "reasoning": { "effort": "medium" },
                    "prompt_cache": { "mode": "markers", "ttl": "5m", "system": true, "tools": true } } },
-    { "id": "openai", "provider": "openai", "model": "gpt-4.1",
-      "options": { "temperature": 0.3, "seed": 7 } },
+    { "id": "openai", "provider": "openai", "model": "gpt-6-luna",
+      "options": { "temperature": 0.3, "reasoning": { "effort": "none" } } },
     { "id": "local", "provider": "ollama", "model": "qwen3", "optional": true,
       "options": { "temperature": 0.3, "reasoning": { "enabled": false } }, "retry": { "disable": true } }
   ]
@@ -146,7 +155,9 @@ Routing keys:
 
 Setting `fail_threshold` or `reprobe_after` without a `policy` selects `affinity`; with `policy: sticky` it is an error. Other permanent errors never fail over.
 
-Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `unset`, `inherit` (`all` or `none`), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected) and `optional` (drop the whole entry when it cannot serve). An optional entry is dropped when its credentials are missing, and an optional entry that needs none (a local Ollama model) is dropped when its server does not answer a reachability check at build time (`preset.Options.Probe`, by default `preset.ProbeOllama`).
+Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `unset`, `inherit` (`all` or `none`), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
+
+`vertex` serves a Google entry through Vertex AI instead of the Gemini API: `{"project": "...", "location": "..."}`. Empty fields default from `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, and the location then defaults to `global`. Vertex authenticates with Application Default Credentials, so the entry needs a project, not an API key. Setting `GOOGLE_GENAI_USE_VERTEXAI=true` serves every Google entry through Vertex the same way. A `vertex` block on another provider's entry is rejected. An optional entry is dropped when its credentials are missing, and an optional entry that needs none (a local Ollama model) is dropped when its server does not answer a reachability check at build time (`preset.Options.Probe`, by default `preset.ProbeOllama`).
 
 ## Precedence
 
@@ -173,11 +184,13 @@ Every chain entry is then checked against its own model:
 - the preset's `tool_choice` and `output_mode` (`native` needs native structured output);
 - `require_declared`, which requires an exact row.
 
-An option an entry cannot honor is rejected, never stripped. A preset whose `temperature` reaches an `o3` entry fails with:
+An option an entry cannot honor is rejected, never stripped. A preset whose `temperature` reaches a `gpt-6.1-sol` entry fails with:
 
 ```
-presets.p.chain[1].options.temperature: not declared supported for openai/o3 (inherited from preset options)
+presets.p.chain[1].options.temperature: not declared supported for openai/gpt-6.1-sol (inherited from preset options)
 ```
+
+On `gpt-6-luna`, which accepts sampling only with reasoning effort `none` and defaults to `medium`, the same option fails with `requires reasoning to be disabled` unless the entry also sets `"reasoning": {"effort": "none"}`.
 
 The fix is written in the file: `"unset": ["temperature"]`, an entry override, or `"inherit": "none"`.
 
@@ -228,14 +241,15 @@ A project file can arrive with a cloned repository, so it is checked against an 
 - `base_url` or `api_key_env` on a chain entry, which could send your key to another host;
 - `mcp_server` on a server tool, wherever options appear (preset, entry, model defaults, templates, baselines), which makes the provider connect to that server;
 - `routing.failover_on_content_filter` or `routing.failover_on_auth`, which send a refused or failed request to another vendor;
-- `inherit_default: false`, which discards the trusted layers below.
+- `inherit_default: false`, which discards the trusted layers below;
+- `vertex.project` or `vertex.location` on a chain entry, which bill and send prompts to a Google Cloud project you did not choose, with your own credentials. An empty `vertex` block, which uses your environment, is allowed.
 
 A field the allowlist does not name is refused too. Such a file fails validation unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the same file is named with `--catalog`, which loads it once, as a trusted explicit layer. Explicit references, including remote URLs, are trusted.
 
 ```
 saige --preset balanced chat
 saige catalog show balanced           # effective options per entry, with origins and hashes
-saige catalog show openai/gpt-4.1     # a one-entry chain from the model's defaults
+saige catalog show openai/gpt-6-luna  # a one-entry chain from the model's defaults
 saige catalog validate --strict       # exit 1 on errors, or on warnings with --strict
 saige catalog validate --dry-build    # also build every adapter with a placeholder key
 saige catalog layers                  # paths, trust state and revisions
@@ -243,6 +257,18 @@ saige catalog schema                  # the JSON Schema
 saige catalog export                  # the merged catalog as canonical JSON
 ```
 
-The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
+The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
+
+The shipped presets:
+
+| Preset | Chain |
+| --- | --- |
+| `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, then a local qwen3 |
+| `anthropic`, `openai`, `google` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite |
+| `anthropic-quality`, `openai-quality`, `google-quality` | claude-sonnet-5-5, gpt-6.1-sol, gemini-3.8-flash |
+| `vertex` | gemini-3.1-flash-lite through Vertex AI |
+| `ollama` | a local qwen3 |
+
+`--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
 
 `--base-url` applies to the entries of the selected provider: `--provider` when given, otherwise the one provider the chain uses. On a chain that spans several vendors without `--provider` it is an error, never ignored.
