@@ -30,3 +30,15 @@ openai/gpt-3.5-turbo*
 openai/gpt-4
 openai/gpt-4-0*
 openai/gpt-4-1106*
+
+# Google speech, live-audio and image endpoints, and the retired 1.5 line.
+google/gemini-live-*
+google/*-live-*
+google/*transcribe*
+google/*-translate-*
+google/gemini-nano-banana-*
+google/gemini-1.5-*
+
+# Access-gated rows: the Mythos models are not listed for general API keys,
+# so their absence from a listing is not a retirement. Check them by hand.
+anthropic/claude-mythos-5*

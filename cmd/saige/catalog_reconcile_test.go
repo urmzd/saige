@@ -156,10 +156,10 @@ func TestReconcileWithFakeLister(t *testing.T) {
 	catalogSandbox(t)
 	now := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
 	anthropicRows := servedRows("anthropic")
-	// claude-haiku-5 has no successor: dropping it is a disappearance.
+	// claude-fable-5 has no successor: dropping it is a disappearance.
 	// claude-3-opus names one: dropping it is not.
 	anthropicRows = slices.DeleteFunc(anthropicRows, func(m catalog.RemoteModel) bool {
-		return m.ID == "claude-haiku-5" || m.ID == "claude-3-opus"
+		return m.ID == "claude-fable-5" || m.ID == "claude-3-opus"
 	})
 	for i := range anthropicRows {
 		if anthropicRows[i].ID == "claude-haiku-5-5" {
@@ -200,7 +200,7 @@ func TestReconcileWithFakeLister(t *testing.T) {
 		t.Fatalf("stubs %+v", rep.Stubs)
 	}
 	an := byName["anthropic"]
-	if !slices.Equal(an.Disappeared, []string{"claude-haiku-5"}) {
+	if !slices.Equal(an.Disappeared, []string{"claude-fable-5"}) {
 		t.Fatalf("disappeared %v", an.Disappeared)
 	}
 	if len(an.LimitDrift) != 1 || an.LimitDrift[0].ID != "claude-haiku-5-5" {

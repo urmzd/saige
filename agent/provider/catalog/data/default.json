@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 1,
-  "revision": "2026-10-09.2",
+  "revision": "2026-10-09.3",
   "templates": {
     "tool_use": {
       "capabilities": [
@@ -415,6 +415,7 @@
       "prefix": "claude-haiku-5",
       "extends": "anthropic.adaptive",
       "tier": "economy",
+      "superseded_by": "claude-haiku-5-5",
       "limits": {
         "context_window": 1000000,
         "max_output_tokens": 128000
