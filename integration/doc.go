@@ -1,7 +1,6 @@
 // Package integration contains end-to-end integration tests that exercise
 // the SDK against live services: an Ollama server for LLM inference and
-// embeddings, PostgreSQL/AlloyDB (with pgvector) for persistence and RAG,
-// and DBOS for durable workflow execution.
+// embeddings, and PostgreSQL/AlloyDB (with pgvector) for persistence and RAG.
 //
 // Tests are opt-in via environment variables and skip cleanly when a backing
 // service is not configured, so plain `go test ./...` stays hermetic:

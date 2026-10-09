@@ -60,4 +60,5 @@ These behavior changes can affect existing code. Each entry says what changed an
 | `postgres.NewPool` with individual fields no longer forces `sslmode=disable`. pgx `prefer` encrypts without verifying the certificate and falls back to plaintext. | Set `sslmode` explicitly. |
 | `RunMigrations` stops at the first failing statement and checks the embedding dimension when one is set explicitly. New migrations add `kg_episode.document_id`, `kg_relation_episode`, a relation fact search index, and `rag_document.scope` and `source_modified_at`. | Run migrations before starting the new release. |
 | pgstore node reads are scoped to the conversation. `SaveNode` returns `ErrVersionConflict` for a stale version and `ErrConversationMismatch` for a node of another conversation. memstore also rejects stale versions. | Handle the errors instead of relying on silent skips. |
-| `dbos.Engine.RegisterAgent` is deprecated: every run would share one agent, tree and budget. | Use `RegisterAgentFactory`. |
+| The DBOS backend is removed. | Use the local engine or the duraturo adapter. |
+| The module requires Go 1.26.4, the minimum of its duraturo dependency. | Build with Go 1.26.4 or later. |

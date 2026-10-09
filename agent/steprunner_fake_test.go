@@ -8,7 +8,7 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// recordingRunner is an in-memory StepRunner that simulates DBOS replay: the
+// recordingRunner is an in-memory StepRunner that simulates durable replay: the
 // first call for a step name runs fn and records the result; later calls with
 // the same name return the recorded result WITHOUT running fn. Seeding a name
 // up front simulates "this step completed before the crash."

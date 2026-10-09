@@ -483,14 +483,14 @@ Independent calls can run. The parent still waits for the complete tool batch be
 `MaxParallelTools: 1` preserves strict ordering for streaming calls.
 The consumer must drain events. A full event buffer applies backpressure to producers.
 
-Use `agent/durable/local` for persisted decisions and process recovery.
+Use `agent/durable/local` or `agent/durable/duraturo` for persisted decisions and process recovery.
 Pending approvals return `ErrSuspended` without holding a goroutine for the human decision.
 The worker releases its run lock after active siblings finish and their results are saved.
 A new worker uses the same run ID, revision, input, and fresh agent factory to resume.
 The engine rejects conflicting decisions, changed revisions, cancellation, and expired pending approvals.
 Non-streaming approvals require `ApprovalRunner`; unsupported runners fail instead of waiting for a missing consumer.
 This includes approvals inside delegated children and the blocking subagent `Execute` path.
-The DBOS runner does not yet implement this approval contract.
+Both durable engines implement it.
 Under a durable runner without it, child approvals stream as markers in the same way as parent approvals.
 
 Aggregation belongs in the host. It must preserve a separate decision for each call.

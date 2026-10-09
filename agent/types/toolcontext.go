@@ -118,6 +118,12 @@ func (c ToolContext) Keys() []string {
 // Len returns how many knobs are set.
 func (c ToolContext) Len() int { return len(c.values) }
 
+// ToolContextIdempotencyKey is the knob a durable runner sets on each tool
+// step. Its string value stays the same when the step replays, so a tool can
+// pass it to an external service that drops duplicate requests. It is absent
+// when a tool runs without a durable runner that supplies one.
+const ToolContextIdempotencyKey = "idempotency_key"
+
 // ── Propagation through context.Context ─────────────────────────────
 
 type toolContextKey struct{}

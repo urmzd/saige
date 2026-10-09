@@ -39,7 +39,8 @@ type AgentConfig struct {
 
 	// StepRunner durably memoizes LLM and tool calls so a crashed process can
 	// resume without repeating them. Defaults to types.NoopStepRunner (inline,
-	// today's streaming behavior). A DBOS-backed runner lives in agent/durable/dbos.
+	// today's streaming behavior). Durable runners live in agent/durable/local
+	// and agent/durable/duraturo.
 	StepRunner types.StepRunner
 
 	// Store persists the conversation tree. Defaults to nil, which keeps the
@@ -280,9 +281,9 @@ func WithMaxIter(n int) AgentOption {
 }
 
 // WithStepRunner sets a durable step runner. The default NoopStepRunner runs
-// steps inline (today's streaming behavior). A DBOS-backed runner (see
-// agent/durable/dbos) memoizes LLM and tool calls so a crashed process resumes
-// without repeating them.
+// steps inline (today's streaming behavior). A durable runner (see
+// agent/durable/local and agent/durable/duraturo) memoizes LLM and tool calls
+// so a crashed process resumes without repeating them.
 func WithStepRunner(r types.StepRunner) AgentOption {
 	return func(c *AgentConfig) { c.StepRunner = r }
 }

@@ -54,7 +54,7 @@ Status values: **implemented** (done and covered by tests), **partial** (done wi
 | Sub-agent timeouts and response schemas | implemented | `agent/subagent.go`, `agent/subagent_result.go` | `subagent_result_test.go`, `subagent_schema_test.go` |
 | Handoff round trips | implemented | `agent/handoff.go`, `agent/handoff_context.go` | `handoff_test.go` |
 | Local durable engine suspends on child approval and resumes after `Decide` | implemented | `agent/durable/local/local.go`, `router.go`, `input.go` | `local_test.go`, `router_test.go`, `lifecycle_test.go`, `input_test.go` |
-| DBOS runner uses an agent factory per run | implemented | `agent/durable/dbos/dbos.go` | `dbos_test.go`, `workflow_test.go`, `integration/dbos_test.go` |
+| duraturo engine: replayed steps, parked approvals, idempotent replies, reconciliation | implemented | `agent/durable/duraturo/duraturo.go`, `runner.go`, `interrupt.go` | `duraturo_test.go`, `runner_test.go`, `router_test.go`, `postgres_test.go` |
 | Clarification tool (`ask_user`) as an interrupt | implemented | `agent/clarify.go` | `interrupt_test.go` |
 
 ### Providers and routing
@@ -163,7 +163,7 @@ Behavior changes are also listed in [upgrade notes](upgrade-notes.md).
 | `WithTracing` opens an `invoke_agent` span per run. | Remove a manual `StartAgent` around `Invoke` to avoid duplicate spans. |
 | pgstore reads are scoped to the conversation; `SaveNode` returns `ErrVersionConflict` and `ErrConversationMismatch`. | Handle the errors instead of relying on silent skips. |
 | `postgres.NewPool` no longer forces `sslmode=disable`. New migrations add columns and tables. | Set `sslmode` explicitly and run migrations before deploying. |
-| `dbos.Engine.RegisterAgent` is deprecated. | Use `RegisterAgentFactory`. |
+| The DBOS backend is removed. | Use the local engine or the duraturo adapter. |
 | `eval.ToolCallRecord` gains `ID`, `ArgumentsError`, and `Exec`; `tool_success_rate` counts argument errors and unfinished calls as failures. | Re-baseline stored results that relied on the old rate. |
 | Google embeddings send a retrieval task type from the embed purpose. | Re-index if query and document vectors must match an older index, or fix the type with `WithTaskType`. |
 | CLI: `saige ask --raw` is removed; `install.sh` runs under `bash`; `ask` denies approval-marked tools by default. | Use `--template minimal`, pipe the installer to `bash`, and pass `--approve=allow` when unattended writes are intended. |
@@ -243,5 +243,5 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | --- | --- | --- |
 | Anthropic live paths are unverified. | environment | Needs a valid `ANTHROPIC_API_KEY` to verify prefill continue, forced-tool structured output, and server tool deltas. |
 | Plain `Ingest` of changed content at the same URI creates a second document. | `rag/internal/pipeline/pipeline.go` | Documented: use `SyncSource` or `Update` for replace-by-URI. |
-| The DBOS runner does not implement `types.InterruptRouter`. | `agent/durable/dbos/dbos.go` | By design: DBOS hosts use `Engine.Decide` and `Engine.PendingApproval` directly. |
+| A reply that lands while its duraturo run is still parking waits for the worker's janitor. | `agent/durable/duraturo/interrupt.go` | The run resumes on the next janitor pass instead of at once; set `worker.WithJanitorEvery` to bound the delay. |
 | Spawn mode is unavailable under durable runners. | `agent/spawn.go` | By design: returns `ErrSpawnUnsupported`. |

@@ -1,11 +1,17 @@
-# Durable execution on one machine
+# Durable execution
+
+Two engines make a run durable. `agent/durable/local` keeps runs on one machine's filesystem.
+`agent/durable/duraturo` runs them on a duraturo ledger and queue, such as Postgres tables; see [the duraturo engine](#the-duraturo-engine).
+Most of this page describes the local engine. The contracts for approvals, uncertain steps and budget receipts are the same in both.
+
+## The local engine
 
 `agent/durable/local` saves a run between worker invocations.
 A run has one process owner at a time. Different run IDs can execute independently.
 The engine requires Unix and a private local filesystem with reliable advisory locks and atomic rename.
 It does not provide remote scheduling or an atomic transaction with an external service.
 
-## Start, decide, and resume
+### Start, decide, and resume
 
 ```go
 engine := local.New("./private-runs")
@@ -57,7 +63,7 @@ A modified argument map becomes the approved call's arguments.
 `Engine.Router()` returns a host-side `types.InterruptRouter` for the engine's runs; each interrupt's `RunID` names the run it belongs to.
 `agent.WithInterruptExpiry` sets the expiry policy: an expired approval is denied by default, fails the run with `InterruptExpireFail`, or is asked of the caller one level up with `InterruptExpireEscalate`.
 
-## Waking waiters without polling
+### Waking waiters without polling
 
 Set `Engine.Notifier` to announce state changes on the `local.SignalChannel` channel.
 `Decide`, `Router.Reply`, a worker's `Reply`, `Append`, `Cancel`, and the end of `Run` each publish a `local.Signal` after they save.
@@ -85,7 +91,7 @@ A failed publish returns an error matching `local.ErrSignal`. The change is alre
 Without a notifier, the engine behaves as before and `Await` returns `local.ErrNoNotifier`.
 `agent.EventStream.Submit` delivers to a stream in the same process. To deliver from another process, `Append` to the durable run as above, or subscribe the process that owns the stream to a channel and call `Submit` for each message.
 
-## Execution and recovery
+### Execution and recovery
 
 Each provider call and regular tool call has a stable step name.
 The engine saves a started record before calling it, then saves the result before returning it.
@@ -118,7 +124,7 @@ No local journal can guarantee exactly-once effects across an unrelated API.
 Cancellation cannot undo a completed external write.
 The local lock releases when a process exits; it has no network lease timeout.
 
-## Budget admission and usage
+### Budget admission and usage
 
 Reservations prevent sibling calls from using the same available allowance.
 The host must set safe per-call cost and token bounds for the configured context, output limit, and provider.
@@ -139,7 +145,7 @@ Set bounds for all attempts, or move accounting to the attempt boundary.
 Price cards must also include relevant cache tiers. Native tool fees and cache storage remain host accounting.
 Token and request limits are independent of monetary approval grants.
 
-## Rate limits, context limits, and runtime failures
+### Rate limits, context limits, and runtime failures
 
 A rate limit or transport failure can occur before or after provider work starts.
 The durable engine does not automatically replay failed external attempts.
@@ -160,7 +166,7 @@ Factories, tool gates, and result policies must reproduce the same decisions dur
 A provider call stopped by an interrupting submission commits its completed text with a `TruncationContent` marker and records a `step.truncated` event, so replay does not repeat the call.
 If a policy needs time, randomness, or an external read, version or checkpoint that input in the host.
 
-## Files, traces, and deployment limits
+### Files, traces, and deployment limits
 
 Each run uses a SHA-256 directory name containing `state.json` and `worker.lock`.
 `state.json` is a versioned recovery snapshot. It includes steps, interrupts, receipts, and ordered event metadata.
@@ -172,14 +178,63 @@ The engine does not provide encryption, a retention service, cross-version gob m
 Each update rewrites the snapshot. Large or long-running workloads need a different storage backend.
 `Engine.List` reads every run's snapshot, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
 
-## Engines compared
+## The duraturo engine
 
-| Feature | `agent/durable/local` | `agent/durable/dbos` |
+`agent/durable/duraturo` runs an agent as a [duraturo](https://github.com/urmzd/duraturo) workflow.
+duraturo keeps runs and their step records in a ledger and delivers run IDs to workers through a queue.
+`ledger.NewMemory` and `queue.NewMemory` form a complete single-process system.
+`github.com/urmzd/duraturo/adapters/postgres` maps both onto Postgres tables the host owns, so Postgres is the only infrastructure.
+The adapter validates the tables and never migrates them; `pgledger.RecommendedDDL` and `pgqueue.RecommendedDDL` return suggested DDL.
+
+```go
+engine := duraturo.New(lgr, q) // any duraturo ledger and queue
+wf := engine.Register("reviewer.v3", func(runID string) *agent.Agent {
+    return agent.NewAgent(agent.AgentConfig{Provider: configuredProvider, Tools: tools})
+})
+go engine.Worker().Run(ctx) // one or more workers, in this process or others
+
+_, err := engine.Run(ctx, wf, "run-42", input)
+if errors.Is(err, types.ErrSuspended) {
+    state, err := engine.Inspect(ctx, "run-42")
+    if err != nil { return err }
+    // Show state.Pending to an authenticated user, then:
+    err = engine.Decide(ctx, "run-42", state.Pending[0].ID, "decision-17",
+        types.ApprovalDecision{Approved: true})
+    if err != nil { return err }
+    result, err := engine.Wait(ctx, "run-42")
+}
+```
+
+The run ID is the idempotency key. Starting an existing run with the same workflow and input is a no-op; a different input returns `ErrConflict`.
+The workflow name is the compatibility contract for recorded runs. Give a workflow a new name when its recorded steps would no longer replay.
+Every worker must come from `Engine.Worker`, so it resolves the registered workflows. Keep duraturo's default JSON codec.
+
+Each provider call and tool call is a duraturo step, keyed by its stable step name.
+On every claim the workflow runs from the top: recorded steps return their results, and the first unrecorded step executes.
+Steps run one at a time, because duraturo derives record keys from call order. Durable tool calls are therefore sequential.
+A tool step's context carries duraturo's idempotency key under `types.ToolContextIdempotencyKey`; pass it to an external service that drops duplicate requests.
+
+An approval or interrupt is a durable event. The run records the request and parks: it leaves the queue, stays pending and holds no worker.
+`Decide` and `Router().Reply` record the reply once and enqueue the run, which replays to the waiting call and continues.
+The same reply again is a no-op, a changed reply returns `ErrConflict`, and a late reply matches `types.ErrInterruptExpired`.
+A reply that lands while its run is still parking is picked up by the worker's janitor; `worker.WithJanitorEvery` bounds that delay.
+
+A step that started and left no result has an unknown effect ([D-14](../DESIGN_DECISIONS.md#d-14-keep-uncertain-effects-explicit)).
+The run parks with `ErrIndeterminate` and does not call the step again.
+`Inspect` lists the step with its saved budget reservation. `Reconcile(ctx, runID, step, &result)` records the verified result; a nil result permits one more attempt and keeps the uncertain charge.
+A tool that returns an error is a recorded result, not an uncertain step. A panic is uncertain.
+
+| Feature | `agent/durable/local` | `agent/durable/duraturo` |
 | --- | --- | --- |
-| Agent per run | Factory passed to `Run` | `RegisterAgentFactory`; `RegisterAgent` is deprecated because every run would share one agent, tree and budget |
-| Approvals | `Decide` and `Inspect`; saved requests survive restarts | `Engine.ApprovalTimeout` enables `Decide` and `PendingApproval`, which turns on the guard that rejects automatic compaction |
-| Budget reservations before dispatch | Saved with the run | Not saved; the budget is per process |
-| Input log and `Append` | Yes | No |
+| Storage | Private directory, one file per run | Any duraturo ledger and queue; Postgres tables in production |
+| Workers | One process lock per run | Any number of workers; fenced, time-bounded leases |
+| Agent per run | Factory passed to `Run` | Factory passed to `Register`, called with the run ID |
+| Approvals and interrupts | `Decide`, `Router`, `Inspect` | `Decide`, `Router`, `Inspect`; the run parks off the queue |
+| Uncertain steps | `ErrIndeterminate`, then `Reconcile` | `ErrIndeterminate`, then `Reconcile` |
+| Budget reservations before dispatch | Saved with the run | Saved as a step record |
+| Tool steps | Concurrent within a batch | Sequential |
+| Input log and `Append` | Yes | No; a run has one input |
+| Revision binding | Revision passed to every call | Workflow name |
 
 | Boundary | Exists now | Required for distributed workers |
 | --- | --- | --- |
@@ -193,4 +248,4 @@ Each update rewrites the snapshot. Large or long-running workloads need a differ
 
 Kubernetes can place and restart workers. It does not replace these contracts.
 Do not use this local lock as a distributed lease on a shared network filesystem.
-The DBOS runner keeps its own step semantics and does not yet implement `ApprovalRunner`.
+The duraturo engine supplies the shared lease, fencing, queue and transactional record store. Account-level limits across runs remain host accounting.
