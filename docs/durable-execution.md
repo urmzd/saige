@@ -110,6 +110,7 @@ This permits other runs to use workers while the host waits for a decision.
 | Provider errors or has no usage | Uncertain or conservative charge | Retain the charge; reconcile before retrying a failed step |
 | Tool returns an ordinary error | Saved tool error result | Replay the error for the model to handle |
 | Tool panics | Indeterminate step | Check whether the tool already changed external state |
+| Process exits during an idempotent tool step | Started record marked idempotent | The local engine runs the step again (`agent.Idempotent`, `types.IdempotentTool`) |
 | Snapshot write fails | Runner is stopped | Release the worker; inspect the last complete snapshot before recovery |
 | Second worker uses the same run | Existing process lock | Return `ErrBusy`; do not start another execution |
 | Pending approval expires | Original request and expiry | Reject it; cancel or create a new run with current authorization |

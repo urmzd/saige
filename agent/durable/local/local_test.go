@@ -362,3 +362,26 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 		t.Fatalf("independent child dispatched: %d, err=%v", childCalls.Load(), err)
 	}
 }
+
+func TestIdempotentAttemptRepeats(t *testing.T) {
+	e := New(t.TempDir())
+	path, release, err := e.acquire("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	r := &runner{path: path, state: State{Version: 1, RunID: "run", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
+	ctx := types.WithIdempotentStep(context.Background())
+	if _, err := r.RunStep(ctx, "put", func(context.Context) (types.StepResult, error) { panic("crash mid-call") }); err == nil {
+		t.Fatal("panic hidden")
+	}
+	res, err := r.RunStep(ctx, "put", func(context.Context) (types.StepResult, error) {
+		return types.StepResult{Kind: types.StepKindTool, ToolResult: "stored"}, nil
+	})
+	if err != nil || res.ToolResult != "stored" {
+		t.Fatalf("idempotent step not repeated: %v %+v", err, res)
+	}
+	if !r.state.Steps["put"].Idempotent || r.state.Steps["put"].Status != statusCompleted {
+		t.Fatalf("step = %+v", r.state.Steps["put"])
+	}
+}

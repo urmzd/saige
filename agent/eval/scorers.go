@@ -31,6 +31,9 @@ type ToolCallRecord struct {
 	// Exec says how far execution got. [CollectAgentRun] always sets it;
 	// it is empty on records built by hand, which are read as finished.
 	Exec ExecState `json:"exec,omitempty"`
+	// Version is the version the tool reported (types.ToolVersion), such as
+	// an agent.Func schema hash or an agent.AIFunc version.
+	Version string `json:"version,omitempty"`
 }
 
 // ExecState is how far a recorded tool call got through execution.

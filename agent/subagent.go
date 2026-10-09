@@ -143,6 +143,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		Extractors:       parent.Extractors,
 		ToolGate:         parent.ToolGate,
 		ToolPolicy:       parent.ToolPolicy,
+		Deps:             parent.Deps,
 		ToolContext:      parent.ToolContext,
 		Tokenizer:        parent.Tokenizer,
 		// The redactor is shared so a placeholder in the task means the same

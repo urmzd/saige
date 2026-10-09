@@ -100,6 +100,12 @@ type AgentConfig struct {
 	// tool reads per-deployment configuration without its signature changing.
 	ToolContext types.ToolContext
 
+	// Deps holds the host's typed dependencies for Func tools: a database
+	// handle, a client, a tenant. A Func tool receives it as RunContext.Deps.
+	// Deps attached to the run's context with ContextWithDeps take
+	// precedence. nil attaches nothing.
+	Deps any
+
 	// ToolRedactor keeps sensitive values on the tool side of the boundary.
 	// Arguments are restored just before a tool executes, after the gate and
 	// any approval saw the placeholders, and results are tokenized before
@@ -1782,7 +1788,7 @@ func assistantToolCalls(msg *types.AssistantMessage) []types.ToolUseContent {
 func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch types.BranchID, results []toolResult) error {
 	contents := make([]types.ToolResultContent, len(results))
 	for i, r := range results {
-		trc := types.ToolResultContent{ToolCallID: r.toolCallID, Text: r.result, Blocks: r.blocks}
+		trc := types.ToolResultContent{ToolCallID: r.toolCallID, Text: r.result, Blocks: r.blocks, ToolVersion: r.version}
 		if r.err != "" {
 			trc.IsError = true
 			if trc.Text == "" {
@@ -2103,6 +2109,8 @@ type toolResult struct {
 	// subAgent names the child of a delegation, so a failed one can be
 	// reported to the OutcomePolicy.
 	subAgent string
+	// version is the version the tool reported, recorded with its result.
+	version string
 }
 
 // executeToolsConcurrently runs all tool calls, streaming deltas as they arrive.
@@ -2246,15 +2254,18 @@ func (a *Agent) Budget() *types.Budget { return a.cfg.Budget }
 // It returns (message, modifiedArgs, approved). On refusal or cancellation the
 // message is the tool error to report.
 func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker) (string, map[string]any, bool) {
-	return a.awaitApprovalPhase(ctx, stream, tc, markers, "gate")
+	d, ok := a.awaitApprovalPhase(ctx, stream, tc, markers, "gate")
+	return d.message, d.args, ok
 }
 
-func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker, phase string) (string, map[string]any, bool) {
+// awaitApprovalPhase asks for one decision about tc. On refusal the
+// decision's message is the tool error to report.
+func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker, phase string) (decision, bool) {
 	d, ok := a.awaitInterrupt(ctx, stream, interruptRequest{kind: interruptKind(tc, phase), phase: phase, call: tc, markers: markers})
 	if !ok {
-		return d.message, nil, false
+		return decision{message: d.message}, false
 	}
-	return "", d.args, true
+	return decision{approved: true, args: d.args, approver: d.approver}, true
 }
 
 // errNonStreamingApproval stops a run that needs a human decision but has
@@ -2295,7 +2306,8 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return failedTool(stream, tc.ID, tc.Name, err.Error())
 	}
 
-	if res, done := a.gateTool(ctx, stream, &tc, def); done {
+	var approval types.CallApproval
+	if res, done := a.gateTool(ctx, stream, &tc, def, &approval); done {
 		return res
 	}
 
@@ -2304,15 +2316,21 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	if a.cfg.ToolContext.Len() > 0 {
 		ctx = types.WithToolContext(ctx, a.cfg.ToolContext)
 	}
-	ctx = types.WithToolCallInfo(ctx, types.ToolCallInfo{ID: tc.ID, Name: tc.Name, Agent: a.toolOwner(ctx)})
+	ctx = types.WithToolCallInfo(ctx, types.ToolCallInfo{
+		ID: tc.ID, Name: tc.Name, Agent: a.toolOwner(ctx), RunID: stream.runID, Branch: stream.branch,
+	})
 	if a.cfg.Workspace != nil {
 		ctx = workspace.NewContext(ctx, a.cfg.Workspace)
 	}
+	if a.cfg.Deps != nil {
+		ctx = context.WithValue(ctx, agentDepsKey{}, a.cfg.Deps)
+	}
 
-	tool, res, done := a.resolveMarkers(ctx, stream, &tc, tool)
+	tool, res, done := a.resolveMarkers(ctx, stream, &tc, tool, &approval)
 	if done {
 		return res
 	}
+	ctx = types.WithCallApproval(ctx, approval)
 
 	// A per-tool quota is charged at dispatch, once the call is cleared to
 	// run, so a denied call never uses up the allowance. An exhausted quota
@@ -2362,7 +2380,9 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		defer func() { <-sem }()
 	}
 
-	return a.runToolStep(ctx, stream, tc, tool)
+	res = a.runToolStep(ctx, stream, tc, tool)
+	res.version = types.ToolVersion(tool)
+	return res
 }
 
 // failedTool emits the terminal ToolExecEndDelta for a call that failed before
@@ -2389,7 +2409,7 @@ func refusedTool(stream *EventStream, toolCallID, name, errMsg string) toolResul
 // model's actual arguments, before anything runs. It may rewrite tc.Arguments
 // in place. A denial is reported to the model as a tool error so it can adapt,
 // rather than failing the turn; done reports whether the call is finished.
-func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef) (toolResult, bool) {
+func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef, approval *types.CallApproval) (toolResult, bool) {
 	decision := a.cfg.ToolGate.Check(ctx, def, tc.Arguments)
 	if decision.Outcome == types.GateAllow {
 		if decision.ModifiedArgs != nil {
@@ -2414,12 +2434,13 @@ func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.Too
 		if decision.Marker != nil {
 			marker = *decision.Marker
 		}
-		approved, args, ok := a.awaitApproval(ctx, stream, *tc, []types.Marker{marker})
+		d, ok := a.awaitApprovalPhase(ctx, stream, *tc, []types.Marker{marker}, "gate")
 		if !ok {
-			return refusedTool(stream, tc.ID, tc.Name, approved), true
+			return refusedTool(stream, tc.ID, tc.Name, d.message), true
 		}
-		if args != nil {
-			return a.recheckEditedArgs(ctx, stream, tc, def, args)
+		*approval = types.CallApproval{Required: true, Approver: d.approver}
+		if d.args != nil {
+			return a.recheckEditedArgs(ctx, stream, tc, def, d.args)
 		}
 	}
 	return toolResult{}, false
@@ -2457,18 +2478,19 @@ func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *
 // wraps a marked tool without re-marking it still prompts. The decorator is
 // then kept and run as is; its MarkedTool runs the inner tool without asking
 // again.
-func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool) (types.Tool, toolResult, bool) {
+func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool, approval *types.CallApproval) (types.Tool, toolResult, bool) {
 	mt, ok := types.As[*types.MarkedTool](tool)
 	if !ok || len(mt.Markers) == 0 {
 		return tool, toolResult{}, false
 	}
 
-	message, args, approved := a.awaitApprovalPhase(ctx, stream, *tc, mt.Markers, "marker")
+	d, approved := a.awaitApprovalPhase(ctx, stream, *tc, mt.Markers, "marker")
 	if !approved {
-		return tool, refusedTool(stream, tc.ID, tc.Name, message), true
+		return tool, refusedTool(stream, tc.ID, tc.Name, d.message), true
 	}
-	if args != nil {
-		if res, done := a.recheckEditedArgs(ctx, stream, tc, tool.Definition(), args); done {
+	*approval = types.CallApproval{Required: true, Approver: d.approver}
+	if d.args != nil {
+		if res, done := a.recheckEditedArgs(ctx, stream, tc, tool.Definition(), d.args); done {
 			return tool, res, true
 		}
 	}
@@ -2607,6 +2629,9 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 // yields multi-modal Blocks; a plain Tool yields text only.
 func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool) toolResult {
 	stepName := "tool-" + tc.ID
+	if types.IsIdempotent(tool) {
+		ctx = types.WithIdempotentStep(ctx)
+	}
 	sr, stepErr := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (result types.StepResult, panicErr error) {
 		// A panic is returned as a Go error, not as a recorded tool error:
 		// a durable runner must see the step fail so it is marked
@@ -2694,7 +2719,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 	} else {
 		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, blocks: sr.ToolBlocks, err: sr.ToolError}
 	}
-	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Blocks: res.blocks, Error: res.err})
+	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Blocks: res.blocks, Error: res.err, Version: types.ToolVersion(tool)})
 	return res
 }
 

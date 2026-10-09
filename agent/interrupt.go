@@ -35,6 +35,8 @@ type decision struct {
 	// message is the refusal reason or, for an approval with a note, the
 	// note. For a clarification it is the answer.
 	message string
+	// approver names who decided, as the host reported it.
+	approver string
 }
 
 // interruptRequest describes one decision a run needs from outside.
@@ -61,7 +63,7 @@ func (a *Agent) awaitInterrupt(ctx context.Context, stream *EventStream, req int
 		if !d.Approved {
 			return decision{message: "rejected: " + d.Message}, false
 		}
-		return decision{approved: true, args: d.ModifiedArgs, message: d.Message}, true
+		return decision{approved: true, args: d.ModifiedArgs, message: d.Message, approver: d.Approver}, true
 	}
 	if stream.nonStreaming {
 		stream.stopRun(errNonStreamingApproval)
@@ -141,7 +143,7 @@ func replyDecision(r types.InterruptReply) (decision, bool) {
 	if answer == "" {
 		answer = r.Decision.Message
 	}
-	return decision{approved: true, args: r.Decision.ModifiedArgs, message: answer}, true
+	return decision{approved: true, args: r.Decision.ModifiedArgs, message: answer, approver: r.Decision.Approver}, true
 }
 
 // replyAnswer returns a reply's Answer as text: a JSON string is unquoted and

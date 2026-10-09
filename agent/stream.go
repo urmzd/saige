@@ -35,6 +35,9 @@ type Resolution struct {
 	Approved     bool
 	ModifiedArgs map[string]any // nil = use original args
 	Message      string         // optional reason (shown to LLM on rejection)
+	// Approver names who decided, as the host authenticated them. It is
+	// recorded with the call (types.CallApproval) and never sent to the model.
+	Approver string
 }
 
 // EventStream is the consumer handle for streaming agent deltas.
@@ -201,7 +204,7 @@ func (s *EventStream) close(err error) {
 // types.ErrInterruptExpired when the wait ended at its deadline.
 func (s *EventStream) ResolveMarkerErr(toolCallID string, r Resolution) error {
 	return s.replyMarker(toolCallID, types.InterruptReply{
-		Decision: types.ApprovalDecision{Approved: r.Approved, ModifiedArgs: r.ModifiedArgs, Message: r.Message},
+		Decision: types.ApprovalDecision{Approved: r.Approved, ModifiedArgs: r.ModifiedArgs, Message: r.Message, Approver: r.Approver},
 	})
 }
 
@@ -212,7 +215,7 @@ func (s *EventStream) replyMarker(toolCallID string, reply types.InterruptReply)
 		if d.Message == "" && len(reply.Answer) > 0 {
 			d.Message = replyAnswer(reply)
 		}
-		return s.resolve(toolCallID, Resolution{Approved: d.Approved, ModifiedArgs: d.ModifiedArgs, Message: d.Message})
+		return s.resolve(toolCallID, Resolution{Approved: d.Approved, ModifiedArgs: d.ModifiedArgs, Message: d.Message, Approver: d.Approver})
 	}
 	s.markerMu.Lock()
 	id, ok := s.markers[toolCallID]

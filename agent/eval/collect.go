@@ -49,10 +49,13 @@ type RouteRecord struct {
 	CatalogRevision string `json:"catalog_revision,omitempty"`
 }
 
-// AddProvenance records the run's response models and serving catalog
-// configurations on p.
+// AddProvenance records the run's response models, serving catalog
+// configurations, and the versions of the tools it ran on p.
 func (r AgentRun) AddProvenance(p *topeval.Provenance) {
 	p.AddModels(r.Models...)
+	for _, c := range r.ToolCalls {
+		p.AddTool(c.Name, c.Version)
+	}
 	for _, rt := range r.Routes {
 		p.AddRoute(rt.Profile, rt.Preset, rt.ConfigHash, rt.CatalogRevision)
 	}
@@ -223,6 +226,7 @@ func (tc *toolCollector) observe(now time.Time, delta types.Delta) {
 		}
 		rec.Result = v.Result
 		rec.Error = v.Error
+		rec.Version = v.Version
 		rec.Exec = ExecFinished
 		if !tc.execStart[idx].IsZero() {
 			rec.DurationMs = now.Sub(tc.execStart[idx]).Milliseconds()

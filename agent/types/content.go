@@ -74,6 +74,10 @@ type ToolResultContent struct {
 	// the run's CitationRegistry assigned. Persisted, so a restored
 	// conversation keeps the numbering its earlier answers referenced.
 	Citations []Citation `json:"citations,omitempty"`
+	// ToolVersion is the version the tool reported when it ran (see
+	// ToolVersion), so a transcript names the schema and prompt that
+	// produced each result. Empty for a tool that reports none.
+	ToolVersion string `json:"tool_version,omitempty"`
 }
 
 func (ToolResultContent) isSystemContent() {}

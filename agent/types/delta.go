@@ -95,6 +95,9 @@ type ToolExecEndDelta struct {
 	Result     string // text projection: UNCHANGED meaning
 	Error      string
 	Blocks     []ToolResultBlock // optional; nil for plain-text results
+	// Version is the version the tool reported (types.ToolVersion), empty
+	// for a tool that reports none.
+	Version string
 }
 
 func (ToolExecEndDelta) isDelta() {}

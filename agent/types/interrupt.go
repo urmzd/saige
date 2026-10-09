@@ -26,6 +26,37 @@ type ApprovalDecision struct {
 	Approved     bool
 	ModifiedArgs map[string]any
 	Message      string
+	// Approver names who decided, as the host authenticated them, for
+	// example a user ID. It is recorded with the call and never shown to
+	// the model. Empty means the host did not say.
+	Approver string `json:",omitempty"`
+}
+
+// CallApproval describes how a tool call was cleared to run. The agent loop
+// attaches it to the call's context once every gate and marker has passed.
+type CallApproval struct {
+	// Required reports that a gate or a marker held the call for a decision.
+	// It is false for a call that needed none.
+	Required bool
+	// Approver is the ApprovalDecision.Approver of the decision that cleared
+	// the call, when one did.
+	Approver string
+	// Grant is the ID of the standing grant that approved the call without
+	// asking, when one did.
+	Grant string
+}
+
+type callApprovalKey struct{}
+
+// WithCallApproval returns ctx carrying a.
+func WithCallApproval(ctx context.Context, a CallApproval) context.Context {
+	return context.WithValue(ctx, callApprovalKey{}, a)
+}
+
+// CallApprovalFrom returns the approval attached to ctx, or the zero value.
+func CallApprovalFrom(ctx context.Context) CallApproval {
+	a, _ := ctx.Value(callApprovalKey{}).(CallApproval)
+	return a
 }
 
 // ApprovalRunner persists approval requests and decisions. Pending requests

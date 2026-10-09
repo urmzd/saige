@@ -30,6 +30,10 @@ type ToolCallInfo struct {
 	ID    string // tool call ID assigned by the provider
 	Name  string // tool name
 	Agent string // name of the agent that owns the turn
+	// RunID identifies the root run of the delegation tree the call belongs
+	// to, and Branch the conversation branch the run extends.
+	RunID  string
+	Branch BranchID
 }
 
 type toolCallInfoKey struct{}

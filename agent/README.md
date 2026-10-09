@@ -167,6 +167,20 @@ tool := &types.ToolFunc{
 }
 ```
 
+`agent.Func` builds the same kind of tool from a typed function. The schema
+comes from the input struct, arguments are decoded strictly, and the function
+receives typed dependencies in a `RunContext`. See
+[typed function tools](../docs/func-tools.md).
+
+```go
+greet := agent.Func("greet", "Greet a person",
+    func(rc agent.RunContext[agent.NoDeps], in struct {
+        Name string `json:"name" description:"Person's name"`
+    }) (string, error) {
+        return "Hello, " + in.Name + "!", nil
+    })
+```
+
 When the LLM requests multiple tool calls in one turn, they run concurrently on
 the same tool instances. Every `Tool`, `ToolGate`, result policy and result sink
 must therefore be safe for concurrent use, unless the agent uses
