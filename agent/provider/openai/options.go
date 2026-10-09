@@ -16,8 +16,11 @@ var _ types.OptionsProvider = (*Adapter)(nil)
 // toggle or budget), fail before any network I/O with an error matching
 // types.ErrInvalidModelConfig.
 func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	c, err := a.withRequestOptions(opts)
+	c, err := a.withRequestOptions(opts.Raw())
 	if err != nil {
+		return nil, err
+	}
+	if c, err = c.compileDials(opts, tools, false, types.SurfaceChat); err != nil {
 		return nil, err
 	}
 	return c.chatStream(ctx, messages, tools, nil)

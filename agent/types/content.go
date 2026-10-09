@@ -221,6 +221,8 @@ type RouteContent struct {
 	ConfigHash      string          `json:"config_hash,omitempty"`
 	CatalogRevision string          `json:"catalog_revision,omitempty"`
 	Options         *RequestOptions `json:"-"`
+	// Dials records how the turn's dials compiled, when it had any.
+	Dials *DialReport `json:"dials,omitempty"`
 }
 
 // RouteContentFrom records the configuration a RouteDelta names.
@@ -230,6 +232,10 @@ func RouteContentFrom(r RouteDelta) RouteContent {
 	if r.Options != nil {
 		o := r.Options.Clone()
 		c.Options = &o
+	}
+	if r.Dials != nil {
+		d := r.Dials.Clone()
+		c.Dials = &d
 	}
 	return c
 }
