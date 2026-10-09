@@ -270,7 +270,7 @@ func (RouteContent) isAssistantContent() {}
 // resolves or records itself and never sends to a provider.
 func IsMetadataContent(c any) bool {
 	switch c.(type) {
-	case ConfigContent, HandoffContent, FeedbackContent, SteerContent, TruncationContent, RouteContent:
+	case ConfigContent, HandoffContent, FeedbackContent, SteerContent, TruncationContent, RouteContent, ApprovalContent:
 		return true
 	default:
 		return false

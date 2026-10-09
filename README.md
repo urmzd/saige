@@ -154,6 +154,7 @@ This repo's conventions are available as portable agent skills in [`skills/`](sk
 See [ownership and policies](docs/orchestration-policies.md) for subagent results, handoff return links, sticky routing, and approval limits.
 See [cache contracts](docs/cache-contracts.md) for cache identity, provider cache modes, and remaining defects.
 See [durable execution](docs/durable-execution.md) for saved approvals, crash recovery, and budget reservations.
+See [approval policy and grants](docs/approval-policy.md) for approvals that grant a scope, denial limits, and capability defaults.
 See [observability](docs/observability.md) for OpenTelemetry spans, metrics, error attributes, and redaction.
 See [upgrade notes](docs/upgrade-notes.md) for behavior changes that can affect existing code.
 [Design decisions](DESIGN_DECISIONS.md) explain the choices and their limits.

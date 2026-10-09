@@ -228,11 +228,11 @@ func (e Envelope) InterruptReply() (InterruptReply, error) {
 }
 
 func toWireDecision(d ApprovalDecision) wireDecision {
-	return wireDecision{Approved: d.Approved, ModifiedArgs: d.ModifiedArgs, Message: d.Message, Approver: d.Approver}
+	return wireDecision(d)
 }
 
 func fromWireDecision(w wireDecision) ApprovalDecision {
-	return ApprovalDecision{Approved: w.Approved, ModifiedArgs: w.ModifiedArgs, Message: w.Message, Approver: w.Approver}
+	return ApprovalDecision(w)
 }
 
 // FlattenDelta unwraps nested ToolExecDelta values and returns the tool call
@@ -597,6 +597,7 @@ type wireDecision struct {
 	ModifiedArgs map[string]any `json:"modified_args,omitempty"`
 	Message      string         `json:"message,omitempty"`
 	Approver     string         `json:"approver,omitempty"`
+	Grant        *GrantRequest  `json:"grant,omitempty"`
 }
 
 type wireInterruptReply struct {

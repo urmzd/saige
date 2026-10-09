@@ -24,6 +24,8 @@ type StepKind string
 const (
 	StepKindLLM  StepKind = "llm"
 	StepKindTool StepKind = "tool"
+	// StepKindApproval records an approval policy's verdict on one call.
+	StepKindApproval StepKind = "approval"
 )
 
 // StepResult is the serializable payload a durable step records. It is a
@@ -40,6 +42,7 @@ type StepResult struct {
 	ToolResult string            // tool text projection / aggregated sub-agent text
 	ToolBlocks []ToolResultBlock // rich tool output; survives durable replay
 	ToolError  string            // non-empty => tool errored (recorded, not retried)
+	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
 }
 
 // NoopStepRunner runs steps inline with no memoization. It is the default,

@@ -385,3 +385,92 @@ func TestIdempotentAttemptRepeats(t *testing.T) {
 		t.Fatalf("step = %+v", r.state.Steps["put"])
 	}
 }
+
+// grantProvider asks for one write, then for a second write next to a
+// destructive call, then answers.
+type grantProvider struct{}
+
+func (grantProvider) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	out := make(chan types.Delta, 20)
+	var deltas []types.Delta
+	switch {
+	case len(m) <= 2:
+		deltas = agenttest.ToolCallResponse("c1", "write", map[string]any{"v": "1"})
+	case len(m) <= 4:
+		deltas = append(agenttest.ToolCallResponse("c2", "write", map[string]any{"v": "2"}),
+			agenttest.ToolCallResponse("c3", "drop", nil)...)
+	default:
+		deltas = agenttest.TextResponse("done")
+	}
+	for _, d := range deltas {
+		out <- d
+	}
+	close(out)
+	return out, nil
+}
+
+func TestGrantVerdictReplaysAfterExpiry(t *testing.T) {
+	ctx := context.Background()
+	engine := New(t.TempDir())
+	start := time.Now()
+	var now atomic.Int64
+	now.Store(start.UnixNano())
+	var writes, drops atomic.Int32
+	write := &types.ToolFunc{Def: types.ToolDef{Name: "write", Capability: types.ToolCapabilityWrite}, Fn: func(context.Context, map[string]any) (string, error) {
+		writes.Add(1)
+		return "written", nil
+	}}
+	drop := &types.ToolFunc{Def: types.ToolDef{Name: "drop", Capability: types.ToolCapabilityDestructive}, Fn: func(context.Context, map[string]any) (string, error) {
+		drops.Add(1)
+		return "dropped", nil
+	}}
+	factory := func() *agent.Agent {
+		return agent.NewAgent(agent.AgentConfig{Provider: grantProvider{}, Tools: types.NewToolRegistry(write, drop), MaxParallelTools: 1},
+			agent.WithApprovalPolicy(agent.ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }}))
+	}
+	input := []types.Message{types.NewUserMessage("go")}
+	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
+		t.Fatal(err)
+	}
+	grant := &types.GrantRequest{Scope: types.GrantTool, ExpiresAt: start.Add(time.Hour)}
+	if err := engine.Decide("run", "v1", "gate/c1", "k1", types.ApprovalDecision{Approved: true, Approver: "ops", Grant: grant}); err != nil {
+		t.Fatal(err)
+	}
+	// The grant approves c2 without asking; the destructive c3 still asks.
+	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
+		t.Fatal(err)
+	}
+	if writes.Load() != 2 || drops.Load() != 0 {
+		t.Fatalf("writes=%d drops=%d", writes.Load(), drops.Load())
+	}
+	state, err := engine.Inspect("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, asked := state.Interrupts["gate/c2"]; asked {
+		t.Fatal("the grant did not cover c2")
+	}
+	// The grant has expired by the time the run resumes. The replay must
+	// still reach the recorded verdict for c2 instead of asking again.
+	now.Store(start.Add(2 * time.Hour).UnixNano())
+	if err := engine.Decide("run", "v1", "gate/c3", "k3", types.ApprovalDecision{Approved: true}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Run(ctx, "run", "v1", factory, input)
+	if err != nil || result == nil {
+		t.Fatalf("%v %v", result, err)
+	}
+	if writes.Load() != 2 || drops.Load() != 1 {
+		t.Fatalf("writes=%d drops=%d", writes.Load(), drops.Load())
+	}
+	state, err = engine.Inspect("run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, asked := state.Interrupts["gate/c2"]; asked {
+		t.Fatal("replay asked about c2 again")
+	}
+	if _, ok := state.Steps["approval-gate-c2"]; !ok {
+		t.Fatalf("verdict not recorded: %v", state.Steps)
+	}
+}

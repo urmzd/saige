@@ -78,7 +78,7 @@ curl -N localhost:8787/v1/sessions/$sid/turns/$tid/events
 | DELETE | `/v1/sessions/{sid}` | Cancel the running turn and drop the session |
 | POST | `/v1/sessions/{sid}/turns` | `{message}` starts a turn: `202 {turn_id}`. `409` while another turn in the session runs. |
 | GET | `/v1/sessions/{sid}/turns/{tid}/events` | SSE stream. `Last-Event-ID` (or `?after=`) resumes after that seq. Ends after the turn's last event. `410 {oldest_seq}` when the next event is no longer kept (see below). |
-| POST | `/v1/sessions/{sid}/turns/{tid}/interrupts/{tool_call_id}` | `{approved, message, modified_args}` answers a `marker` event. A sub-agent's call id contains `/` (`<delegation id>/<child id>`); send it as-is or percent-encoded. `404` when nothing is pending for that call. |
+| POST | `/v1/sessions/{sid}/turns/{tid}/interrupts/{tool_call_id}` | `{approved, message, modified_args, grant}` answers a `marker` event. An optional `grant` (`scope`: `once`, `tool`, `args` or `session`; `match`; `expires_at`) approves later calls it covers for the rest of the session. An invalid, expired, or refused grant is a `400`. A sub-agent's call id contains `/` (`<delegation id>/<child id>`); send it as-is or percent-encoded. `404` when nothing is pending for that call. |
 | POST | `/v1/sessions/{sid}/turns/{tid}/cancel` | Cancel the turn |
 | GET | `/v1/sessions/{sid}/turns/{tid}` | `{done, last_seq, error}` |
 | GET | `/v1/sessions/{sid}/tree` | The conversation tree as JSON |
@@ -91,6 +91,7 @@ Safety rules:
 
 - **Localhost by default.** Binding to a non-loopback address requires `--token` or `SAIGE_SERVE_TOKEN`, sent as `Authorization: Bearer <token>`. Without a token, requests whose `Host` is not a loopback name are refused.
 - **JSON-only POSTs.** Every POST must send `Content-Type: application/json`, which a cross-site form cannot do without a CORS preflight the server never grants.
+- **Grants are explicit.** Only a client's approval creates a grant, it never covers a destructive tool, and `--deny-after N` stops asking about a tool after N denials in a session. See [approval policy and grants](../../docs/approval-policy.md).
 - **No silent approvals.** `approved` must be present. A pending approval that gets no decision within `--approval-timeout` (default 10m) is denied, including when the client disconnected.
 
 ### Tool packs

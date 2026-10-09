@@ -143,6 +143,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		Extractors:       parent.Extractors,
 		ToolGate:         parent.ToolGate,
 		ToolPolicy:       parent.ToolPolicy,
+		ApprovalPolicy:   parent.ApprovalPolicy,
 		Deps:             parent.Deps,
 		ToolContext:      parent.ToolContext,
 		Tokenizer:        parent.Tokenizer,

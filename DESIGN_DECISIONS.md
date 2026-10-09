@@ -348,3 +348,12 @@ An option an entry cannot honor is rejected at load time with the path and the l
 The embedded catalog is the single source of truth for model rows; a golden test freezes what it resolves. Hosts load further layers through a `Source`, and only `Install` or `Use` changes what `Lookup` returns.
 Failover across vendors is opt-in. The CLI default runs one vendor, the first that can serve, and a preset names its chain when failover is wanted. Authentication and content-filter failures end the request unless the preset says otherwise.
 A layer that arrives with a repository is checked against an allowlist, not a denylist, so a new field stays closed to it until someone decides.
+
+## D-38: Let approvals grant scope, and record every grant
+
+Asking about every held call trains people to approve without reading. An `ApprovalPolicy` lets an approval carry a grant: once, the tool, matching arguments, or the conversation, with an optional expiry. Later calls the grant covers run without asking.
+Only the host creates grants, from the decisions it delivers. The model's text and arguments, tool and skill output, and gates cannot (D-08, D-28).
+Grants never cover a destructive tool, and neither does the opt-in approval ramp. A tool people denied too often is refused with the reason, or hidden from the model.
+Each decision is recorded as metadata in the tree next to the call's result, and the policy's state is rebuilt from those records at the start of each run, so a restored conversation decides alike. Compaction writes the whole state onto its new branch as one snapshot record. A turn that ends before its results are written loses that turn's records, which at worst asks again.
+Under a durable runner the verdict on each call is a recorded step, so a replay decides the same way after a grant expired. The decision that created a grant is saved with the approval.
+State is per conversation. A sub-agent starts with none, so a grant never crosses a delegation.

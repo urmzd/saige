@@ -25,6 +25,7 @@ func init() {
 	gob.Register(types.SteerContent{})
 	gob.Register(types.TruncationContent{})
 	gob.Register(types.RouteContent{})
+	gob.Register(types.ApprovalContent{})
 	// Tool-call Arguments are map[string]any decoded from JSON; nested arrays and
 	// objects arrive as []interface{} / map[string]interface{} inside interface
 	// values and must be registered or gob.Encode fails on real tool schemas.

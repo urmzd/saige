@@ -95,6 +95,12 @@ type AgentConfig struct {
 	ToolGate   types.ToolGate
 	ToolPolicy ToolPolicy // nil exposes all tools
 
+	// ApprovalPolicy lets approvals adapt within a conversation: grants a
+	// person attaches to an approval, a denial limit, capability-class
+	// defaults, and an opt-in approval ramp. nil asks about every held call.
+	// See ApprovalPolicy.
+	ApprovalPolicy *ApprovalPolicy
+
 	// ToolContext carries the configurable knobs tools read (see
 	// types.ToolContext). It is attached to every tool call's context, so a
 	// tool reads per-deployment configuration without its signature changing.
@@ -1277,6 +1283,15 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	if err := a.reportStarted(stream, tr, branch); err != nil {
 		return err
 	}
+	if a.cfg.ApprovalPolicy != nil {
+		// The conversation's grants and counts are rebuilt from the records
+		// on its branch, so a restored or replayed run decides alike.
+		msgs, err := tr.FlattenBranch(branch)
+		if err != nil {
+			return err
+		}
+		stream.approvals = newApprovalState(msgs)
+	}
 
 	// scopeBranch keys per-conversation policy state. It stays the branch the
 	// run started on even after compaction moves the run elsewhere.
@@ -1370,6 +1385,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		if err != nil {
 			return err
 		}
+		active = a.hideDenied(stream, active)
 		// The final_answer tool and a prompted schema apply to every turn
 		// and every member, after tool selection, so a policy cannot hide
 		// the way the run ends.
@@ -1424,6 +1440,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				}
 				branch = newBranch
 				stream.branch = branch
+				if err := a.carryApprovals(ctx, stream, tr, branch); err != nil {
+					return err
+				}
 				continue
 			}
 		}
@@ -1483,6 +1502,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				}
 				branch = newBranch
 				stream.branch = branch
+				if err := a.carryApprovals(ctx, stream, tr, branch); err != nil {
+					return err
+				}
 				continue
 			}
 			log.Error("provider call failed", "error", err, "iteration", iterCount)
@@ -1797,7 +1819,13 @@ func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch ty
 		}
 		contents[i] = trc
 	}
-	return a.appendToBranch(ctx, tr, branch, types.NewToolResultMessage(contents...))
+	msg := types.NewToolResultMessage(contents...)
+	for _, r := range results {
+		for _, rec := range r.approvals {
+			msg.Content = append(msg.Content, rec)
+		}
+	}
+	return a.appendToBranch(ctx, tr, branch, msg)
 }
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
@@ -2111,6 +2139,8 @@ type toolResult struct {
 	subAgent string
 	// version is the version the tool reported, recorded with its result.
 	version string
+	// approvals records the approval policy's decisions about the call.
+	approvals []types.ApprovalContent
 }
 
 // executeToolsConcurrently runs all tool calls, streaming deltas as they arrive.
@@ -2263,9 +2293,9 @@ func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types
 func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker, phase string) (decision, bool) {
 	d, ok := a.awaitInterrupt(ctx, stream, interruptRequest{kind: interruptKind(tc, phase), phase: phase, call: tc, markers: markers})
 	if !ok {
-		return decision{message: d.message}, false
+		return d, false
 	}
-	return decision{approved: true, args: d.args, approver: d.approver}, true
+	return decision{approved: true, args: d.args, approver: d.approver, grant: d.grant}, true
 }
 
 // errNonStreamingApproval stops a run that needs a human decision but has
@@ -2283,6 +2313,10 @@ var errNonStreamingApproval = errors.New("non-streaming approvals require an App
 // take down the process and every other run in it.
 func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tools *types.ToolRegistry) (res toolResult) {
 	stream.send(types.ToolExecStartDelta{ToolCallID: tc.ID, Name: tc.Name})
+	var ca callApproval
+	// Registered first so it runs last, after a recovered panic set res:
+	// the decisions made before a failure are recorded too.
+	defer func() { res.approvals = ca.records }()
 	defer func() {
 		if p := recover(); p != nil {
 			err := a.toolPanic(ctx, tc, p)
@@ -2306,8 +2340,7 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		return failedTool(stream, tc.ID, tc.Name, err.Error())
 	}
 
-	var approval types.CallApproval
-	if res, done := a.gateTool(ctx, stream, &tc, def, &approval); done {
+	if res, done := a.gateTool(ctx, stream, &tc, def, &ca); done {
 		return res
 	}
 
@@ -2326,11 +2359,11 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 		ctx = context.WithValue(ctx, agentDepsKey{}, a.cfg.Deps)
 	}
 
-	tool, res, done := a.resolveMarkers(ctx, stream, &tc, tool, &approval)
+	tool, res, done := a.resolveMarkers(ctx, stream, &tc, tool, &ca)
 	if done {
 		return res
 	}
-	ctx = types.WithCallApproval(ctx, approval)
+	ctx = types.WithCallApproval(ctx, ca.approval)
 
 	// A per-tool quota is charged at dispatch, once the call is cleared to
 	// run, so a denied call never uses up the allowance. An exhausted quota
@@ -2405,12 +2438,21 @@ func refusedTool(stream *EventStream, toolCallID, name, errMsg string) toolResul
 	return res
 }
 
+// toolGate returns the agent's gate, with the capability defaults of its
+// ApprovalPolicy added when it asks for them.
+func (a *Agent) toolGate() types.ToolGate {
+	if p := a.cfg.ApprovalPolicy; p != nil && p.RiskDefaults {
+		return types.Gates(a.cfg.ToolGate, riskGate)
+	}
+	return a.cfg.ToolGate
+}
+
 // gateTool applies the pre-execution gate to the resolved definition and the
 // model's actual arguments, before anything runs. It may rewrite tc.Arguments
 // in place. A denial is reported to the model as a tool error so it can adapt,
 // rather than failing the turn; done reports whether the call is finished.
-func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef, approval *types.CallApproval) (toolResult, bool) {
-	decision := a.cfg.ToolGate.Check(ctx, def, tc.Arguments)
+func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef, ca *callApproval) (toolResult, bool) {
+	decision := a.toolGate().Check(ctx, def, tc.Arguments)
 	if decision.Outcome == types.GateAllow {
 		if decision.ModifiedArgs != nil {
 			// An allowing gate may still narrow the call, e.g. clamping a limit.
@@ -2434,11 +2476,10 @@ func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.Too
 		if decision.Marker != nil {
 			marker = *decision.Marker
 		}
-		d, ok := a.awaitApprovalPhase(ctx, stream, *tc, []types.Marker{marker}, "gate")
+		d, ok := a.requestApproval(ctx, stream, *tc, def, []types.Marker{marker}, "gate", ca)
 		if !ok {
 			return refusedTool(stream, tc.ID, tc.Name, d.message), true
 		}
-		*approval = types.CallApproval{Required: true, Approver: d.approver}
 		if d.args != nil {
 			return a.recheckEditedArgs(ctx, stream, tc, def, d.args)
 		}
@@ -2456,7 +2497,7 @@ func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *
 	if err := types.ValidateToolArgs(def.Parameters, args); err != nil {
 		return failedTool(stream, tc.ID, tc.Name, err.Error()), true
 	}
-	decision := a.cfg.ToolGate.Check(ctx, def, args)
+	decision := a.toolGate().Check(ctx, def, args)
 	if decision.ModifiedArgs != nil {
 		tc.Arguments = decision.ModifiedArgs
 	}
@@ -2478,17 +2519,16 @@ func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *
 // wraps a marked tool without re-marking it still prompts. The decorator is
 // then kept and run as is; its MarkedTool runs the inner tool without asking
 // again.
-func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool, approval *types.CallApproval) (types.Tool, toolResult, bool) {
+func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool, ca *callApproval) (types.Tool, toolResult, bool) {
 	mt, ok := types.As[*types.MarkedTool](tool)
 	if !ok || len(mt.Markers) == 0 {
 		return tool, toolResult{}, false
 	}
 
-	d, approved := a.awaitApprovalPhase(ctx, stream, *tc, mt.Markers, "marker")
+	d, approved := a.requestApproval(ctx, stream, *tc, tool.Definition(), mt.Markers, "marker", ca)
 	if !approved {
 		return tool, refusedTool(stream, tc.ID, tc.Name, d.message), true
 	}
-	*approval = types.CallApproval{Required: true, Approver: d.approver}
 	if d.args != nil {
 		if res, done := a.recheckEditedArgs(ctx, stream, tc, tool.Definition(), d.args); done {
 			return tool, res, true

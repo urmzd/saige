@@ -699,3 +699,69 @@ func TestServeStreamsAGUIEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestServeApprovalGrant(t *testing.T) {
+	isMarker := func(fr sseFrame) bool { return fr.kind == types.WireMarker }
+	newFixture := func(t *testing.T) *serveFixture {
+		calls := &atomic.Int32{}
+		tool := countedDanger(calls)
+		opts := serveOptions{approvalTimeout: 2 * time.Second}
+		opts.newAgent = func() (*agentsdk.Agent, error) {
+			return agentsdk.NewAgent(agentsdk.AgentConfig{
+				Name: "test",
+				Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+					agenttest.ToolCallResponse("call_1", "danger", map[string]any{}),
+					agenttest.ToolCallResponse("call_2", "danger", map[string]any{}),
+					agenttest.TextResponse("finished"),
+				}},
+				Tools: types.NewToolRegistry(tool),
+			}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})), nil
+		}
+		return newServeFixtureWith(t, opts, calls)
+	}
+
+	t.Run("a tool grant approves the next call", func(t *testing.T) {
+		f := newFixture(t)
+		sid, tid := f.startTurn("do it twice")
+		f.events(sid, tid, "", isMarker)
+		base := "/v1/sessions/" + sid + "/turns/" + tid
+		f.post(base+"/interrupts/call_1", map[string]any{"approved": true, "grant": map[string]any{
+			"scope": "tool", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		}}, http.StatusOK)
+		status := waitDone(t, f, sid, tid)
+		if _, failed := status["error"]; failed || f.calls.Load() != 2 {
+			t.Fatalf("status %v, tool ran %d times; want the grant to approve call_2", status, f.calls.Load())
+		}
+		var markers int
+		for _, fr := range f.events(sid, tid, "", func(sseFrame) bool { return false }) {
+			if isMarker(fr) {
+				markers++
+			}
+		}
+		if markers != 1 {
+			t.Fatalf("asked %d times, want once", markers)
+		}
+	})
+
+	t.Run("invalid grants are rejected", func(t *testing.T) {
+		f := newFixture(t)
+		sid, tid := f.startTurn("do it")
+		f.events(sid, tid, "", isMarker)
+		path := "/v1/sessions/" + sid + "/turns/" + tid + "/interrupts/call_1"
+		for name, body := range map[string]map[string]any{
+			"unknown scope":       {"approved": true, "grant": map[string]any{"scope": "forever"}},
+			"args without match":  {"approved": true, "grant": map[string]any{"scope": "args"}},
+			"matcher without one": {"approved": true, "grant": map[string]any{"scope": "args", "match": []any{map[string]any{"field": "path"}}}},
+			"expired":             {"approved": true, "grant": map[string]any{"scope": "tool", "expires_at": "2000-01-01T00:00:00Z"}},
+			"on a denial":         {"approved": false, "grant": map[string]any{"scope": "tool"}},
+		} {
+			out := f.post(path, body, http.StatusBadRequest)
+			if out["error"] == nil {
+				t.Errorf("%s: no error message", name)
+			}
+		}
+		// The marker is still waiting for a valid decision.
+		f.post(path, map[string]any{"approved": false}, http.StatusOK)
+		waitDone(t, f, sid, tid)
+	})
+}

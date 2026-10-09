@@ -30,6 +30,11 @@ type ApprovalDecision struct {
 	// example a user ID. It is recorded with the call and never shown to
 	// the model. Empty means the host did not say.
 	Approver string `json:",omitempty"`
+	// Grant extends an approval beyond this call, to the tool, to matching
+	// arguments, or to the conversation, until an optional expiry. It is
+	// ignored on a refusal, and when the run has no ApprovalPolicy. Only
+	// the host supplies it.
+	Grant *GrantRequest `json:",omitempty"`
 }
 
 // CallApproval describes how a tool call was cleared to run. The agent loop
