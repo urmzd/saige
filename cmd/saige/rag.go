@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/tui"
-	"github.com/urmzd/saige/rag"
-	"github.com/urmzd/saige/rag/extractor"
-	"github.com/urmzd/saige/rag/pgstore"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
@@ -29,38 +27,32 @@ func newRagCmd(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func ragPipeline(ctx context.Context, dsn string) (ragtypes.Pipeline, func()) {
+// openRAGPipeline connects to the RAG database (--db, then SAIGE_RAG_DB) and
+// builds the shared pipeline. The returned cleanup closes the pipeline and
+// the pool. withEmbedder is set only for commands that embed (search, ingest).
+func openRAGPipeline(ctx context.Context, dsn string, withEmbedder bool) (ragtypes.Pipeline, func(), error) {
 	if dsn == "" {
 		dsn = os.Getenv("SAIGE_RAG_DB")
 	}
 	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "error: --db or SAIGE_RAG_DB is required")
-		os.Exit(1)
+		return nil, nil, errors.New("--db or SAIGE_RAG_DB is required")
 	}
 
 	pool, err := connectPostgres(ctx, dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
 
-	store := pgstore.NewStore(pool, nil)
-	pipeline, err := rag.NewPipeline(
-		rag.WithStore(store),
-		rag.WithContentExtractor(extractor.NewAuto()),
-		rag.WithRecursiveChunker(512, 64),
-		rag.WithBM25(nil),
-	)
+	pipeline, err := newRAGPipeline(ctx, pool, persistentFlagVars, withEmbedder)
 	if err != nil {
 		pool.Close()
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
 
 	return pipeline, func() {
 		_ = pipeline.Close(ctx)
 		pool.Close()
-	}
+	}, nil
 }
 
 func newRagSearchCmd(ctx context.Context) *cobra.Command {
@@ -75,22 +67,22 @@ func newRagSearchCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "rag search"})
 
 			if query == "" {
-				out.Error(fmt.Errorf("--query is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--query is required"))
 			}
 
-			pipeline, cleanup := ragPipeline(ctx, db)
+			pipeline, cleanup, err := openRAGPipeline(ctx, db, true)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			result, err := pipeline.Search(ctx, query, ragtypes.WithLimit(limit))
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
-			if err := out.Result(result); err != nil {
-				out.Error(err)
-				os.Exit(1)
+			if err := out.Result(withoutEmbeddings(result)); err != nil {
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -115,22 +107,22 @@ func newRagLookupCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "rag lookup"})
 
 			if uuid == "" {
-				out.Error(fmt.Errorf("--uuid is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--uuid is required"))
 			}
 
-			pipeline, cleanup := ragPipeline(ctx, db)
+			pipeline, cleanup, err := openRAGPipeline(ctx, db, false)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			hit, err := pipeline.Lookup(ctx, uuid)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			if err := out.Result(hit); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -154,17 +146,18 @@ func newRagIngestCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "rag ingest"})
 
 			if file == "" {
-				out.Error(fmt.Errorf("--file is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--file is required"))
 			}
 
 			data, err := os.ReadFile(file) //nolint:gosec // file path is from CLI flag, not untrusted input
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
-			pipeline, cleanup := ragPipeline(ctx, db)
+			pipeline, cleanup, err := openRAGPipeline(ctx, db, true)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			sourceURI := source
@@ -178,13 +171,11 @@ func newRagIngestCmd(ctx context.Context) *cobra.Command {
 				Data:      data,
 			})
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			if err := out.Result(result); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			return nil
 		},
@@ -210,16 +201,17 @@ func newRagDeleteCmd(ctx context.Context) *cobra.Command {
 			out.Header(tui.OutputHeader{Operation: "rag delete"})
 
 			if uuid == "" {
-				out.Error(fmt.Errorf("--uuid is required"))
-				os.Exit(1)
+				return reported(out, fmt.Errorf("--uuid is required"))
 			}
 
-			pipeline, cleanup := ragPipeline(ctx, db)
+			pipeline, cleanup, err := openRAGPipeline(ctx, db, false)
+			if err != nil {
+				return reported(out, err)
+			}
 			defer cleanup()
 
 			if err := pipeline.Delete(ctx, uuid); err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			out.Status(fmt.Sprintf("deleted %s", uuid))
@@ -232,4 +224,20 @@ func newRagDeleteCmd(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 
 	return cmd
+}
+
+// withoutEmbeddings returns a copy of result whose hits carry no embedding
+// vectors. A vector is hundreds of floats per hit, which buries the text in
+// both output formats and means nothing to a reader.
+func withoutEmbeddings(result *ragtypes.SearchPipelineResult) *ragtypes.SearchPipelineResult {
+	if result == nil {
+		return nil
+	}
+	out := *result
+	out.Hits = make([]ragtypes.SearchHit, len(result.Hits))
+	for i, h := range result.Hits {
+		h.Variant.Embedding = nil
+		out.Hits[i] = h
+	}
+	return &out
 }

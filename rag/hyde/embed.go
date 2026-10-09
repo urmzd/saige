@@ -3,6 +3,7 @@ package hyde
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"text/template"
 )
 
@@ -13,10 +14,10 @@ var DefaultPromptTemplate string
 
 var defaultPromptTmpl = template.Must(template.New("default").Parse(DefaultPromptTemplate))
 
-func renderPrompt(tmpl *template.Template, data any) string {
+func renderPrompt(tmpl *template.Template, data any) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		panic("render prompt: " + err.Error())
+		return "", fmt.Errorf("hyde: render prompt: %w", err)
 	}
-	return buf.String()
+	return buf.String(), nil
 }

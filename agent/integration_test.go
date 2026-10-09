@@ -3524,81 +3524,88 @@ func TestPersistCompactedTooShortReturnsError(t *testing.T) {
 }
 
 // ===================================================================
-// tryCompact tests
+// runCompaction with a message-level compactor
 // ===================================================================
 
-func TestTryCompactNoCompactorNoOp(t *testing.T) {
-	agent := NewAgent(AgentConfig{
-		Provider:     &mockProvider{response: "ok"},
-		SystemPrompt: "sys",
-	})
-
-	rc := resolvedConfig{maxIter: 10}
-	msgs := []types.Message{types.NewSystemMessage("sys"), types.NewUserMessage("hi")}
-
-	_, compacted := agent.tryCompact(context.Background(), agent.cfg.Logger, rc, msgs, agent.cfg.Tree)
-	if compacted {
-		t.Error("should not compact without compactor")
+// compactionHistory builds a tree holding a system prompt and n alternating
+// user and assistant messages on main.
+func compactionHistory(t *testing.T, n int) *tree.Tree {
+	t.Helper()
+	tr, err := tree.New(types.NewSystemMessage("sys"))
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestTryCompactBelowThresholdNoOp(t *testing.T) {
-	agent := NewAgent(AgentConfig{
-		Provider:     &mockProvider{response: "ok"},
-		SystemPrompt: "sys",
-	})
-
-	// Compactor with high threshold: won't trigger.
-	rc := resolvedConfig{
-		maxIter:   10,
-		compactor: types.NewSummarizeCompactor(100, 4),
-	}
-	msgs := []types.Message{types.NewSystemMessage("sys"), types.NewUserMessage("hi")}
-
-	_, compacted := agent.tryCompact(context.Background(), agent.cfg.Logger, rc, msgs, agent.cfg.Tree)
-	if compacted {
-		t.Error("should not compact below threshold")
-	}
-}
-
-func TestTryCompactSuccessReturnsTrueAndNewBranch(t *testing.T) {
-	provider := &mockProvider{response: "summary of conversation"}
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
-
-	// Build up enough messages on main branch to trigger summarize.
 	current := tr.Root()
-	for i := 0; i < 6; i++ {
+	for i := range n {
 		var msg types.Message
 		if i%2 == 0 {
 			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
 		} else {
 			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
-		node, _ := tr.AddChild(context.Background(), current.ID, msg)
+		node, err := tr.AddChild(context.Background(), current.ID, msg)
+		if err != nil {
+			t.Fatal(err)
+		}
 		current = node
 	}
+	return tr
+}
 
-	agent := NewAgent(AgentConfig{
-		Provider:     provider,
-		SystemPrompt: "sys",
-		Tree:         tr,
-	})
+func TestRunCompactionWithCompactor(t *testing.T) {
+	tests := []struct {
+		name          string
+		compactor     types.Compactor
+		messages      int
+		wantCompacted bool
+	}{
+		{name: "no compactor", messages: 6},
+		{name: "below threshold", compactor: types.NewSummarizeCompactor(100, 4), messages: 6},
+		{name: "over threshold", compactor: types.NewSummarizeCompactor(3, 2), messages: 6, wantCompacted: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The agent's own provider must not be used: compaction runs with
+			// the active member's provider.
+			configured := &mockProvider{response: "wrong provider"}
+			member := &mockProvider{response: "summary of conversation"}
+			tr := compactionHistory(t, tt.messages)
+			a := NewAgent(AgentConfig{Provider: configured, SystemPrompt: "sys", Tree: tr})
+			msgs, err := tr.FlattenBranch("main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stream := newEventStream(ctx, cancel)
+			rc := resolvedConfig{maxIter: 10, compactor: tt.compactor}
+			active := activeContext{provider: member, messages: msgs}
 
-	msgs, _ := tr.FlattenBranch("main")
-	rc := resolvedConfig{
-		maxIter:   10,
-		compactor: types.NewSummarizeCompactor(3, 2), // threshold=3, keepLast=2
-	}
-
-	newBranch, compacted := agent.tryCompact(context.Background(), agent.cfg.Logger, rc, msgs, tr)
-	if !compacted {
-		t.Fatal("expected compaction to succeed")
-	}
-	if newBranch == "" {
-		t.Fatal("expected non-empty branch ID")
-	}
-	if tr.Active() != newBranch {
-		t.Errorf("active = %s, want %s", tr.Active(), newBranch)
+			newBranch, compacted, err := a.runCompaction(ctx, stream, &overflowState{}, rc, active, tr, "main", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if compacted != tt.wantCompacted {
+				t.Fatalf("compacted = %v, want %v", compacted, tt.wantCompacted)
+			}
+			if !tt.wantCompacted {
+				if tr.Active() != "main" {
+					t.Fatalf("active = %s, want main", tr.Active())
+				}
+				return
+			}
+			if newBranch == "" || tr.Active() != newBranch {
+				t.Fatalf("active = %s, new branch = %q", tr.Active(), newBranch)
+			}
+			compactedMsgs, err := tr.FlattenBranch(newBranch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := types.MessagesToText(compactedMsgs)
+			if !strings.Contains(text, "summary of conversation") || strings.Contains(text, "wrong provider") {
+				t.Fatalf("summary did not come from the active provider:\n%s", text)
+			}
+		})
 	}
 }
 

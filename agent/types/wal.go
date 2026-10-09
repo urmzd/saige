@@ -14,6 +14,9 @@ const (
 	TxOpSetBranch     TxOpKind = "set_branch"
 	TxOpAddChild      TxOpKind = "add_child"
 	TxOpAddCheckpoint TxOpKind = "add_checkpoint"
+	// TxOpSetActive records the active-branch pointer. Its BranchID names
+	// the branch that Invoke reads from.
+	TxOpSetActive TxOpKind = "set_active"
 )
 
 // TxOp is a single operation within a WAL transaction.

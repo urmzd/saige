@@ -76,6 +76,8 @@ type Provider interface {
 | Anthropic | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | no |
 | Google | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
 
+The OpenAI package has two adapters. `openai.NewAdapter` uses Chat Completions, and `openai.NewResponsesAdapter` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
+
 > **Note:** Anthropic does not offer an embedding API. When using Anthropic as your LLM
 > provider with RAG or Knowledge Graph features, supply a separate embedder from another
 > provider. In the CLI: `--provider anthropic` with an additional API key set
@@ -165,7 +167,13 @@ tool := &types.ToolFunc{
 }
 ```
 
-When the LLM requests multiple tool calls, all tools execute **concurrently**.
+When the LLM requests multiple tool calls in one turn, they run concurrently on
+the same tool instances. Every `Tool`, `ToolGate`, result policy and result sink
+must therefore be safe for concurrent use, unless the agent uses
+`WithSequentialTools`. An `Agent` is safe for concurrent use by runs on
+different branches, but one run holds a branch at a time: a second `Invoke` or
+`Continue` on a busy branch fails with `agent.ErrRunActive`. Use
+`Agent.Submit` to queue or steer input into the active run instead.
 
 Tools that share mutable state, or whose contract depends on call order, need a
 total order instead. `agent.WithSequentialTools()` runs the calls one at a time,
@@ -197,10 +205,31 @@ a := agent.NewAgent(agent.AgentConfig{
             SystemPrompt: "You are a research assistant.",
             Provider:     adapter,
             Tools:        types.NewToolRegistry(searchTool),
+            Timeout:      2 * time.Minute, // bounds the whole delegated run
         },
     },
 })
 ```
+
+`SubAgentDef.Timeout` bounds the whole delegated run, apart from time spent
+waiting for approvals. The child's own `LLMTimeout` and `ToolTimeout` still
+apply per call; the parent's `ToolTimeout` does not cover a delegation.
+
+`SubAgentDef.Mode` picks how the child runs:
+
+| Mode | Tool | Behavior |
+|------|------|----------|
+| `SubAgentDelegate` (default) | `delegate_to_<name>` | The parent's tool call waits for the child's answer |
+| `SubAgentSpawn` | `spawn_<name>` | Starts the child in the background and returns a handle; `await_subagent`, `send_subagent`, `cancel_subagent`, `list_subagents`, `search_subagent` and `read_subagent` manage it |
+
+`SubAgentDef.Context` picks what the child starts with: `ContextTaskOnly`
+(default, the task alone), `ContextFork` (the parent's branch up to the
+delegating turn, without thinking blocks), or `ContextFiltered` (the messages
+`ContextFilter` selects from that history).
+
+Register `agent.ClarificationTool()` to give the model an `ask_user` tool. Its
+question reaches the consumer as an interrupt, like an approval, and the answer
+is the tool result.
 
 ## Markers (Human-in-the-Loop)
 
@@ -211,9 +240,21 @@ safeTool := types.WithMarkers(myTool,
     types.Marker{Kind: "human_approval", Message: "This modifies production data."},
 )
 
-// Consumer resolves:
-stream.ResolveMarker(d.ToolCallID, approved, nil)
+// Consumer resolves; the error reports a marker that is unknown, expired or
+// already answered:
+err := stream.ResolveMarkerErr(d.ToolCallID, agent.Resolution{Approved: approved})
 ```
+
+`agent.WithInterruptExpiry(ttl, policy)` bounds how long a decision may wait.
+An expired approval is denied by default (`types.InterruptExpireDeny`);
+`InterruptExpireFail` stops the run and `InterruptExpireEscalate` asks the
+caller one level up.
+
+A stream produced in another process can be consumed the same way.
+`types.MarshalDelta` and `types.UnmarshalDelta` encode each delta as a
+versioned wire envelope, and `agent.NewRemoteStream(deltas, wait, cancel,
+resolve)` wraps the decoded deltas in an `EventStream`, forwarding
+`ResolveMarkerErr` calls through `resolve`.
 
 ## Structured Output
 
@@ -225,6 +266,18 @@ a := agent.NewAgent(agent.AgentConfig{
     Provider: adapter,
 }, agent.WithResponseSchema(schema))
 ```
+
+Without tools every turn is sent with the schema. With tools, turns are sent
+with the tools and without the schema, since most providers cannot combine
+them; when a turn ends without tool calls and its text does not already
+satisfy the schema, the loop asks once more with the schema and no tools, and
+that reply is the final answer. A provider that cannot enforce a schema fails
+the run with `types.ErrInvalidModelConfig`, also behind retry, fallback and
+tracing decorators. The schema is never dropped.
+
+`AgentConfig.ServerTools` (`WithServerTools`) is informational: the loop
+neither sends nor validates it. Enable provider-run tools on the adapter with
+`anthropic.WithServerTools` or `google.WithServerTools`.
 
 ## Provider Resilience
 
@@ -310,14 +363,19 @@ import "github.com/urmzd/saige/agent/tui"
 // Non-interactive (works in pipes/CI)
 result := tui.StreamVerbose(header, stream.Deltas(), os.Stdout)
 
-// Interactive single-stream (bubbletea)
-model := tui.NewStreamModel(header, stream.Deltas())
+// Interactive single-stream (bubbletea); quitting early cancels the run
+model := tui.NewStreamModel(header, stream.Deltas()).WithCancel(stream.Cancel)
 tea.NewProgram(model).Run()
 
 // Multi-turn conversation loop (reads input, resolves markers, loops until /quit)
 runner := &tui.Runner{Title: "My Agent"}
 runner.Run(ctx, myAgent)
 ```
+
+In the runner, Enter queues a message for the active run, Ctrl-J or Alt-Enter
+steers it at the next safe point, Esc stops the run, Ctrl-C twice quits, and
+`/continue` resumes a turn that was stopped or cut short. `*tui.JSONOutput`
+writes one wire envelope per line.
 
 ## Testing
 

@@ -60,6 +60,12 @@ func (s *Store) GetGraph(ctx context.Context, limit int64) (*types.GraphData, er
 }
 
 // GetNode returns a node with its multi-hop neighbors and edges (BFS).
+//
+// Each hop runs one query for the whole frontier. Edges are deduplicated by
+// relation UUID, and only edges whose endpoints are both admitted nodes are
+// returned. The traversal stops at the store's node and edge caps (see
+// WithTraversalLimits) and then sets NodeDetail.Truncated. A failed hop
+// query fails the call instead of returning a silently partial graph.
 func (s *Store) GetNode(ctx context.Context, id string, depth int) (*types.NodeDetail, error) {
 	if depth < 1 {
 		depth = 1
@@ -75,41 +81,96 @@ func (s *Store) GetNode(ctx context.Context, id string, depth int) (*types.NodeD
 	}
 
 	visited := map[string]bool{id: true}
-	var allNeighbors []types.GraphNode
-	var allEdges []types.GraphEdge
+	seenEdges := make(map[string]bool)
+	allNeighbors := []types.GraphNode{}
+	allEdges := []types.GraphEdge{}
 	frontier := []string{id}
+	truncated := false
 
-	for d := 0; d < depth && len(frontier) > 0; d++ {
+	for d := 0; d < depth && len(frontier) > 0 && !truncated; d++ {
+		remaining := s.maxEdges - len(allEdges)
+		edges, nodes, err := s.neighborsOf(ctx, frontier, seenEdges, remaining+1)
+		if err != nil {
+			return nil, fmt.Errorf("get node %s: hop %d: %w", id, d+1, err)
+		}
+		if len(edges) > remaining {
+			edges = edges[:remaining]
+			truncated = true
+		}
+
 		var nextFrontier []string
-		for _, nodeUUID := range frontier {
-			neighbors, edges, err := s.getNeighbors(ctx, nodeUUID)
-			if err != nil {
-				s.logger.Warn("get neighbors failed", "uuid", nodeUUID, "error", err)
+		for _, e := range edges {
+			if seenEdges[e.ID] {
 				continue
 			}
-			allEdges = append(allEdges, edges...)
-			for _, n := range neighbors {
-				if !visited[n.ID] {
-					visited[n.ID] = true
-					allNeighbors = append(allNeighbors, n)
-					nextFrontier = append(nextFrontier, n.ID)
+			admitted := true
+			for _, end := range []string{e.Source, e.Target} {
+				if visited[end] {
+					continue
 				}
+				if len(allNeighbors) >= s.maxNodes {
+					admitted = false
+					truncated = true
+					break
+				}
+				visited[end] = true
+				allNeighbors = append(allNeighbors, nodes[end])
+				nextFrontier = append(nextFrontier, end)
 			}
+			if !admitted {
+				continue
+			}
+			seenEdges[e.ID] = true
+			allEdges = append(allEdges, e)
 		}
 		frontier = nextFrontier
 	}
 
-	if allNeighbors == nil {
-		allNeighbors = []types.GraphNode{}
-	}
-	if allEdges == nil {
-		allEdges = []types.GraphEdge{}
-	}
-
-	return &types.NodeDetail{Node: rootNode, Neighbors: allNeighbors, Edges: allEdges}, nil
+	return &types.NodeDetail{Node: rootNode, Neighbors: allNeighbors, Edges: allEdges, Truncated: truncated}, nil
 }
 
-// GetFactProvenance returns episodes that mention entities involved in a relation.
+// neighborsOf returns up to limit active edges touching any frontier entity,
+// newest first, with the nodes at both ends keyed by UUID. Edges already in
+// seen are excluded so they do not count against the limit again.
+func (s *Store) neighborsOf(ctx context.Context, frontier []string, seen map[string]bool, limit int) ([]types.GraphEdge, map[string]types.GraphNode, error) {
+	exclude := make([]string, 0, len(seen))
+	for id := range seen {
+		exclude = append(exclude, id)
+	}
+	rows, err := s.pool.Query(ctx, relationNeighborsBatchSQL, frontier, limit, exclude)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var edges []types.GraphEdge
+	nodes := make(map[string]types.GraphNode)
+	for rows.Next() {
+		var (
+			rUUID, rType, rFact        string
+			rCreatedAt, rValidAt       time.Time
+			rInvalidAt                 *time.Time
+			sUUID, sName, sType, sSumm string
+			tUUID, tName, tType, tSumm string
+		)
+		if err := rows.Scan(&rUUID, &rType, &rFact, &rCreatedAt, &rValidAt, &rInvalidAt,
+			&sUUID, &sName, &sType, &sSumm, &tUUID, &tName, &tType, &tSumm); err != nil {
+			return nil, nil, err
+		}
+		nodes[sUUID] = types.GraphNode{ID: sUUID, Name: sName, Type: sType, Summary: sSumm}
+		nodes[tUUID] = types.GraphNode{ID: tUUID, Name: tName, Type: tType, Summary: tSumm}
+		edges = append(edges, types.GraphEdge{
+			ID: rUUID, Source: sUUID, Target: tUUID,
+			Type: rType, Fact: rFact, Weight: 1.0,
+			CreatedAt: rCreatedAt, ValidAt: rValidAt, InvalidAt: rInvalidAt,
+		})
+	}
+	return edges, nodes, rows.Err()
+}
+
+// GetFactProvenance returns the episodes that asserted a relation, oldest
+// first. For a relation with no recorded episode links (written before links
+// existed), it returns the episodes that mention both of its endpoints.
 func (s *Store) GetFactProvenance(ctx context.Context, factUUID string) ([]types.Episode, error) {
 	rows, err := s.pool.Query(ctx, graphFactProvenanceSQL, factUUID)
 	if err != nil {
@@ -121,7 +182,7 @@ func (s *Store) GetFactProvenance(ctx context.Context, factUUID string) ([]types
 	for rows.Next() {
 		var e types.Episode
 		var metadata []byte
-		if err := rows.Scan(&e.UUID, &e.Name, &e.Body, &e.Source, &e.GroupID, &metadata, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.UUID, &e.Name, &e.Body, &e.Source, &e.GroupID, &e.DocumentID, &metadata, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		e.Metadata = decodeEpisodeMetadata(metadata)

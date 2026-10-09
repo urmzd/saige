@@ -35,12 +35,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Build the agent normally: the core package never imports dbos.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-		Name:         "researcher",
-		SystemPrompt: "You research questions and summarize concisely.",
-		Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
-	})
+	// Build each run's agent normally: the core package never imports dbos.
+	// The engine calls the factory once per workflow, so concurrent and
+	// recovered runs never share a tree or a budget.
+	newAgent := func(string) *agentsdk.Agent {
+		return agentsdk.NewAgent(agentsdk.AgentConfig{
+			Name:         "researcher",
+			SystemPrompt: "You research questions and summarize concisely.",
+			Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
+		})
+	}
 
 	// The durable engine shares the same Postgres pool.
 	engine, err := durabledbos.NewEngine(ctx, "saige-demo", pool, dsn)
@@ -51,7 +55,7 @@ func main() {
 
 	// Register the agent-run workflow BEFORE Launch; Launch recovers any
 	// in-flight workflows from a previous crash.
-	wf := engine.RegisterAgent(agent, "saige.agent.run")
+	wf := engine.RegisterAgentFactory(newAgent, "saige.agent.run")
 	if err := engine.Launch(); err != nil {
 		log.Fatalf("launch: %v", err)
 	}
@@ -60,7 +64,6 @@ func main() {
 	// the same ID returns a handle to the existing run instead of re-executing.
 	handle, err := engine.Run(wf, durabledbos.RunInput{
 		Messages: []types.Message{types.NewUserMessage("Summarize the benefits of durable workflows.")},
-		Branch:   agent.Tree().Active(),
 	}, "demo-turn-1")
 	if err != nil {
 		log.Fatalf("run: %v", err)

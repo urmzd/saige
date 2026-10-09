@@ -20,9 +20,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	agentsdk "github.com/urmzd/saige/agent"
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/tui"
+	"github.com/urmzd/saige/agent/types"
 )
 
 func main() {
@@ -111,7 +111,8 @@ func agentHeader(agent *agentsdk.Agent) tui.AgentHeader {
 }
 
 func runInteractive(agent *agentsdk.Agent, stream *agentsdk.EventStream) {
-	model := tui.NewStreamModel(agentHeader(agent), stream.Deltas())
+	// WithCancel stops the run when the user quits before it finishes.
+	model := tui.NewStreamModel(agentHeader(agent), stream.Deltas()).WithCancel(stream.Cancel)
 	p := tea.NewProgram(model)
 
 	finalModel, err := p.Run()

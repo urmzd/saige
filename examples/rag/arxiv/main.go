@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/rag"
-	"github.com/urmzd/saige/rag/tool"
-	"github.com/urmzd/saige/rag/memstore"
 	"github.com/urmzd/saige/rag/eval"
+	"github.com/urmzd/saige/rag/memstore"
+	"github.com/urmzd/saige/rag/tool"
 	"github.com/urmzd/saige/rag/types"
 )
 

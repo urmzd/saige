@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var thinkRE = regexp.MustCompile(`(?s)<think>.*?</think>`)
@@ -121,13 +122,21 @@ func Round1(v float64) float64 {
 	return float64(int(v*10-0.5)) / 10
 }
 
-// Truncate trims whitespace and cuts s to at most maxLen bytes.
+// Truncate trims whitespace and cuts s to at most maxLen bytes, backing off
+// to a rune boundary so a multi-byte character is never split.
 func Truncate(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen]
+	if maxLen <= 0 {
+		return ""
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // Rate returns the fraction of turns matching pred, 0 for an empty slice.

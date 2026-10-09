@@ -6,8 +6,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/urmzd/saige/agent/types"
+)
+
+const (
+	// maxReadFileBytes is the largest file read_file opens.
+	maxReadFileBytes = 5 << 20
+	// maxReadFileLineChars caps each emitted line so one long line cannot fill
+	// the model's context window.
+	maxReadFileLineChars = 2000
 )
 
 // ReadFileTool implements types.Tool for reading local file contents.
@@ -22,21 +31,22 @@ func NewReadFileTool(root string) *ReadFileTool {
 func (t *ReadFileTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "read_file",
+		Capability:  types.ToolCapabilityRead,
 		Description: "Read the contents of a local file. Returns the file content with line numbers. Use this to examine specific files found via file_search or known paths.",
 		Parameters: types.ParameterSchema{
-			Type:     "object",
-			Required: []string{"path"},
+			Type:     types.SchemaObject,
+			Required: []string{argPath},
 			Properties: map[string]types.PropertyDef{
-				"path":   {Type: "string", Description: "File path to read, relative to the configured root directory. Paths that escape the root are rejected."},
-				"offset": {Type: "number", Description: "Line number to start from (default: 1)"},
-				"limit":  {Type: "number", Description: "Max lines to return (default: 200)"},
+				argPath:  {Type: types.SchemaString, Description: "File path to read, relative to the configured root directory. Paths that escape the root are rejected."},
+				"offset": {Type: types.SchemaNumber, Description: "Line number to start from (default: 1)"},
+				"limit":  {Type: types.SchemaNumber, Description: "Max lines to return (default: 200)"},
 			},
 		},
 	}
 }
 
 func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	rawPath, _ := args["path"].(string)
+	rawPath, _ := args[argPath].(string)
 	if rawPath == "" {
 		return "", fmt.Errorf("read_file: path is required")
 	}
@@ -65,7 +75,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string
 	if info.IsDir() {
 		return "", fmt.Errorf("read_file: %s is a directory, not a file", path)
 	}
-	if info.Size() > 5<<20 { // 5MB
+	if info.Size() > maxReadFileBytes {
 		return "", fmt.Errorf("read_file: file too large (%d bytes), max 5MB", info.Size())
 	}
 
@@ -77,6 +87,9 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string
 
 	var b strings.Builder
 	scanner := bufio.NewScanner(f)
+	// The default 64KB token limit fails the whole read on one long line, such
+	// as minified JS or a lockfile. The file cap bounds the buffer instead.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxReadFileBytes+1)
 	lineNum := 0
 	linesWritten := 0
 
@@ -89,7 +102,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string
 			fmt.Fprintf(&b, "\n... (truncated at %d lines, use offset=%d to continue)\n", limit, lineNum)
 			break
 		}
-		fmt.Fprintf(&b, "%4d | %s\n", lineNum, scanner.Text())
+		fmt.Fprintf(&b, "%4d | %s\n", lineNum, truncateLine(scanner.Text(), maxReadFileLineChars))
 		linesWritten++
 	}
 
@@ -101,4 +114,17 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string
 		return "File is empty.", nil
 	}
 	return b.String(), nil
+}
+
+// truncateLine shortens s to at most max bytes, cut on a rune boundary, with a
+// marker saying how much was dropped.
+func truncateLine(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s...(%d more chars)", s[:cut], len(s)-cut)
 }

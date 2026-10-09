@@ -21,24 +21,24 @@ type SystemMessage struct {
 	Content []SystemContent
 }
 
-func (SystemMessage) Role() Role  { return RoleSystem }
-func (SystemMessage) isMessage()  {}
+func (SystemMessage) Role() Role { return RoleSystem }
+func (SystemMessage) isMessage() {}
 
 // UserMessage contains user input or human-provided tool results.
 type UserMessage struct {
 	Content []UserContent
 }
 
-func (UserMessage) Role() Role  { return RoleUser }
-func (UserMessage) isMessage()  {}
+func (UserMessage) Role() Role { return RoleUser }
+func (UserMessage) isMessage() {}
 
 // AssistantMessage contains the model's response (text and/or tool calls).
 type AssistantMessage struct {
 	Content []AssistantContent
 }
 
-func (AssistantMessage) Role() Role  { return RoleAssistant }
-func (AssistantMessage) isMessage()  {}
+func (AssistantMessage) Role() Role { return RoleAssistant }
+func (AssistantMessage) isMessage() {}
 
 // ── Convenience constructors ────────────────────────────────────────
 

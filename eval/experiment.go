@@ -2,126 +2,92 @@ package eval
 
 import (
 	"context"
-	"log/slog"
-	"time"
+	"fmt"
 )
 
-// ExperimentConfig configures an A/B experiment.
-type ExperimentConfig struct {
-	Name      string
-	OutputDir string
-	Logger    *slog.Logger
+// Experiment states what a run should learn: a claim, the variants under
+// test, how to score them, and which gates must hold. It owns no data; a
+// run pairs it with a dataset, so the same experiment can be rerun on a new
+// or larger dataset.
+//
+// To gate variants separately, give each assertion a [Where] on
+// [LabelVariant]. To compare variants against a control, pass the result
+// to [CompareVariants].
+type Experiment struct {
+	Name string
+	// Claim is the hypothesis in plain words, such as "retrieval improves
+	// answer correctness on billing questions". It is copied to
+	// [SuiteResult.Claim].
+	Claim      string
+	Variants   []Variant
+	Scorers    []Scorer
+	Assertions []Assertion
+	// Sampler samples the scorers as [WithSampler] does. A [WithSampler]
+	// option passed to Run takes precedence.
+	Sampler Sampler
 }
 
-// ExperimentOption configures an experiment.
-type ExperimentOption func(*ExperimentConfig)
-
-// WithExperimentName sets the experiment name.
-func WithExperimentName(name string) ExperimentOption {
-	return func(c *ExperimentConfig) { c.Name = name }
-}
-
-// WithOutputDir sets the directory for persisting experiment results.
-func WithOutputDir(dir string) ExperimentOption {
-	return func(c *ExperimentConfig) { c.OutputDir = dir }
-}
-
-// WithExperimentLogger sets the logger.
-func WithExperimentLogger(l *slog.Logger) ExperimentOption {
-	return func(c *ExperimentConfig) { c.Logger = l }
-}
-
-// ExperimentResult holds the complete A/B comparison.
-type ExperimentResult struct {
-	Name          string              `json:"name"`
-	CreatedAt     time.Time           `json:"created_at"`
-	BaseResults   []ObservationResult `json:"base_results"`
-	ExpResults    []ObservationResult `json:"exp_results"`
-	BaseAggregate map[string]float64  `json:"base_aggregate"`
-	ExpAggregate  map[string]float64  `json:"exp_aggregate"`
-	Deltas        map[string]float64  `json:"deltas"`
-	// BaseErroredCases and ExpErroredCases count observations with at least
-	// one errored score on each side; errored scores are excluded from the
-	// aggregates and deltas.
-	BaseErroredCases int `json:"base_errored_cases,omitempty"`
-	ExpErroredCases  int `json:"exp_errored_cases,omitempty"`
-}
-
-// RunExperiment runs both subjects on the same inputs, scores them, and
-// computes the delta between experimental and base aggregate metrics.
-func RunExperiment(ctx context.Context, inputs []Observation, base, exp Subject, scorers []Scorer, opts ...ExperimentOption) (*ExperimentResult, error) {
-	cfg := &ExperimentConfig{
-		Name:   "experiment",
-		Logger: slog.Default(),
-	}
-	for _, o := range opts {
-		o(cfg)
-	}
-
-	// Deep-copy inputs for each subject so they don't interfere.
-	baseObs := copyObservations(inputs)
-	expObs := copyObservations(inputs)
-
-	// Run base subject.
-	if err := Populate(ctx, baseObs, base); err != nil {
+// Run runs every variant's subject over the dataset, scores all results in
+// one suite, and gates it with the experiment's assertions.
+//
+// Each observation is copied once per variant and labeled with the variant's
+// labels and its name under [LabelVariant]; variant labels override dataset
+// labels with the same key. Options apply as in [Run] and [PopulateAll], and
+// [WithRepeats] runs each subject several times per observation. A subject
+// error on one observation is recorded on it and the rest continue. The
+// returned error is the error of [Run], so a cancelled experiment returns
+// the partial suite with an error wrapping ctx.Err().
+func (e Experiment) Run(ctx context.Context, dataset []Observation, opts ...Option) (*SuiteResult, error) {
+	if err := e.validate(); err != nil {
 		return nil, err
 	}
-	// Run experimental subject.
-	if err := Populate(ctx, expObs, exp); err != nil {
-		return nil, err
+	if e.Sampler.N > 1 {
+		opts = append([]Option{WithSampler(e.Sampler)}, opts...)
+	}
+	cfg := newConfig(opts)
+	dataset = Sampler{N: cfg.Repeats}.Replicate(dataset)
+
+	all := make([]Observation, 0, len(dataset)*len(e.Variants))
+	for _, v := range e.Variants {
+		obs := copyObservations(dataset)
+		labels := v.Labels.merge(Labels{LabelVariant: v.Name})
+		for i := range obs {
+			obs[i].Labels = obs[i].Labels.merge(labels)
+		}
+		_ = PopulateAll(ctx, obs, v.Subject, opts...)
+		all = append(all, obs...)
 	}
 
-	// Score both.
-	baseSuite, err := Run(ctx, cfg.Name+"/base", baseObs, scorers)
-	if err != nil {
-		return nil, err
-	}
-	expSuite, err := Run(ctx, cfg.Name+"/exp", expObs, scorers)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compute deltas (exp - base).
-	deltas := make(map[string]float64)
-	for name, expVal := range expSuite.Aggregate {
-		if baseVal, ok := baseSuite.Aggregate[name]; ok {
-			deltas[name] = expVal - baseVal
-		} else {
-			deltas[name] = expVal
+	runOpts := append(append([]Option(nil), opts...), WithAssertions(e.Assertions...))
+	suite, err := Run(ctx, e.Name, all, e.Scorers, runOpts...)
+	if suite != nil {
+		suite.Claim = e.Claim
+		if len(e.Assertions) == 0 && len(cfg.Assertions) == 0 {
+			suite.Gate()
 		}
 	}
-
-	result := &ExperimentResult{
-		Name:             cfg.Name,
-		CreatedAt:        time.Now(),
-		BaseResults:      baseSuite.Results,
-		ExpResults:       expSuite.Results,
-		BaseAggregate:    baseSuite.Aggregate,
-		ExpAggregate:     expSuite.Aggregate,
-		Deltas:           deltas,
-		BaseErroredCases: baseSuite.ErroredCases,
-		ExpErroredCases:  expSuite.ErroredCases,
-	}
-
-	// Persist if output dir is set.
-	if cfg.OutputDir != "" {
-		if err := WriteExperiment(cfg.OutputDir, result); err != nil {
-			cfg.Logger.Error("failed to write experiment", "dir", cfg.OutputDir, "error", err)
-		}
-	}
-
-	return result, nil
+	return suite, err
 }
 
-func copyObservations(obs []Observation) []Observation {
-	out := make([]Observation, len(obs))
-	for i, o := range obs {
-		out[i] = Observation{
-			ID:          o.ID,
-			Turn:        o.Turn,
-			Input:       append([]byte(nil), o.Input...),
-			GroundTruth: append([]byte(nil), o.GroundTruth...),
+func (e Experiment) validate() error {
+	if len(e.Variants) == 0 {
+		return fmt.Errorf("experiment %q: no variants", e.Name)
+	}
+	seen := make(map[string]bool, len(e.Variants))
+	for i, v := range e.Variants {
+		if v.Name == "" {
+			return fmt.Errorf("experiment %q: variant %d has no name", e.Name, i)
+		}
+		if lv, ok := v.Labels[LabelVariant]; ok && lv != v.Name {
+			return fmt.Errorf("experiment %q: variant %q has label %s=%q; it must match the name", e.Name, v.Name, LabelVariant, lv)
+		}
+		if seen[v.Name] {
+			return fmt.Errorf("experiment %q: duplicate variant %q", e.Name, v.Name)
+		}
+		seen[v.Name] = true
+		if v.Subject == nil {
+			return fmt.Errorf("experiment %q: variant %q has no subject", e.Name, v.Name)
 		}
 	}
-	return out
+	return nil
 }

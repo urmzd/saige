@@ -57,7 +57,10 @@ func main() {
 	}
 	defer graph.Close(ctx)
 
-	// 4. (Optional) Apply an ontology to guide extraction.
+	// 4. (Optional) Apply an ontology to guide extraction. The extractor is
+	// asked to use these types, and extracted types that match one ignoring
+	// case and punctuation are stored with the ontology's spelling. Build the
+	// graph with knowledge.WithStrictOntology() to drop any other type.
 	err = graph.ApplyOntology(ctx, &types.Ontology{
 		EntityTypes: []types.EntityTypeDef{
 			{Name: "Person", Description: "A human being"},

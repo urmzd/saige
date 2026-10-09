@@ -17,11 +17,20 @@
 // what makes crash recovery exact. The trade-off is latency on turns with many
 // tool calls: a durable run pays the sum of its tools' latencies rather than
 // the max.
+//
+// Approvals are answered with Engine.Decide and listed with
+// Engine.PendingApproval. This package does not implement
+// types.InterruptRouter: a decision travels as a durable message that leaves
+// no record once the run consumes it, so a repeated or changed reply could not
+// be told apart from a first one. Use the local durable engine for a router
+// with idempotent replies.
 package dbos
 
 import (
 	"context"
 	"encoding/gob"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
@@ -42,6 +51,8 @@ func init() {
 	// interface values, so the wrapper types need registration too.
 	gob.Register(RunInput{})
 	gob.Register(RunOutput{})
+	gob.Register(approvalMessage{})
+	gob.Register(types.ApprovalRequest{})
 
 }
 
@@ -62,10 +73,71 @@ func (r *Runner) RunStep(_ context.Context, name string, fn func(ctx context.Con
 	return dbos.RunAsStep(r.dctx, dbos.Step[types.StepResult](fn), dbos.WithStepName(name))
 }
 
+// ErrApprovalExpired reports that no decision arrived before the approval
+// timeout. The run fails closed: the tool does not execute.
+var ErrApprovalExpired = errors.New("dbos: approval request expired")
+
+// approvalTopic is the Send/Recv topic that carries the decision for one
+// approval request.
+func approvalTopic(requestID string) string { return "saige.approval:" + requestID }
+
+// PendingApprovalEvent is the workflow event key under which a run publishes
+// the approval request it is waiting on. It holds an empty request when the
+// run is not waiting.
+const PendingApprovalEvent = "saige.approval.pending"
+
+// approvalMessage is the decision sent to a waiting workflow. Decided is
+// false only in the zero value Recv returns on timeout.
+type approvalMessage struct {
+	Decided  bool
+	Decision types.ApprovalDecision
+}
+
+// ApprovalRunner is a Runner that also resolves tool approvals durably. A
+// waiting run publishes its request under PendingApprovalEvent and blocks in
+// a durable dbos.Recv until Engine.Decide sends a decision or the timeout
+// passes. A recovered workflow replays the recorded decision instead of
+// asking again. It requires sequential tool execution in the workflow
+// goroutine, which Runner already guarantees.
+type ApprovalRunner struct {
+	*Runner
+	timeout time.Duration
+}
+
+var _ types.ApprovalRunner = (*ApprovalRunner)(nil)
+
+// NewApprovalRunner wraps a workflow-bound DBOS context as a StepRunner that
+// resolves approvals, waiting at most timeout for each decision.
+func NewApprovalRunner(dctx dbos.DBOSContext, timeout time.Duration) *ApprovalRunner {
+	return &ApprovalRunner{Runner: NewRunner(dctx), timeout: timeout}
+}
+
+// ResolveApproval publishes req and waits for its decision. It returns
+// ErrApprovalExpired when the timeout passes without one.
+func (r *ApprovalRunner) ResolveApproval(_ context.Context, req types.ApprovalRequest) (types.ApprovalDecision, error) {
+	if err := dbos.SetEvent(r.dctx, PendingApprovalEvent, req); err != nil {
+		return types.ApprovalDecision{}, fmt.Errorf("dbos: publish approval request: %w", err)
+	}
+	msg, err := dbos.Recv[approvalMessage](r.dctx, approvalTopic(req.ID), r.timeout)
+	if err != nil && !errors.Is(err, &dbos.DBOSError{Code: dbos.TimeoutError}) {
+		return types.ApprovalDecision{}, fmt.Errorf("dbos: wait for approval: %w", err)
+	}
+	if err := dbos.SetEvent(r.dctx, PendingApprovalEvent, types.ApprovalRequest{}); err != nil {
+		return types.ApprovalDecision{}, fmt.Errorf("dbos: clear approval request: %w", err)
+	}
+	if !msg.Decided {
+		return types.ApprovalDecision{}, fmt.Errorf("%w: %s", ErrApprovalExpired, req.ID)
+	}
+	return msg.Decision, nil
+}
+
 // RunInput is the single serializable workflow input.
 type RunInput struct {
 	Messages []types.Message
-	Branch   types.BranchID
+	// Branch names a branch of the factory's fresh tree to run on; empty uses
+	// that tree's active branch. A branch of another process's tree does not
+	// exist in the fresh tree and fails the run.
+	Branch types.BranchID
 }
 
 // RunOutput is the single serializable workflow output.
@@ -76,7 +148,22 @@ type RunOutput struct {
 // Engine owns a DBOS context lifecycle and registers agent-run workflows.
 type Engine struct {
 	dctx dbos.DBOSContext
+
+	// ApprovalTimeout enables durable approvals when positive: registered
+	// workflows run with an ApprovalRunner that waits this long for each
+	// decision sent through Decide. Zero keeps approvals unsupported, which
+	// is required for agents that compact automatically, because the agent
+	// rejects automatic compaction under a runner that resolves approvals.
+	// Set it before Launch.
+	ApprovalTimeout time.Duration
 }
+
+// Factory returns a fresh Agent, with its own tree and budget, for one
+// workflow execution. It is called on the first run and again on every
+// recovery of that workflow. workflowID identifies the run, so a host can key
+// per-run budgets or stores by it. Do not load a partially persisted tree
+// into the agent: RunDurable appends the workflow input itself.
+type Factory func(workflowID string) *agent.Agent
 
 // NewEngine builds a DBOS context backed by Postgres and a gob serializer. Pass
 // the SAME *pgxpool.Pool used by agent/pgstore to share one connection pool, or
@@ -99,16 +186,40 @@ func NewEngine(ctx context.Context, appName string, pool *pgxpool.Pool, database
 // streams, manual workflow retrieval).
 func (e *Engine) Context() dbos.DBOSContext { return e.dctx }
 
-// RegisterAgent registers a durable workflow that runs the given agent to
-// completion via Agent.RunDurable. It MUST be called before Launch. The returned
-// Workflow value is passed to Run. name defaults to "saige.agent.run".
+// RegisterAgent registers a durable workflow that runs the given agent.
+//
+// Deprecated: every workflow shares the one Agent, including its tree and
+// budget, so concurrent or recovered runs interleave their conversations and
+// spend from one budget. Use RegisterAgentFactory.
 func (e *Engine) RegisterAgent(a *agent.Agent, name string) dbos.Workflow[RunInput, RunOutput] {
+	return e.RegisterAgentFactory(func(string) *agent.Agent { return a }, name)
+}
+
+// RegisterAgentFactory registers a durable workflow that builds a fresh agent
+// with factory for each execution and runs it to completion via
+// Agent.RunDurable. The workflow's DBOS context is the run's context, so
+// Shutdown and a workflow timeout (dbos.WithTimeout on the context that starts
+// the run) cancel in-flight provider and tool calls.
+// It MUST be called before Launch. The returned Workflow value is passed to
+// Run. name defaults to "saige.agent.run".
+func (e *Engine) RegisterAgentFactory(factory Factory, name string) dbos.Workflow[RunInput, RunOutput] {
 	if name == "" {
 		name = "saige.agent.run"
 	}
 	wf := func(dctx dbos.DBOSContext, in RunInput) (RunOutput, error) {
-		runner := NewRunner(dctx)
-		final, err := a.RunDurable(context.Background(), runner, in.Messages, in.Branch)
+		workflowID, err := dbos.GetWorkflowID(dctx)
+		if err != nil {
+			return RunOutput{}, err
+		}
+		a := factory(workflowID)
+		if a == nil {
+			return RunOutput{}, errors.New("dbos: factory returned nil agent")
+		}
+		var runner types.StepRunner = NewRunner(dctx)
+		if e.ApprovalTimeout > 0 {
+			runner = NewApprovalRunner(dctx, e.ApprovalTimeout)
+		}
+		final, err := a.RunDurable(dctx, runner, in.Messages, in.Branch)
 		return RunOutput{Final: final}, err
 	}
 	dbos.RegisterWorkflow(e.dctx, dbos.Workflow[RunInput, RunOutput](wf), dbos.WithWorkflowName(name))
@@ -133,6 +244,34 @@ func (e *Engine) Run(wf dbos.Workflow[RunInput, RunOutput], in RunInput, workflo
 		opts = append(opts, dbos.WithWorkflowID(workflowID))
 	}
 	return dbos.RunWorkflow(e.dctx, wf, in, opts...)
+}
+
+// Decide sends a decision for the approval request interruptID that workflow
+// workflowID is waiting on. The host authenticates the decision maker. A
+// decision sent before the run asks is kept until it does.
+func (e *Engine) Decide(workflowID, interruptID string, decision types.ApprovalDecision) error {
+	return dbos.Send(e.dctx, workflowID, approvalMessage{Decided: true, Decision: decision}, approvalTopic(interruptID))
+}
+
+// PendingApproval returns the approval request workflow workflowID is waiting
+// on, waiting up to timeout for the run to publish one. ok is false, with a nil
+// error, when the run is not waiting: it never asked for approval within
+// timeout, or its last request was already decided.
+func (e *Engine) PendingApproval(workflowID string, timeout time.Duration) (req types.ApprovalRequest, ok bool, err error) {
+	return pendingResult(dbos.GetEvent[types.ApprovalRequest](e.dctx, workflowID, PendingApprovalEvent, timeout))
+}
+
+// pendingResult maps a GetEvent result to PendingApproval's. GetEvent reports
+// an event that was never set as a timeout error; for PendingApproval that is
+// the normal "not waiting" state, not a failure.
+func pendingResult(req types.ApprovalRequest, err error) (types.ApprovalRequest, bool, error) {
+	if errors.Is(err, &dbos.DBOSError{Code: dbos.TimeoutError}) {
+		return types.ApprovalRequest{}, false, nil
+	}
+	if err != nil {
+		return types.ApprovalRequest{}, false, err
+	}
+	return req, req.ID != "", nil
 }
 
 // Retrieve reattaches to an in-flight or completed run by workflow ID, e.g. from

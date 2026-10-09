@@ -54,6 +54,9 @@ type SampleStats struct {
 	// statistics rather than counted as zero.
 	Errors int `json:"errors,omitempty"`
 	// Stable reports whether Max minus Min is within the Sampler's Tolerance.
+	// A sampled score is also unstable when any of its samples reported
+	// itself unstable, such as a pairwise judge that contradicted itself
+	// across the position swap; that sample's reason says why.
 	Stable bool `json:"stable"`
 }
 
@@ -176,6 +179,7 @@ func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, erro
 
 	stats := &SampleStats{}
 	name := ""
+	innerUnstable := 0
 	var lastErr error
 	for i := range n {
 		switch {
@@ -188,6 +192,9 @@ func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, erro
 			name = scores[i].Name
 			stats.Values = append(stats.Values, scores[i].Value)
 			stats.Reasons = append(stats.Reasons, scores[i].Reason)
+			if inner := scores[i].Samples; inner != nil && !inner.Stable {
+				innerUnstable++
+			}
 		}
 	}
 	if len(stats.Values) == 0 {
@@ -198,11 +205,17 @@ func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, erro
 	}
 
 	stats.summarize(s.sampler.Tolerance)
+	if innerUnstable > 0 {
+		stats.Stable = false
+	}
 	reduce := s.sampler.Reduce
 	if reduce == nil {
 		reduce = Mean
 	}
 	reason := fmt.Sprintf("%d samples, spread %.3g", len(stats.Values), stats.Max-stats.Min)
+	if innerUnstable > 0 {
+		reason += fmt.Sprintf(", %d inconsistent", innerUnstable)
+	}
 	if !stats.Stable {
 		reason += " (unstable)"
 	}

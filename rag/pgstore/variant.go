@@ -86,3 +86,81 @@ func (s *Store) GetVariant(ctx context.Context, variantUUID string) (*types.Cont
 
 	return &v, &prov, nil
 }
+
+// GetVariantRecord retrieves a variant with its provenance and the owning
+// document's metadata and timestamp, implementing types.VariantRecordGetter.
+func (s *Store) GetVariantRecord(ctx context.Context, variantUUID string) (*types.VariantRecord, error) {
+	var (
+		rec   types.VariantRecord
+		ct    string
+		emb   *pgvector.Vector
+		vMeta []byte
+		dMeta []byte
+	)
+	v := &rec.Variant
+	prov := &rec.Provenance
+	err := s.pool.QueryRow(ctx, variantGetRecordSQL, variantUUID).Scan(
+		&v.UUID, &ct, &v.MIMEType, &v.Data, &v.Text, &emb, &vMeta,
+		&prov.SectionUUID, &prov.SectionHeading, &prov.SectionIndex,
+		&prov.DocumentUUID, &prov.DocumentTitle, &prov.SourceURI,
+		&dMeta, &rec.Timestamp, &rec.Scope,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, types.ErrVariantNotFound
+		}
+		return nil, err
+	}
+
+	v.ContentType = types.ContentType(ct)
+	v.SectionUUID = prov.SectionUUID
+	if emb != nil {
+		v.Embedding = emb.Slice()
+	}
+	v.Metadata = decodeMetadata(vMeta)
+	rec.DocumentMetadata = decodeMetadata(dMeta)
+	return &rec, nil
+}
+
+// GetVariantRecords retrieves the records for many variants in one query,
+// implementing types.VariantRecordsGetter. UUIDs with no stored variant are
+// absent from the result.
+func (s *Store) GetVariantRecords(ctx context.Context, variantUUIDs []string) (map[string]*types.VariantRecord, error) {
+	out := make(map[string]*types.VariantRecord, len(variantUUIDs))
+	if len(variantUUIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, variantGetRecordsSQL, variantUUIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			rec   types.VariantRecord
+			ct    string
+			emb   *pgvector.Vector
+			vMeta []byte
+			dMeta []byte
+		)
+		v := &rec.Variant
+		prov := &rec.Provenance
+		if err := rows.Scan(
+			&v.UUID, &ct, &v.MIMEType, &v.Data, &v.Text, &emb, &vMeta,
+			&prov.SectionUUID, &prov.SectionHeading, &prov.SectionIndex,
+			&prov.DocumentUUID, &prov.DocumentTitle, &prov.SourceURI,
+			&dMeta, &rec.Timestamp, &rec.Scope,
+		); err != nil {
+			return nil, err
+		}
+		v.ContentType = types.ContentType(ct)
+		v.SectionUUID = prov.SectionUUID
+		if emb != nil {
+			v.Embedding = emb.Slice()
+		}
+		v.Metadata = decodeMetadata(vMeta)
+		rec.DocumentMetadata = decodeMetadata(dMeta)
+		out[v.UUID] = &rec
+	}
+	return out, rows.Err()
+}

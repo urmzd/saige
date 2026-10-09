@@ -73,3 +73,24 @@ func TestWrapAllKeepsMarkersOutsideTheCache(t *testing.T) {
 		t.Errorf("inner ran %d times, want 1: the cache under the markers is not working", inner.count())
 	}
 }
+
+func TestCachedToolUnwrapsToItsInnerTool(t *testing.T) {
+	inner := &countingTool{result: "x", policy: cachedPolicy()}
+	wrapped, err := New(inner, Config{Cache: newMemCache()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, ok := wrapped.(interface{ Unwrap() types.Tool })
+	if !ok {
+		t.Fatalf("%T does not implement Unwrap", wrapped)
+	}
+	if u.Unwrap() != types.Tool(inner) {
+		t.Fatalf("Unwrap = %T, want the inner tool", u.Unwrap())
+	}
+	if _, ok := wrapped.(types.RichTool); !ok {
+		t.Error("cached tool is not a RichTool")
+	}
+	if !types.PolicyFor(wrapped).Enabled {
+		t.Error("cached tool hides its cache policy")
+	}
+}

@@ -42,7 +42,8 @@ result, err := engine.Run(ctx, "run-42", "config-v3", factory, input)
 
 The factory must return a fresh agent, tree, and budget for each call.
 The revision identifies the provider, tools, permissions, and budget configuration.
-Use the same input and revision to resume. A changed value returns `ErrConflict`.
+Use the same revision to resume. The input is an append-only log: an input that repeats the logged input resumes the run, an input that extends it appends the new messages as a segment, and an input that diverges from it returns `ErrConflict`, as does a changed revision.
+`Engine.Append(id, revision, key, msgs)` adds a segment without running; the next `Run` executes it after the logged input finishes. `key` makes the call idempotent.
 Do not share a mutable tree between factories or load a partially reconstructed tree into the factory.
 Tool objects and external services remain the host's isolation responsibility.
 Local durable children must share the root budget. An independent child budget is rejected because reconciled receipts belong to the run ledger.
@@ -53,6 +54,8 @@ Gate approvals and marker approvals have separate IDs, including within subagent
 An identical decision retry is accepted before the run closes. A conflicting retry is rejected.
 The host authenticates the person and checks their authority before calling `Decide`.
 A modified argument map becomes the approved call's arguments.
+`Engine.Router()` returns a host-side `types.InterruptRouter` for the engine's runs; each interrupt's `RunID` names the run it belongs to.
+`agent.WithInterruptExpiry` sets the expiry policy: an expired approval is denied by default, fails the run with `InterruptExpireFail`, or is asked of the caller one level up with `InterruptExpireEscalate`.
 
 ## Execution and recovery
 
@@ -126,6 +129,7 @@ A summary needs stable per-owner checkpoints before it can participate in determ
 For now, bound the context or create an explicit new run with a reviewed summary and a new revision.
 A context-limit error is not fixed by retrying the same oversized request.
 Factories, tool gates, and result policies must reproduce the same decisions during replay.
+A provider call stopped by an interrupting submission commits its completed text with a `TruncationContent` marker and records a `step.truncated` event, so replay does not repeat the call.
 If a policy needs time, randomness, or an external read, version or checkpoint that input in the host.
 
 ## Files, traces, and deployment limits
@@ -138,6 +142,16 @@ State files use mode 0600 and new run directories use mode 0700.
 Protect the parent directory, retain required audit records, and remove secrets from application inputs.
 The engine does not provide encryption, a retention service, cross-version gob migration, or a portable export format.
 Each update rewrites the snapshot. Large or long-running workloads need a different storage backend.
+`Engine.List` reads every run's snapshot, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
+
+## Engines compared
+
+| Feature | `agent/durable/local` | `agent/durable/dbos` |
+| --- | --- | --- |
+| Agent per run | Factory passed to `Run` | `RegisterAgentFactory`; `RegisterAgent` is deprecated because every run would share one agent, tree and budget |
+| Approvals | `Decide` and `Inspect`; saved requests survive restarts | `Engine.ApprovalTimeout` enables `Decide` and `PendingApproval`, which turns on the guard that rejects automatic compaction |
+| Budget reservations before dispatch | Saved with the run | Not saved; the budget is per process |
+| Input log and `Append` | Yes | No |
 
 | Boundary | Exists now | Required for distributed workers |
 | --- | --- | --- |

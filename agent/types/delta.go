@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Delta is a sealed interface for streaming incremental updates.
 // Consumers type-switch on concrete delta types to reconstruct state.
@@ -39,15 +42,25 @@ type ToolCallStartDelta struct {
 func (ToolCallStartDelta) isDelta() {}
 
 // ToolCallArgumentDelta carries a JSON fragment of arguments from the LLM.
+// ID names the call the fragment belongs to. Producers that interleave
+// parallel calls must set it; an empty ID means the most recently started call.
 type ToolCallArgumentDelta struct {
+	ID      string
 	Content string
 }
 
 func (ToolCallArgumentDelta) isDelta() {}
 
 // ToolCallEndDelta signals the LLM finished generating a tool call.
+// ID names the call being closed, so parallel calls pair with their arguments
+// regardless of arrival order. An empty ID closes the oldest open call.
 type ToolCallEndDelta struct {
+	ID        string
 	Arguments map[string]any
+	// ArgumentsError is set when the streamed argument text was not valid
+	// JSON. Arguments is nil in that case. Producers must never report a parse
+	// failure as an empty argument map.
+	ArgumentsError string
 }
 
 func (ToolCallEndDelta) isDelta() {}
@@ -78,6 +91,7 @@ func (ToolExecDelta) isDelta() {}
 // Blocks carries optional rich output for consumers (e.g. TUIs) that render images.
 type ToolExecEndDelta struct {
 	ToolCallID string
+	Name       string // tool name; empty when the producer does not know it
 	Result     string // text projection: UNCHANGED meaning
 	Error      string
 	Blocks     []ToolResultBlock // optional; nil for plain-text results
@@ -117,6 +131,11 @@ type MarkerDelta struct {
 	ToolName   string
 	Arguments  map[string]any
 	Markers    []Marker
+	// Interrupt is the pending decision this marker posted: its ID, the call
+	// path from the root run, its kind, and its deadline. A reply can name
+	// the interrupt ID instead of the tool call ID. Nil for streams that do
+	// not post interrupts, such as remote streams.
+	Interrupt *Interrupt
 }
 
 func (MarkerDelta) isDelta() {}
@@ -250,6 +269,103 @@ type RouteDelta struct {
 	Profile  string
 	Provider string
 	Model    string
+	// Experiment and Variant name the traffic split and arm that chose this
+	// route; both are empty when no split applied.
+	Experiment string
+	Variant    string
+	// Reason says why this route was chosen, e.g. "primary", "fallback",
+	// "canary_demoted". Empty means the first choice.
+	Reason string
+	// Preset names the declared preset the profile belongs to, ConfigHash
+	// identifies the profile's complete configuration, and CatalogRevision
+	// the catalog it was resolved from. All are empty for a profile that was
+	// not built from a catalog.
+	Preset          string
+	ConfigHash      string
+	CatalogRevision string
+	// Options are the effective options of this attempt: the profile's
+	// configured options merged with the request's overrides. Nil when the
+	// profile does not report them.
+	Options *RequestOptions
 }
 
 func (RouteDelta) isDelta() {}
+
+// ── Run control deltas ───────────────────────────────────────────────
+
+// TruncatedDelta reports that a partial assistant turn was committed to the
+// tree with a TruncationContent marker, for example after a stop request or
+// when the output token limit cut the response short.
+type TruncatedDelta struct {
+	NodeID string // tree node holding the partial turn; empty if nothing was committed
+	Reason string // "interrupted", FinishReasonMaxTokens, or a producer-specific value
+}
+
+func (TruncatedDelta) isDelta() {}
+
+// QueuedDelta acknowledges a message submitted while a run is active. The
+// message is held until the run reaches a safe point.
+type QueuedDelta struct {
+	SubmissionID string
+	Mode         string // "queue", "steer", or "interrupt"
+	Position     int    // 1-based position among pending submissions
+}
+
+func (QueuedDelta) isDelta() {}
+
+// InjectedDelta reports that a queued or steering message was appended to
+// the conversation and will be seen by the next model call.
+type InjectedDelta struct {
+	SubmissionID string
+	Mode         string // "queue", "steer", or "interrupt"
+	NodeID       string // tree node the message was appended as
+}
+
+func (InjectedDelta) isDelta() {}
+
+// InterruptedDelta reports that the in-flight provider call was stopped on
+// request. The run continues with whatever the interrupt asked for.
+type InterruptedDelta struct {
+	Reason       string
+	SubmissionID string // submission that caused the interrupt, if any
+}
+
+func (InterruptedDelta) isDelta() {}
+
+// ── Server tool deltas ───────────────────────────────────────────────
+
+// ServerToolCallDelta reports a tool call the provider executes itself (web
+// search, code execution, remote MCP). Nothing runs locally, so no gate sees
+// it; the delta exists so the call is visible and auditable.
+type ServerToolCallDelta struct {
+	ID    string
+	Kind  ServerToolKind
+	Name  string // provider-specific tool name, e.g. "web_search"
+	Input map[string]any
+}
+
+func (ServerToolCallDelta) isDelta() {}
+
+// ServerToolResultDelta carries the outcome of a ServerToolCallDelta.
+type ServerToolResultDelta struct {
+	ID      string
+	Kind    ServerToolKind
+	Text    string          // human-readable projection of the result
+	Result  json.RawMessage // provider-native result payload, if any
+	IsError bool
+	Files   []FileContent // files the tool produced (URIs only on the wire)
+}
+
+func (ServerToolResultDelta) isDelta() {}
+
+// ── Structured output deltas ─────────────────────────────────────────
+
+// PartialJSONDelta carries the best-effort parse of a structured output that
+// is still streaming. JSON is always a complete, valid document: unclosed
+// strings, arrays, and objects are closed, so consumers can render it
+// directly. Each delta replaces the previous one.
+type PartialJSONDelta struct {
+	JSON json.RawMessage
+}
+
+func (PartialJSONDelta) isDelta() {}

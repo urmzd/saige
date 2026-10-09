@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 )
 
 // Embedder implements types.Embedder using the official OpenAI SDK.
@@ -13,18 +12,23 @@ type Embedder struct {
 	model  openai.EmbeddingModel
 }
 
-// NewEmbedder creates a new OpenAI embedder.
+// NewEmbedder creates a new OpenAI embedder. Unlike the chat adapter it keeps
+// the SDK's built-in retries unless WithMaxRetries says otherwise; pass
+// WithMaxRetries(0) when a retry decorator (embedderregistry.NewRetrying)
+// wraps it, so attempts are not multiplied.
+//
+// Embed sends all texts in one request, and the API limits how many inputs
+// and tokens one request may carry. Wrap the embedder with
+// embedderregistry.NewBatching to split large inputs. OpenAI embedding
+// models are symmetric, so the embed purpose carried by the context does not
+// change the request.
 func NewEmbedder(apiKey, model string, opts ...Option) *Embedder {
 	cfg := &config{}
 	for _, o := range opts {
 		o(cfg)
 	}
-	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
-	if cfg.baseURL != "" {
-		clientOpts = append(clientOpts, option.WithBaseURL(cfg.baseURL))
-	}
 	return &Embedder{
-		client: openai.NewClient(clientOpts...),
+		client: openai.NewClient(cfg.clientOptions(apiKey, nil)...),
 		model:  openai.EmbeddingModel(model),
 	}
 }
@@ -38,7 +42,7 @@ func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 		Model: e.model,
 	})
 	if err != nil {
-		return nil, classifyOpenAIError(err)
+		return nil, classifyOpenAIError(string(e.model), err, true)
 	}
 
 	embeddings := make([][]float32, len(texts))

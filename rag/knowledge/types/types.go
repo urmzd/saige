@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
 // --- Errors ---
@@ -17,8 +19,16 @@ var (
 
 	// ErrPartialSearch indicates a search succeeded on at least one backend
 	// but failed on another. The returned results are usable; callers can
-	// detect degraded results with errors.Is(err, ErrPartialSearch).
-	ErrPartialSearch = errors.New("partial search failure")
+	// detect degraded results with errors.Is(err, ErrPartialSearch). It is
+	// the same sentinel as the RAG pipeline's, so one errors.Is check covers
+	// a partial graph search and a partial pipeline search.
+	ErrPartialSearch = ragtypes.ErrPartialSearch
+
+	// ErrPartialEpisode indicates an episode was stored but some of its
+	// entities, relations, embeddings, or links failed. IngestEpisode returns
+	// it wrapped together with a usable IngestResult; callers can detect it
+	// with errors.Is(err, ErrPartialEpisode).
+	ErrPartialEpisode = errors.New("partial episode ingest")
 )
 
 // --- Graph interface (high-level, orchestrated) ---
@@ -72,12 +82,36 @@ type Store interface {
 
 // EpisodeDeleter is an optional Graph/Store extension for removing all data
 // derived from a group: its episodes, mentions, relations, and entities.
-// The rag pipeline ingests each document under GroupID = document UUID and
-// calls DeleteEpisodes on document delete/replace so graph facts don't
-// outlive their source. The groupID must be non-empty: the default group
-// ("") holds all legacy single-tenant data and cannot be bulk-deleted.
+// Older rag pipelines ingested each document under GroupID = document UUID;
+// DeleteEpisodes still removes data written that way. The groupID must be
+// non-empty: the default group ("") holds all legacy single-tenant data and
+// cannot be bulk-deleted.
 type EpisodeDeleter interface {
 	DeleteEpisodes(ctx context.Context, groupID string) error
+}
+
+// DocumentEpisodeDeleter is an optional Graph/Store extension for removing
+// the episodes of one source document inside a group. Relations asserted
+// only by those episodes are removed; relations that another episode also
+// asserts are kept. Entities left with no mentions and no relations are
+// removed. Entities shared with other documents survive, so a group can hold
+// one canonical node per entity across many documents. A relation that a
+// removed relation had superseded is valid again unless a remaining relation
+// supersedes it.
+type DocumentEpisodeDeleter interface {
+	DeleteDocumentEpisodes(ctx context.Context, groupID, documentID string) error
+}
+
+// EpisodeLinker is an optional Store extension that records which episode
+// asserted which relation. With it, the engine creates the episode before
+// its entities and relations, links each relation (new or matched as a
+// duplicate) to the episode, and GetFactProvenance returns the asserting
+// episodes instead of every episode that mentions an endpoint.
+type EpisodeLinker interface {
+	// LinkEpisodeEntities records that the episode mentions the entities.
+	LinkEpisodeEntities(ctx context.Context, episodeUUID string, entityUUIDs []string) error
+	// LinkRelationEpisode records that the episode asserts the relation.
+	LinkRelationEpisode(ctx context.Context, relationUUID, episodeUUID string) error
 }
 
 // GroupScopedStore is an optional Store extension for tenant isolation.
@@ -95,6 +129,10 @@ type GroupScopedStore interface {
 type SearchOptions struct {
 	GroupID string
 	Limit   int
+	// ValidAt, when set, returns the relations that were valid at that
+	// instant (valid_at <= t and not yet invalidated at t) instead of the
+	// currently valid ones.
+	ValidAt *time.Time
 }
 
 // SearchOption configures a search query.
@@ -108,6 +146,12 @@ func WithGroupID(id string) SearchOption {
 // WithLimit sets the max number of results.
 func WithLimit(n int) SearchOption {
 	return func(o *SearchOptions) { o.Limit = n }
+}
+
+// WithValidAt runs an as-of query: only relations valid at t are returned,
+// including ones that a later fact has since superseded.
+func WithValidAt(t time.Time) SearchOption {
+	return func(o *SearchOptions) { o.ValidAt = &t }
 }
 
 // --- Core types ---
@@ -139,6 +183,10 @@ type RelationInput struct {
 	Type       string
 	Fact       string
 	ValidAt    time.Time
+	// InvalidAt, when set, creates the relation already superseded. The
+	// engine sets it when a backfilled fact is older than a stored fact of
+	// the same kind.
+	InvalidAt *time.Time
 	// GroupID scopes the relation to a tenant group. Empty means the
 	// default (single-tenant) group.
 	GroupID string
@@ -164,13 +212,16 @@ type ScoredFact struct {
 
 // Episode represents an ingested text episode.
 type Episode struct {
-	UUID      string            `json:"uuid"`
-	Name      string            `json:"name"`
-	Body      string            `json:"body"`
-	Source    string            `json:"source"`
-	GroupID   string            `json:"group_id"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
+	UUID    string `json:"uuid"`
+	Name    string `json:"name"`
+	Body    string `json:"body"`
+	Source  string `json:"source"`
+	GroupID string `json:"group_id"`
+	// DocumentID names the source document the episode came from, when the
+	// caller supplied one.
+	DocumentID string            `json:"document_id,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
 }
 
 // GraphData holds nodes and edges for visualization.
@@ -205,15 +256,29 @@ type NodeDetail struct {
 	Node      GraphNode   `json:"node"`
 	Neighbors []GraphNode `json:"neighbors"`
 	Edges     []GraphEdge `json:"edges"`
+	// Truncated reports that the traversal stopped at the store's node or
+	// edge cap, so Neighbors and Edges are incomplete.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // EpisodeInput is input for ingesting an episode.
 type EpisodeInput struct {
-	Name     string            `json:"name"`
-	Body     string            `json:"episode_body"`
-	Source   string            `json:"source_description"`
-	GroupID  string            `json:"group_id"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Name   string `json:"name"`
+	Body   string `json:"episode_body"`
+	Source string `json:"source_description"`
+	// GroupID is the tenant scope. Entities are deduplicated within a group,
+	// so episodes from different documents that name the same entity share
+	// one node.
+	GroupID string `json:"group_id"`
+	// DocumentID names the source document. It lets
+	// DocumentEpisodeDeleter remove one document's episodes without
+	// touching the rest of the group.
+	DocumentID string `json:"document_id,omitempty"`
+	// ReferenceTime is when the episode's facts became true, for example the
+	// date of a backfilled document. It sets the ValidAt of the relations the
+	// episode creates. The zero value means the ingest time.
+	ReferenceTime time.Time         `json:"reference_time,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 // IngestResult is the result of ingesting an episode.
@@ -282,4 +347,11 @@ type ExtractedRelation struct {
 // Extractor extracts entities and relations from text.
 type Extractor interface {
 	Extract(ctx context.Context, text string) ([]ExtractedEntity, []ExtractedRelation, error)
+}
+
+// OntologyExtractor is an optional Extractor extension that constrains
+// extraction to an ontology. The engine calls it instead of Extract when an
+// ontology has been applied.
+type OntologyExtractor interface {
+	ExtractWithOntology(ctx context.Context, text string, ont *Ontology) ([]ExtractedEntity, []ExtractedRelation, error)
 }

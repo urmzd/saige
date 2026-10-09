@@ -28,6 +28,19 @@ func WithMaxSize(n int) Option {
 // WithConfigKey binds entries to an immutable embedder configuration revision.
 func WithConfigKey(key string) Option { return func(c *Cache) { c.configKey = key } }
 
+// keyInput is the identity-free projection of a variant that the cache key
+// hashes. Field order is fixed so the encoding is stable.
+type keyInput struct {
+	Config      string
+	Purpose     types.EmbedPurpose
+	ContentType types.ContentType
+	MIMEType    string
+	Text        string
+	Data        []byte
+	Metadata    map[string]string
+	Embedding   []float32
+}
+
 type entry struct {
 	key       string
 	embedding []float32
@@ -70,12 +83,24 @@ func (c *Cache) Embed(ctx context.Context, variants []types.ContentVariant) ([][
 	results := make([][]float32, len(variants))
 	keys := make([]string, len(variants))
 
-	// Encode the complete input before acquiring the cache lock.
+	// Encode the complete embedder input before acquiring the cache lock.
+	// The key covers everything an embedder reads (content, MIME type, text,
+	// bytes, metadata, prior embedding) plus the configuration revision and
+	// the embed purpose, and deliberately omits the variant and section
+	// UUIDs: extractors and chunkers mint fresh UUIDs on every ingest, so
+	// keying on them would make identical content miss.
+	purpose := types.EmbedPurposeFrom(ctx)
 	for i, v := range variants {
-		raw, err := json.Marshal(struct {
-			Config  string
-			Variant types.ContentVariant
-		}{c.configKey, v})
+		raw, err := json.Marshal(keyInput{
+			Config:      c.configKey,
+			Purpose:     purpose,
+			ContentType: v.ContentType,
+			MIMEType:    v.MIMEType,
+			Text:        v.Text,
+			Data:        v.Data,
+			Metadata:    v.Metadata,
+			Embedding:   v.Embedding,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("embeddingcache: input %d: %w", i, err)
 		}
@@ -110,8 +135,8 @@ func (c *Cache) Embed(ctx context.Context, variants []types.ContentVariant) ([][
 		return nil, err
 	}
 
-	if len(missEmbeddings) != len(missIndices) {
-		return nil, fmt.Errorf("embeddingcache: got %d vectors for %d inputs", len(missEmbeddings), len(missIndices))
+	if err := types.ValidateEmbeddings(len(missIndices), missEmbeddings); err != nil {
+		return nil, fmt.Errorf("embeddingcache: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

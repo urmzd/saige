@@ -27,6 +27,7 @@ import (
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/provider/cache"
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -51,7 +52,10 @@ func main() {
 		fmt.Println("OPENAI_API_KEY not set, skipping live validation.")
 		return
 	}
-	newProvider := func() types.Provider { return openai.NewAdapter(apiKey, model()) }
+	// The SDK client makes one attempt per call; retry.Provider adds backoff.
+	newProvider := func() types.Provider {
+		return retry.New(openai.NewAdapter(apiKey, model()), retry.DefaultConfig())
+	}
 
 	checks := []struct {
 		name string

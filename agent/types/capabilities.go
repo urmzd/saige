@@ -242,11 +242,16 @@ func (mc ModelCapabilities) With(caps ...Capability) ModelCapabilities {
 	return out
 }
 
-// Without returns a copy with the given capabilities removed.
+// Without returns a copy with the given capabilities removed. Removing
+// CapStructuredOutput also clears the StructuredOutput mode, so the flag and
+// the mode never disagree.
 func (mc ModelCapabilities) Without(caps ...Capability) ModelCapabilities {
 	out := mc.clone()
 	for _, c := range caps {
 		delete(out.Caps, c)
+		if c == CapStructuredOutput {
+			out.StructuredOutput = StructuredOutputNone
+		}
 	}
 	return out
 }

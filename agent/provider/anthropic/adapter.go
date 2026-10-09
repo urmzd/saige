@@ -3,15 +3,27 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
+
+// blockServerToolUse is the content block type of a server-side tool call.
+const blockServerToolUse = "server_tool_use"
+
+// stopPauseTurn is the stop reason of a server tool turn the API paused.
+const stopPauseTurn = "pause_turn"
+
+// errPausedTurn reports a server tool turn the API paused before its answer.
+var errPausedTurn = errors.New("response paused during server tool use before a final answer; the turn cannot be resumed")
 
 // Compile-time interface checks.
 var (
@@ -21,12 +33,13 @@ var (
 	_ types.ModelSwitcher            = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 	_ types.ContentNegotiator        = (*Adapter)(nil)
+	_ types.OptionsReporter          = (*Adapter)(nil)
 )
 
 // Adapter wraps the official Anthropic SDK client and implements types.Provider,
 // types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
 type Adapter struct {
-	systemCacheTTL  string
+	cachePolicy     PromptCachePolicy
 	client          anthropic.Client
 	model           anthropic.Model
 	maxTokens       int64
@@ -39,6 +52,10 @@ type Adapter struct {
 	stop          []string
 	baseURL       string
 	parallelTools *bool
+	toolChoice    *types.ToolChoice
+	serverTools   []types.ServerTool
+	maxRetries    int
+	requestOpts   []option.RequestOption
 }
 
 // Option configures the Anthropic adapter.
@@ -87,9 +104,10 @@ func WithStopSequences(stop ...string) Option {
 }
 
 // WithParallelToolCalls turns parallel tool use on or off. Anthropic expresses
-// "off" as disable_parallel_tool_use on the auto tool choice, so this is only
-// applied when the request does not already force a specific tool: the
-// structured-output path forces one, and overriding that would break it.
+// "off" as disable_parallel_tool_use on the tool choice, so it rides on the
+// choice WithToolChoice configures (auto by default). It is not applied when
+// the structured-output path forces its hidden tool, since overriding that
+// would break it.
 func WithParallelToolCalls(enabled bool) Option {
 	return func(a *Adapter) { a.parallelTools = &enabled }
 }
@@ -97,6 +115,23 @@ func WithParallelToolCalls(enabled bool) Option {
 // WithBaseURL overrides the API base URL, for gateways and proxies.
 func WithBaseURL(url string) Option {
 	return func(a *Adapter) { a.baseURL = url }
+}
+
+// WithMaxRetries sets how many times the SDK itself retries a failed request.
+// The default is 0: retries belong to retry.Provider, which counts every
+// attempt, honors Retry-After, and reports RetryError. SDK retries run inside
+// one ChatStream call, hidden from that accounting, and stack under an outer
+// retry decorator. Set a positive value only for a bare adapter that has no
+// retry decorator.
+func WithMaxRetries(n int) Option {
+	return func(a *Adapter) { a.maxRetries = max(n, 0) }
+}
+
+// WithRequestOptions appends SDK request options to every call, for settings
+// this package does not wrap (custom headers, an HTTP client, middleware).
+// They apply after the adapter's own options, so they can override them.
+func WithRequestOptions(opts ...option.RequestOption) Option {
+	return func(a *Adapter) { a.requestOpts = append(a.requestOpts, opts...) }
 }
 
 // NewAdapter creates a new Anthropic provider adapter using the official SDK.
@@ -112,6 +147,8 @@ func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
 	if a.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(a.baseURL))
 	}
+	clientOpts = append(clientOpts, option.WithMaxRetries(a.maxRetries))
+	clientOpts = append(clientOpts, a.requestOpts...)
 	a.client = anthropic.NewClient(clientOpts...)
 	return a
 }
@@ -139,27 +176,40 @@ func (a *Adapter) applyParams(p *anthropic.MessageNewParams) {
 	if len(a.stop) > 0 {
 		p.StopSequences = a.stop
 	}
-	if a.parallelTools != nil && p.ToolChoice.OfAuto == nil && p.ToolChoice.OfTool == nil {
-		p.ToolChoice = anthropic.ToolChoiceUnionParam{
-			OfAuto: &anthropic.ToolChoiceAutoParam{
-				DisableParallelToolUse: anthropic.Bool(!*a.parallelTools),
-			},
-		}
-	}
 }
 
-// Validate rejects unsupported or incompatible controls before any request.
-func (a *Adapter) Validate() error {
-	caps := a.Capabilities()
+// EffectiveOptions implements types.OptionsReporter: the adapter's configured
+// controls expressed as request options, including the max_tokens default
+// every request carries.
+func (a *Adapter) EffectiveOptions() types.RequestOptions { return a.requestOptions().Clone() }
+
+// requestOptions expresses the adapter's configured controls as request
+// options, so the shared validation and reasoning rules apply to them.
+func (a *Adapter) requestOptions() types.RequestOptions {
 	var topK *float64
 	if a.topK != nil {
 		k := float64(*a.topK)
 		topK = &k
 	}
-	o := types.RequestOptions{Temperature: a.temperature, TopP: a.topP, TopK: topK,
+	return types.RequestOptions{Temperature: a.temperature, TopP: a.topP, TopK: topK,
 		MaxOutputTokens: &a.maxTokens, StopSequences: a.stop, ParallelTools: a.parallelTools,
-		ReasoningBudget: a.thinking, ReasoningEffort: a.reasoningEffort}
+		ReasoningBudget: a.thinking, ReasoningEffort: a.reasoningEffort, ToolChoice: a.toolChoice}
+}
+
+// reasoningActive reports whether requests from this adapter think: a manual
+// budget, an effort level, or the model's cataloged default.
+func (a *Adapter) reasoningActive() bool {
+	return catalog.MustLookup("anthropic", string(a.model)).ReasoningActive(a.requestOptions())
+}
+
+// Validate rejects unsupported or incompatible controls before any request.
+func (a *Adapter) Validate() error {
+	caps := a.Capabilities()
+	o := a.requestOptions()
 	if err := caps.ValidateOptions(o); err != nil {
+		return err
+	}
+	if err := a.validateTools(caps, caps.ReasoningActive(o)); err != nil {
 		return err
 	}
 	if a.temperature != nil && *a.temperature > 1 {
@@ -200,7 +250,7 @@ func (a *Adapter) WithModel(model string) types.Provider {
 // response text. It is the simple generation seam used by eval judges, HyDE,
 // context compression, and KG extraction.
 func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
-	return types.GenerateText(ctx, a, prompt)
+	return generate.Text(ctx, a, prompt)
 }
 
 // ChatStream implements types.Provider.
@@ -212,12 +262,12 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	if err := a.Validate(); err != nil {
 		return nil, err
 	}
-
-	systemBlocks, aMsgs := toAnthropicParams(messages)
-	if err := a.applyPromptCache(systemBlocks); err != nil {
+	if err := a.checkToolChoice(tools); err != nil {
 		return nil, err
 	}
-	aTools := toAnthropicTools(tools)
+
+	systemBlocks, aMsgs := toAnthropicParams(messages)
+	aTools := append(toAnthropicTools(tools), a.serverToolParams()...)
 
 	params := anthropic.MessageNewParams{
 		Model:     a.model,
@@ -229,6 +279,10 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 		params.Tools = aTools
 	}
 	a.applyParams(&params)
+	a.applyToolChoice(&params, len(params.Tools) > 0)
+	if err := a.applyPromptCache(&params); err != nil {
+		return nil, err
+	}
 
 	stream := a.client.Messages.NewStreaming(ctx, params)
 	return a.consumeStream(stream, nil), nil
@@ -237,6 +291,12 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 // This adapter constrains output with a hidden tool and forces the model to call it.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	if schema != nil && a.reasoningActive() {
+		// The API rejects a forced tool choice while thinking, whether the
+		// thinking is manual, adaptive, or the model's default. This error is
+		// returned before any request, so fallback can try another member.
+		return nil, schemacheck.Unsupported(a, "forced-tool schema output is incompatible with thinking")
+	}
 	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
 		return nil, err
 	}
@@ -245,20 +305,20 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		return nil, err
 	}
 
-	if schema != nil && a.thinking != nil {
-		return nil, a.Capabilities().OptionError("structured_output", "forced-tool schema output is incompatible with manual thinking")
-	}
 	if schema != nil {
 		if err := a.Capabilities().Require(types.CapTools, types.CapToolChoice); err != nil {
 			return nil, err
 		}
+		if err := a.checkSchemaToolChoice(); err != nil {
+			return nil, err
+		}
+	}
+	if err := a.checkToolChoice(tools); err != nil {
+		return nil, err
 	}
 
 	systemBlocks, aMsgs := toAnthropicParams(messages)
-	if err := a.applyPromptCache(systemBlocks); err != nil {
-		return nil, err
-	}
-	aTools := toAnthropicTools(tools)
+	aTools := append(toAnthropicTools(tools), a.serverToolParams()...)
 
 	params := anthropic.MessageNewParams{
 		Model:     a.model,
@@ -291,6 +351,10 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	if len(aTools) > 0 {
 		params.Tools = aTools
 	}
+	a.applyToolChoice(&params, len(params.Tools) > 0)
+	if err := a.applyPromptCache(&params); err != nil {
+		return nil, err
+	}
 
 	isStructured := func(name string) bool {
 		return schema != nil && name == "structured_output"
@@ -303,20 +367,66 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 // consumeStream reads from the Anthropic streaming response and emits deltas.
 // If isStructuredTool is non-nil and returns true for a tool_use block name,
 // the tool's input JSON is emitted as text deltas instead of tool call deltas.
+//
+// A tool call whose argument JSON does not decode is held open, because
+// Anthropic sends content_block_stop before the message_delta that carries
+// stop_reason. When a later block starts, or the stop reason is not
+// max_tokens, the model finished writing the call: it closes with
+// ToolCallEndDelta.ArgumentsError set and nil Arguments, so the loop refuses
+// it and the model can correct it. A max_tokens stop, or a stream that ends
+// before any stop reason, never closes the call and reports a truncation or
+// an incomplete stream instead. Malformed structured output is always an
+// error. Errors arrive after the usage delta, so the consumer can still
+// account for the tokens.
+//
+//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStreamEventUnion], isStructuredTool func(string) bool) <-chan types.Delta {
 	out := make(chan types.Delta, 64)
+	model := string(a.model)
+	maxTokens := int(a.maxTokens)
 	go func() {
 		defer close(out)
 
 		var currentBlockType string
 		var currentBlockName string
+		var currentBlockID string
 		var toolArgsBuf []byte
 		var signatureBuf string
+		// serverKinds remembers each server tool call's kind, so its result
+		// block, which carries only the call ID, reports the same kind.
+		serverKinds := map[string]types.ServerToolKind{}
 
 		// Track response metadata for the final UsageDelta.
 		var responseID string
 		var responseModel string
 		var finishReason string
+		var outputTokens int
+		stopped := false
+
+		// emitted turns true once a content delta reaches the consumer; after
+		// that a transport error can no longer be retried.
+		emitted := false
+		var argsFailure streamcheck.ArgsFailure
+		emit := func(d types.Delta) {
+			if _, usage := d.(types.UsageDelta); !usage {
+				emitted = true
+			}
+			out <- d
+		}
+		// heldCall is a tool call whose arguments did not decode, waiting to
+		// learn whether the model finished writing it.
+		var heldCall *streamcheck.ArgsFailure
+		releaseHeld := func(complete bool) {
+			if heldCall == nil {
+				return
+			}
+			if complete {
+				emit(types.ToolCallEndDelta{ID: heldCall.ToolCallID, ArgumentsError: heldCall.Err.Error()})
+			} else {
+				argsFailure.Set(heldCall.ToolCallID, heldCall.Name, heldCall.Err)
+			}
+			heldCall = nil
+		}
 
 		for stream.Next() {
 			evt := stream.Current()
@@ -326,7 +436,7 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 				responseID = evt.Message.ID
 				responseModel = string(evt.Message.Model)
 				if evt.Message.Usage.InputTokens+evt.Message.Usage.CacheReadInputTokens+evt.Message.Usage.CacheCreationInputTokens > 0 {
-					out <- types.UsageDelta{Cumulative: true,
+					emit(types.UsageDelta{Cumulative: true,
 						CompletionTokens:   int(evt.Message.Usage.OutputTokens),
 						PromptTokens:       int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens),
 						CachedPromptTokens: int(evt.Message.Usage.CacheReadInputTokens),
@@ -334,72 +444,105 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 						TotalTokens:        int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens + evt.Message.Usage.OutputTokens),
 						ResponseID:         evt.Message.ID,
 						ResponseModel:      string(evt.Message.Model),
-					}
+					})
 				}
 
 			case "content_block_start":
+				releaseHeld(true)
 				currentBlockType = evt.ContentBlock.Type
 				currentBlockName = evt.ContentBlock.Name
+				currentBlockID = evt.ContentBlock.ID
 				switch evt.ContentBlock.Type {
 				case "text":
-					out <- types.TextStartDelta{}
+					emit(types.TextStartDelta{})
 				case "thinking":
 					signatureBuf = ""
-					out <- types.ThinkingStartDelta{}
+					emit(types.ThinkingStartDelta{})
 				case "tool_use":
 					toolArgsBuf = toolArgsBuf[:0]
 					if isStructuredTool != nil && isStructuredTool(evt.ContentBlock.Name) {
-						out <- types.TextStartDelta{}
+						emit(types.TextStartDelta{})
 					} else {
-						out <- types.ToolCallStartDelta{
+						emit(types.ToolCallStartDelta{
 							ID:   evt.ContentBlock.ID,
 							Name: evt.ContentBlock.Name,
+						})
+					}
+				case blockServerToolUse:
+					// The input streams like a tool call's; the call is
+					// reported once it is complete.
+					toolArgsBuf = toolArgsBuf[:0]
+					serverKinds[evt.ContentBlock.ID] = serverToolKind(evt.ContentBlock.Name)
+				default:
+					// Server tool results arrive whole in the start event.
+					if strings.HasSuffix(evt.ContentBlock.Type, "_tool_result") && evt.ContentBlock.ToolUseID != "" {
+						kind, ok := serverKinds[evt.ContentBlock.ToolUseID]
+						if !ok {
+							kind = serverToolKind(strings.TrimSuffix(evt.ContentBlock.Type, "_tool_result"))
 						}
+						emit(serverToolResult(evt.ContentBlock.RawJSON(), kind))
 					}
 				}
 
 			case "content_block_delta":
 				switch evt.Delta.Type {
 				case "text_delta":
-					out <- types.TextContentDelta{Content: evt.Delta.Text}
+					emit(types.TextContentDelta{Content: evt.Delta.Text})
 				case "thinking_delta":
-					out <- types.ThinkingContentDelta{Content: evt.Delta.Thinking}
+					emit(types.ThinkingContentDelta{Content: evt.Delta.Thinking})
 				case "signature_delta":
 					signatureBuf += evt.Delta.Signature
 				case "input_json_delta":
 					toolArgsBuf = append(toolArgsBuf, evt.Delta.PartialJSON...)
+					if currentBlockType == blockServerToolUse {
+						break
+					}
 					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
-						out <- types.TextContentDelta{Content: evt.Delta.PartialJSON}
+						emit(types.TextContentDelta{Content: evt.Delta.PartialJSON})
 					} else {
-						out <- types.ToolCallArgumentDelta{Content: evt.Delta.PartialJSON}
+						emit(types.ToolCallArgumentDelta{ID: currentBlockID, Content: evt.Delta.PartialJSON})
 					}
 				}
 
 			case "content_block_stop":
 				switch currentBlockType {
 				case "text":
-					out <- types.TextEndDelta{}
+					emit(types.TextEndDelta{})
 				case "thinking":
-					out <- types.ThinkingEndDelta{Signature: signatureBuf}
+					emit(types.ThinkingEndDelta{Signature: signatureBuf})
 				case "tool_use":
+					args, err := streamcheck.DecodeArguments(string(toolArgsBuf))
 					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
-						out <- types.TextEndDelta{}
-					} else {
-						var args map[string]any
-						if len(toolArgsBuf) > 0 {
-							_ = json.Unmarshal(toolArgsBuf, &args)
+						if err != nil {
+							argsFailure.Set("", "", err)
 						}
-						out <- types.ToolCallEndDelta{Arguments: args}
+						emit(types.TextEndDelta{})
+					} else if err != nil {
+						heldCall = &streamcheck.ArgsFailure{ToolCallID: currentBlockID, Name: currentBlockName, Err: err}
+					} else {
+						emit(types.ToolCallEndDelta{ID: currentBlockID, Arguments: args})
 					}
+				case blockServerToolUse:
+					// Input that does not decode is reported as absent; the
+					// provider ran the call, so there is nothing to refuse.
+					input, _ := streamcheck.DecodeArguments(string(toolArgsBuf))
+					emit(types.ServerToolCallDelta{ID: currentBlockID, Kind: serverKinds[currentBlockID],
+						Name: currentBlockName, Input: input})
 				}
 				currentBlockType = ""
 				currentBlockName = ""
+				currentBlockID = ""
+
+			case "message_stop":
+				stopped = true
 
 			case "message_delta":
 				if string(evt.Delta.StopReason) != "" {
 					finishReason = string(evt.Delta.StopReason)
+					releaseHeld(!types.IsTruncationFinishReason(finishReason) && !types.IsContentFilterFinishReason(finishReason))
 				}
 				if evt.Usage.OutputTokens > 0 {
+					outputTokens = int(evt.Usage.OutputTokens)
 					ud := types.UsageDelta{Cumulative: true,
 						CompletionTokens: int(evt.Usage.OutputTokens),
 						TotalTokens:      int(evt.Usage.OutputTokens),
@@ -409,13 +552,31 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 					if finishReason != "" {
 						ud.FinishReasons = []string{finishReason}
 					}
-					out <- ud
+					emit(ud)
 				}
 			}
 		}
 
-		if err := stream.Err(); err != nil {
-			out <- types.ErrorDelta{Error: classifyAnthropicError(err)}
+		releaseHeld(false)
+		switch err := stream.Err(); {
+		case err != nil:
+			out <- types.ErrorDelta{Error: classifyAnthropicError(model, err, !emitted)}
+		case !stopped && finishReason == "":
+			// A clean close without message_stop or stop_reason means the
+			// connection ended early; reporting success would hand the loop a
+			// partial answer.
+			out <- types.ErrorDelta{Error: streamcheck.StreamError("anthropic", model, streamcheck.ErrIncompleteStream, !emitted)}
+		case types.IsContentFilterFinishReason(finishReason):
+			out <- types.ErrorDelta{Error: streamcheck.Refused("anthropic", model, finishReason)}
+		case finishReason == stopPauseTurn:
+			// The API paused a long server tool turn and expects the partial
+			// response sent back to continue it. Server tool blocks are not
+			// replayed, so the turn cannot continue: report it rather than
+			// hand the loop a partial answer as final.
+			out <- types.ErrorDelta{Error: &types.ProviderError{Provider: "anthropic", Model: model,
+				Kind: types.ErrorKindPermanent, Err: errPausedTurn}}
+		case argsFailure.Failed():
+			out <- types.ErrorDelta{Error: argsFailure.Error("anthropic", model, finishReason, outputTokens, maxTokens)}
 		}
 	}()
 
@@ -425,8 +586,20 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 // Capabilities implements types.CapabilityReporter: it resolves the target
 // model against the shared catalog so callers can check whether a flag (e.g.
 // reasoning) is supported before building a request that would be rejected.
+//
+// Extended thinking rejects a request that ends with an assistant turn or
+// forces a tool call, so an adapter that thinks does not report assistant
+// prefill or structured output.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
-	return catalog.MustLookup("anthropic", string(a.model))
+	caps := catalog.MustLookup("anthropic", string(a.model))
+	if a.thinking != nil || a.reasoningEffort != nil || caps.ReasoningDefaultEnabled {
+		caps = caps.Without(types.CapAssistantPrefill)
+	}
+	if caps.ReasoningActive(a.requestOptions()) {
+		// Schema output forces a tool call, which thinking does not allow.
+		caps = caps.Without(types.CapStructuredOutput)
+	}
+	return caps
 }
 
 // ContentSupport implements types.ContentNegotiator.
@@ -496,7 +669,32 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 		}
 	}
 
-	return system, out
+	return system, trimPrefill(out)
+}
+
+// trimPrefill prepares a request that ends with an assistant turn, which the
+// model continues (prefill). The API rejects a final assistant text that ends
+// in whitespace, so that whitespace is removed, and a text block left empty
+// is dropped.
+func trimPrefill(msgs []anthropic.MessageParam) []anthropic.MessageParam {
+	if len(msgs) == 0 || msgs[len(msgs)-1].Role != anthropic.MessageParamRoleAssistant {
+		return msgs
+	}
+	last := &msgs[len(msgs)-1]
+	n := len(last.Content)
+	if n == 0 || last.Content[n-1].OfText == nil {
+		return msgs
+	}
+	text := strings.TrimRight(last.Content[n-1].OfText.Text, " \t\r\n")
+	if text != "" {
+		last.Content[n-1].OfText.Text = text
+		return msgs
+	}
+	last.Content = last.Content[:n-1]
+	if len(last.Content) == 0 {
+		return msgs[:len(msgs)-1]
+	}
+	return msgs
 }
 
 // appendMsg appends a content block to the last message if same role, otherwise creates new.
@@ -624,19 +822,26 @@ func propertyToSchema(p types.PropertyDef) map[string]any {
 	return p.JSONSchema()
 }
 
-func classifyAnthropicError(err error) error {
+// streamErrorPrefix is how the SDK reports an error event received inside an
+// SSE stream; the event's JSON follows it.
+const streamErrorPrefix = "received error while streaming: "
+
+// classifyAnthropicError maps an error that ended a stream to a ProviderError.
+// An HTTP API error is classified by status, message, and Retry-After. An
+// error event inside the stream is classified by its error type, for example
+// overloaded_error. Anything else is a transport failure, transient only while
+// no output has reached the consumer.
+func classifyAnthropicError(model string, err error, beforeOutput bool) error {
 	var apiErr *anthropic.Error
 	if errors.As(err, &apiErr) {
-		return &types.ProviderError{
-			Provider: "anthropic",
-			Kind:     types.ClassifyHTTPStatus(apiErr.StatusCode),
-			Code:     apiErr.StatusCode,
-			Err:      err,
+		var header map[string][]string
+		if apiErr.Response != nil {
+			header = apiErr.Response.Header
 		}
+		return streamcheck.HTTPError("anthropic", model, apiErr.StatusCode, header, apiErr.RawJSON(), err)
 	}
-	return &types.ProviderError{
-		Provider: "anthropic",
-		Kind:     types.ErrorKindPermanent,
-		Err:      err,
+	if payload, ok := strings.CutPrefix(err.Error(), streamErrorPrefix); ok {
+		return streamcheck.EventError("anthropic", model, payload, err)
 	}
+	return streamcheck.StreamError("anthropic", model, err, beforeOutput)
 }

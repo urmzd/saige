@@ -148,11 +148,14 @@ func TestSetActiveWritesWAL(t *testing.T) {
 	}
 
 	ops := lastTxOps(t, wal, before, 1)
-	if len(ops) != 1 || ops[0].Kind != types.TxOpSetBranch {
-		t.Fatalf("ops = %+v, want single %s", ops, types.TxOpSetBranch)
+	if len(ops) != 2 || ops[0].Kind != types.TxOpSetBranch || ops[1].Kind != TxOpSetActive {
+		t.Fatalf("ops = %+v, want %s then %s", ops, types.TxOpSetBranch, TxOpSetActive)
 	}
 	if ops[0].BranchID != branchID || ops[0].TipID != child.ID {
 		t.Errorf("set_branch op = %+v, want %s -> %s", ops[0], branchID, child.ID)
+	}
+	if ops[1].BranchID != branchID {
+		t.Errorf("set_active op = %+v, want %s", ops[1], branchID)
 	}
 }
 
@@ -191,11 +194,14 @@ func TestCompactWritesOneWALTx(t *testing.T) {
 	if len(ops) < 2 {
 		t.Fatalf("compact ops = %d, want summary node + clones + set_branch", len(ops))
 	}
-	last := ops[len(ops)-1]
-	if last.Kind != types.TxOpSetBranch || last.BranchID != newBranch {
-		t.Errorf("final op = %+v, want %s for %s", last, types.TxOpSetBranch, newBranch)
+	setBranch, setActive := ops[len(ops)-2], ops[len(ops)-1]
+	if setBranch.Kind != types.TxOpSetBranch || setBranch.BranchID != newBranch {
+		t.Errorf("op = %+v, want %s for %s", setBranch, types.TxOpSetBranch, newBranch)
 	}
-	for i, op := range ops[:len(ops)-1] {
+	if setActive.Kind != TxOpSetActive || setActive.BranchID != newBranch {
+		t.Errorf("final op = %+v, want %s for %s", setActive, TxOpSetActive, newBranch)
+	}
+	for i, op := range ops[:len(ops)-2] {
 		if op.Kind != types.TxOpAddNode || op.Node == nil {
 			t.Errorf("op[%d] = %+v, want %s with node", i, op, types.TxOpAddNode)
 		}

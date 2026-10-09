@@ -1,0 +1,925 @@
+{
+  "$defs": {
+    "EntrySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_env": {
+          "type": "string"
+        },
+        "attempt_timeout": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inherit": {
+          "enum": [
+            "all",
+            "none"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "options": {
+          "$ref": "#/$defs/OptionsSpec"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "retry": {
+          "$ref": "#/$defs/RetrySpec"
+        },
+        "unset": {
+          "items": {
+            "enum": [
+              "temperature",
+              "top_p",
+              "top_k",
+              "frequency_penalty",
+              "presence_penalty",
+              "seed",
+              "max_output_tokens",
+              "stop",
+              "parallel_tools",
+              "reasoning",
+              "tool_choice",
+              "prompt_cache",
+              "server_tools"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "Fee": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "per_use": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "per_use"
+      ],
+      "type": "object"
+    },
+    "LimitsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "context_window": {
+          "type": "integer"
+        },
+        "default_max_output_tokens": {
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "MCPServerSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "require_approval": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "type": "object"
+    },
+    "ModelSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "$delete": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "$replace": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "add_capabilities": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "assistant_prefill",
+                  "automatic_prompt_cache",
+                  "citations",
+                  "code_execution",
+                  "context_window_override",
+                  "embeddings",
+                  "explicit_context_cache",
+                  "frequency_penalty",
+                  "max_output_tokens",
+                  "parallel_tool_control",
+                  "parallel_tools",
+                  "presence_penalty",
+                  "prompt_cache_markers",
+                  "prompt_caching",
+                  "reasoning",
+                  "reasoning_budget",
+                  "reasoning_effort",
+                  "reasoning_signature",
+                  "reasoning_toggle",
+                  "remote_mcp",
+                  "safety_settings",
+                  "seed",
+                  "server_tools",
+                  "stop_sequences",
+                  "streaming",
+                  "structured_output",
+                  "system_prompt",
+                  "temperature",
+                  "tool_choice",
+                  "tools",
+                  "top_k",
+                  "top_p",
+                  "web_search"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "assistant_prefill",
+                  "automatic_prompt_cache",
+                  "citations",
+                  "code_execution",
+                  "context_window_override",
+                  "embeddings",
+                  "explicit_context_cache",
+                  "frequency_penalty",
+                  "max_output_tokens",
+                  "parallel_tool_control",
+                  "parallel_tools",
+                  "presence_penalty",
+                  "prompt_cache_markers",
+                  "prompt_caching",
+                  "reasoning",
+                  "reasoning_budget",
+                  "reasoning_effort",
+                  "reasoning_signature",
+                  "reasoning_toggle",
+                  "remote_mcp",
+                  "safety_settings",
+                  "seed",
+                  "server_tools",
+                  "stop_sequences",
+                  "streaming",
+                  "structured_output",
+                  "system_prompt",
+                  "temperature",
+                  "tool_choice",
+                  "tools",
+                  "top_k",
+                  "top_p",
+                  "web_search"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OptionsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extends": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LimitsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "media": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "image/jpeg",
+                  "image/png",
+                  "image/gif",
+                  "image/webp",
+                  "application/pdf",
+                  "text/csv",
+                  "audio/mpeg",
+                  "audio/wav",
+                  "video/mp4",
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                  "text/html",
+                  "text/plain",
+                  "application/json"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "pricing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PricingSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remove_capabilities": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "assistant_prefill",
+                  "automatic_prompt_cache",
+                  "citations",
+                  "code_execution",
+                  "context_window_override",
+                  "embeddings",
+                  "explicit_context_cache",
+                  "frequency_penalty",
+                  "max_output_tokens",
+                  "parallel_tool_control",
+                  "parallel_tools",
+                  "presence_penalty",
+                  "prompt_cache_markers",
+                  "prompt_caching",
+                  "reasoning",
+                  "reasoning_budget",
+                  "reasoning_effort",
+                  "reasoning_signature",
+                  "reasoning_toggle",
+                  "remote_mcp",
+                  "safety_settings",
+                  "seed",
+                  "server_tools",
+                  "stop_sequences",
+                  "streaming",
+                  "structured_output",
+                  "system_prompt",
+                  "temperature",
+                  "tool_choice",
+                  "tools",
+                  "top_k",
+                  "top_p",
+                  "web_search"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "server_tool_fees": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/Fee"
+              },
+              "propertyNames": {
+                "enum": [
+                  "web_search",
+                  "code_execution",
+                  "remote_mcp"
+                ],
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "server_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "web_search",
+                  "code_execution",
+                  "remote_mcp"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "structured_output": {
+          "anyOf": [
+            {
+              "enum": [
+                "",
+                "native",
+                "tool_call"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "enum": [
+                "frontier",
+                "standard",
+                "economy"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "OptionsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency_penalty": {
+          "type": "number"
+        },
+        "max_output_tokens": {
+          "type": "integer"
+        },
+        "parallel_tools": {
+          "type": "boolean"
+        },
+        "presence_penalty": {
+          "type": "number"
+        },
+        "prompt_cache": {
+          "$ref": "#/$defs/PromptCacheSpec"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningOption"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "server_tools": {
+          "items": {
+            "$ref": "#/$defs/ServerToolSpec"
+          },
+          "type": "array"
+        },
+        "stop": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "tool_choice": {
+          "enum": [
+            "auto",
+            "none"
+          ],
+          "type": "string"
+        },
+        "top_k": {
+          "type": "number"
+        },
+        "top_p": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "PresetSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "items": {
+            "$ref": "#/$defs/EntrySpec"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "extends": {
+          "type": "string"
+        },
+        "llm_timeout": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/OptionsSpec"
+        },
+        "output_mode": {
+          "enum": [
+            "auto",
+            "native",
+            "tool",
+            "prompt"
+          ],
+          "type": "string"
+        },
+        "require_declared": {
+          "type": "boolean"
+        },
+        "retry": {
+          "$ref": "#/$defs/RetrySpec"
+        },
+        "routing": {
+          "$ref": "#/$defs/RoutingSpec"
+        },
+        "tool_choice": {
+          "pattern": "^(auto|none|required|named:.+)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PricingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "cache_write_per_mtok": {
+          "type": "number"
+        },
+        "cached_input_per_mtok": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "free": {
+          "type": "boolean"
+        },
+        "input_per_mtok": {
+          "type": "number"
+        },
+        "output_per_mtok": {
+          "type": "number"
+        },
+        "per_request": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PromptCacheSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "off",
+            "markers",
+            "automatic"
+          ],
+          "type": "string"
+        },
+        "retention": {
+          "type": "string"
+        },
+        "system": {
+          "type": "boolean"
+        },
+        "tools": {
+          "type": "boolean"
+        },
+        "ttl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "ReasoningOption": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "type": "integer"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ReasoningSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "default_effort": {
+          "type": "string"
+        },
+        "default_enabled": {
+          "type": "boolean"
+        },
+        "dynamic_budget": {
+          "type": "boolean"
+        },
+        "efforts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_budget": {
+          "type": "integer"
+        },
+        "min_budget": {
+          "type": "integer"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "sampling_requires_no_reasoning": {
+          "items": {
+            "enum": [
+              "assistant_prefill",
+              "automatic_prompt_cache",
+              "citations",
+              "code_execution",
+              "context_window_override",
+              "embeddings",
+              "explicit_context_cache",
+              "frequency_penalty",
+              "max_output_tokens",
+              "parallel_tool_control",
+              "parallel_tools",
+              "presence_penalty",
+              "prompt_cache_markers",
+              "prompt_caching",
+              "reasoning",
+              "reasoning_budget",
+              "reasoning_effort",
+              "reasoning_signature",
+              "reasoning_toggle",
+              "remote_mcp",
+              "safety_settings",
+              "seed",
+              "server_tools",
+              "stop_sequences",
+              "streaming",
+              "structured_output",
+              "system_prompt",
+              "temperature",
+              "tool_choice",
+              "tools",
+              "top_k",
+              "top_p",
+              "web_search"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "zero_budget": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "RetrySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "base_delay": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        },
+        "disable": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "type": "integer"
+        },
+        "max_delay": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        },
+        "max_retry_after": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        },
+        "multiplier": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "RoutingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "fail_threshold": {
+          "type": "integer"
+        },
+        "failover_on_auth": {
+          "type": "boolean"
+        },
+        "failover_on_content_filter": {
+          "type": "boolean"
+        },
+        "policy": {
+          "enum": [
+            "sticky",
+            "affinity"
+          ],
+          "type": "string"
+        },
+        "reprobe_after": {
+          "type": "integer"
+        },
+        "required": {
+          "items": {
+            "enum": [
+              "assistant_prefill",
+              "automatic_prompt_cache",
+              "citations",
+              "code_execution",
+              "context_window_override",
+              "embeddings",
+              "explicit_context_cache",
+              "frequency_penalty",
+              "max_output_tokens",
+              "parallel_tool_control",
+              "parallel_tools",
+              "presence_penalty",
+              "prompt_cache_markers",
+              "prompt_caching",
+              "reasoning",
+              "reasoning_budget",
+              "reasoning_effort",
+              "reasoning_signature",
+              "reasoning_toggle",
+              "remote_mcp",
+              "safety_settings",
+              "seed",
+              "server_tools",
+              "stop_sequences",
+              "streaming",
+              "structured_output",
+              "system_prompt",
+              "temperature",
+              "tool_choice",
+              "tools",
+              "top_k",
+              "top_p",
+              "web_search"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ServerToolSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blocked_domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "web_search",
+            "code_execution",
+            "remote_mcp"
+          ],
+          "type": "string"
+        },
+        "max_uses": {
+          "type": "integer"
+        },
+        "mcp_server": {
+          "$ref": "#/$defs/MCPServerSpec"
+        },
+        "user_location": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "baselines": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelSpec"
+      },
+      "type": "object"
+    },
+    "default_preset": {
+      "type": "string"
+    },
+    "inherit_default": {
+      "type": "boolean"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ModelSpec"
+      },
+      "type": "array"
+    },
+    "presets": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PresetSpec"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "templates": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelSpec"
+      },
+      "type": "object"
+    },
+    "version": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "saige model catalog",
+  "type": "object"
+}

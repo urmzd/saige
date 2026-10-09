@@ -66,7 +66,7 @@ func TestAdaptiveThinkingEncodingAndManualSchemaConflict(t *testing.T) {
 	}
 }
 
-func TestAdaptiveSchemaPreservesPromptCache(t *testing.T) {
+func TestAdaptivePromptCache(t *testing.T) {
 	for _, model := range []string{"claude-opus-4-6", "claude-fable-5"} {
 		t.Run(model, func(t *testing.T) {
 			var body map[string]any
@@ -79,7 +79,7 @@ func TestAdaptiveSchemaPreservesPromptCache(t *testing.T) {
 			}))
 			defer server.Close()
 			a := NewAdapter("test", model, WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h"))
-			stream, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reply")}, nil, &types.ParameterSchema{Type: "object"})
+			stream, err := a.ChatStream(context.Background(), []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reply")}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,12 +91,63 @@ func TestAdaptiveSchemaPreservesPromptCache(t *testing.T) {
 			if body["thinking"].(map[string]any)["type"] != "adaptive" || body["output_config"].(map[string]any)["effort"] != "max" {
 				t.Fatal("adaptive settings lost", body)
 			}
-			if body["tool_choice"].(map[string]any)["name"] != "structured_output" {
-				t.Fatal("schema tool lost", body)
-			}
 			system := body["system"].([]any)[0].(map[string]any)
 			if system["cache_control"].(map[string]any)["ttl"] != "1h" {
 				t.Fatal("prompt cache lost", body)
+			}
+		})
+	}
+}
+
+// TestSchemaWithThinkingIsRejected checks that a schema request is refused
+// before any network call whenever the adapter thinks, because the API
+// rejects a forced tool choice while thinking, and that capabilities say so.
+func TestSchemaWithThinkingIsRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name, model string
+		opts        []Option
+		reject      bool
+	}{
+		{"manual thinking", "claude-sonnet-4-5", []Option{WithThinking(1024)}, true},
+		{"adaptive thinking", "claude-opus-4-6", []Option{WithReasoningEffort("high")}, true},
+		{"thinking by default", "claude-fable-5", nil, true},
+		{"adaptive thinking by default", "claude-sonnet-5-5", nil, true},
+		{"no thinking", "claude-sonnet-4-5", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+			}))
+			defer server.Close()
+			a := NewAdapter("test", tc.model, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			if got := a.Capabilities().Supports(types.CapStructuredOutput); got == tc.reject {
+				t.Errorf("structured output capability = %v, want %v", got, !tc.reject)
+			}
+			if got := a.Capabilities().StructuredOutput != types.StructuredOutputNone; got == tc.reject {
+				t.Errorf("structured output mode declared = %v, want %v", got, !tc.reject)
+			}
+			stream, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("reply")}, nil, &types.ParameterSchema{Type: "object"})
+			if tc.reject {
+				if stream != nil || !errors.Is(err, types.ErrSchemaUnsupported) || !errors.Is(err, types.ErrInvalidModelConfig) {
+					t.Fatalf("stream = %v, err = %v; want a schema-unsupported error", stream, err)
+				}
+				if body != nil {
+					t.Fatal("request was sent")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range stream {
+			}
+			if body["tool_choice"].(map[string]any)["name"] != "structured_output" {
+				t.Fatal("schema tool lost", body)
 			}
 		})
 	}

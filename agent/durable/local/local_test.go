@@ -204,6 +204,9 @@ func TestProcessCrashDoesNotRepeatUncertainStep(t *testing.T) {
 		t.Fatal("helper did not crash")
 	}
 	e := New(dir)
+	if leased, err := e.Leased("crash"); err != nil || leased {
+		t.Fatalf("crashed run leased=%v err=%v, want an unleased orphan", leased, err)
+	}
 	path, release, err := e.acquire("crash")
 	if err != nil {
 		t.Fatal("crash did not release lease", err)

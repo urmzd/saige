@@ -36,6 +36,8 @@ const (
 	iconMarker    = "⚠" // approval required
 	iconUsage     = "⏱" // token usage
 	iconSeparator = "─" // section divider
+	iconStopped   = "■" // run stopped or cut short
+	iconQueued    = "…" // message waiting for the run
 )
 
 // ── Activity log styles ─────────────────────────────────────────────
@@ -59,9 +61,6 @@ var (
 				Foreground(lipgloss.Color("8")) // dim
 
 	// Status styles
-	statusRunning = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("11")) // yellow
-
 	statusDone = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("10")) // green
 
@@ -95,9 +94,15 @@ var (
 	reportDividerStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("8"))
 
+	// Stopped runs and the queued-message strip
+	stoppedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")) // yellow
+
+	queuedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")) // dim
+
 	// Prompt (runner input)
 	promptStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("12")).
 			Bold(true)
-
 )

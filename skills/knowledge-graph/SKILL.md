@@ -59,14 +59,18 @@ graph.ApplyOntology(ctx, &knowledge.Ontology{
 })
 ```
 
+The ontology is passed to the extractor, which is asked to use its types. Extracted types that match an ontology type ignoring case and punctuation are rewritten to the ontology's spelling; other types are kept as extracted. Build the graph with `knowledge.WithStrictOntology()` to drop entities and relations whose type is not in the ontology.
+
 ## Agent Tool Bindings
 
 ```go
 import "github.com/urmzd/saige/rag/knowledge/tool"
 
-tools := tool.NewTools(graph)
-// kg_search, kg_ingest
+tools := tool.NewTools(graph, tool.WithGroupID(tenantID))
+// kg_search, kg_ingest, both bound to one graph group the model cannot change
 ```
+
+In a RAG pipeline, `rag.WithGraphNamespace(tenantID)` sets the group documents are ingested into and the graph retriever searches.
 
 ## CLI
 

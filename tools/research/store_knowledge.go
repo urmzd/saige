@@ -2,6 +2,7 @@ package research
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/urmzd/saige/agent/types"
@@ -25,13 +26,14 @@ func (t *StoreKnowledgeTool) WithGroupID(id string) *StoreKnowledgeTool {
 func (t *StoreKnowledgeTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "store_knowledge",
+		Capability:  types.ToolCapabilityWrite,
 		Description: "Store information into the knowledge graph by extracting entities and relationships from text. Use this to persist important findings.",
 		Parameters: types.ParameterSchema{
-			Type:     "object",
+			Type:     types.SchemaObject,
 			Required: []string{"text", "source"},
 			Properties: map[string]types.PropertyDef{
-				"text":   {Type: "string", Description: "The text content to extract knowledge from"},
-				"source": {Type: "string", Description: "Description of the source of this information"},
+				"text":   {Type: types.SchemaString, Description: "The text content to extract knowledge from"},
+				"source": {Type: types.SchemaString, Description: "Description of the source of this information"},
 			},
 		},
 	}
@@ -56,7 +58,12 @@ func (t *StoreKnowledgeTool) Execute(ctx context.Context, args map[string]any) (
 
 	resp, err := t.graph.IngestEpisode(ctx, input)
 	if err != nil {
-		return "", err
+		// A partial episode is stored with some facts missing: report what
+		// was stored, with the reason the rest was not.
+		if !errors.Is(err, kgtypes.ErrPartialEpisode) || resp == nil {
+			return "", err
+		}
+		return fmt.Sprintf("Stored %d entities and %d relations. Warning: %v", len(resp.EntityNodes), len(resp.EpisodicEdges), err), nil
 	}
 
 	return fmt.Sprintf("Stored %d entities and %d relations.", len(resp.EntityNodes), len(resp.EpisodicEdges)), nil

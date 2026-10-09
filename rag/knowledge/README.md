@@ -44,14 +44,14 @@ See [`examples/knowledge/basic/`](../../examples/knowledge/basic/) for a runnabl
 
 ```go
 type Graph interface {
-    ApplyOntology(ctx, ontology) error
-    IngestEpisode(ctx, episode) (*IngestResult, error)
-    GetEntity(ctx, uuid) (*Entity, error)
-    SearchFacts(ctx, query, opts...) (*SearchFactsResult, error)
-    GetGraph(ctx) (*GraphData, error)
-    GetNode(ctx, uuid, depth) (*NodeDetail, error)
-    GetFactProvenance(ctx, factID) ([]Episode, error)
-    Close(ctx) error
+    ApplyOntology(ctx context.Context, ont *Ontology) error
+    IngestEpisode(ctx context.Context, input *EpisodeInput) (*IngestResult, error)
+    GetEntity(ctx context.Context, id string) (*Entity, error)
+    SearchFacts(ctx context.Context, query string, opts ...SearchOption) (*SearchFactsResult, error)
+    GetGraph(ctx context.Context, limit int64) (*GraphData, error)
+    GetNode(ctx context.Context, id string, depth int) (*NodeDetail, error)
+    GetFactProvenance(ctx context.Context, factUUID string) ([]Episode, error)
+    Close(ctx context.Context) error
 }
 ```
 
@@ -59,15 +59,34 @@ type Graph interface {
 
 | Type | Purpose |
 |------|---------|
-| `Entity` | Node: UUID, Name, Type, Summary, Embedding |
+| `Entity` | Node: UUID, Name, Type, Summary |
 | `Relation` | Edge: Source/Target UUID, Type, Fact, ValidAt/InvalidAt |
 | `Fact` | Relation with resolved source/target entities |
-| `Episode` | Text input with Name, Body, Source, GroupID, Metadata |
-| `Ontology` | Schema constraints: EntityTypes, RelationTypes |
+| `EpisodeInput` | Text to ingest: Name, Body, Source, GroupID, DocumentID, ReferenceTime, Metadata |
+| `Ontology` | Entity and relation types passed to the extractor |
+
+`GroupID` is the tenant scope: entities are deduplicated within a group. `DocumentID` names the source document, so `DeleteDocumentEpisodes` can remove one document's episodes without touching the rest of the group. A fact that the removed document had superseded becomes current again unless a remaining fact supersedes it.
+
+## Ingest
+
+`IngestEpisode` fails when extraction fails or the episode cannot be stored. Failures of single entities, relations, embeddings, or links return the stored parts with an error wrapping `types.ErrPartialEpisode`:
+
+```go
+res, err := graph.IngestEpisode(ctx, input)
+if err != nil && !errors.Is(err, types.ErrPartialEpisode) {
+    return err
+}
+```
+
+All entities of an episode are embedded in one `Embed` call. With the Postgres store, the episode is stored first and linked to every relation it asserts, including relations it repeats. `GetFactProvenance` returns those episodes, oldest first.
+
+## Ontology
+
+`ApplyOntology` passes the ontology to an extractor that implements `types.OntologyExtractor` (the Ollama extractor does). Extracted types that match an ontology type ignoring case and punctuation are rewritten to the ontology's spelling, so `"person"` is stored as `"Person"`. Other types are kept unless the graph is built with `knowledge.WithStrictOntology()`, which drops them.
 
 ## Hybrid Search
 
-Combines vector similarity (HNSW) and full-text (BM25) via **Reciprocal Rank Fusion**:
+Combines vector similarity (HNSW) and Postgres full-text search (`ts_rank`) via **Reciprocal Rank Fusion**. Text search matches entity names and summaries and the fact text and relation type, so "who reports to Bob" finds a `reports_to` fact:
 
 ```go
 results, _ := graph.SearchFacts(ctx, "Who works at Acme?",
@@ -79,11 +98,23 @@ for _, fact := range knowledge.FactsToStrings(results.Facts) {
 }
 ```
 
+The limit is applied in SQL. Each matched entity contributes at most `Limit` of its newest edges, and ties are ordered deterministically.
+
+A search that succeeds on one backend and fails on the other returns its results with `types.ErrPartialSearch`, the same sentinel as the RAG pipeline's, so one `errors.Is` check covers both.
+
+`knowledge.WithObserver(obs)` reports episode ingest, fact search, and deletion as spans (`knowledge.ingest_episode`, `knowledge.search_facts`, `knowledge.delete`) and each fact search as a retrieval metric. `rag/otel` adapts OpenTelemetry to the observer; see the [rag README](../README.md#observability).
+
+## Temporal Facts
+
+Relations become valid at `EpisodeInput.ReferenceTime` (default: ingest time). A new relation of the same source, target, type, and direction invalidates an older active one at its own valid time. A backfilled relation older than the stored one is created already invalidated, so it never looks current. A reversed edge ("B reports_to A") neither duplicates nor supersedes "A reports_to B".
+
+`types.WithValidAt(t)` runs an as-of query: it returns the relations valid at `t`, including ones superseded since.
+
 ## Deduplication
 
 - **Exact match** by (name, type) pair
-- **Fuzzy match** via Levenshtein distance (threshold 0.8)
-- **Relation dedup** by text similarity (threshold 0.92)
+- **Fuzzy match** via Levenshtein distance (threshold 0.8); a match keeps the existing entity's name and type
+- **Relation dedup** by fact text similarity (threshold 0.92), same direction only
 
 ## Graph Traversal
 
@@ -91,6 +122,8 @@ for _, fact := range knowledge.FactsToStrings(results.Facts) {
 detail, _ := graph.GetNode(ctx, entityUUID, 2) // BFS to depth 2
 sub := knowledge.Subgraph(detail)              // extract visualization data
 ```
+
+The Postgres store runs one query per hop and returns each edge once. It stops at 1000 nodes or 5000 edges by default and sets `NodeDetail.Truncated`; change the caps with `pgstore.NewStore(pool, logger, pgstore.WithTraversalLimits(nodes, edges))`.
 
 ## Graph Formatting
 
@@ -110,13 +143,15 @@ The [`rag/knowledge/tool`](tool/) package exposes the graph as agent tools:
 ```go
 import kgtool "github.com/urmzd/saige/rag/knowledge/tool"
 
-kgTools := kgtool.NewTools(graph)
+kgTools := kgtool.NewTools(graph, kgtool.WithGroupID(tenantID))
 // kg_search, kg_ingest
 ```
 
+`WithGroupID` binds both tools to one group: `kg_search` searches only it and `kg_ingest` writes into it. The model cannot choose the group. `kg_search` caps the model's limit at 50.
+
 ## PostgreSQL Backend
 
-Automatic schema provisioning via `postgres.RunMigrations` with pgvector HNSW index (configurable dimension, cosine distance), tsvector fulltext search, pg_trgm fuzzy matching, unique constraints, and temporal relation tracking. See [`rag/knowledge/pgstore`](pgstore/) for the Store implementation.
+Automatic schema provisioning via `postgres.RunMigrations` with pgvector HNSW index (configurable dimension, cosine distance), tsvector full-text search, pg_trgm fuzzy matching, unique constraints, relation-to-episode links, and temporal relation tracking. See [`rag/knowledge/pgstore`](pgstore/) for the Store implementation.
 
 ## Related
 

@@ -1,0 +1,286 @@
+package eval
+
+import (
+	"encoding/json"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/urmzd/saige/agent/types"
+	topeval "github.com/urmzd/saige/eval"
+)
+
+// AgentRun is everything an agent eval needs from one drained delta stream.
+type AgentRun struct {
+	// Text is the concatenated assistant text.
+	Text string
+	// Timing holds latency, token usage, and any stream errors.
+	Timing StreamTiming
+	// ToolCalls lists the top-level tool calls in the order the model
+	// started them, with arguments, results, errors, and execution time.
+	ToolCalls []ToolCallRecord
+	// TurnCount is the number of provider calls, counted from the
+	// UsageDelta the agent loop emits once per loop iteration.
+	TurnCount int
+	// TotalMs is the time from start until the stream closed.
+	TotalMs int64
+	// Usage is the billable token usage of the run's provider calls, one
+	// call per top-level UsageDelta. A response-cache replay adds nothing.
+	Usage types.TokenUsage
+	// Models lists the response models the provider reported, in first-seen
+	// order, for [topeval.Provenance.AddModels].
+	Models []string
+	// CostUSD is the run's cost, set by [AgentRun.Priced]. Nil means no
+	// price was applied or the run could not be priced.
+	CostUSD *float64
+	// Routes lists the configuration that served each provider call, in
+	// order: the last top-level route reported before the call's usage.
+	// Empty when the provider reports no routes.
+	Routes []RouteRecord
+	// Deltas holds every delta received, for further inspection.
+	Deltas []types.Delta
+}
+
+// RouteRecord names the configuration that served one provider call.
+type RouteRecord struct {
+	Profile         string `json:"profile,omitempty"`
+	Preset          string `json:"preset,omitempty"`
+	ConfigHash      string `json:"config_hash,omitempty"`
+	CatalogRevision string `json:"catalog_revision,omitempty"`
+}
+
+// AddProvenance records the run's response models and serving catalog
+// configurations on p.
+func (r AgentRun) AddProvenance(p *topeval.Provenance) {
+	p.AddModels(r.Models...)
+	for _, rt := range r.Routes {
+		p.AddRoute(rt.Profile, rt.Preset, rt.ConfigHash, rt.CatalogRevision)
+	}
+}
+
+// CollectAgentRun drains ch into an [AgentRun], starting the clock now.
+// Prefer [CollectAgentRunFrom] when the stream was started earlier.
+func CollectAgentRun(ch <-chan types.Delta) AgentRun {
+	return CollectAgentRunFrom(time.Now(), ch)
+}
+
+// CollectAgentRunFrom drains ch into an [AgentRun] with latency measured from
+// start.
+//
+// Tool calls are built in one pass. Each ToolCallEndDelta closes the open
+// call with the same ID, or the oldest open call when the ID is empty, and
+// supplies its arguments or the error from parsing them. ToolExecStartDelta and ToolExecEndDelta are joined
+// by tool call ID to fill the result, the error, and the wall-clock execution
+// time. Deltas nested in ToolExecDelta belong to sub-agents and streaming
+// tools, so they are kept in Deltas but do not enter the top-level
+// trajectory, text, or timing.
+func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
+	var (
+		run       AgentRun
+		sc        streamCollector
+		tc        toolCollector
+		lastDelta = start
+		route     *types.RouteDelta
+	)
+	for delta := range ch {
+		now := time.Now()
+		lastDelta = now
+		run.Deltas = append(run.Deltas, delta)
+		sc.observe(now, delta)
+		tc.observe(now, delta)
+		if rd, ok := delta.(types.RouteDelta); ok {
+			route = &rd
+		}
+		if u, ok := delta.(types.UsageDelta); ok {
+			if route != nil {
+				run.Routes = append(run.Routes, RouteRecord{Profile: route.Profile, Preset: route.Preset,
+					ConfigHash: route.ConfigHash, CatalogRevision: route.CatalogRevision})
+				route = nil
+			}
+			run.TurnCount++
+			run.Usage.Add(types.UsageFromDelta(u))
+			if u.ResponseModel != "" && !slices.Contains(run.Models, u.ResponseModel) {
+				run.Models = append(run.Models, u.ResponseModel)
+			}
+		}
+	}
+	run.Text = sc.text.String()
+	run.Timing = sc.timing(start)
+	run.ToolCalls = tc.records()
+	run.TotalMs = lastDelta.Sub(start).Milliseconds()
+	return run
+}
+
+// Priced returns a copy of the run with CostUSD computed from its usage at
+// the given rates. Rates in a currency other than USD, and an unpriced rate
+// card (all zero and not marked free), leave CostUSD nil, so an unknown cost
+// is never reported as zero. A run that reported more than one response
+// model (a fallback or routed run) also gets a nil CostUSD: Usage is summed
+// across models, so one rate card cannot price it.
+func (r AgentRun) Priced(p types.Pricing) AgentRun {
+	if len(r.Models) > 1 || (p.IsZero() && !p.Free) || (p.Currency != "" && p.Currency != types.DefaultCurrency) {
+		r.CostUSD = nil
+		return r
+	}
+	usd := p.Cost(r.Usage).Float()
+	r.CostUSD = &usd
+	return r
+}
+
+// toolCollector pairs tool call and tool execution deltas into records.
+type toolCollector struct {
+	calls     []ToolCallRecord
+	execStart []time.Time
+	executed  []bool // an execution delta has claimed the record
+	byID      map[string]int
+	open      []int // indices of calls whose arguments are still streaming
+}
+
+func (tc *toolCollector) add(id, name string) int {
+	tc.calls = append(tc.calls, ToolCallRecord{ID: id, Name: name, Exec: ExecNotRun})
+	tc.execStart = append(tc.execStart, time.Time{})
+	tc.executed = append(tc.executed, false)
+	idx := len(tc.calls) - 1
+	if id != "" {
+		if tc.byID == nil {
+			tc.byID = map[string]int{}
+		}
+		tc.byID[id] = idx
+	}
+	return idx
+}
+
+// lookup returns the record for an executed call. A call announced without
+// an ID is adopted by the first execution of the same tool name; a call the
+// stream never announced (for example a replayed execution) gets a new
+// record.
+func (tc *toolCollector) lookup(id, name string) int {
+	if idx, ok := tc.byID[id]; ok && id != "" {
+		return idx
+	}
+	for idx := range tc.calls {
+		rec := &tc.calls[idx]
+		if rec.ID == "" && rec.Name == name && !tc.executed[idx] {
+			rec.ID = id
+			if id != "" {
+				if tc.byID == nil {
+					tc.byID = map[string]int{}
+				}
+				tc.byID[id] = idx
+			}
+			return idx
+		}
+	}
+	return tc.add(id, name)
+}
+
+func (tc *toolCollector) closeCall(id string) (int, bool) {
+	pos := -1
+	if id != "" {
+		for i, idx := range tc.open {
+			if tc.calls[idx].ID == id {
+				pos = i
+				break
+			}
+		}
+	}
+	if pos < 0 {
+		if len(tc.open) == 0 {
+			return 0, false
+		}
+		pos = 0
+	}
+	idx := tc.open[pos]
+	tc.open = append(tc.open[:pos], tc.open[pos+1:]...)
+	return idx, true
+}
+
+func (tc *toolCollector) observe(now time.Time, delta types.Delta) {
+	switch v := delta.(type) {
+	case types.ToolCallStartDelta:
+		tc.open = append(tc.open, tc.add(v.ID, v.Name))
+
+	case types.ToolCallEndDelta:
+		if idx, ok := tc.closeCall(v.ID); ok {
+			tc.calls[idx].Arguments = v.Arguments
+			tc.calls[idx].ArgumentsError = v.ArgumentsError
+		}
+
+	case types.ToolExecStartDelta:
+		idx := tc.lookup(v.ToolCallID, v.Name)
+		tc.executed[idx] = true
+		tc.execStart[idx] = now
+		if tc.calls[idx].Exec != ExecFinished {
+			tc.calls[idx].Exec = ExecUnfinished
+		}
+
+	case types.ToolExecEndDelta:
+		idx := tc.lookup(v.ToolCallID, v.Name)
+		tc.executed[idx] = true
+		rec := &tc.calls[idx]
+		if rec.Name == "" {
+			rec.Name = v.Name
+		}
+		rec.Result = v.Result
+		rec.Error = v.Error
+		rec.Exec = ExecFinished
+		if !tc.execStart[idx].IsZero() {
+			rec.DurationMs = now.Sub(tc.execStart[idx]).Milliseconds()
+		}
+	}
+}
+
+func (tc *toolCollector) records() []ToolCallRecord {
+	if tc.calls == nil {
+		return []ToolCallRecord{}
+	}
+	return tc.calls
+}
+
+// AnnotateObservation records an [AgentRun] on obs under the agent
+// annotation keys ([AnnotationToolCalls], [AnnotationTurnCount],
+// [AnnotationStreamTiming]) so the scorers in this package can read it. It
+// also fills obs.Timing, including the cost when the run was [AgentRun.Priced],
+// and, when obs.Output is empty, sets Output to the run's text as a JSON
+// string.
+func AnnotateObservation(obs *topeval.Observation, run AgentRun) error {
+	calls := run.ToolCalls
+	if calls == nil {
+		calls = []ToolCallRecord{}
+	}
+	values := map[string]any{
+		AnnotationToolCalls:    calls,
+		AnnotationTurnCount:    run.TurnCount,
+		AnnotationStreamTiming: run.Timing,
+	}
+	if obs.Annotations == nil {
+		obs.Annotations = make(map[string]json.RawMessage, len(values))
+	}
+	for key, value := range values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("annotate %s: %w", key, err)
+		}
+		obs.Annotations[key] = raw
+	}
+
+	if len(obs.Output) == 0 {
+		out, err := json.Marshal(run.Text)
+		if err != nil {
+			return fmt.Errorf("annotate output: %w", err)
+		}
+		obs.Output = out
+	}
+	obs.Timing = topeval.ObservationTiming{
+		TotalMs:      run.TotalMs,
+		TTFTMs:       run.Timing.TTFTMs,
+		TTLTMs:       run.Timing.TTLTMs,
+		MedianITL:    run.Timing.MedianITL,
+		InputTokens:  run.Timing.InputTokens,
+		OutputTokens: run.Timing.OutputTokens,
+	}
+	if run.CostUSD != nil {
+		obs.Timing.SetCostUSD(*run.CostUSD)
+	}
+	return nil
+}

@@ -1,0 +1,186 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	agentsdk "github.com/urmzd/saige/agent"
+	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/tools/exec"
+	"github.com/urmzd/saige/tools/fetch"
+	"github.com/urmzd/saige/tools/fs"
+)
+
+func newServeCmd(ctx context.Context) *cobra.Command {
+	var (
+		addr            string
+		token           string
+		approvalTimeout time.Duration
+		idleTTL         time.Duration
+		packs           []string
+		workspace       string
+		bashNetwork     string
+	)
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Serve the agent over HTTP with a Server-Sent Events turn stream",
+		Long: `Serve the agent over HTTP. Each session owns a conversation; each turn
+streams its events as Server-Sent Events whose data is the versioned wire
+envelope. Approvals and cancellation are POST endpoints.
+
+  POST /v1/sessions                                         -> {session_id}
+  POST /v1/sessions/{sid}/turns              {message}      -> 202 {turn_id}
+  GET  /v1/sessions/{sid}/turns/{tid}/events                -> SSE (Last-Event-ID resumes)
+  GET  /v1/sessions/{sid}/turns/{tid}/events?format=agui    -> SSE as AG-UI events
+  POST /v1/sessions/{sid}/turns/{tid}/interrupts/{call_id}  {approved, message, modified_args}
+  POST /v1/sessions/{sid}/turns/{tid}/cancel
+  GET  /v1/sessions/{sid}/turns/{tid}                       -> {done, last_seq, error}
+  GET  /v1/sessions/{sid}/tree                              -> conversation tree JSON
+
+The server binds to localhost by default. Binding to another address
+requires a bearer token (--token or SAIGE_SERVE_TOKEN). An approval nobody
+answers within --approval-timeout is denied.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cf := persistentFlagVars
+			if token == "" {
+				token = os.Getenv("SAIGE_SERVE_TOKEN")
+			}
+			if err := checkServeAddr(addr, token); err != nil {
+				return err
+			}
+
+			provider, err := resolveProvider(ctx, cf, false)
+			if err != nil {
+				return err
+			}
+			tools, cleanup, err := buildTools(ctx, cf)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			packTools, err := buildPackTools(packs, workspace, bashNetwork)
+			if err != nil {
+				return err
+			}
+			tools = append(tools, packTools...)
+
+			newAgent := func() (*agentsdk.Agent, error) {
+				cfg := agentsdk.AgentConfig{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
+				if len(tools) > 0 {
+					cfg.Tools = types.NewToolRegistry(tools...)
+				}
+				return agentsdk.NewAgent(cfg), nil
+			}
+
+			srvCtx, stop := context.WithCancel(ctx)
+			defer stop()
+			s := newServer(srvCtx, serveOptions{newAgent: newAgent, token: token, approvalTimeout: approvalTimeout, idleTTL: idleTTL})
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			httpSrv := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+			go func() {
+				<-ctx.Done()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = httpSrv.Shutdown(shutdownCtx)
+			}()
+			slog.Info("saige serve listening", "addr", ln.Addr().String(), "tools", len(tools))
+			fmt.Fprintf(cmd.ErrOrStderr(), "listening on http://%s\n", ln.Addr())
+			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&addr, "addr", "127.0.0.1:8787", "Listen address")
+	f.StringVar(&token, "token", "", "Bearer token required on every request (default $SAIGE_SERVE_TOKEN)")
+	f.DurationVar(&approvalTimeout, "approval-timeout", 10*time.Minute, "Deny an approval that gets no decision within this time")
+	f.DurationVar(&idleTTL, "idle-ttl", time.Hour, "Drop a session that has had no running turn for this long")
+	f.StringSliceVar(&packs, "tools", nil, "Tool packs to enable: fs, fs-write, fetch, bash")
+	f.StringVar(&workspace, "workspace", "", "Workspace root for the fs and bash packs")
+	f.StringVar(&bashNetwork, "bash-network", string(exec.NetworkDeny), "Network policy for bash: deny (needs an isolating wrapper) or allow")
+	return cmd
+}
+
+// checkServeAddr refuses to expose the server beyond this machine without a
+// token.
+func checkServeAddr(addr, token string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid --addr %q: %w", addr, err)
+	}
+	if token != "" || isLoopbackHost(host) {
+		return nil
+	}
+	return fmt.Errorf("--addr %s is not a loopback address; set --token or SAIGE_SERVE_TOKEN to serve beyond localhost", addr)
+}
+
+// buildPackTools builds the opt-in tool packs named in packs. The fs and
+// bash packs need a workspace root. Mutating tools carry approval markers,
+// which the serve API resolves through its interrupt endpoint.
+func buildPackTools(packs []string, workspace, bashNetwork string) ([]types.Tool, error) {
+	want := map[string]bool{}
+	for _, p := range packs {
+		p = strings.TrimSpace(p)
+		switch p {
+		case "":
+			continue
+		case "fs", "fs-write", "fetch", "bash":
+			want[p] = true
+		default:
+			return nil, fmt.Errorf("unknown tool pack %q (want fs, fs-write, fetch, or bash)", p)
+		}
+	}
+	if (want["fs"] || want["fs-write"] || want["bash"]) && workspace == "" {
+		return nil, errors.New("--workspace is required for the fs and bash packs")
+	}
+
+	var tools []types.Tool
+	if want["fs"] || want["fs-write"] {
+		var opts []fs.Option
+		if want["fs-write"] {
+			opts = append(opts, fs.AllowWrites())
+		}
+		ts, err := fs.NewTools(workspace, opts...)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, ts...)
+	}
+	if want["fetch"] {
+		tools = append(tools, fetch.NewTool())
+	}
+	if want["bash"] {
+		policy := exec.DefaultPolicy()
+		policy.Network = exec.NetworkPolicy(bashNetwork)
+		var sbOpts []exec.SubprocessOption
+		switch policy.Network {
+		case exec.NetworkDeny:
+			sbOpts = append(sbOpts, exec.NoNetwork())
+		case exec.NetworkAllow:
+		default:
+			return nil, fmt.Errorf("--bash-network must be deny or allow, got %q", bashNetwork)
+		}
+		sb, err := exec.NewSubprocess(sbOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("bash pack: %w", err)
+		}
+		bash, err := exec.NewBashTool(sb, workspace, policy)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, bash)
+	}
+	return tools, nil
+}

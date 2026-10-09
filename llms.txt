@@ -2,7 +2,7 @@
 
 > A Go SDK and CLI for building AI agents, giving them context and memory, and evaluating them.
 
-Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, human-in-the-loop markers, structured output, provider resilience via retry/fallback, conversation tree with branching and compaction, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, HyDE query transformation, and citations). Includes research tools (web search via SearXNG, file search/read, knowledge graph CRUD) and an MCP server binary (`saige-mcp`) that exposes tool packs over stdio for Claude Code, Gemini CLI, and other MCP clients. Includes a universal evaluation framework with built-in scorers for text quality, agent performance, RAG relevance, and knowledge graph extraction. Ships a CLI (`saige`) with interactive chat, single-shot queries, and standalone RAG/KG operations.
+Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, human-in-the-loop markers, structured output, provider resilience via retry/fallback, conversation tree with branching and compaction, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, HyDE query transformation, and citations). Includes research tools (web search via SearXNG, file search/read, knowledge graph CRUD), opt-in tool packs (workspace files with root confinement, a sandboxed bash tool with command/env/network policy, and a URL fetch tool that blocks private and metadata addresses; mutating tools always require approval) and an MCP server binary (`saige-mcp`) that exposes tool packs over stdio for Claude Code, Gemini CLI, and other MCP clients. Includes a universal evaluation framework with built-in scorers for text quality, agent performance, RAG relevance, and knowledge graph extraction. Ships a CLI (`saige`) with interactive chat, single-shot queries, an HTTP + SSE server (`saige serve`) with approve and cancel endpoints, and standalone RAG/KG operations.
 
 ## Docs
 
@@ -11,22 +11,29 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [rag/knowledge/README.md](rag/knowledge/README.md): Knowledge graph SDK: graph interface, hybrid search, deduplication, PostgreSQL backend
 - [rag/README.md](rag/README.md): RAG pipelines: data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings
 - [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
-- [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, rag, kg
+- [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
+- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
+- [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
+- [docs/observability.md](docs/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
 - [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
+- [tools/fs/README.md](tools/fs/README.md): Workspace file tools: read with paging, glob, grep, write, edit; read-only by default
+- [tools/exec/README.md](tools/exec/README.md): Sandboxed bash tool: Sandbox interface, subprocess backend, command/env/network policy
+- [tools/fetch/README.md](tools/fetch/README.md): URL fetch tool and SafeHTTPClient
 - [examples/README.md](examples/README.md): Runnable example index
 - [AGENTS.md](AGENTS.md): Architecture, packages, CLI, commands, code style
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development setup, commit conventions
 
 ## Key Files
 
-- CLI: cmd/saige/main.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/connect.go
-- MCP: cmd/saige-mcp/main.go, cmd/saige-mcp/bridge.go, cmd/saige-mcp/deps.go
+- CLI: cmd/saige/main.go, cmd/saige/serve.go, cmd/saige/serve_server.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/catalog.go, cmd/saige/connect.go
+- MCP: cmd/saige-mcp/main.go, cmd/saige-mcp/bridge.go, cmd/saige-mcp/deps.go, agent/mcp/mcp.go, agent/mcp/pool.go, agent/mcp/catalog.go, agent/mcp/config.go
 - Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go
 - Tree: agent/tree/tree.go, agent/tree/compact.go, agent/tree/serialize.go
 - Knowledge: rag/knowledge/config.go, rag/knowledge/types/types.go, rag/knowledge/pgstore/store.go, rag/knowledge/tool/tools.go, rag/knowledge/graph/format.go
 - RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/tool/tools.go
 - Eval: eval/eval.go, eval/experiment.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
 - Research: tools/research/tools.go, tools/research/web_search.go, tools/research/file_search.go, tools/research/read_file.go, tools/research/search_knowledge.go, tools/research/store_knowledge.go, tools/research/get_graph.go
+- Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go
 - SearXNG: rag/source/searxng/searxng.go
 - Shared: postgres/pool.go, postgres/migrate.go

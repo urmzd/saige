@@ -12,14 +12,18 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/saige ./cmd/saige
+# BuildKit sets TARGETOS and TARGETARCH for each platform of a
+# multi-platform build (docker buildx build --platform linux/amd64,linux/arm64).
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/saige ./cmd/saige-mcp
 
 # ---- Runtime stage ----
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates
 
-COPY --from=builder /out/saige /usr/local/bin/saige
+COPY --from=builder /out/saige /out/saige-mcp /usr/local/bin/
 
 ENTRYPOINT ["saige"]

@@ -260,3 +260,23 @@ func TestToolDefinitions(t *testing.T) {
 		}
 	}
 }
+
+func TestToolsDeclareCapability(t *testing.T) {
+	want := map[string]agenttypes.ToolCapability{
+		"rag_search":      agenttypes.ToolCapabilityRead,
+		"rag_lookup":      agenttypes.ToolCapabilityRead,
+		"rag_reconstruct": agenttypes.ToolCapabilityRead,
+		"rag_update":      agenttypes.ToolCapabilityWrite,
+		"rag_delete":      agenttypes.ToolCapabilityDestructive,
+	}
+	tools := tool.NewTools(&mockPipeline{})
+	if len(tools) != len(want) {
+		t.Fatalf("tools = %d, want %d", len(tools), len(want))
+	}
+	for _, tl := range tools {
+		def := tl.Definition()
+		if def.Capability != want[def.Name] {
+			t.Errorf("%s capability = %q, want %q", def.Name, def.Capability, want[def.Name])
+		}
+	}
+}

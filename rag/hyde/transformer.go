@@ -3,10 +3,11 @@ package hyde
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"text/template"
-
-	"golang.org/x/sync/errgroup"
 
 	"github.com/urmzd/saige/rag/types"
 )
@@ -25,40 +26,72 @@ type Transformer struct {
 }
 
 // New creates a HyDE query transformer. NumHypothetical defaults to 3 if <= 0.
+// It panics when PromptTemplate does not parse; use Compile to receive that
+// failure as an error.
 func New(cfg Config) *Transformer {
+	t, err := Compile(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// Compile creates a HyDE query transformer like New, but returns an error
+// instead of panicking when PromptTemplate does not parse.
+func Compile(cfg Config) (*Transformer, error) {
 	if cfg.NumHypothetical <= 0 {
 		cfg.NumHypothetical = 3
 	}
 	tmpl := defaultPromptTmpl
 	if cfg.PromptTemplate != "" {
-		tmpl = template.Must(template.New("custom").Parse(cfg.PromptTemplate))
+		parsed, err := template.New("custom").Parse(cfg.PromptTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("hyde: parse prompt template: %w", err)
+		}
+		tmpl = parsed
 	}
-	return &Transformer{cfg: cfg, tmpl: tmpl}
+	return &Transformer{cfg: cfg, tmpl: tmpl}, nil
 }
 
-// Transform generates hypothetical documents and returns the original query plus all hypotheticals.
+// Transform generates hypothetical documents and returns the original query
+// followed by every non-empty hypothetical.
+//
+// Generations run concurrently and independently: one failure does not
+// cancel the others. When some generations fail, Transform returns the
+// original query and the successful hypotheticals together with an error
+// describing the failures, so the pipeline can search with them and report a
+// partial failure. When the prompt cannot be rendered, it returns only the
+// original query and the error.
 func (t *Transformer) Transform(ctx context.Context, query string) ([]string, error) {
-	prompt := renderPrompt(t.tmpl, map[string]any{"Query": query})
+	prompt, err := renderPrompt(t.tmpl, map[string]any{"Query": query})
+	if err != nil {
+		return []string{query}, err
+	}
+
 	hypotheticals := make([]string, t.cfg.NumHypothetical)
+	errs := make([]error, t.cfg.NumHypothetical)
 
-	g, gctx := errgroup.WithContext(ctx)
+	var wg sync.WaitGroup
 	for i := range t.cfg.NumHypothetical {
-		g.Go(func() error {
-			h, err := t.cfg.LLM.Generate(gctx, prompt)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := t.cfg.LLM.Generate(ctx, prompt)
 			if err != nil {
-				return fmt.Errorf("generate hypothetical %d: %w", i, err)
+				errs[i] = fmt.Errorf("generate hypothetical %d: %w", i, err)
+				return
 			}
-			hypotheticals[i] = h
-			return nil
-		})
+			hypotheticals[i] = strings.TrimSpace(h)
+		}()
 	}
-
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
+	wg.Wait()
 
 	queries := make([]string, 0, 1+t.cfg.NumHypothetical)
 	queries = append(queries, query)
-	queries = append(queries, hypotheticals...)
-	return queries, nil
+	for _, h := range hypotheticals {
+		if h != "" {
+			queries = append(queries, h)
+		}
+	}
+	return queries, errors.Join(errs...)
 }

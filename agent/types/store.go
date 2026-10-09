@@ -1,6 +1,9 @@
 package types
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Store provides persistence for conversation tree data.
 type Store interface {
@@ -25,4 +28,26 @@ type StoreTx interface {
 	SaveNode(ctx context.Context, node *Node) error
 	SaveBranch(ctx context.Context, branch BranchID, tipID NodeID) error
 	SaveCheckpoint(ctx context.Context, cp Checkpoint) error
+}
+
+// ErrVersionConflict reports a node write whose version is older than the
+// stored one.
+var ErrVersionConflict = errors.New("version conflict")
+
+// ActiveBranchWriter is implemented by stores and store transactions that can
+// persist the active-branch pointer.
+type ActiveBranchWriter interface {
+	SaveActiveBranch(ctx context.Context, branch BranchID) error
+}
+
+// ActiveBranchReader is implemented by stores that persist the active-branch
+// pointer. LoadActiveBranch returns "" and no error when none was saved.
+type ActiveBranchReader interface {
+	LoadActiveBranch(ctx context.Context) (BranchID, error)
+}
+
+// ConversationDeleter is implemented by stores that can delete everything
+// they hold for their conversation.
+type ConversationDeleter interface {
+	DeleteConversation(ctx context.Context) error
 }

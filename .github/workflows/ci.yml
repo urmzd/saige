@@ -53,6 +53,82 @@ jobs:
           name: coverage
           path: coverage.out
 
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 ./...
+
+  # Postgres-backed tests skip unless SAIGE_TEST_POSTGRES_DSN is set. This job
+  # provides a pgvector database so they run on every pull request. Tests that
+  # also need Ollama or DBOS still skip here; run them with `just
+  # test-integration`. Packages run one at a time (-p 1) because their tests
+  # truncate the same tables.
+  integration:
+    name: Integration (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      SAIGE_TEST_POSTGRES_DSN: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: >-
+          go test -count=1 -p 1 -v
+          ./integration/...
+          ./postgres/...
+          ./agent/pgstore/...
+          ./agent/durable/dbos/...
+          ./rag/pgstore/...
+          ./rag/knowledge/pgstore/...
+          ./cmd/saige/
+
+  # Benchmarks run on every pull request so a benchmark that no longer
+  # compiles or panics fails the build. Timings on shared runners are noisy,
+  # so the job reports them as an artifact and does not compare them.
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # An explicit bash shell turns on pipefail, so a failing benchmark is not
+      # hidden by tee.
+      - shell: bash
+        run: >-
+          go test -run='^$' -bench=. -benchmem -benchtime=200ms
+          ./agent/
+          ./agent/provider/cache/
+          ./agent/store/filewal/
+          ./agent/tree/
+          ./rag/bm25retriever/
+          ./rag/chunker/
+          ./rag/memstore/
+          | tee benchmarks.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: benchmarks
+          path: benchmarks.txt
+
   vuln:
     name: Vulnerability Check
     runs-on: ubuntu-latest

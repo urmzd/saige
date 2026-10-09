@@ -3,8 +3,11 @@ package retry
 import (
 	"context"
 	"math"
+	"math/rand/v2"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
+	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -15,16 +18,27 @@ type Config struct {
 	MaxDelay    time.Duration    // cap on delay
 	Multiplier  float64          // backoff multiplier (default 2.0)
 	ShouldRetry func(error) bool // nil = retry on IsTransient errors
+
+	// DisableJitter turns off full jitter. With jitter (the default) each
+	// wait is drawn uniformly from [0, computed backoff], so concurrent
+	// callers that share a rate-limited key do not retry in lockstep.
+	DisableJitter bool
+	// MaxRetryAfter caps how long a provider's Retry-After may stretch one
+	// wait. A delay the provider asked for is honored up to this cap, even
+	// past MaxDelay. Zero uses 60s.
+	MaxRetryAfter time.Duration
 }
 
 // DefaultConfig returns sensible defaults: 3 attempts, 500ms base,
-// 10s cap, 2x exponential backoff, transient-only.
+// 10s cap, 2x exponential backoff with full jitter, transient-only, and
+// Retry-After honored up to 60s.
 func DefaultConfig() Config {
 	return Config{
-		MaxAttempts: 3,
-		BaseDelay:   500 * time.Millisecond,
-		MaxDelay:    10 * time.Second,
-		Multiplier:  2.0,
+		MaxAttempts:   3,
+		BaseDelay:     500 * time.Millisecond,
+		MaxDelay:      10 * time.Second,
+		Multiplier:    2.0,
+		MaxRetryAfter: 60 * time.Second,
 	}
 }
 
@@ -47,6 +61,9 @@ func New(inner types.Provider, cfg Config) *Provider {
 	}
 	if cfg.MaxDelay <= 0 {
 		cfg.MaxDelay = 10 * time.Second
+	}
+	if cfg.MaxRetryAfter <= 0 {
+		cfg.MaxRetryAfter = 60 * time.Second
 	}
 	return &Provider{Inner: inner, Config: cfg}
 }
@@ -75,10 +92,11 @@ func (r *Provider) ContentSupport() types.ContentSupport {
 // Capabilities implements types.CapabilityReporter by delegating to the inner
 // provider. When the inner provider does not report, the zero value is
 // returned: it declares nothing and has Known false, so a caller that must
-// fail closed still can.
+// fail closed still can. Capabilities that need request options are dropped
+// when the inner provider cannot receive them.
 func (r *Provider) Capabilities() types.ModelCapabilities {
 	caps, _ := types.ProviderCapabilities(r.Inner)
-	return caps
+	return optionscheck.Narrow(caps, r.Inner)
 }
 
 func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
@@ -87,17 +105,41 @@ func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, too
 	})
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-// If the inner provider supports structured output, retries use it.
-// Otherwise, falls back to ChatStream (schema is lost).
+// ChatStreamWithSchema implements types.StructuredOutputProvider. When the
+// inner provider cannot enforce a schema, a non-nil schema is rejected with
+// types.ErrInvalidModelConfig rather than silently dropped: the caller asked
+// for schema-checked output and must not receive free-form text instead.
 func (r *Provider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	if sp, ok := r.Inner.(types.StructuredOutputProvider); ok {
-		return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-			return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
-		})
+	sp, ok := r.Inner.(types.StructuredOutputProvider)
+	if !ok {
+		if schema != nil {
+			return nil, schemacheck.Unsupported(r.Inner, "provider cannot enforce a response schema")
+		}
+		return r.ChatStream(ctx, messages, tools)
 	}
-	return r.ChatStream(ctx, messages, tools)
+	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
+		return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
+	})
 }
+
+// ChatStreamWithOptions implements types.OptionsProvider. When the inner
+// provider cannot receive request options they are rejected with
+// types.ErrInvalidModelConfig rather than dropped.
+func (r *Provider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
+	op, ok := r.Inner.(types.OptionsProvider)
+	if !ok {
+		return nil, optionscheck.Unsupported(r.Inner)
+	}
+	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
+		return op.ChatStreamWithOptions(ctx, messages, tools, opts)
+	})
+}
+
+// Unwrap returns the inner provider. See package wrapper.
+func (r *Provider) Unwrap() types.Provider { return r.Inner }
+
+// Close implements types.Closer by closing the inner provider.
+func (r *Provider) Close() error { return types.CloseProvider(r.Inner) }
 
 // retryLoop runs the call function with exponential backoff.
 //
@@ -127,7 +169,7 @@ func (r *Provider) retryLoop(ctx context.Context, call func() (<-chan types.Delt
 			if !shouldRetry(err) {
 				return nil, lastErr
 			}
-			if !r.backoff(ctx, attempt) {
+			if !r.backoff(ctx, attempt, err) {
 				return nil, ctx.Err()
 			}
 			continue
@@ -138,7 +180,7 @@ func (r *Provider) retryLoop(ctx context.Context, call func() (<-chan types.Delt
 		buffered, channelErr, hadContent := drainUntilContentOrError(ctx, ch)
 		if channelErr == nil {
 			// Stream produced content (or closed cleanly) without a leading error.
-			return replay(buffered, nil, ch), nil
+			return replay(ctx, buffered, nil, ch), nil
 		}
 
 		// A leading ErrorDelta was observed. If content already streamed we must
@@ -147,9 +189,12 @@ func (r *Provider) retryLoop(ctx context.Context, call func() (<-chan types.Delt
 		// consumers still see a terminal error event.
 		lastErr = channelErr
 		if hadContent || ctx.Err() != nil || !shouldRetry(channelErr) {
-			return replay(buffered, channelErr, ch), nil
+			return replay(ctx, buffered, channelErr, ch), nil
 		}
-		if !r.backoff(ctx, attempt) {
+		// Abandon the failed attempt. A producer that keeps sending after its
+		// ErrorDelta would otherwise block forever on the dropped channel.
+		go drain(ch)
+		if !r.backoff(ctx, attempt, channelErr) {
 			return nil, ctx.Err()
 		}
 	}
@@ -157,32 +202,62 @@ func (r *Provider) retryLoop(ctx context.Context, call func() (<-chan types.Delt
 	return nil, &types.RetryError{Attempts: r.Config.MaxAttempts, Last: lastErr}
 }
 
-// backoff sleeps before the next attempt using exponential backoff. It returns
-// false if the context was cancelled while waiting. No sleep occurs after the
-// final attempt.
-func (r *Provider) backoff(ctx context.Context, attempt int) bool {
+// backoff sleeps before the next attempt. It returns false if the context was
+// cancelled while waiting. No sleep occurs after the final attempt.
+func (r *Provider) backoff(ctx context.Context, attempt int, err error) bool {
 	if attempt >= r.Config.MaxAttempts-1 {
 		return true
 	}
-	delay := time.Duration(float64(r.Config.BaseDelay) * math.Pow(r.Config.Multiplier, float64(attempt)))
-	if delay > r.Config.MaxDelay {
-		delay = r.Config.MaxDelay
-	}
+	timer := time.NewTimer(r.delay(attempt, err, rand.Float64())) //nolint:gosec // jitter needs no cryptographic randomness
+	defer timer.Stop()
 	select {
-	case <-time.After(delay):
+	case <-timer.C:
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
+// delay computes the wait before the attempt after attempt. See
+// Config.Delay.
+func (r *Provider) delay(attempt int, err error, u float64) time.Duration {
+	return r.Config.Delay(attempt, err, u)
+}
+
+// Delay computes the wait before the attempt after attempt (0-based) failed
+// with err. The exponential backoff, BaseDelay*Multiplier^attempt, is capped
+// at MaxDelay and, unless DisableJitter is set, scaled by u (uniform in
+// [0, 1)) for full jitter. A Retry-After carried by err is a floor on the
+// result, clamped to MaxRetryAfter (60s when zero): the provider said how
+// long to wait, so jitter never shortens it. Other retry loops, such as the
+// embedding retrier, use it so every loop backs off the same way.
+func (c Config) Delay(attempt int, err error, u float64) time.Duration {
+	d := time.Duration(float64(c.BaseDelay) * math.Pow(c.Multiplier, float64(attempt)))
+	if d > c.MaxDelay || d < 0 {
+		d = c.MaxDelay
+	}
+	if !c.DisableJitter {
+		d = time.Duration(float64(d) * u)
+	}
+	maxAfter := c.MaxRetryAfter
+	if maxAfter <= 0 {
+		maxAfter = 60 * time.Second
+	}
+	if after := min(types.RetryAfter(err), maxAfter); after > d {
+		d = after
+	}
+	return d
+}
+
 // isContentDelta reports whether d carries model output (text, tool calls,
-// thinking, tool execution). Metadata-only deltas (usage, done) do not count as
-// content for retry purposes, so a usage preamble followed by an ErrorDelta is
-// still retryable.
+// thinking, tool execution). Metadata-only deltas (usage, route, done) do not
+// count as content for retry purposes, so a usage or route preamble followed
+// by an ErrorDelta is still retryable. Routers and splits send a RouteDelta
+// before every attempt; the deltas buffered from a failed attempt are
+// discarded, so a retried attempt reports only its own route.
 func isContentDelta(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.DoneDelta, types.ErrorDelta:
+	case types.UsageDelta, types.RouteDelta, types.DoneDelta, types.ErrorDelta:
 		return false
 	default:
 		return true
@@ -218,24 +293,61 @@ func drainUntilContentOrError(ctx context.Context, ch <-chan types.Delta) (buffe
 
 // replay returns a channel that first yields the buffered deltas, then re-emits
 // errAfter (if non-nil) as an ErrorDelta so downstream consumers still see a
-// terminal error event, then forwards the remainder of rest.
-func replay(buffered []types.Delta, errAfter error, rest <-chan types.Delta) <-chan types.Delta {
+// terminal error event, then forwards the remainder of rest. Sends give up
+// when ctx is done; rest is then drained so its producer never blocks.
+func replay(ctx context.Context, buffered []types.Delta, errAfter error, rest <-chan types.Delta) <-chan types.Delta {
 	out := make(chan types.Delta)
 	go func() {
 		defer close(out)
+		send := func(d types.Delta) bool {
+			select {
+			case out <- d:
+				return true
+			case <-ctx.Done():
+				go drain(rest)
+				return false
+			}
+		}
 		for _, d := range buffered {
-			out <- d
+			if !send(d) {
+				return
+			}
 		}
-		if errAfter != nil {
-			out <- types.ErrorDelta{Error: errAfter}
+		if errAfter != nil && !send(types.ErrorDelta{Error: errAfter}) {
+			return
 		}
-		for d := range rest {
-			out <- d
+		for {
+			select {
+			case d, ok := <-rest:
+				if !ok {
+					return
+				}
+				if !send(d) {
+					return
+				}
+			case <-ctx.Done():
+				go drain(rest)
+				return
+			}
 		}
 	}()
 	return out
 }
 
+// drain discards the remainder of an abandoned stream.
+func drain(ch <-chan types.Delta) {
+	for range ch {
+	}
+}
+
 func (p *Provider) NewSession() types.Provider {
 	return &Provider{Inner: types.NewProviderSession(p.Inner), Config: p.Config}
+}
+
+// EffectiveOptions implements types.OptionsReporter by forwarding to the inner
+// provider. A retry replays the identical adapter, so every attempt sends
+// these options.
+func (r *Provider) EffectiveOptions() types.RequestOptions {
+	o, _ := types.ProviderEffectiveOptions(r.Inner)
+	return o
 }

@@ -8,6 +8,15 @@ default:
 test:
     go test ./...
 
+# Run all tests under the race detector
+test-race:
+    go test -race -count=1 ./...
+
+# Run the Postgres-backed tests (no Ollama needed) against integration-up's database
+test-postgres:
+    SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
+    go test -count=1 -p 1 ./integration/... ./agent/pgstore/... ./rag/pgstore/... ./rag/knowledge/pgstore/... ./cmd/saige/
+
 # Run tests with coverage report
 test-cover:
     go test -coverprofile=coverage.out -covermode=atomic ./...
@@ -25,13 +34,14 @@ vet:
 fmt:
     gofmt -w .
 
-# Install CLI binary to $GOPATH/bin
+# Install CLI binaries to $GOPATH/bin
 install:
-    CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" ./cmd/saige
+    CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" ./cmd/saige ./cmd/saige-mcp
 
-# Build CLI binary to bin/
+# Build CLI binaries to bin/
 build:
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/saige ./cmd/saige
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/saige-mcp ./cmd/saige-mcp
 
 # Run govulncheck
 vuln:

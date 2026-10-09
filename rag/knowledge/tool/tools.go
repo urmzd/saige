@@ -11,11 +11,15 @@ import (
 	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
+// MaxSearchLimit caps the number of facts one kg_search call returns,
+// whatever limit the model asks for.
+const MaxSearchLimit = 50
+
 // --- Parameter types ---
 
 type searchParams struct {
 	Query string `json:"query" description:"Search query text"`
-	Limit int    `json:"limit,omitempty" description:"Maximum number of results"`
+	Limit int    `json:"limit,omitempty" description:"Maximum number of results (at most 50)"`
 }
 
 type ingestParams struct {
@@ -28,7 +32,8 @@ type ingestParams struct {
 
 // SearchTool searches the knowledge graph for facts.
 type SearchTool struct {
-	graph kgtypes.Graph
+	graph   kgtypes.Graph
+	groupID string
 }
 
 func (t *SearchTool) Definition() agenttypes.ToolDef {
@@ -36,6 +41,7 @@ func (t *SearchTool) Definition() agenttypes.ToolDef {
 		Name:        "kg_search",
 		Description: "Search the knowledge graph for facts matching the query. Returns scored facts with entity names, relation types, and confidence.",
 		Parameters:  agenttypes.SchemaFrom[searchParams](),
+		Capability:  agenttypes.ToolCapabilityRead,
 	}
 }
 
@@ -47,7 +53,10 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 	var opts []kgtypes.SearchOption
 	if limit, ok := toInt(args["limit"]); ok && limit > 0 {
-		opts = append(opts, kgtypes.WithLimit(limit))
+		opts = append(opts, kgtypes.WithLimit(min(limit, MaxSearchLimit)))
+	}
+	if t.groupID != "" {
+		opts = append(opts, kgtypes.WithGroupID(t.groupID))
 	}
 
 	result, err := t.graph.SearchFacts(ctx, query, opts...)
@@ -68,7 +77,15 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 // IngestTool ingests text into the knowledge graph, extracting entities and relations.
 type IngestTool struct {
-	graph kgtypes.Graph
+	graph   kgtypes.Graph
+	groupID string
+}
+
+// ingestOutput is the kg_ingest result. Warning reports a partial ingest:
+// the episode was stored but some entities or relations were not.
+type ingestOutput struct {
+	*kgtypes.IngestResult
+	Warning string `json:"warning,omitempty"`
 }
 
 func (t *IngestTool) Definition() agenttypes.ToolDef {
@@ -76,6 +93,7 @@ func (t *IngestTool) Definition() agenttypes.ToolDef {
 		Name:        "kg_ingest",
 		Description: "Ingest text into the knowledge graph. Extracts entities and relations from the provided text.",
 		Parameters:  agenttypes.SchemaFrom[ingestParams](),
+		Capability:  agenttypes.ToolCapabilityWrite,
 	}
 }
 
@@ -89,15 +107,20 @@ func (t *IngestTool) Execute(ctx context.Context, args map[string]any) (string, 
 	source, _ := args["source"].(string)
 
 	result, err := t.graph.IngestEpisode(ctx, &kgtypes.EpisodeInput{
-		Name:   name,
-		Body:   body,
-		Source: source,
+		Name:    name,
+		Body:    body,
+		Source:  source,
+		GroupID: t.groupID,
 	})
+	out := ingestOutput{IngestResult: result}
 	if err != nil {
-		return "", fmt.Errorf("kg ingest: %w", err)
+		if !errors.Is(err, kgtypes.ErrPartialEpisode) || result == nil {
+			return "", fmt.Errorf("kg ingest: %w", err)
+		}
+		out.Warning = err.Error()
 	}
 
-	data, err := json.Marshal(result)
+	data, err := json.Marshal(out)
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
@@ -109,6 +132,7 @@ func (t *IngestTool) Execute(ctx context.Context, args map[string]any) (string, 
 // config controls how NewTools assembles the tool set.
 type config struct {
 	readOnly bool
+	groupID  string
 }
 
 // Option configures NewTools.
@@ -119,6 +143,14 @@ type Option func(*config)
 // query-only agents.
 func ReadOnly() Option {
 	return func(c *config) { c.readOnly = true }
+}
+
+// WithGroupID binds both tools to one graph group (tenant scope): kg_search
+// searches only that group and kg_ingest writes into it. The host sets it;
+// the model cannot choose a group. Without it, kg_search searches every
+// group and kg_ingest writes to the default group.
+func WithGroupID(id string) Option {
+	return func(c *config) { c.groupID = id }
 }
 
 // mutatingMarker is the human-approval gate attached to mutating KG tools.
@@ -142,12 +174,12 @@ func NewTools(graph kgtypes.Graph, opts ...Option) []agenttypes.Tool {
 	}
 
 	tools := []agenttypes.Tool{
-		&SearchTool{graph: graph},
+		&SearchTool{graph: graph, groupID: cfg.groupID},
 	}
 
 	if !cfg.readOnly {
 		tools = append(tools,
-			agenttypes.WithMarkers(&IngestTool{graph: graph}, mutatingMarker("kg_ingest")),
+			agenttypes.WithMarkers(&IngestTool{graph: graph, groupID: cfg.groupID}, mutatingMarker("kg_ingest")),
 		)
 	}
 
@@ -160,6 +192,11 @@ func toInt(v any) (int, bool) {
 		return int(n), true
 	case int:
 		return n, true
+	case int64:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return int(i), err == nil
 	default:
 		return 0, false
 	}

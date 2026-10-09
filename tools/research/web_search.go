@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -40,21 +41,28 @@ func (t *WebSearchTool) WithAutoIngest() *WebSearchTool {
 }
 
 func (t *WebSearchTool) Definition() types.ToolDef {
+	// Auto-ingest writes every result into the knowledge graph, so the tool is
+	// only read-only without it.
+	capability := types.ToolCapabilityRead
+	if t.autoIngest && t.graph != nil {
+		capability = types.ToolCapabilityWrite
+	}
 	return types.ToolDef{
 		Name:        "web_search",
+		Capability:  capability,
 		Description: "Search the web for current information on a topic using SearXNG (a privacy-respecting metasearch engine). Results come from third-party search engines and may be inaccurate or outdated. Returns a JSON array of results with index, title, url, and snippet. Use the index numbers as citation references [1], [2], etc.",
 		Parameters: types.ParameterSchema{
-			Type:     "object",
-			Required: []string{"query"},
+			Type:     types.SchemaObject,
+			Required: []string{argQuery},
 			Properties: map[string]types.PropertyDef{
-				"query": {Type: "string", Description: "The search query"},
+				argQuery: {Type: types.SchemaString, Description: "The search query"},
 			},
 		},
 	}
 }
 
 func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	query, _ := args["query"].(string)
+	query, _ := args[argQuery].(string)
 	if query == "" {
 		return "", fmt.Errorf("web_search: query is required")
 	}
@@ -94,7 +102,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) (strin
 				GroupID: t.groupID,
 			}
 			if _, err := t.graph.IngestEpisode(ctx, input); err != nil {
-				log.Printf("[web_search] auto-ingest error (result %d): %v", item.Index, err)
+				if errors.Is(err, kgtypes.ErrPartialEpisode) {
+					log.Printf("[web_search] auto-ingest warning (result %d): %v", item.Index, err)
+				} else {
+					log.Printf("[web_search] auto-ingest error (result %d): %v", item.Index, err)
+				}
 			}
 		}
 	}

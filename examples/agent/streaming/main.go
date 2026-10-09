@@ -10,19 +10,19 @@ import (
 	"log"
 
 	agentsdk "github.com/urmzd/saige/agent"
-	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/provider/ollama"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // ANSI color codes for terminal output.
 const (
 	colorReset   = "\033[0m"
-	colorGreen   = "\033[32m"  // text content
-	colorYellow  = "\033[33m"  // tool call deltas
-	colorCyan    = "\033[36m"  // tool execution deltas
-	colorMagenta = "\033[35m"  // usage/metadata
-	colorRed     = "\033[31m"  // errors
-	colorDim     = "\033[2m"   // structural markers
+	colorGreen   = "\033[32m" // text content
+	colorYellow  = "\033[33m" // tool call deltas
+	colorCyan    = "\033[36m" // tool execution deltas
+	colorMagenta = "\033[35m" // usage/metadata
+	colorRed     = "\033[31m" // errors
+	colorDim     = "\033[2m"  // structural markers
 )
 
 func main() {

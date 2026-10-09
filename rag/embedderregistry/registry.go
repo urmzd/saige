@@ -50,7 +50,9 @@ func (r *Registry) Register(contentType types.ContentType, embedder types.Varian
 }
 
 // Embed dispatches variants to the appropriate embedder by ContentType,
-// then reassembles results in the original order.
+// then reassembles results in the original order. It returns an error
+// wrapping types.ErrEmbeddingShape when an embedder returns the wrong number
+// of vectors, an empty vector, or vectors of mixed dimensions.
 func (r *Registry) Embed(ctx context.Context, variants []types.ContentVariant) ([][]float32, error) {
 	if len(variants) == 0 {
 		return nil, nil
@@ -90,12 +92,15 @@ func (r *Registry) Embed(ctx context.Context, variants []types.ContentVariant) (
 		if err != nil {
 			return nil, fmt.Errorf("embed %q: %w", ct, err)
 		}
+		// Each group comes from one embedder, so its vectors must share a
+		// dimension; groups from different embedders may differ.
+		if err := types.ValidateEmbeddings(len(batch), embeddings); err != nil {
+			return nil, fmt.Errorf("embed %q: %w", ct, err)
+		}
 
 		// Place results back in original order.
 		for i, iv := range group {
-			if i < len(embeddings) {
-				results[iv.origIdx] = embeddings[i]
-			}
+			results[iv.origIdx] = embeddings[i]
 		}
 	}
 

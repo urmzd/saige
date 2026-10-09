@@ -40,7 +40,13 @@ The recorder rejects errors, cancellation, empty responses, and unfinished conte
 Replay preserves citations and copies mutable maps.
 Response caching changes sampling: repeated requests return an old sample.
 Disable it for independent evaluation samples and stochastic judges.
-There is no response-cache single-flight mechanism, so concurrent misses can all incur cost.
+A response that stopped at the output token limit (a truncation finish reason) is not admitted.
+`Config.SingleFlight` collapses concurrent identical misses onto one upstream call; without it, concurrent misses can all incur cost.
+A failed cache read is logged at Warn, recorded as the `chat.cache_error` metric, and treated as a miss.
+
+`EncodeResponse` and `DecodeResponse` serialize a recorded response as versioned wire envelopes, and `BytesCache` adapts any `types.Cache[[]byte]` (Redis, disk, a database) to the response cache.
+A stored value that does not decode is a cache error, so a store shared across releases misses instead of replaying a value it cannot read.
+The tool cache has the same pair: `toolcache.EncodeEntry`, `DecodeEntry` and `BytesCache`, which keep result block bytes, and records a read failure as the `<tool>.cache_error` metric.
 
 ## Provider prompt caches
 
@@ -95,7 +101,8 @@ Single-flight followers receive detached results. A successful refresh enters th
 Stale-on-error retains successful entries for `TTL + MaxStale`. Cancellation does not serve stale data.
 When stale-on-error is enabled, failed refreshes do not replace the previous successful entry.
 
-Embedding keys hash the full input, including bytes, MIME type, metadata, and existing embeddings.
+Embedding keys hash `{config, purpose, content type, MIME type, text, data, metadata, embedding}`.
+They exclude variant and section UUIDs, which extractors and chunkers mint fresh on every ingest, and they include the embed purpose, because asymmetric models embed a query and a document differently.
 `WithConfigKey` binds the embedder revision. Vectors are copied at storage and return boundaries.
 Incorrect output counts fail. The host must not modify input concurrently with a call.
 These contracts prevent read results from mutating another session's cache state.

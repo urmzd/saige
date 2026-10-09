@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -28,6 +28,8 @@ const (
 	statusRunning   = "running"
 	statusCancelled = "cancelled"
 	statusCompleted = "completed"
+	statusFailed    = "failed"
+	statusSuspended = "suspended"
 )
 
 var (
@@ -65,6 +67,11 @@ type Interrupt struct {
 	Decision    *types.ApprovalDecision `json:"decision,omitempty"`
 	DecisionKey string                  `json:"decision_key,omitempty"`
 	DecidedAt   time.Time               `json:"decided_at,omitempty"`
+	// Posted holds an interrupt raised through an InterruptRouter. It is nil
+	// for approvals raised through ResolveApproval, which use Request.
+	Posted *types.Interrupt `json:"posted,omitempty"`
+	// Answer is the free-form reply to a clarification or input interrupt.
+	Answer json.RawMessage `json:"answer,omitempty"`
 }
 
 // State is a detached inspection snapshot. Input and step Result are gob bytes.
@@ -83,7 +90,8 @@ type State struct {
 	RunID              string                `json:"run_id"`
 	Revision           string                `json:"revision"`
 	Status             string                `json:"status"`
-	Input              []byte                `json:"input"`
+	Input              []byte                `json:"input"`            // first input segment, gob
+	Inputs             []InputSegment        `json:"inputs,omitempty"` // later segments, in append order
 	Steps              map[string]Step       `json:"steps"`
 	Interrupts         map[string]Interrupt  `json:"interrupts"`
 	UpdatedAt          time.Time             `json:"updated_at"`
@@ -102,6 +110,12 @@ type runner struct {
 // approvals are saved; call Decide and then Run with the same identity/input.
 // A crash during an operation leaves an indeterminate attempt. Run will not
 // repeat it until Reconcile supplies its result or explicitly permits retry.
+//
+// The run's input is an append-only log. input must agree with the log
+// message by message: a prefix of the log (including nil) resumes the logged
+// input, and a longer input appends its extra messages as a new segment that
+// runs after the earlier ones finish. A message that differs from the log
+// returns ErrConflict. Append adds a segment without running it.
 func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, input []types.Message) (*types.AssistantMessage, error) {
 	if id == "" || revision == "" || factory == nil {
 		return nil, errors.New("run ID, revision and factory are required")
@@ -127,53 +141,43 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 	if state.RunID != id || state.Revision != revision {
 		return nil, ErrConflict
 	}
-	var saved []types.Message
-	if err := decode(state.Input, &saved); err != nil {
-		return nil, err
-	}
-	// Gob normalizes interface representations; compare the original logical values.
-	currentRaw, err := encode(input)
-	if err != nil {
-		return nil, err
-	}
-	var current []types.Message
-	if err := decode(currentRaw, &current); err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(saved, current) {
-		return nil, fmt.Errorf("%w: input changed", ErrConflict)
-	}
 	if state.Status == statusCancelled {
 		return nil, ErrClosed
+	}
+	segments, err := reconcileInput(&state, input)
+	if err != nil {
+		return nil, err
 	}
 	r := &runner{state: state, path: path, ttl: e.ApprovalTTL}
 	if r.ttl <= 0 {
 		r.ttl = 24 * time.Hour
 	}
+	// Build the agent before recording the run as running, so a
+	// configuration error is saved as failed instead of an in-progress run.
+	a, err := prepare(factory, state.ReconciledReceipts)
+	if err != nil {
+		r.state.Status = statusFailed
+		r.state.Error = err.Error()
+		r.note("run.failed", id)
+		if saveErr := r.save(); saveErr != nil {
+			return nil, errors.Join(err, saveErr)
+		}
+		return nil, err
+	}
 	r.state.Status = statusRunning
+	r.state.Error = ""
 	r.note("run.started", id)
 	if err := r.save(); err != nil {
 		return nil, err
 	}
-	a := factory()
-	if a == nil {
-		return nil, errors.New("factory returned nil agent")
-	}
-	if b := a.Budget(); b != nil {
-		for _, receipt := range state.ReconciledReceipts {
-			if err := b.Restore(receipt); err != nil {
-				return nil, err
-			}
-		}
-	}
-	result, runErr := a.RunDurable(ctx, r, saved, "")
+	result, runErr := runSegments(ctx, a, r, segments)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
 	case errors.Is(runErr, types.ErrSuspended):
-		r.state.Status = "suspended"
+		r.state.Status = statusSuspended
 	case runErr != nil:
-		r.state.Status = "failed"
+		r.state.Status = statusFailed
 	default:
 		r.state.Status = statusCompleted
 	}
@@ -186,6 +190,22 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 		return nil, err
 	}
 	return result, runErr
+}
+
+// prepare builds a fresh agent and restores reconciled budget receipts.
+func prepare(factory Factory, receipts []types.BudgetReceipt) (*agent.Agent, error) {
+	a := factory()
+	if a == nil {
+		return nil, errors.New("factory returned nil agent")
+	}
+	if b := a.Budget(); b != nil {
+		for _, receipt := range receipts {
+			if err := b.Restore(receipt); err != nil {
+				return nil, fmt.Errorf("restore budget receipt: %w", err)
+			}
+		}
+	}
+	return a, nil
 }
 
 func (r *runner) ConcurrentSteps() bool { return true }
@@ -233,6 +253,27 @@ func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Conte
 	}
 	s.CompletedAt = time.Now().UTC()
 	s.Status = statusCompleted
+	if errors.Is(err, context.Canceled) && truncatedLLM(result) {
+		// A stopped provider call that returns its committed partial turn has
+		// a known outcome: the partial message is the step's result. Record
+		// it as completed so a later Run replays it instead of requiring
+		// Reconcile, and still report the stop to this caller. Any other
+		// error leaves the step indeterminate so it can be reconciled.
+		encoded, encodeErr := encode(result)
+		if encodeErr == nil {
+			s.Result = encoded
+			r.state.Steps[name] = s
+			r.note("step.truncated", name)
+			if saveErr := r.save(); saveErr != nil {
+				return types.StepResult{}, saveErr
+			}
+			var detached types.StepResult
+			if decodeErr := decode(s.Result, &detached); decodeErr != nil {
+				return types.StepResult{}, decodeErr
+			}
+			return detached, err
+		}
+	}
 	encoded, encodeErr := encode(result)
 	s.Result = encoded
 	if encodeErr != nil {
@@ -322,40 +363,141 @@ func (r *runner) ResolveApproval(ctx context.Context, req types.ApprovalRequest)
 }
 
 // Inspect reads an atomic, detached snapshot without acquiring a worker lease.
+// A Status of running does not prove a worker is alive: after a crash it
+// stays running until the next Run. Use Leased to tell the two apart.
 func (e *Engine) Inspect(id string) (State, error) { return readState(e.path(id)) }
+
+// Leased reports whether a worker currently holds the run's lease. A run whose
+// state says running but which is not leased was orphaned by a crash and
+// needs Run (and possibly Reconcile) to continue. The probe takes the lease
+// for an instant, so a Run starting at that moment can see ErrBusy. A run
+// that was never started returns an error matching os.ErrNotExist.
+func (e *Engine) Leased(id string) (bool, error) {
+	if _, err := readState(e.path(id)); err != nil {
+		return false, err
+	}
+	_, release, err := e.acquire(id)
+	if errors.Is(err, ErrBusy) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	release()
+	return false, nil
+}
+
+// List returns the state of every run under the engine directory for which
+// keep returns true (every run when keep is nil), ordered by run ID. It reads
+// snapshots without leases, like Inspect, so a run being written may show its
+// previous snapshot. Directories without a readable snapshot are skipped.
+func (e *Engine) List(keep func(State) bool) ([]State, error) {
+	if e.Directory == "" {
+		return nil, errors.New("directory required")
+	}
+	entries, err := os.ReadDir(e.Directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []State
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		s, err := readState(filepath.Join(e.Directory, entry.Name(), "state.json"))
+		if err != nil {
+			continue
+		}
+		if keep == nil || keep(s) {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RunID < out[j].RunID })
+	return out, nil
+}
+
+// Delete removes a finished run's directory, including its inputs, step
+// results and approval records. It takes the worker lease, so it fails with
+// ErrBusy while a worker runs. Only completed, cancelled and failed runs can
+// be deleted; cancel a suspended run first. A stale revision returns
+// ErrConflict.
+func (e *Engine) Delete(id, revision string) error {
+	// Check first so deleting an unknown run does not create its directory.
+	if _, err := readState(e.path(id)); err != nil {
+		return err
+	}
+	path, release, err := e.acquire(id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	s, err := readState(path)
+	if err != nil {
+		return err
+	}
+	if s.RunID != id || s.Revision != revision {
+		return ErrConflict
+	}
+	switch s.Status {
+	case statusCompleted, statusCancelled, statusFailed:
+	default:
+		return fmt.Errorf("%w: run is %s", ErrConflict, s.Status)
+	}
+	return os.RemoveAll(filepath.Dir(path))
+}
 
 // Decide accepts one authenticated host decision. key is its idempotency key.
 // A conflicting retry, stale revision, cancellation, or expiry is rejected.
+// An unknown interrupt matches types.ErrInterruptNotFound and an expired one
+// matches types.ErrInterruptExpired as well as ErrClosed.
 func (e *Engine) Decide(id, revision, interruptID, key string, decision types.ApprovalDecision) error {
-	if key == "" {
+	return e.update(id, revision, func(s *State) error {
+		return applyReply(s, types.InterruptReply{ID: interruptID, IdempotencyKey: key, Decision: decision})
+	})
+}
+
+// applyReply records a reply on s. Replaying the same reply under the same
+// key is a no-op; any other reply to a decided interrupt is ErrConflict.
+func applyReply(s *State, reply types.InterruptReply) error {
+	if reply.IdempotencyKey == "" {
 		return errors.New("decision idempotency key required")
 	}
-	return e.update(id, revision, func(s *State) error {
-		if s.Status == statusCompleted || s.Status == statusCancelled {
-			return ErrClosed
+	if s.Status == statusCompleted || s.Status == statusCancelled {
+		return ErrClosed
+	}
+	p, ok := s.Interrupts[reply.ID]
+	if !ok {
+		return fmt.Errorf("%w: %s", types.ErrInterruptNotFound, reply.ID)
+	}
+	if p.Decision != nil {
+		a, _ := json.Marshal(p.Decision)
+		b, err := json.Marshal(reply.Decision)
+		if err == nil && reply.IdempotencyKey == p.DecisionKey && bytes.Equal(a, b) && bytes.Equal(compactJSON(p.Answer), compactJSON(reply.Answer)) {
+			return nil
 		}
-		p, ok := s.Interrupts[interruptID]
-		if !ok {
-			return errors.New("unknown interrupt")
+		if p.DecisionKey == expiredReplyKey && reply.IdempotencyKey != expiredReplyKey {
+			// The denial was recorded by expiry, not by a host reply.
+			return fmt.Errorf("%w: %w", ErrClosed, types.ErrInterruptExpired)
 		}
-		if p.Decision != nil {
-			a, _ := json.Marshal(p.Decision)
-			b, err := json.Marshal(decision)
-			if err == nil && key == p.DecisionKey && bytes.Equal(a, b) {
-				return nil
-			}
-			return ErrConflict
-		}
-		if !time.Now().Before(p.ExpiresAt) {
-			return fmt.Errorf("%w: approval expired", ErrClosed)
-		}
-		p.Decision = &decision
-		p.DecisionKey = key
-		p.DecidedAt = time.Now().UTC()
-		s.Interrupts[interruptID] = p
-		s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: time.Now().UTC(), Kind: "approval.decided", ID: interruptID})
-		return nil
-	})
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	if !now.Before(p.ExpiresAt) {
+		return fmt.Errorf("%w: %w", ErrClosed, types.ErrInterruptExpired)
+	}
+	decision := reply.Decision
+	p.Decision = &decision
+	p.DecisionKey = reply.IdempotencyKey
+	p.DecidedAt = now
+	if len(reply.Answer) > 0 {
+		p.Answer = append(json.RawMessage(nil), reply.Answer...)
+	}
+	s.Interrupts[reply.ID] = p
+	s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: now, Kind: "approval.decided", ID: reply.ID})
+	return nil
 }
 
 // Cancel prevents future resumes. A currently leased run returns ErrBusy; its

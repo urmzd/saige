@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,8 +15,18 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// Approval policies for tool calls that carry an approval marker in
+// non-interactive commands, where nobody is there to answer a prompt.
+const (
+	approveDeny  = "deny"
+	approveAllow = "allow"
+)
+
+// deniedByFlag is the reason the model sees when --approve=deny rejects a call.
+const deniedByFlag = "denied by --approve=deny: this session cannot approve tool calls that need confirmation"
+
 func newAskCmd(ctx context.Context) *cobra.Command {
-	var tmplName string
+	var tmplName, approve string
 
 	cmd := &cobra.Command{
 		Use:   "ask [question]",
@@ -22,55 +34,70 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cf := persistentFlagVars
 
+			if approve != approveDeny && approve != approveAllow {
+				return fmt.Errorf("--approve must be %q or %q, got %q", approveDeny, approveAllow, approve)
+			}
+
 			question := strings.Join(args, " ")
 			if question == "" {
 				question = readStdin()
 			}
 			if question == "" {
-				fmt.Fprintln(os.Stderr, "usage: saige ask [flags] \"question\"")
-				os.Exit(1)
+				return errors.New(`usage: saige ask [flags] "question"`)
 			}
 
 			out := tui.ResolveOutput(cf.isJSON(), tui.TemplateByName(tmplName))
 
-			provider, err := resolveProvider(ctx, cf, false)
+			bundle, err := resolveBundle(ctx, cf, false)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 
 			tools, cleanup, err := buildTools(ctx, cf)
 			if err != nil {
-				out.Error(err)
-				os.Exit(1)
+				return reported(out, err)
 			}
 			defer cleanup()
 
 			agentCfg := agentsdk.AgentConfig{
-				Name:         "saige",
+				Name:         cliName,
 				SystemPrompt: *cf.system,
-				Provider:     provider,
 			}
 			if len(tools) > 0 {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			agent := agentsdk.NewAgent(agentCfg)
-			stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
-
-			result := out.StreamDeltas(tui.AgentHeader{}, stream.Deltas())
-			if result.Err != nil {
-				out.Error(result.Err)
-				os.Exit(1)
+			if err := runAsk(ctx, agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle)), question, out, approve == approveAllow); err != nil {
+				return reported(out, err)
 			}
-			fmt.Println()
+			if !cf.isJSON() {
+				// JSON lines already end in a newline; text output does not.
+				fmt.Println()
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
+	cmd.Flags().StringVar(&approve, "approve", approveDeny, "Decision for tool calls that need approval, since ask cannot prompt (deny|allow)")
 
 	return cmd
+}
+
+// runAsk invokes agent once and renders the response on out. Every marker is
+// resolved inline with allow, so a marked tool call can never leave the
+// command waiting for an answer nobody will give.
+func runAsk(ctx context.Context, agent *agentsdk.Agent, question string, out tui.Output, allow bool) error {
+	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
+	resolve := func(d types.MarkerDelta) {
+		if allow {
+			stream.ResolveMarker(d.ToolCallID, true, nil)
+			return
+		}
+		stream.ResolveMarkerWithMessage(d.ToolCallID, false, nil, deniedByFlag)
+	}
+	result := tui.StreamDeltasResolving(out, tui.AgentHeader{}, stream.Deltas(), resolve)
+	return result.Err
 }
 
 func readStdin() string {
@@ -81,8 +108,12 @@ func readStdin() string {
 	if info.Mode()&os.ModeCharDevice != 0 {
 		return ""
 	}
+	return readAll(os.Stdin)
+}
+
+func readAll(r io.Reader) string {
 	var lines []string
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}

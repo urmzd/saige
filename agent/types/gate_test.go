@@ -2,6 +2,9 @@ package types
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -74,7 +77,7 @@ func TestPrefixApprovalGatesByNameShape(t *testing.T) {
 
 // The most restrictive verdict wins regardless of ordering, so composing gates
 // cannot accidentally widen access.
-func TestGatesReturnTheFirstNonAllowVerdict(t *testing.T) {
+func TestGatesMostRestrictiveVerdictWins(t *testing.T) {
 	permissive := GateFunc(func(context.Context, ToolDef, map[string]any) GateDecision { return Allow() })
 	strict := DenyListGate("rm")
 
@@ -116,4 +119,89 @@ func TestModifiedArgumentsFlowThroughTheChain(t *testing.T) {
 	if n, _ := got.ModifiedArgs["limit"].(int); n != 10 {
 		t.Errorf("limit = %v, want the clamped 10 to reach the caller", got.ModifiedArgs["limit"])
 	}
+}
+
+// An approval verdict must not shadow a later denial: a human click would
+// otherwise run a call that policy refuses.
+func TestGatesDenyBeatsApprovalInEitherOrder(t *testing.T) {
+	approve := PrefixApprovalGate("x", "write_")
+	deny := DenyListGate("write_secrets")
+	tests := []struct {
+		name string
+		gate ToolGate
+		tool string
+		want GateOutcome
+	}{
+		{"approval then deny", Gates(approve, deny), "write_secrets", GateDeny},
+		{"deny then approval", Gates(deny, approve), "write_secrets", GateDeny},
+		{"approval only matches", Gates(approve, deny), "write_notes", GateRequireApproval},
+		{"neither matches", Gates(approve, deny), "read_notes", GateAllow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.gate.Check(context.Background(), def(tt.tool), nil); got.Outcome != tt.want {
+				t.Errorf("outcome = %v, want %v", got.Outcome, tt.want)
+			}
+		})
+	}
+}
+
+func TestGatesMergeApprovalReasonsAndKeepFirstMarker(t *testing.T) {
+	custom := &Marker{Kind: "custom"}
+	first := GateFunc(func(context.Context, ToolDef, map[string]any) GateDecision {
+		d := RequireApproval("writes need review")
+		d.Marker = custom
+		return d
+	})
+	second := GateFunc(func(context.Context, ToolDef, map[string]any) GateDecision {
+		return RequireApproval("cost above limit")
+	})
+	got := Gates(first, second).Check(context.Background(), def("write"), nil)
+	if got.Outcome != GateRequireApproval {
+		t.Fatalf("outcome = %v, want approval", got.Outcome)
+	}
+	if got.Reason != "writes need review; cost above limit" {
+		t.Errorf("reason = %q, want both reasons", got.Reason)
+	}
+	if got.Marker != custom {
+		t.Errorf("marker = %v, want the first custom marker", got.Marker)
+	}
+}
+
+func TestGatesApprovalCarriesRewrittenArguments(t *testing.T) {
+	clamp := GateFunc(func(context.Context, ToolDef, map[string]any) GateDecision {
+		return GateDecision{Outcome: GateAllow, ModifiedArgs: map[string]any{"limit": 10}}
+	})
+	got := Gates(PrefixApprovalGate("", "s"), clamp).Check(context.Background(), def("search"), map[string]any{"limit": 99})
+	if got.Outcome != GateRequireApproval {
+		t.Fatalf("outcome = %v, want approval", got.Outcome)
+	}
+	if got.ModifiedArgs["limit"] != 10 {
+		t.Errorf("args = %v, want the clamped arguments", got.ModifiedArgs)
+	}
+}
+
+// The default reason must name the tool under check, and concurrent checks
+// must not share state.
+func TestPrefixApprovalGateDefaultReasonNamesEachTool(t *testing.T) {
+	g := PrefixApprovalGate("", "write_", "delete_")
+	if got := g.Check(context.Background(), def("write_a"), nil).Reason; !strings.Contains(got, "write_a") {
+		t.Errorf("reason = %q, want it to name write_a", got)
+	}
+	if got := g.Check(context.Background(), def("delete_b"), nil).Reason; !strings.Contains(got, "delete_b") {
+		t.Errorf("reason = %q, want it to name delete_b", got)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := fmt.Sprintf("write_%d", i)
+			if got := g.Check(context.Background(), def(name), nil).Reason; !strings.Contains(got, name) {
+				t.Errorf("reason = %q, want it to name %s", got, name)
+			}
+		}(i)
+	}
+	wg.Wait()
 }

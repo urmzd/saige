@@ -18,7 +18,7 @@ import (
 // The database needs the pgvector extension available; a disposable instance:
 //
 //	docker run --rm -e POSTGRES_PASSWORD=test -p 5433:5432 pgvector/pgvector:pg17
-//	SAIGE_TEST_POSTGRES_DSN=postgres://postgres:test@localhost:5433/postgres go test ./knowledge/pgstore/
+//	SAIGE_TEST_POSTGRES_DSN=postgres://postgres:test@localhost:5433/postgres go test ./rag/knowledge/pgstore/
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("SAIGE_TEST_POSTGRES_DSN")
@@ -51,7 +51,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{}); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE kg_mention, kg_relation, kg_episode, kg_entity RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE kg_relation_episode, kg_mention, kg_relation, kg_episode, kg_entity RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool
@@ -280,13 +280,17 @@ func TestEpisodeMetadataProvenanceRoundTrip(t *testing.T) {
 	relUUID, epWithMeta := seedGroup(t, store, "g", 1, meta)
 
 	// A second episode mentioning the same entities, without metadata.
-	e1s, err := store.FindEntitiesByNameTypeInGroup(ctx, "g", "Alpha", "person")
-	if err != nil || len(e1s) != 1 {
-		t.Fatalf("find Alpha: %v (%d entities)", err, len(e1s))
+	var both []string
+	for _, name := range []string{"Alpha", "Beta"} {
+		found, err := store.FindEntitiesByNameTypeInGroup(ctx, "g", name, "person")
+		if err != nil || len(found) != 1 {
+			t.Fatalf("find %s: %v (%d entities)", name, err, len(found))
+		}
+		both = append(both, found[0].UUID)
 	}
 	epNoMeta, err := store.CreateEpisode(ctx, &types.EpisodeInput{
 		Name: "ep-no-meta", Body: "no metadata", Source: "test", GroupID: "g",
-	}, []string{e1s[0].UUID})
+	}, both)
 	if err != nil {
 		t.Fatalf("create episode without metadata: %v", err)
 	}
@@ -386,6 +390,7 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 	ctx := context.Background()
 
 	stmts := []string{
+		`DROP TABLE IF EXISTS kg_relation_episode`,
 		`DROP TABLE IF EXISTS kg_mention`,
 		`DROP TABLE IF EXISTS kg_relation`,
 		`DROP TABLE IF EXISTS kg_episode`,
@@ -478,6 +483,7 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 		{"kg_entity", "group_id"},
 		{"kg_relation", "group_id"},
 		{"kg_episode", "metadata"},
+		{"kg_episode", "document_id"},
 	} {
 		n := countRows(t, pool,
 			`SELECT count(*) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,

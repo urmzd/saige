@@ -20,6 +20,11 @@ func init() {
 	gob.Register(types.ConfigContent{})
 	gob.Register(types.FeedbackContent{})
 	gob.Register(types.HandoffContent{})
+	// Run metadata content can appear in recorded turns and appended input.
+	gob.Register(types.ServerToolContent{})
+	gob.Register(types.SteerContent{})
+	gob.Register(types.TruncationContent{})
+	gob.Register(types.RouteContent{})
 	// Tool-call Arguments are map[string]any decoded from JSON; nested arrays and
 	// objects arrive as []interface{} / map[string]interface{} inside interface
 	// values and must be registered or gob.Encode fails on real tool schemas.

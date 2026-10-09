@@ -95,7 +95,7 @@ func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int 
 //     graph facts never outlive their source document.
 func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 	pool := requirePostgres(t)
-	truncate(t, pool, "rag_document", "kg_entity", "kg_episode")
+	truncate(t, pool, "rag_document", "kg_entity", "kg_episode", "kg_relation")
 	ctx := testContext(t, 2*time.Minute)
 
 	// Knowledge side: public constructor with an injected fake extractor and
@@ -139,17 +139,18 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 		t.Fatalf("ingest sections = %d, want 2", res.Sections)
 	}
 
-	// kg_episode rows exist, grouped by the document UUID (one per text variant).
-	if n := countRows(t, pool, `SELECT count(*) FROM kg_episode WHERE group_id = $1`, docUUID); n != 2 {
-		t.Errorf("kg_episode rows for group %s = %d, want 2", docUUID, n)
+	// kg_episode rows exist, tagged with the document UUID (one per text
+	// variant), in the pipeline's graph namespace (the default group here).
+	if n := countRows(t, pool, `SELECT count(*) FROM kg_episode WHERE document_id = $1`, docUUID); n != 2 {
+		t.Errorf("kg_episode rows for document %s = %d, want 2", docUUID, n)
 	}
-	// Entities dedup within the group: two distinct entities despite two episodes.
-	if n := countRows(t, pool, `SELECT count(*) FROM kg_entity WHERE group_id = $1`, docUUID); n != 2 {
-		t.Errorf("kg_entity rows for group %s = %d, want 2", docUUID, n)
+	// Entities dedup within the namespace: two distinct entities despite two episodes.
+	if n := countRows(t, pool, `SELECT count(*) FROM kg_entity`); n != 2 {
+		t.Errorf("kg_entity rows = %d, want 2", n)
 	}
 	// Edge dedup: the identical relation from the second episode is skipped.
-	if n := countRows(t, pool, `SELECT count(*) FROM kg_relation WHERE group_id = $1`, docUUID); n != 1 {
-		t.Errorf("kg_relation rows for group %s = %d, want 1", docUUID, n)
+	if n := countRows(t, pool, `SELECT count(*) FROM kg_relation`); n != 1 {
+		t.Errorf("kg_relation rows = %d, want 1", n)
 	}
 
 	// ── Search ────────────────────────────────────────────────────────
@@ -212,10 +213,12 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 		t.Fatalf("delete document: %v", err)
 	}
 
-	for _, tbl := range []string{"kg_episode", "kg_relation", "kg_entity"} {
-		if n := countRows(t, pool, `SELECT count(*) FROM `+tbl+` WHERE group_id = $1`, docUUID); n != 0 {
-			t.Errorf("%s rows for group %s after delete = %d, want 0", tbl, docUUID, n)
-		}
+	if n := countRows(t, pool, `SELECT count(*) FROM kg_episode WHERE document_id = $1`, docUUID); n != 0 {
+		t.Errorf("kg_episode rows for document %s after delete = %d, want 0", docUUID, n)
+	}
+	// Facts supported only by the deleted document go with it.
+	if n := countRows(t, pool, `SELECT count(*) FROM kg_relation`); n != 0 {
+		t.Errorf("kg_relation rows after delete = %d, want 0", n)
 	}
 	if n := countRows(t, pool, `SELECT count(*) FROM kg_mention`); n != 0 {
 		t.Errorf("kg_mention rows after delete = %d, want 0", n)

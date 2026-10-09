@@ -1,0 +1,67 @@
+package anthropic
+
+import (
+	"context"
+	"math"
+
+	"github.com/urmzd/saige/agent/types"
+)
+
+var _ types.OptionsProvider = (*Adapter)(nil)
+
+// ChatStreamWithOptions implements types.OptionsProvider. Each option set in
+// opts overrides the adapter's configured value for this call only; unset
+// options keep the configured ones. The tool choice maps to Anthropic's
+// tool_choice: auto, none, any (required) or tool (named). Options the model
+// does not declare, and combinations Anthropic rejects, fail before any
+// network I/O with an error matching types.ErrInvalidModelConfig.
+func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
+	c, err := a.withRequestOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	return c.ChatStream(ctx, messages, tools)
+}
+
+// withRequestOptions returns a copy of the adapter with opts applied.
+func (a *Adapter) withRequestOptions(o types.RequestOptions) (*Adapter, error) {
+	caps := a.Capabilities()
+	if err := caps.ValidateOptions(o); err != nil {
+		return nil, err
+	}
+	c := *a
+	if o.Temperature != nil {
+		c.temperature = o.Temperature
+	}
+	if o.TopP != nil {
+		c.topP = o.TopP
+	}
+	if o.TopK != nil {
+		if *o.TopK != math.Trunc(*o.TopK) {
+			return nil, caps.OptionError("top_k", "must be a whole number")
+		}
+		k := int64(*o.TopK)
+		c.topK = &k
+	}
+	if o.MaxOutputTokens != nil {
+		c.maxTokens = *o.MaxOutputTokens
+	}
+	if len(o.StopSequences) > 0 {
+		c.stop = o.StopSequences
+	}
+	if o.ParallelTools != nil {
+		c.parallelTools = o.ParallelTools
+	}
+	// One reasoning control per request: a per-call budget or effort
+	// replaces the configured one.
+	if o.ReasoningBudget != nil {
+		c.thinking, c.reasoningEffort = o.ReasoningBudget, nil
+	}
+	if o.ReasoningEffort != nil {
+		c.thinking, c.reasoningEffort = nil, o.ReasoningEffort
+	}
+	if o.ToolChoice != nil {
+		c.toolChoice = o.ToolChoice
+	}
+	return &c, nil
+}

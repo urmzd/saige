@@ -176,6 +176,15 @@ func TestServerToolValidationCatchesProviderSideMistakes(t *testing.T) {
 		{"remote mcp complete", types.ServerTool{
 			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "https://y"},
 		}, true},
+		{"remote mcp over plain http", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "http://y"},
+		}, false},
+		{"remote mcp without host", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "https:///path"},
+		}, false},
+		{"remote mcp not a url", types.ServerTool{
+			Kind: types.ServerToolRemoteMCP, MCPServer: &types.RemoteMCPServer{Name: "x", URL: "y.example/mcp"},
+		}, false},
 		{"unknown kind", types.ServerTool{Kind: "teleport"}, false},
 		{"negative max uses", types.ServerTool{Kind: types.ServerToolWebSearch, MaxUses: -1}, false},
 	}

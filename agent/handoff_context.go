@@ -63,7 +63,7 @@ func (OwnerContext) Select(_ context.Context, request HandoffContext) ([]types.M
 					out = append(out, latestTask)
 				}
 				seen = true
-				out = append(out, types.NewUserMessage(fmt.Sprintf("Handoff from %s to %s. Task brief or return data: %s", transfer.From, transfer.To, transfer.Reason)))
+				out = append(out, types.NewUserMessage(handoffBrief(*transfer)))
 			}
 			continue
 		}
@@ -102,4 +102,18 @@ func (a *Agent) selectHandoffContext(ctx context.Context, active activeContext, 
 		active.messages = overlaySystem(active.messages, member.systemPrompt)
 	}
 	return active, nil
+}
+
+// handoffBrief is the user message a recipient reads for a transfer: the
+// reason, then the previous owner's handover note and context when it wrote
+// them.
+func handoffBrief(h types.HandoffContent) string {
+	brief := fmt.Sprintf("Handoff from %s to %s. Task brief or return data: %s", h.From, h.To, h.Reason)
+	if h.Message != "" {
+		brief += "\nHandover note: " + h.Message
+	}
+	if h.Context != "" {
+		brief += "\nContext: " + h.Context
+	}
+	return brief
 }

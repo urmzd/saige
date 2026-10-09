@@ -5,3 +5,4 @@ JOIN kg_entity src ON src.id = r.source_id
 JOIN kg_entity tgt ON tgt.id = r.target_id
 WHERE (src.uuid = $1 AND tgt.uuid = $2)
    OR (src.uuid = $2 AND tgt.uuid = $1)
+ORDER BY r.valid_at, r.id

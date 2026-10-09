@@ -27,9 +27,10 @@ type TurnMetrics struct {
 // returns an error on collision.
 //
 // FailureReason follows the harness failure-reason contract used by
-// [ComputeReliability]: reasons prefixed with "envelope parse failed",
-// "validation failed", "invalid envelope", or "apply failed" are classified
-// into the matching Reliability counters.
+// [ComputeReliability]: reasons prefixed with "request failed",
+// "envelope parse failed", "validation failed", "invalid envelope", or
+// "apply failed" are classified into the matching Reliability counters. The
+// built-in flows set "request failed: ..." when a chat request fails.
 type TurnResult struct {
 	Turn              int
 	Edit              string
@@ -210,10 +211,16 @@ func ToFlowMetrics(turns []TurnResult) FlowMetrics {
 
 // Comparison reports savings of one flow against a baseline flow, as
 // percentages of the baseline totals.
+//
+// [CompareTurns] fills ComparedTurns and ExcludedTurns: savings then cover
+// only the edit turns that succeeded in both flows, and ExcludedTurns counts
+// the turns left out because either flow failed them.
 type Comparison struct {
 	OutputTokenSavingsPct float64 `json:"output_token_savings_pct"`
 	InputTokenSavingsPct  float64 `json:"input_token_savings_pct"`
 	LatencySavingsPct     float64 `json:"latency_savings_pct"`
+	ComparedTurns         int     `json:"compared_turns,omitempty"`
+	ExcludedTurns         int     `json:"excluded_turns,omitempty"`
 }
 
 // Compare computes token and latency savings of other relative to base.
@@ -223,6 +230,53 @@ func Compare(base, other FlowMetrics) Comparison {
 		InputTokenSavingsPct:  Pct(base.TotalInputTokens, other.TotalInputTokens),
 		LatencySavingsPct:     Pct(base.TotalLatencyMillis, other.TotalLatencyMillis),
 	}
+}
+
+// CompareTurns computes the savings of other relative to base over the edit
+// turns that succeeded in both flows, matched by turn index. A failed turn
+// spends latency and reports few or no tokens, so counting it would show
+// savings the flow did not earn. Turns present in only one flow are also
+// left out. When no turn is comparable every savings value is 0.
+func CompareTurns(base, other []TurnResult) Comparison {
+	failed := make(map[int]bool, len(base)+len(other))
+	inBase := make(map[int]bool, len(base))
+	inOther := make(map[int]bool, len(other))
+	for _, t := range base {
+		inBase[t.Turn] = true
+		if t.Failed {
+			failed[t.Turn] = true
+		}
+	}
+	for _, t := range other {
+		inOther[t.Turn] = true
+		if t.Failed {
+			failed[t.Turn] = true
+		}
+	}
+	keep := func(turns []TurnResult, peer map[int]bool) []TurnResult {
+		var kept []TurnResult
+		for _, t := range turns {
+			if !failed[t.Turn] && peer[t.Turn] {
+				kept = append(kept, t)
+			}
+		}
+		return kept
+	}
+	keptBase := keep(base, inOther)
+	keptOther := keep(other, inBase)
+
+	all := make(map[int]bool, len(inBase)+len(inOther))
+	for turn := range inBase {
+		all[turn] = true
+	}
+	for turn := range inOther {
+		all[turn] = true
+	}
+
+	cmp := Compare(ToFlowMetrics(keptBase), ToFlowMetrics(keptOther))
+	cmp.ComparedTurns = len(keptOther)
+	cmp.ExcludedTurns = len(all) - len(keptOther)
+	return cmp
 }
 
 // Reliability classifies failed edit turns by failure reason.
@@ -240,8 +294,8 @@ type Reliability struct {
 }
 
 // ComputeReliability classifies failed turns by the harness failure-reason
-// prefix contract: "envelope parse failed", "validation failed",
-// "invalid envelope", and "apply failed". Turns whose Extra carries
+// prefix contract: "request failed", "envelope parse failed",
+// "validation failed", "invalid envelope", and "apply failed". Turns whose Extra carries
 // envelope_parsed=false count as request failures; turns with
 // envelope_parsed=true but without apply_succeeded=true count as apply
 // misses. Anything else falls into UnknownMissCount.
@@ -263,6 +317,8 @@ func ComputeReliability(turns []TurnResult) *Reliability {
 		parsed, parsedSet := extraBool(turn.Extra, "envelope_parsed")
 		applied, _ := extraBool(turn.Extra, "apply_succeeded")
 		switch {
+		case strings.HasPrefix(reason, requestFailedPrefix):
+			report.RequestFailureCount++
 		case strings.HasPrefix(reason, "envelope parse failed"):
 			report.ParseMissCount++
 		case strings.HasPrefix(reason, "validation failed"):

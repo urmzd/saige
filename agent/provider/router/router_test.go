@@ -121,3 +121,81 @@ func TestEarlyStreamFailureAndPolicyValidation(t *testing.T) {
 		t.Fatal("invalid policy accepted")
 	}
 }
+
+// TestUsageBeforeOutputDoesNotCommit checks that usage reported before any
+// output (as Anthropic does at message start) neither blocks failover nor
+// reaches the caller from the failed profile, and is still forwarded when the
+// profile serves or when the request ends with its error.
+func TestUsageBeforeOutputDoesNotCommit(t *testing.T) {
+	unavailable := &types.ProviderError{Kind: types.ErrorKindUnavailable, Err: errors.New("overloaded")}
+	permanent := &types.ProviderError{Kind: types.ErrorKindPermanent, Err: errors.New("bad key")}
+	tests := []struct {
+		name       string
+		a          []types.Delta
+		wantText   string
+		wantErr    bool
+		wantBCalls int32
+		wantPrompt int
+	}{
+		{
+			name:       "usage then transient error fails over",
+			a:          []types.Delta{types.UsageDelta{PromptTokens: 10}, types.ErrorDelta{Error: unavailable}},
+			wantText:   "from b",
+			wantBCalls: 1,
+			wantPrompt: 3,
+		},
+		{
+			name:       "usage then output is served",
+			a:          []types.Delta{types.UsageDelta{PromptTokens: 10}, types.TextContentDelta{Content: "from a"}},
+			wantText:   "from a",
+			wantPrompt: 10,
+		},
+		{
+			name:       "usage then permanent error reports usage",
+			a:          []types.Delta{types.UsageDelta{PromptTokens: 10}, types.ErrorDelta{Error: permanent}},
+			wantErr:    true,
+			wantPrompt: 10,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var bCalls atomic.Int32
+			r, err := New(Config{Profiles: []Profile{
+				{ID: "a", Provider: provider{call: func() (<-chan types.Delta, error) { return deltas(tt.a...), nil }}},
+				{ID: "b", Provider: provider{call: func() (<-chan types.Delta, error) {
+					bCalls.Add(1)
+					return deltas(types.UsageDelta{PromptTokens: 3}, types.TextContentDelta{Content: "from b"}), nil
+				}}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch, err := r.Session().ChatStream(context.Background(), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text string
+			var prompt int
+			var streamErr error
+			for d := range ch {
+				switch v := d.(type) {
+				case types.TextContentDelta:
+					text += v.Content
+				case types.UsageDelta:
+					prompt += v.PromptTokens
+				case types.ErrorDelta:
+					streamErr = v.Error
+				}
+			}
+			if text != tt.wantText || (streamErr != nil) != tt.wantErr {
+				t.Errorf("text = %q, err = %v; want %q, error %v", text, streamErr, tt.wantText, tt.wantErr)
+			}
+			if bCalls.Load() != tt.wantBCalls {
+				t.Errorf("b calls = %d, want %d", bCalls.Load(), tt.wantBCalls)
+			}
+			if prompt != tt.wantPrompt {
+				t.Errorf("forwarded prompt tokens = %d, want %d", prompt, tt.wantPrompt)
+			}
+		})
+	}
+}

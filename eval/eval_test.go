@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRunSingleObservation(t *testing.T) {
@@ -194,5 +198,119 @@ func TestPopulate(t *testing.T) {
 		if o.Timing.TotalMs != 42 {
 			t.Errorf("expected 42ms, got %d", o.Timing.TotalMs)
 		}
+	}
+}
+
+func TestRunCancelledReturnsPartialSuite(t *testing.T) {
+	obs := make([]Observation, 100)
+	for i := range obs {
+		obs[i] = Observation{ID: fmt.Sprintf("o%03d", i)}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var scored atomic.Int32
+	scorer := NewScorerFunc("slow", func(ctx context.Context, _ Observation) (Score, error) {
+		if scored.Add(1) == 10 {
+			cancel()
+		}
+		select {
+		case <-ctx.Done():
+			return Score{}, ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+		return Score{Name: "slow", Value: 1}, nil
+	})
+
+	suite, err := Run(ctx, "cancel", obs, []Scorer{scorer}, WithConcurrency(4))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if suite == nil {
+		t.Fatal("expected a partial suite")
+	}
+	if suite.Incomplete == 0 {
+		t.Error("expected Incomplete > 0")
+	}
+	if suite.Incomplete+len(suite.Results) != len(obs) {
+		t.Errorf("Incomplete %d + Results %d != %d", suite.Incomplete, len(suite.Results), len(obs))
+	}
+	if suite.ErroredCases != 0 {
+		t.Errorf("cancelled scorers must not count as errored cases, got %d", suite.ErroredCases)
+	}
+	for _, r := range suite.Results {
+		if r.Observation.ID == "" {
+			t.Fatal("result with empty Observation.ID")
+		}
+		if len(r.Scores) != 1 || r.Scores[0].Error != "" {
+			t.Errorf("case %s: unexpected scores %+v", r.Observation.ID, r.Scores)
+		}
+	}
+}
+
+func TestRunCancelledBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	suite, err := Run(ctx, "pre", []Observation{{ID: "a"}, {ID: "b"}}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if suite.Incomplete != 2 || len(suite.Results) != 0 {
+		t.Errorf("got Incomplete=%d Results=%d, want 2 and 0", suite.Incomplete, len(suite.Results))
+	}
+}
+
+func TestPopulateAllRecordsSubjectErrors(t *testing.T) {
+	obs := make([]Observation, 10)
+	for i := range obs {
+		obs[i] = Observation{ID: fmt.Sprintf("o%d", i)}
+	}
+	var running, peak atomic.Int32
+	subject := Subject(func(_ context.Context, o *Observation) error {
+		n := running.Add(1)
+		defer running.Add(-1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		if o.ID == "o3" {
+			return errors.New("boom")
+		}
+		o.Output = json.RawMessage(`"ok"`)
+		return nil
+	})
+
+	err := PopulateAll(context.Background(), obs, subject, WithConcurrency(4))
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected joined subject error, got %v", err)
+	}
+	if peak.Load() < 2 {
+		t.Errorf("expected subjects to run in parallel, peak concurrency %d", peak.Load())
+	}
+	if peak.Load() > 4 {
+		t.Errorf("concurrency limit exceeded: %d", peak.Load())
+	}
+	if got := SubjectError(obs[3]); got != "boom" {
+		t.Errorf("SubjectError: got %q, want boom", got)
+	}
+	if got := SubjectError(obs[0]); got != "" {
+		t.Errorf("successful observation has subject error %q", got)
+	}
+
+	scorer := NewScorerFunc("one", func(_ context.Context, _ Observation) (Score, error) {
+		return Score{Name: "one", Value: 1}, nil
+	})
+	suite, err := Run(context.Background(), "s", obs, []Scorer{scorer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suite.SubjectErrors != 1 || len(suite.Results) != 10 {
+		t.Errorf("SubjectErrors=%d Results=%d, want 1 and 10", suite.SubjectErrors, len(suite.Results))
+	}
+	if len(suite.Results[3].Scores) != 0 {
+		t.Errorf("failed observation must not be scored, got %+v", suite.Results[3].Scores)
 	}
 }

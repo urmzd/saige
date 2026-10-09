@@ -48,3 +48,18 @@ var variantUpdateEmbeddingSQL string
 
 //go:embed sql/variant_get.sql
 var variantGetSQL string
+
+//go:embed sql/variant_get_record.sql
+var variantGetRecordSQL string
+
+//go:embed sql/variant_get_records.sql
+var variantGetRecordsSQL string
+
+//go:embed sql/document_list.sql
+var documentListSQL string
+
+//go:embed sql/document_find_source.sql
+var documentFindSourceSQL string
+
+//go:embed sql/document_list_source.sql
+var documentListSourceSQL string

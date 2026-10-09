@@ -16,11 +16,22 @@ const (
 	contentTypeConfig     = "config"
 	contentTypeThinking   = "thinking"
 	contentTypeHandoff    = "handoff"
+	contentTypeServerTool = "server_tool"
+	contentTypeSteer      = "steer"
+	contentTypeTruncation = "truncation"
+	contentTypeRoute      = "route"
 	contentTypeUnknown    = "unknown"
 )
 
+// TreeFormatVersion is the serialized tree format this package writes.
+// UnmarshalJSON rejects a document with a higher version instead of guessing
+// at its meaning. A document without a version predates the field and is
+// read as version 1.
+const TreeFormatVersion = 1
+
 // serializedTree is the JSON wire format for a Tree.
 type serializedTree struct {
+	V           int                             `json:"v,omitempty"`
 	Metadata    json.RawMessage                 `json:"metadata,omitempty"`
 	Nodes       []serializedNode                `json:"nodes"`
 	Children    map[string][]string             `json:"children"`
@@ -166,6 +177,8 @@ func systemContentType(c types.SystemContent) string {
 		return contentTypeConfig
 	case types.HandoffContent:
 		return contentTypeHandoff
+	case types.RouteContent:
+		return contentTypeRoute
 	default:
 		return contentTypeUnknown
 	}
@@ -185,6 +198,8 @@ func userContentType(c types.UserContent) string {
 		return "file"
 	case types.FeedbackContent:
 		return "feedback"
+	case types.SteerContent:
+		return contentTypeSteer
 	default:
 		return contentTypeUnknown
 	}
@@ -198,6 +213,12 @@ func assistantContentType(c types.AssistantContent) string {
 		return "tool_use"
 	case types.ThinkingContent:
 		return contentTypeThinking
+	case types.ServerToolContent:
+		return contentTypeServerTool
+	case types.TruncationContent:
+		return contentTypeTruncation
+	case types.RouteContent:
+		return contentTypeRoute
 	default:
 		return contentTypeUnknown
 	}
@@ -216,6 +237,9 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeHandoff:
 		var c types.HandoffContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeRoute:
+		var c types.RouteContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)
@@ -242,6 +266,9 @@ func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
 	case "feedback":
 		var c types.FeedbackContent
 		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeSteer:
+		var c types.SteerContent
+		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown user content type: %s", ce.Type)
 	}
@@ -263,6 +290,20 @@ func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, erro
 	case contentTypeThinking:
 		var c types.ThinkingContent
 		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeServerTool:
+		var c types.ServerToolContent
+		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	case contentTypeTruncation:
+		var c types.TruncationContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeRoute:
+		var c types.RouteContent
+		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown assistant content type: %s", ce.Type)
 	}
@@ -274,6 +315,7 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 	defer t.mu.RUnlock()
 
 	st := serializedTree{
+		V:        TreeFormatVersion,
 		Metadata: t.metadata,
 		RootID:   string(t.rootID),
 		Active:   string(t.active),
@@ -317,7 +359,10 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 	return json.Marshal(st)
 }
 
-// UnmarshalJSON restores a tree from JSON.
+// UnmarshalJSON restores a tree from JSON. The input is decoded in full
+// before the tree changes, so a malformed document leaves the tree as it was,
+// and the result is installed under the tree's lock, so concurrent readers
+// never see a partly restored tree.
 func (t *Tree) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		serializedTree
@@ -327,6 +372,9 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	st := wire.serializedTree
+	if st.V < 0 || st.V > TreeFormatVersion {
+		return fmt.Errorf("%w: %d", ErrTreeFormatVersion, st.V)
+	}
 	if wire.Content != nil {
 		if st.Nodes != nil {
 			return fmt.Errorf("tree: both nodes and content were supplied")
@@ -336,14 +384,11 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 	if err := validateMetadata(st.Metadata); err != nil {
 		return err
 	}
-	t.metadata = append(json.RawMessage(nil), st.Metadata...)
 
-	t.nodes = make(map[types.NodeID]*types.Node, len(st.Nodes))
-	t.children = make(map[types.NodeID][]types.NodeID, len(st.Children))
-	t.branches = make(map[types.BranchID]types.NodeID, len(st.Branches))
-	t.checkpoints = make(map[types.CheckpointID]types.Checkpoint)
-	t.rootID = types.NodeID(st.RootID)
-	t.active = types.BranchID(st.Active)
+	nodes := make(map[types.NodeID]*types.Node, len(st.Nodes))
+	children := make(map[types.NodeID][]types.NodeID, len(st.Children))
+	branches := make(map[types.BranchID]types.NodeID, len(st.Branches))
+	checkpoints := make(map[types.CheckpointID]types.Checkpoint)
 
 	for _, sn := range st.Nodes {
 		msg, err := unmarshalMessage(types.Role(sn.Role), sn.Message)
@@ -356,7 +401,7 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 			summaryOf[i] = types.NodeID(s)
 		}
 
-		t.nodes[types.NodeID(sn.ID)] = &types.Node{
+		nodes[types.NodeID(sn.ID)] = &types.Node{
 			ID:         types.NodeID(sn.ID),
 			ParentID:   types.NodeID(sn.ParentID),
 			Message:    msg,
@@ -377,16 +422,16 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 		for i, c := range childStrs {
 			kids[i] = types.NodeID(c)
 		}
-		t.children[types.NodeID(parentStr)] = kids
+		children[types.NodeID(parentStr)] = kids
 	}
 
 	for bStr, nStr := range st.Branches {
-		t.branches[types.BranchID(bStr)] = types.NodeID(nStr)
+		branches[types.BranchID(bStr)] = types.NodeID(nStr)
 	}
 
 	for _, scp := range st.Checkpoints {
 		cpID := types.CheckpointID(scp.ID)
-		t.checkpoints[cpID] = types.Checkpoint{
+		checkpoints[cpID] = types.Checkpoint{
 			ID:        cpID,
 			Branch:    types.BranchID(scp.Branch),
 			NodeID:    types.NodeID(scp.NodeID),
@@ -395,5 +440,14 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.metadata = append(json.RawMessage(nil), st.Metadata...)
+	t.nodes = nodes
+	t.children = children
+	t.branches = branches
+	t.checkpoints = checkpoints
+	t.rootID = types.NodeID(st.RootID)
+	t.active = types.BranchID(st.Active)
 	return nil
 }

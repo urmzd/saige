@@ -3,7 +3,11 @@ package dbos
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/dbos-inc/dbos-transact-golang/dbos"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -114,5 +118,38 @@ func TestPayloadsGobEncodeAsInterface(t *testing.T) {
 		if err := gob.NewDecoder(&buf).Decode(&back); err != nil {
 			t.Errorf("decode %T as interface: %v", p, err)
 		}
+	}
+}
+
+// TestPendingResult checks the mapping from GetEvent to PendingApproval: an
+// event that was never set (a DBOS timeout) means "not waiting", not a failure.
+func TestPendingResult(t *testing.T) {
+	req := types.ApprovalRequest{ID: "i1"}
+	other := errors.New("db down")
+	for _, tc := range []struct {
+		name    string
+		req     types.ApprovalRequest
+		err     error
+		wantOK  bool
+		wantErr error
+	}{
+		{name: "pending", req: req, wantOK: true},
+		{name: "decided clears the request", req: types.ApprovalRequest{}},
+		{name: "never set times out", err: &dbos.DBOSError{Code: dbos.TimeoutError, Message: "no event found"}},
+		{name: "wrapped timeout", err: fmt.Errorf("get event: %w", &dbos.DBOSError{Code: dbos.TimeoutError})},
+		{name: "other error", err: other, wantErr: other},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok, err := pendingResult(tc.req, tc.err)
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && got.ID != req.ID {
+				t.Errorf("req = %+v, want %+v", got, req)
+			}
+		})
 	}
 }

@@ -8,11 +8,17 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
 )
+
+// providerName identifies this adapter in errors, the catalog and metrics.
+const providerName = "google"
 
 // Compile-time interface checks.
 var (
@@ -79,8 +85,10 @@ func WithoutThinking() Option {
 
 // WithServerTools enables provider-executed tools. Gemini runs search
 // grounding and code execution inside the model call, so unlike a local tool
-// there is no ToolExecStartDelta, no ToolGate, and no durable step: the only
-// trace is the grounding metadata, which this adapter turns into citations.
+// there is no ToolExecStartDelta, no ToolGate, and no durable step. The trace
+// is reported as ServerToolCallDelta and ServerToolResultDelta pairs: the
+// generated code and its output, and the search queries with the sources
+// found. Grounding sources are also reported as citations.
 //
 // An unsupported kind is rejected here rather than sent, because Gemini
 // answers an unknown tool with an opaque 400.
@@ -110,12 +118,14 @@ func WithSafetySettings(settings ...*genai.SafetySetting) Option {
 // callers most often set. Pointer fields are omitted when nil, so the zero
 // value sends nothing and the model's defaults apply.
 type GenerationConfig struct {
-	Temperature     *float32
-	TopP            *float32
-	TopK            *float32
-	Seed            *int32
-	MaxOutputTokens int32
-	StopSequences   []string
+	Temperature      *float32
+	TopP             *float32
+	TopK             *float32
+	Seed             *int32
+	MaxOutputTokens  int32
+	StopSequences    []string
+	FrequencyPenalty *float32
+	PresencePenalty  *float32
 }
 
 // apply copies the set knobs onto a request config.
@@ -126,6 +136,8 @@ func (g GenerationConfig) apply(c *genai.GenerateContentConfig) {
 	c.Seed = g.Seed
 	c.MaxOutputTokens = g.MaxOutputTokens
 	c.StopSequences = g.StopSequences
+	c.FrequencyPenalty = g.FrequencyPenalty
+	c.PresencePenalty = g.PresencePenalty
 }
 
 // Adapter wraps the official Google GenAI SDK client and implements types.Provider,
@@ -144,6 +156,7 @@ type Adapter struct {
 	generation  GenerationConfig
 	safety      []*genai.SafetySetting
 	serverTools []types.ServerTool
+	toolChoice  *types.ToolChoice
 }
 
 // NewAdapter creates a new Google provider adapter using the official SDK. It
@@ -163,7 +176,7 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 	}
 	// Fail at construction, not mid-stream: an unsupported server tool comes
 	// back from Gemini as an opaque 400 on the first request that uses it.
-	if err := types.ValidateServerTools(catalog.MustLookup("google", model), a.serverTools); err != nil {
+	if err := types.ValidateServerTools(catalog.MustLookup(providerName, model), a.serverTools); err != nil {
 		return nil, fmt.Errorf("google: %w", err)
 	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
@@ -171,7 +184,7 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 		Backend:    a.backend,
 		Project:    a.project,
 		Location:   a.location,
-		HTTPClient: a.httpClient,
+		HTTPClient: withHeaderTransport(a.httpClient),
 	})
 	if err != nil {
 		return nil, err
@@ -183,6 +196,27 @@ func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Ada
 // Validate checks controls against the selected model, including after WithModel.
 func (a *Adapter) Validate() error {
 	caps := a.Capabilities()
+	o := a.EffectiveOptions()
+	if a.thinking != nil && !o.HasReasoning() {
+		return caps.OptionError("reasoning", "an explicit thinking configuration needs a budget or level")
+	}
+	if err := caps.ValidateOptions(o); err != nil {
+		return err
+	}
+	if len(a.safety) > 0 {
+		if err := caps.Require(types.CapSafetySettings); err != nil {
+			return err
+		}
+	}
+	if err := types.ValidateServerTools(caps, a.serverTools); err != nil {
+		return caps.OptionError("server_tools", err.Error())
+	}
+	return nil
+}
+
+// EffectiveOptions implements types.OptionsReporter: the generation config,
+// thinking configuration and tool choice as request options.
+func (a *Adapter) EffectiveOptions() types.RequestOptions {
 	toFloat := func(p *float32) *float64 {
 		if p == nil {
 			return nil
@@ -191,7 +225,9 @@ func (a *Adapter) Validate() error {
 		return &v
 	}
 	o := types.RequestOptions{Temperature: toFloat(a.generation.Temperature),
-		TopP: toFloat(a.generation.TopP), TopK: toFloat(a.generation.TopK), StopSequences: a.generation.StopSequences}
+		TopP: toFloat(a.generation.TopP), TopK: toFloat(a.generation.TopK), StopSequences: a.generation.StopSequences,
+		FrequencyPenalty: toFloat(a.generation.FrequencyPenalty), PresencePenalty: toFloat(a.generation.PresencePenalty),
+		ToolChoice: a.toolChoice}
 	if a.generation.Seed != nil {
 		n := int64(*a.generation.Seed)
 		o.Seed = &n
@@ -209,26 +245,12 @@ func (a *Adapter) Validate() error {
 			level := strings.ToLower(string(a.thinking.ThinkingLevel))
 			o.ReasoningEffort = &level
 		}
-		if o.ReasoningBudget == nil && o.ReasoningEffort == nil {
-			return caps.OptionError("reasoning", "an explicit thinking configuration needs a budget or level")
-		}
 	}
-	if err := caps.ValidateOptions(o); err != nil {
-		return err
-	}
-	if len(a.safety) > 0 {
-		if err := caps.Require(types.CapSafetySettings); err != nil {
-			return err
-		}
-	}
-	if err := types.ValidateServerTools(caps, a.serverTools); err != nil {
-		return caps.OptionError("server_tools", err.Error())
-	}
-	return nil
+	return o.Clone()
 }
 
 // Name implements types.NamedProvider.
-func (a *Adapter) Name() string { return "google" }
+func (a *Adapter) Name() string { return providerName }
 
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.model }
@@ -245,7 +267,7 @@ func (a *Adapter) WithModel(model string) types.Provider {
 // response text. It is the simple generation seam used by eval judges, HyDE,
 // context compression, and KG extraction.
 func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
-	return types.GenerateText(ctx, a, prompt)
+	return generate.Text(ctx, a, prompt)
 }
 
 // ChatStream implements types.Provider.
@@ -255,6 +277,9 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	}
 
 	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	if err := a.checkToolChoice(tools); err != nil {
 		return nil, err
 	}
 
@@ -272,6 +297,9 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	}
 
 	if err := a.Validate(); err != nil {
+		return nil, err
+	}
+	if err := a.checkToolChoice(tools); err != nil {
 		return nil, err
 	}
 
@@ -299,6 +327,9 @@ func (a *Adapter) buildRequest(messages []types.Message, tools []types.ToolDef) 
 	if len(gTools) > 0 {
 		config.Tools = gTools
 	}
+	if len(tools) > 0 {
+		config.ToolConfig = a.toolConfig()
+	}
 	a.generation.apply(config)
 	if a.thinking != nil {
 		config.ThinkingConfig = a.thinking
@@ -317,6 +348,8 @@ func (a *Adapter) buildRequest(messages []types.Message, tools []types.ToolDef) 
 // and thinking blocks are bracketed across chunks (one Start, many Content,
 // one End) to match the other adapters, so downstream aggregators see one
 // block per run of content rather than one per network chunk.
+//
+//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, config *genai.GenerateContentConfig) (<-chan types.Delta, error) {
 	out := make(chan types.Delta, 64)
 	go func() {
@@ -324,6 +357,16 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 
 		textStarted, thinkStarted := false, false
 		var signature string
+		// emitted turns true once a content delta reaches the consumer; after
+		// that a transport error can no longer be retried.
+		emitted := false
+		structured := config != nil && (config.ResponseSchema != nil || config.ResponseJsonSchema != nil)
+		var finishReason string
+		var outputTokens int
+		// blocked holds the prompt feedback of a prompt Gemini refused. Such
+		// a stream completes with no candidate and so no finishReason.
+		var blocked *genai.GenerateContentResponsePromptFeedback
+		var server serverToolState
 
 		endThinking := func() {
 			if thinkStarted {
@@ -338,21 +381,26 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 			}
 		}
 
-		for resp, err := range a.client.Models.GenerateContentStream(ctx, a.model, contents, config) {
+		streamCtx, sink := withRetryAfterSink(ctx)
+		for resp, err := range a.client.Models.GenerateContentStream(streamCtx, a.model, contents, config) {
 			if err != nil {
+				beforeOutput := !emitted
 				endThinking()
 				endText()
-				out <- types.ErrorDelta{Error: &types.ProviderError{
-					Provider: "google",
-					Model:    a.model,
-					Kind:     classifyGoogleError(err),
-					Err:      err,
-				}}
+				out <- types.ErrorDelta{Error: classifyWithHeader(a.model, err, beforeOutput, sink)}
 				return
 			}
 
+			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+				blocked = resp.PromptFeedback
+			}
+			if len(resp.Candidates) > 0 && string(resp.Candidates[0].FinishReason) != "" {
+				finishReason = string(resp.Candidates[0].FinishReason)
+			}
 			if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
 				for _, part := range resp.Candidates[0].Content.Parts {
+					emitted = emitted || part.Text != "" || part.FunctionCall != nil ||
+						part.ExecutableCode != nil || part.CodeExecutionResult != nil
 					switch {
 					case part.Text != "" && part.Thought:
 						endText()
@@ -380,8 +428,22 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 						if id == "" {
 							id = types.NewID()
 						}
+						args := part.FunctionCall.Args
+						if args == nil {
+							args = map[string]any{}
+						}
 						out <- types.ToolCallStartDelta{ID: id, Name: part.FunctionCall.Name}
-						out <- types.ToolCallEndDelta{Arguments: part.FunctionCall.Args}
+						out <- types.ToolCallEndDelta{ID: id, Arguments: args}
+
+					case part.ExecutableCode != nil:
+						endThinking()
+						endText()
+						out <- server.codeCall(part.ExecutableCode)
+
+					case part.CodeExecutionResult != nil:
+						endThinking()
+						endText()
+						out <- server.codeResult(part.CodeExecutionResult)
 					}
 				}
 			}
@@ -389,6 +451,7 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 			// Emit grounding citations before usage, so a consumer has the
 			// sources in hand by the time the turn closes.
 			if len(resp.Candidates) > 0 {
+				server.observe(resp.Candidates[0].GroundingMetadata)
 				for _, c := range citationsFrom(resp.Candidates[0].GroundingMetadata) {
 					out <- types.CitationDelta{Citation: c}
 				}
@@ -396,6 +459,7 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 
 			// Emit usage.
 			if resp.UsageMetadata != nil {
+				outputTokens = int(resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount)
 				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:       int(resp.UsageMetadata.PromptTokenCount),
 					CachedPromptTokens: int(resp.UsageMetadata.CachedContentTokenCount),
@@ -413,28 +477,112 @@ func (a *Adapter) chatStream(ctx context.Context, contents []*genai.Content, con
 
 		endThinking()
 		endText()
+		for _, d := range server.search() {
+			out <- d
+		}
+		switch {
+		case blocked != nil:
+			out <- types.ErrorDelta{Error: promptBlockedError(a.model, blocked)}
+		case finishReason == "":
+			// Gemini sets finishReason on the last chunk; a stream that ends
+			// without one was cut off.
+			out <- types.ErrorDelta{Error: streamcheck.StreamError(providerName, a.model, streamcheck.ErrIncompleteStream, !emitted)}
+		case types.IsContentFilterFinishReason(finishReason):
+			out <- types.ErrorDelta{Error: streamcheck.Refused(providerName, a.model, finishReason)}
+		case finishReason == string(genai.FinishReasonMalformedFunctionCall):
+			out <- types.ErrorDelta{Error: &types.ProviderError{
+				Provider: providerName, Model: a.model, Kind: types.ErrorKindPermanent,
+				Err: errors.New("model produced a malformed function call"),
+			}}
+		case structured && types.IsTruncationFinishReason(finishReason):
+			// Schema output cut at the token limit is incomplete JSON.
+			out <- types.ErrorDelta{Error: streamcheck.Truncated(providerName, a.model, finishReason,
+				outputTokens, int(config.MaxOutputTokens))}
+		}
 	}()
 
 	return out, nil
 }
 
-// classifyGoogleError maps an SDK error onto a retry decision. Everything used
-// to be reported permanent, which meant a 429 or a 503 from Gemini defeated the
-// retry and fallback decorators entirely: they only act on transient errors by
-// default.
-func classifyGoogleError(err error) types.ErrorKind {
-	var apiErr genai.APIError
-	if errors.As(err, &apiErr) {
-		return types.ClassifyHTTPStatus(apiErr.Code)
+// promptBlockedError reports a prompt Gemini's safety system refused. It is a
+// content-filter error, not a dropped stream, so retry does not resend it.
+func promptBlockedError(model string, fb *genai.GenerateContentResponsePromptFeedback) *types.ProviderError {
+	msg := "prompt blocked: " + string(fb.BlockReason)
+	if fb.BlockReasonMessage != "" {
+		msg += ": " + fb.BlockReasonMessage
 	}
-	return types.ErrorKindPermanent
+	return &types.ProviderError{Provider: providerName, Model: model, Kind: types.ErrorKindContentFilter, Err: errors.New(msg)}
+}
+
+// classifyGoogleError maps an error that ended a stream to a ProviderError. An
+// API error is classified by status code and message, an ErrorInfo reason
+// that names a bad credential makes it ErrorKindAuth, and a RetryInfo detail
+// sets RetryAfter. Anything else is a transport failure, transient only while
+// no output has reached the consumer.
+func classifyGoogleError(model string, err error, beforeOutput bool) *types.ProviderError {
+	var apiErr genai.APIError
+	if !errors.As(err, &apiErr) {
+		var ptr *genai.APIError
+		if errors.As(err, &ptr) && ptr != nil {
+			apiErr = *ptr
+		} else {
+			return streamcheck.StreamError(providerName, model, err, beforeOutput)
+		}
+	}
+	pe := streamcheck.HTTPError(providerName, model, apiErr.Code, nil, apiErr.Status+" "+apiErr.Message, err)
+	if credentialRejected(apiErr.Details) {
+		// Gemini reports a bad API key as 400 INVALID_ARGUMENT; the reason,
+		// not the status, says it is an authentication failure.
+		pe.Kind = types.ErrorKindAuth
+	}
+	if pe.Kind.Transient() {
+		pe.RetryAfter = retryDelay(apiErr.Details)
+	}
+	return pe
+}
+
+// credentialReasons are the google.rpc.ErrorInfo reasons that mean the
+// credential itself was rejected.
+var credentialReasons = map[string]bool{
+	"API_KEY_INVALID":      true,
+	"API_KEY_EXPIRED":      true,
+	"ACCESS_TOKEN_EXPIRED": true,
+}
+
+// credentialRejected reports whether the error details carry a
+// google.rpc.ErrorInfo whose reason names a rejected credential.
+func credentialRejected(details []map[string]any) bool {
+	for _, d := range details {
+		if t, _ := d["@type"].(string); !strings.HasSuffix(t, "google.rpc.ErrorInfo") {
+			continue
+		}
+		if reason, _ := d["reason"].(string); credentialReasons[reason] {
+			return true
+		}
+	}
+	return false
+}
+
+// retryDelay reads google.rpc.RetryInfo.retryDelay ("7s", "1.5s") from the
+// error details Gemini attaches to quota and overload errors.
+func retryDelay(details []map[string]any) time.Duration {
+	for _, d := range details {
+		if t, _ := d["@type"].(string); !strings.HasSuffix(t, "google.rpc.RetryInfo") {
+			continue
+		}
+		raw, _ := d["retryDelay"].(string)
+		if delay, err := time.ParseDuration(raw); err == nil && delay > 0 {
+			return delay
+		}
+	}
+	return 0
 }
 
 // Capabilities implements types.CapabilityReporter: it resolves the target
 // model against the shared catalog so callers can check whether a flag (e.g.
 // reasoning) is supported before building a request that would be rejected.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
-	return catalog.MustLookup("google", a.model)
+	return catalog.MustLookup(providerName, a.model)
 }
 
 // serverToolDecls converts the configured server tools into Gemini tool
@@ -466,7 +614,7 @@ func citationsFrom(md *genai.GroundingMetadata) []types.Citation {
 			continue
 		}
 		c := types.NewCitation(types.CitationWeb, chunk.Web.URI, chunk.Web.Title)
-		c.Producer = "google"
+		c.Producer = providerName
 		if chunk.Web.Domain != "" {
 			c.Meta = map[string]any{"domain": chunk.Web.Domain}
 		}

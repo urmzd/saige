@@ -25,7 +25,7 @@ func SchemaFrom[T any]() ParameterSchema {
 
 	props, required := structToProperties(t)
 	return ParameterSchema{
-		Type:       "object",
+		Type:       SchemaObject,
 		Required:   required,
 		Properties: props,
 	}
@@ -84,22 +84,22 @@ func typeToPropertyDef(t reflect.Type) PropertyDef {
 
 	switch t.Kind() {
 	case reflect.String:
-		return PropertyDef{Type: "string"}
+		return PropertyDef{Type: SchemaString}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return PropertyDef{Type: "integer"}
+		return PropertyDef{Type: SchemaInteger}
 	case reflect.Float32, reflect.Float64:
-		return PropertyDef{Type: "number"}
+		return PropertyDef{Type: SchemaNumber}
 	case reflect.Bool:
-		return PropertyDef{Type: "boolean"}
+		return PropertyDef{Type: SchemaBoolean}
 	case reflect.Slice, reflect.Array:
 		items := typeToPropertyDef(t.Elem())
-		return PropertyDef{Type: "array", Items: &items}
+		return PropertyDef{Type: SchemaArray, Items: &items}
 	case reflect.Struct:
 		props, req := structToProperties(t)
-		return PropertyDef{Type: "object", Properties: props, Required: req}
+		return PropertyDef{Type: SchemaObject, Properties: props, Required: req}
 	default:
-		return PropertyDef{Type: "string"}
+		return PropertyDef{Type: SchemaString}
 	}
 }
 

@@ -17,14 +17,20 @@ type CachedResponse struct {
 
 // recordAndTee forwards every delta to the consumer unchanged, accumulating a
 // recording. The recording is written to the cache ONLY when the stream
-// completes without an ErrorDelta and was not cancelled. Tool-call streams are
+// completes without an ErrorDelta, was not cancelled, and did not stop at the
+// output token limit. done, when non-nil, runs after the store attempt with
+// whether the recording was stored. Tool-call streams are
 // cacheable (a tool call is a pure function of the input): TextStart/Content/End,
 // Thinking*, and ToolCall* deltas are recorded. UsageDelta is captured
 // separately. DoneDelta / MarkerDelta / ToolExec* / ErrorDelta are not recorded.
-func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types.Delta) <-chan types.Delta {
+func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types.Delta, done func(stored bool)) <-chan types.Delta {
 	out := make(chan types.Delta, 64)
 	go func() {
 		defer close(out)
+		stored := false
+		if done != nil {
+			defer func() { done(stored) }()
+		}
 
 		var rec CachedResponse
 		failed := false
@@ -48,18 +54,24 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 				failed = true // poison the recording; do not cache
 			case types.UsageDelta:
 				v.FinishReasons = append([]string(nil), v.FinishReasons...)
+				for _, reason := range v.FinishReasons {
+					// A response cut at the output limit is incomplete, even
+					// when its blocks are balanced.
+					if types.IsTruncationFinishReason(reason) {
+						failed = true
+					}
+				}
 				rec.Usage = rec.Usage.Merge(v) // providers may emit usage in parts
-			case types.TextStartDelta, types.TextContentDelta, types.TextEndDelta,
-				types.ThinkingStartDelta, types.ThinkingContentDelta, types.ThinkingEndDelta,
-				types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta, types.CitationDelta:
+			default:
+				if !recordable(v) {
+					break // DoneDelta / MarkerDelta / ToolExec* / others: forwarded, not recorded.
+				}
 				cloned, err := cloneDelta(v)
 				if err != nil {
 					failed = true
 				} else {
 					rec.Deltas = append(rec.Deltas, cloned)
 				}
-			default:
-				// DoneDelta / MarkerDelta / ToolExec* / others: forwarded, not recorded.
 			}
 			// Always forward to the live consumer.
 			select {
@@ -74,7 +86,9 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 		}
 		if err := p.cfg.Cache.Set(ctx, key, rec, p.cfg.TTL); err != nil {
 			p.cfg.Logger.Warn("response cache set failed", "error", err)
+			return
 		}
+		stored = true
 	}()
 	return out
 }
@@ -83,8 +97,19 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 // the recorded content deltas followed by a final UsageDelta marked CacheHit.
 // The provider stream does not emit DoneDelta (that is the agent's EventStream),
 // so replay mirrors a provider, not agent.Replay.
+//
+// Every replayed tool call gets a fresh ID, and argument, end, and citation
+// deltas that named the recorded ID are rewritten to match, so parallel calls
+// still pair with their own arguments.
 func replay(cr CachedResponse) <-chan types.Delta {
 	out := make(chan types.Delta, len(cr.Deltas)+1)
+	ids := map[string]string{}
+	remap := func(id string) string {
+		if fresh, ok := ids[id]; ok {
+			return fresh
+		}
+		return id
+	}
 	for _, d := range cr.Deltas {
 		cloned, err := cloneDelta(d)
 		if err != nil {
@@ -92,9 +117,23 @@ func replay(cr CachedResponse) <-chan types.Delta {
 			close(out)
 			return out
 		}
-		if call, ok := cloned.(types.ToolCallStartDelta); ok {
-			call.ID = types.NewID()
-			cloned = call
+		switch v := cloned.(type) {
+		case types.ToolCallStartDelta:
+			fresh := types.NewID()
+			if v.ID != "" {
+				ids[v.ID] = fresh
+			}
+			v.ID = fresh
+			cloned = v
+		case types.ToolCallArgumentDelta:
+			v.ID = remap(v.ID)
+			cloned = v
+		case types.ToolCallEndDelta:
+			v.ID = remap(v.ID)
+			cloned = v
+		case types.CitationDelta:
+			v.ToolCallID = remap(v.ToolCallID)
+			cloned = v
 		}
 		out <- cloned
 	}

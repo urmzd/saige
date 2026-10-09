@@ -39,6 +39,11 @@ just test-integration
 just integration-down
 ```
 
+Postgres only, no Ollama: `just test-postgres` runs the tests that need just a
+database (this package's Postgres-only tests, the `pgstore` packages, and the
+CLI's RAG round trip). CI runs the same set on every pull request against a
+pgvector service container; tests that also need Ollama or DBOS skip there.
+
 No native Ollama? Use the containerized one:
 
 ```sh

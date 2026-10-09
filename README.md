@@ -33,7 +33,11 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **4 LLM providers** (Ollama, OpenAI, Anthropic, Google) behind one `Provider` interface, with retry and fallback composition
 - **Nullable tool properties** with separate presence rules across providers and MCP. See [tool schemas](docs/tool-schemas.md).
 - **Durable runs** that resume after a crash, plus response caching
-- **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client
+- **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client, with approval enforced for mutating tools
+- **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
+- **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
+- **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
+- **MCP client** with pooled sessions, safe retries, catalog drift detection, and `.mcp.json` loading. See [MCP client](docs/mcp-client.md).
 
 ### Context and memory
 
@@ -43,7 +47,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 
 ### Evals
 
-- **Composable scorers** for agents, retrieval, and knowledge graphs, with A/B experiments and LLM-as-judge
+- **Composable scorers** for agents, retrieval, and knowledge graphs, with gates, comparisons, experiments and LLM-as-judge
 - **Sampler** to measure how stable scores and subjects are across repeated runs
 - **Live eval harness** via `saige eval`
 
@@ -66,11 +70,14 @@ go install github.com/urmzd/saige/cmd/saige@latest
 go install github.com/urmzd/saige/cmd/saige-mcp@latest
 ```
 
-Or install a pre-built `saige` binary:
+Or install a pre-built binary (Linux and macOS, amd64 and arm64, checksum-verified):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/urmzd/saige/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/urmzd/saige/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/urmzd/saige/main/install.sh | BIN=saige-mcp bash
 ```
+
+Each release also attaches Windows amd64 builds and a `SHA256SUMS` file. Update an installed CLI with `saige update` (`saige update --check` only reports).
 
 ## Quick Start
 
@@ -79,6 +86,9 @@ curl -fsSL https://raw.githubusercontent.com/urmzd/saige/main/install.sh | sh
 ```bash
 saige chat                                    # interactive multi-turn chat
 saige ask "What is retrieval-augmented generation?"
+
+# Serve the agent over HTTP + SSE with workspace file tools
+saige serve --tools fs,fetch --workspace .
 
 # Serve saige tools to Claude Code, Codex, or Gemini CLI over MCP
 saige-mcp --tools all --db "$SAIGE_DB" --searxng-url http://localhost:8080
@@ -123,10 +133,13 @@ Each subsystem has its own README as the entrypoint for further information:
 | `agent` | [agent/README.md](agent/README.md) | Providers, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing |
 | `rag` | [rag/README.md](rag/README.md) | Data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings |
 | `rag/knowledge` | [rag/knowledge/README.md](rag/knowledge/README.md) | Knowledge graph backend: graph interface, hybrid search, deduplication, PostgreSQL backend, formatting |
-| `eval` | [eval/README.md](eval/README.md) | Scorers, A/B experiments, LLM-as-judge, stream timing, live eval harness (`saige eval`) |
-| `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, rag, kg, eval |
+| `eval` | [eval/README.md](eval/README.md) | Scorers, gates, comparisons, experiments, LLM-as-judge, stream timing, live eval harness (`saige eval`) |
+| `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, serve, rag, kg, eval |
 | `cmd/saige-mcp` | [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md) | MCP server setup for Claude Code, Codex, Gemini CLI |
 | `tools/research` | [tools/research/README.md](tools/research/README.md) | Web search, file, and knowledge graph tools |
+| `tools/fs` | [tools/fs/README.md](tools/fs/README.md) | Workspace read, glob, grep, write, edit with root confinement |
+| `tools/exec` | [tools/exec/README.md](tools/exec/README.md) | Sandboxed bash with command, environment, and network policy |
+| `tools/fetch` | [tools/fetch/README.md](tools/fetch/README.md) | URL fetch through a client that blocks private and metadata addresses |
 | `examples` | [examples/README.md](examples/README.md) | Runnable example index |
 
 API reference for every package: [pkg.go.dev/github.com/urmzd/saige](https://pkg.go.dev/github.com/urmzd/saige)
@@ -140,6 +153,8 @@ This repo's conventions are available as portable agent skills in [`skills/`](sk
 See [ownership and policies](docs/orchestration-policies.md) for subagent results, handoff return links, sticky routing, and approval limits.
 See [cache contracts](docs/cache-contracts.md) for cache identity, provider cache modes, and remaining defects.
 See [durable execution](docs/durable-execution.md) for saved approvals, crash recovery, and budget reservations.
+See [observability](docs/observability.md) for OpenTelemetry spans, metrics, error attributes, and redaction.
+See [upgrade notes](docs/upgrade-notes.md) for behavior changes that can affect existing code.
 [Design decisions](DESIGN_DECISIONS.md) explain the choices and their limits.
 
 ## License

@@ -3,6 +3,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -21,6 +22,16 @@ type EvalResult struct {
 	NDCG             float64 `json:"ndcg"`
 	MRR              float64 `json:"mrr"`
 	HitRate          float64 `json:"hit_rate"`
+
+	// Unlabeled reports that the case has no relevance labels, so the
+	// retrieval metrics above were not computed. Exclude such cases from
+	// retrieval averages instead of counting their zero scores.
+	Unlabeled bool `json:"unlabeled,omitempty"`
+
+	// RetrievalWarning holds the partial-failure error returned by the
+	// pipeline search (for example one retriever failing while others
+	// returned hits). The metrics were computed from the hits that came back.
+	RetrievalWarning string `json:"retrieval_warning,omitempty"`
 
 	// Generation metrics.
 	Faithfulness      float64 `json:"faithfulness,omitempty"`
@@ -62,12 +73,63 @@ func (r *EvalResult) recordMetricError(metric string, err error) {
 	r.MetricErrors[metric] = err.Error()
 }
 
+// tmplResponse is the template field that carries the response under judgment.
+const tmplResponse = "Response"
+
+// RelevanceKey selects which identifier of a hit a relevance label names.
+type RelevanceKey string
+
+const (
+	// RelevanceVariant labels hits by Variant.UUID. Variant UUIDs are
+	// assigned at ingest, so labels must be refreshed after re-ingesting.
+	RelevanceVariant RelevanceKey = "variant"
+	// RelevanceSection labels hits by Provenance.SectionUUID.
+	RelevanceSection RelevanceKey = "section"
+	// RelevanceDocument labels hits by Provenance.DocumentUUID.
+	RelevanceDocument RelevanceKey = "document"
+	// RelevanceSource labels hits by Provenance.SourceURI, which stays the
+	// same when a document is re-ingested from the same source.
+	RelevanceSource RelevanceKey = "source"
+)
+
+// ErrUnknownRelevanceKey is returned when a relevance key is not one of the
+// RelevanceKey constants. Without this check such labels would never match a
+// hit and every retrieval metric would score zero.
+var ErrUnknownRelevanceKey = errors.New("eval: unknown relevance key")
+
+// Validate reports whether k is empty (meaning variant) or one of the
+// RelevanceKey constants, and returns ErrUnknownRelevanceKey otherwise.
+func (k RelevanceKey) Validate() error {
+	switch k {
+	case "", RelevanceVariant, RelevanceSection, RelevanceDocument, RelevanceSource:
+		return nil
+	}
+	return fmt.Errorf("%w %q: want %q, %q, %q, or %q", ErrUnknownRelevanceKey, string(k),
+		RelevanceVariant, RelevanceSection, RelevanceDocument, RelevanceSource)
+}
+
 // EvalCase defines a single evaluation case with ground truth.
+//
+// Relevance labels come from RelevantKeys, interpreted by RelevanceKey, or,
+// when RelevantKeys is empty, from RelevantUUIDs as variant UUIDs. For keys
+// coarser than a variant, several hits can share one key; only the first hit
+// with a given key counts, so each relevant item is ranked once.
 type EvalCase struct {
 	Query         string   `json:"query"`
 	GroundTruth   string   `json:"ground_truth"`
 	RelevantUUIDs []string `json:"relevant_uuids"`
 	Response      string   `json:"response"`
+
+	RelevantKeys []string     `json:"relevant_keys,omitempty"`
+	RelevanceKey RelevanceKey `json:"relevance_key,omitempty"`
+}
+
+// labels returns the case's relevance labels and the key they name.
+func (c EvalCase) labels() ([]string, RelevanceKey) {
+	if len(c.RelevantKeys) > 0 {
+		return c.RelevantKeys, c.RelevanceKey
+	}
+	return c.RelevantUUIDs, RelevanceVariant
 }
 
 // EvalOptions configures which metrics to compute and their parameters.
@@ -92,7 +154,9 @@ func WithEmbedders(e types.EmbedderRegistry) EvalOption {
 	return func(o *EvalOptions) { o.Embedders = e }
 }
 
-// WithK sets the cutoff for NDCG@k and HitRate@k (default 10).
+// WithK sets the retrieval cutoff (default 10). Evaluate searches for k hits
+// and computes every retrieval metric (precision, recall, NDCG, MRR, and hit
+// rate) over those top k.
 func WithK(k int) EvalOption {
 	return func(o *EvalOptions) { o.K = k }
 }
@@ -109,124 +173,191 @@ func WithJudgeRubric(rubric string) EvalOption {
 
 // --- Retrieval Metrics ---
 
-// ContextPrecision computes Average Precision over relevant UUIDs.
-func ContextPrecision(hits []types.SearchHit, relevantUUIDs []string) float64 {
-	if len(relevantUUIDs) == 0 {
-		return 0
-	}
+// RetrievalScores holds every retrieval metric for one ranked result.
+type RetrievalScores struct {
+	ContextPrecision float64 `json:"context_precision"`
+	ContextRecall    float64 `json:"context_recall"`
+	NDCG             float64 `json:"ndcg"`
+	MRR              float64 `json:"mrr"`
+	HitRate          float64 `json:"hit_rate"`
+}
 
-	relevant := make(map[string]bool, len(relevantUUIDs))
-	for _, uuid := range relevantUUIDs {
-		relevant[uuid] = true
+// ScoreRetrieval computes every retrieval metric for hits against relevant
+// labels of the given key, over the top k hits (all hits when k <= 0). Hits
+// are first reduced to the first occurrence of each key, and duplicate labels
+// count once. It returns false, with zero scores, when relevant is empty:
+// such a case carries no retrieval signal.
+func ScoreRetrieval(hits []types.SearchHit, relevant []string, key RelevanceKey, k int) (RetrievalScores, bool) {
+	rel := labelSet(relevant)
+	if len(rel) == 0 {
+		return RetrievalScores{}, false
 	}
+	ranked := rankedKeys(hits, key)
+	cutoff := k
+	if cutoff <= 0 {
+		cutoff = len(ranked)
+	}
+	if len(ranked) > cutoff {
+		ranked = ranked[:cutoff]
+	}
+	return RetrievalScores{
+		ContextPrecision: averagePrecision(ranked, rel),
+		ContextRecall:    recall(ranked, rel),
+		NDCG:             ndcg(ranked, rel, cutoff),
+		MRR:              reciprocalRank(ranked, rel),
+		HitRate:          hitRate(ranked, rel, cutoff),
+	}, true
+}
 
+// hitKey returns the identifier of hit that labels of the given key name.
+func hitKey(hit types.SearchHit, key RelevanceKey) string {
+	switch key {
+	case RelevanceSection:
+		return hit.Provenance.SectionUUID
+	case RelevanceDocument:
+		return hit.Provenance.DocumentUUID
+	case RelevanceSource:
+		return hit.Provenance.SourceURI
+	default:
+		return hit.Variant.UUID
+	}
+}
+
+// rankedKeys maps hits to their keys, keeping the first occurrence of each.
+// Hits without a key keep their rank position under an empty key that never
+// matches a label.
+func rankedKeys(hits []types.SearchHit, key RelevanceKey) []string {
+	seen := make(map[string]bool, len(hits))
+	out := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		id := hitKey(hit, key)
+		if id != "" {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// labelSet returns the non-empty labels as a set.
+func labelSet(labels []string) map[string]bool {
+	set := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		if l != "" {
+			set[l] = true
+		}
+	}
+	return set
+}
+
+func averagePrecision(ranked []string, rel map[string]bool) float64 {
 	sum := 0.0
 	found := 0
-	for i, hit := range hits {
-		if relevant[hit.Variant.UUID] {
+	for i, id := range ranked {
+		if rel[id] {
 			found++
 			sum += float64(found) / float64(i+1)
 		}
 	}
-
 	if found == 0 {
 		return 0
 	}
-	return sum / float64(len(relevantUUIDs))
+	return sum / float64(len(rel))
 }
 
-// ContextRecall computes the fraction of relevant UUIDs present in the results.
-func ContextRecall(hits []types.SearchHit, relevantUUIDs []string) float64 {
-	if len(relevantUUIDs) == 0 {
-		return 0
-	}
-
-	hitUUIDs := make(map[string]bool, len(hits))
-	for _, hit := range hits {
-		hitUUIDs[hit.Variant.UUID] = true
-	}
-
+func recall(ranked []string, rel map[string]bool) float64 {
 	found := 0
-	for _, uuid := range relevantUUIDs {
-		if hitUUIDs[uuid] {
+	for _, id := range ranked {
+		if rel[id] {
 			found++
 		}
 	}
-
-	return float64(found) / float64(len(relevantUUIDs))
+	return float64(found) / float64(len(rel))
 }
 
-// NDCG computes Normalized Discounted Cumulative Gain at rank k using binary relevance.
-func NDCG(hits []types.SearchHit, relevantUUIDs []string, k int) float64 {
-	if len(relevantUUIDs) == 0 || k <= 0 {
+func ndcg(ranked []string, rel map[string]bool, k int) float64 {
+	if k <= 0 {
 		return 0
 	}
-
-	relevant := make(map[string]bool, len(relevantUUIDs))
-	for _, uuid := range relevantUUIDs {
-		relevant[uuid] = true
-	}
-
-	n := min(k, len(hits))
-
+	n := min(k, len(ranked))
 	// DCG: sum of rel_i / log2(i+2) for 0-indexed i.
 	dcg := 0.0
 	for i := 0; i < n; i++ {
-		if relevant[hits[i].Variant.UUID] {
+		if rel[ranked[i]] {
 			dcg += 1.0 / math.Log2(float64(i+2))
 		}
 	}
-
 	// Ideal DCG: all relevant items at top positions.
-	idealCount := min(k, len(relevantUUIDs))
+	idealCount := min(k, len(rel))
 	idcg := 0.0
 	for i := 0; i < idealCount; i++ {
 		idcg += 1.0 / math.Log2(float64(i+2))
 	}
-
 	if idcg == 0 {
 		return 0
 	}
 	return dcg / idcg
 }
 
-// MRR computes the Reciprocal Rank: 1/rank of the first relevant hit.
-func MRR(hits []types.SearchHit, relevantUUIDs []string) float64 {
-	if len(relevantUUIDs) == 0 {
-		return 0
-	}
-
-	relevant := make(map[string]bool, len(relevantUUIDs))
-	for _, uuid := range relevantUUIDs {
-		relevant[uuid] = true
-	}
-
-	for i, hit := range hits {
-		if relevant[hit.Variant.UUID] {
+func reciprocalRank(ranked []string, rel map[string]bool) float64 {
+	for i, id := range ranked {
+		if rel[id] {
 			return 1.0 / float64(i+1)
 		}
 	}
 	return 0
 }
 
-// HitRate returns 1.0 if any relevant document appears in the top-k hits, else 0.0.
-func HitRate(hits []types.SearchHit, relevantUUIDs []string, k int) float64 {
-	if len(relevantUUIDs) == 0 || k <= 0 {
-		return 0
-	}
-
-	relevant := make(map[string]bool, len(relevantUUIDs))
-	for _, uuid := range relevantUUIDs {
-		relevant[uuid] = true
-	}
-
-	n := min(k, len(hits))
+func hitRate(ranked []string, rel map[string]bool, k int) float64 {
+	n := min(k, len(ranked))
 	for i := 0; i < n; i++ {
-		if relevant[hits[i].Variant.UUID] {
+		if rel[ranked[i]] {
 			return 1.0
 		}
 	}
 	return 0
+}
+
+// ContextPrecision computes Average Precision over relevant variant UUIDs.
+// Duplicate UUIDs count once. It returns 0 when relevantUUIDs is empty; use
+// ScoreRetrieval to tell an unlabeled case from a miss.
+func ContextPrecision(hits []types.SearchHit, relevantUUIDs []string) float64 {
+	s, _ := ScoreRetrieval(hits, relevantUUIDs, RelevanceVariant, 0)
+	return s.ContextPrecision
+}
+
+// ContextRecall computes the fraction of relevant variant UUIDs present in
+// the results. Duplicate UUIDs count once.
+func ContextRecall(hits []types.SearchHit, relevantUUIDs []string) float64 {
+	s, _ := ScoreRetrieval(hits, relevantUUIDs, RelevanceVariant, 0)
+	return s.ContextRecall
+}
+
+// NDCG computes Normalized Discounted Cumulative Gain at rank k using binary relevance.
+func NDCG(hits []types.SearchHit, relevantUUIDs []string, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	s, _ := ScoreRetrieval(hits, relevantUUIDs, RelevanceVariant, k)
+	return s.NDCG
+}
+
+// MRR computes the Reciprocal Rank: 1/rank of the first relevant hit.
+func MRR(hits []types.SearchHit, relevantUUIDs []string) float64 {
+	s, _ := ScoreRetrieval(hits, relevantUUIDs, RelevanceVariant, 0)
+	return s.MRR
+}
+
+// HitRate returns 1.0 if any relevant document appears in the top-k hits, else 0.0.
+func HitRate(hits []types.SearchHit, relevantUUIDs []string, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	s, _ := ScoreRetrieval(hits, relevantUUIDs, RelevanceVariant, k)
+	return s.HitRate
 }
 
 // --- Generation Metrics ---
@@ -236,7 +367,7 @@ func HitRate(hits []types.SearchHit, relevantUUIDs []string, k int) float64 {
 // Faithfulness decomposes the response into atomic claims and verifies each against context.
 func Faithfulness(ctx context.Context, response string, contextText string, llm types.LLM) (float64, *FaithfulnessDetail, error) {
 	// Step 1: Decompose into claims.
-	decomposeResult, err := llm.Generate(ctx, renderPrompt(faithfulnessDecomposeTmpl, map[string]any{"Response": response}))
+	decomposeResult, err := llm.Generate(ctx, renderPrompt(faithfulnessDecomposeTmpl, map[string]any{tmplResponse: response}))
 	if err != nil {
 		return 0, nil, fmt.Errorf("faithfulness decompose: %w", err)
 	}
@@ -281,7 +412,7 @@ func AnswerRelevancy(ctx context.Context, query, response string, llm types.LLM,
 		sampleCount = 3
 	}
 
-	result, err := llm.Generate(ctx, renderPrompt(answerRelevancyTmpl, map[string]any{"Count": sampleCount, "Response": response}))
+	result, err := llm.Generate(ctx, renderPrompt(answerRelevancyTmpl, map[string]any{"Count": sampleCount, tmplResponse: response}))
 	if err != nil {
 		return 0, fmt.Errorf("answer relevancy generate: %w", err)
 	}
@@ -317,7 +448,7 @@ func AnswerRelevancy(ctx context.Context, query, response string, llm types.LLM,
 
 // AnswerCorrectness uses an LLM to compare the generated answer against ground truth.
 func AnswerCorrectness(ctx context.Context, response, groundTruth string, llm types.LLM) (float64, error) {
-	result, err := llm.Generate(ctx, renderPrompt(answerCorrectnessTmpl, map[string]any{"GroundTruth": groundTruth, "Response": response}))
+	result, err := llm.Generate(ctx, renderPrompt(answerCorrectnessTmpl, map[string]any{"GroundTruth": groundTruth, tmplResponse: response}))
 	if err != nil {
 		return 0, fmt.Errorf("answer correctness: %w", err)
 	}
@@ -327,7 +458,7 @@ func AnswerCorrectness(ctx context.Context, response, groundTruth string, llm ty
 
 // LLMJudge performs pointwise scoring using a customizable criteria rubric.
 func LLMJudge(ctx context.Context, query, response, contextText, rubric string, llm types.LLM) (float64, string, error) {
-	result, err := llm.Generate(ctx, renderPrompt(llmJudgeTmpl, map[string]any{"Query": query, "Context": contextText, "Response": response, "Rubric": rubric}))
+	result, err := llm.Generate(ctx, renderPrompt(llmJudgeTmpl, map[string]any{"Query": query, "Context": contextText, tmplResponse: response, "Rubric": rubric}))
 	if err != nil {
 		return 0, "", fmt.Errorf("llm judge: %w", err)
 	}
@@ -342,11 +473,21 @@ func LLMJudge(ctx context.Context, query, response, contextText, rubric string, 
 
 // --- Orchestrator ---
 
-// Evaluate runs all cases through the pipeline and computes all applicable metrics.
+// Evaluate runs all cases through the pipeline and computes all applicable
+// metrics. It returns an error wrapping ErrUnknownRelevanceKey, before any
+// search runs, when a case names an unknown RelevanceKey.
 func Evaluate(ctx context.Context, cases []EvalCase, pipe types.Pipeline, opts ...EvalOption) ([]EvalResult, error) {
+	for i, tc := range cases {
+		if err := tc.RelevanceKey.Validate(); err != nil {
+			return nil, fmt.Errorf("evaluate case %d: %w", i, err)
+		}
+	}
 	o := &EvalOptions{K: 10, RelevancySampleCount: 3}
 	for _, opt := range opts {
 		opt(o)
+	}
+	if o.K <= 0 {
+		o.K = 10
 	}
 
 	results := make([]EvalResult, len(cases))
@@ -356,18 +497,26 @@ func Evaluate(ctx context.Context, cases []EvalCase, pipe types.Pipeline, opts .
 
 		// Retrieval phase.
 		retrievalStart := time.Now()
-		sr, err := pipe.Search(ctx, tc.Query, types.WithLimit(max(20, o.K)))
+		sr, err := pipe.Search(ctx, tc.Query, types.WithLimit(o.K))
 		if err != nil {
-			return nil, fmt.Errorf("evaluate case %d: %w", i, err)
+			// A partial failure still returns hits; score them and keep the
+			// warning. Any other error aborts the run.
+			if !errors.Is(err, types.ErrPartialSearch) || sr == nil {
+				return nil, fmt.Errorf("evaluate case %d: %w", i, err)
+			}
+			results[i].RetrievalWarning = err.Error()
 		}
 		results[i].RetrievalMs = time.Since(retrievalStart).Milliseconds()
 
-		// Retrieval metrics.
-		results[i].ContextPrecision = ContextPrecision(sr.Hits, tc.RelevantUUIDs)
-		results[i].ContextRecall = ContextRecall(sr.Hits, tc.RelevantUUIDs)
-		results[i].NDCG = NDCG(sr.Hits, tc.RelevantUUIDs, o.K)
-		results[i].MRR = MRR(sr.Hits, tc.RelevantUUIDs)
-		results[i].HitRate = HitRate(sr.Hits, tc.RelevantUUIDs, o.K)
+		// Retrieval metrics over the top K.
+		relevant, key := tc.labels()
+		scores, labeled := ScoreRetrieval(sr.Hits, relevant, key, o.K)
+		results[i].Unlabeled = !labeled
+		results[i].ContextPrecision = scores.ContextPrecision
+		results[i].ContextRecall = scores.ContextRecall
+		results[i].NDCG = scores.NDCG
+		results[i].MRR = scores.MRR
+		results[i].HitRate = scores.HitRate
 
 		// Generation metrics. A metric error is recorded per case rather
 		// than aborting the run or silently leaving a zero score.

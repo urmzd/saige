@@ -21,11 +21,13 @@ func TestDBOSDurableRun(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 15*time.Minute)
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-		Name:         "durable",
-		SystemPrompt: "You are a concise assistant.",
-		Provider:     ollama.NewAdapter(client),
-	})
+	newAgent := func(string) *agentsdk.Agent {
+		return agentsdk.NewAgent(agentsdk.AgentConfig{
+			Name:         "durable",
+			SystemPrompt: "You are a concise assistant.",
+			Provider:     ollama.NewAdapter(client),
+		})
+	}
 
 	engine, err := durabledbos.NewEngine(ctx, "saige-it-durable", pool, pgDSN(t))
 	if err != nil {
@@ -33,14 +35,13 @@ func TestDBOSDurableRun(t *testing.T) {
 	}
 	defer engine.Shutdown(30 * time.Second)
 
-	wf := engine.RegisterAgent(agent, "saige.it.durable")
+	wf := engine.RegisterAgentFactory(newAgent, "saige.it.durable")
 	if err := engine.Launch(); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 
 	handle, err := engine.Run(wf, durabledbos.RunInput{
 		Messages: []types.Message{types.NewUserMessage("Reply with exactly one word: durable")},
-		Branch:   agent.Tree().Active(),
 	}, "it-durable-"+uuid.NewString())
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -66,12 +67,14 @@ func TestDBOSIdempotentReplay(t *testing.T) {
 	ctx := testContext(t, 15*time.Minute)
 
 	tool, calls := addTool()
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-		Name:         "idempotent",
-		SystemPrompt: "You are a calculator. You must use the add tool for any addition; never compute it yourself.",
-		Provider:     ollama.NewAdapter(client),
-		Tools:        types.NewToolRegistry(tool),
-	})
+	newAgent := func(string) *agentsdk.Agent {
+		return agentsdk.NewAgent(agentsdk.AgentConfig{
+			Name:         "idempotent",
+			SystemPrompt: "You are a calculator. You must use the add tool for any addition; never compute it yourself.",
+			Provider:     ollama.NewAdapter(client),
+			Tools:        types.NewToolRegistry(tool),
+		})
+	}
 
 	engine, err := durabledbos.NewEngine(ctx, "saige-it-idem", pool, pgDSN(t))
 	if err != nil {
@@ -79,14 +82,13 @@ func TestDBOSIdempotentReplay(t *testing.T) {
 	}
 	defer engine.Shutdown(30 * time.Second)
 
-	wf := engine.RegisterAgent(agent, "saige.it.idem")
+	wf := engine.RegisterAgentFactory(newAgent, "saige.it.idem")
 	if err := engine.Launch(); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 
 	input := durabledbos.RunInput{
 		Messages: []types.Message{types.NewUserMessage("What is 2 + 3? Use the add tool.")},
-		Branch:   agent.Tree().Active(),
 	}
 	workflowID := "it-idem-" + uuid.NewString()
 
@@ -131,11 +133,17 @@ func TestDBOSFullStack(t *testing.T) {
 	ctx := testContext(t, 15*time.Minute)
 
 	store := agentpgstore.NewStore(pool, uuid.NewString(), nil)
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
-		Name:         "fullstack",
-		SystemPrompt: "You are a concise assistant.",
-		Provider:     ollama.NewAdapter(client),
-	}, agentsdk.WithStore(store))
+	// The factory keeps the agent it builds so the test can find the stored
+	// tree's root after the run.
+	var agent *agentsdk.Agent
+	newAgent := func(string) *agentsdk.Agent {
+		agent = agentsdk.NewAgent(agentsdk.AgentConfig{
+			Name:         "fullstack",
+			SystemPrompt: "You are a concise assistant.",
+			Provider:     ollama.NewAdapter(client),
+		}, agentsdk.WithStore(store))
+		return agent
+	}
 
 	engine, err := durabledbos.NewEngine(ctx, "saige-it-fullstack", pool, pgDSN(t))
 	if err != nil {
@@ -143,14 +151,13 @@ func TestDBOSFullStack(t *testing.T) {
 	}
 	defer engine.Shutdown(30 * time.Second)
 
-	wf := engine.RegisterAgent(agent, "saige.it.fullstack")
+	wf := engine.RegisterAgentFactory(newAgent, "saige.it.fullstack")
 	if err := engine.Launch(); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 
 	handle, err := engine.Run(wf, durabledbos.RunInput{
 		Messages: []types.Message{types.NewUserMessage("Reply with exactly one word: persisted")},
-		Branch:   agent.Tree().Active(),
 	}, "it-fullstack-"+uuid.NewString())
 	if err != nil {
 		t.Fatalf("run: %v", err)

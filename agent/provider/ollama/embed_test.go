@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 func TestOllamaEmbedder_Embed(t *testing.T) {
@@ -47,5 +49,28 @@ func TestOllamaEmbedder_Embed(t *testing.T) {
 	}
 	if results[1][0] != 6 { // len("world!") = 6
 		t.Errorf("results[1][0] = %f, want 6", results[1][0])
+	}
+}
+
+func TestOllamaEmbedErrorsAreClassified(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		status        int
+		wantTransient bool
+	}{
+		{"overloaded", http.StatusServiceUnavailable, true},
+		{"rate limited", http.StatusTooManyRequests, true},
+		{"bad request", http.StatusBadRequest, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"error":"busy"}`, tc.status)
+			}))
+			defer server.Close()
+			_, err := NewClient(server.URL, "m", "e").Embed(context.Background(), "x")
+			if err == nil || types.IsTransient(err) != tc.wantTransient {
+				t.Fatalf("err = %v, transient want %v", err, tc.wantTransient)
+			}
+		})
 	}
 }

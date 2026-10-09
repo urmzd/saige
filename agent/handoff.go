@@ -87,9 +87,11 @@ func registerHandoff(registry *types.ToolRegistry, target, description string) {
 			Name:        "handoff_to_" + target,
 			Description: description,
 			Parameters: types.ParameterSchema{
-				Type: "object",
+				Type: types.SchemaObject,
 				Properties: map[string]types.PropertyDef{
-					"reason": {Type: "string", Description: "Task brief, data, and why control is being transferred. When unable to proceed, explain what the previous owner must resolve."},
+					"reason":   {Type: types.SchemaString, Description: "Task brief, data, and why control is being transferred. When unable to proceed, explain what the previous owner must resolve."},
+					argMessage: {Type: types.SchemaString, Description: "Handover note to the next agent: what was done, what is left, and what to watch for."},
+					"context":  {Type: types.SchemaString, Description: "Data the next agent needs that it cannot see, such as identifiers, figures, or intermediate results."},
 				},
 			},
 		},

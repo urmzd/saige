@@ -20,6 +20,5 @@ You are an impartial evaluator. Score the response based on the given criteria.
    - 0.5 = partially meets the criteria
    - 1.0 = fully meets the criteria
 
-Output your evaluation in exactly this format:
-REASONING: <your reasoning>
-SCORE: <0.0-1.0>
+Reply with only a JSON object in exactly this shape:
+{"reasoning": "<your reasoning>", "score": <0.0-1.0>}

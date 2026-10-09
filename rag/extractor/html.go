@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/urmzd/saige/rag/internal/textclean"
 	"github.com/urmzd/saige/rag/types"
 	"golang.org/x/net/html"
 )
@@ -55,7 +56,7 @@ func (e *HTML) Extract(_ context.Context, raw *types.RawDocument) (*types.Docume
 		title = titleFromText(sections[0].Variants[0].Text)
 	}
 
-	return &types.Document{
+	out := &types.Document{
 		UUID:      docUUID,
 		SourceURI: raw.SourceURI,
 		Title:     title,
@@ -63,7 +64,9 @@ func (e *HTML) Extract(_ context.Context, raw *types.RawDocument) (*types.Docume
 		Sections:  sections,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, nil
+	}
+	textclean.Document(out)
+	return out, nil
 }
 
 type textBlock struct {

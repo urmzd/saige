@@ -26,41 +26,49 @@ func NewOllamaExtractor(client *ollama.Client) *OllamaExtractor {
 }
 
 // jsonFormat is the Ollama structured output schema for extraction.
-var jsonFormat = map[string]any{
+var jsonFormat = json.RawMessage(`{
 	"type": "object",
-	"properties": map[string]any{
-		"entities": map[string]any{
+	"properties": {
+		"entities": {
 			"type": "array",
-			"items": map[string]any{
+			"items": {
 				"type": "object",
-				"properties": map[string]any{
-					"name":    map[string]any{"type": "string"},
-					"type":    map[string]any{"type": "string"},
-					"summary": map[string]any{"type": "string"},
+				"properties": {
+					"name": {"type": "string"},
+					"type": {"type": "string"},
+					"summary": {"type": "string"}
 				},
-				"required": []string{"name", "type", "summary"},
-			},
+				"required": ["name", "type", "summary"]
+			}
 		},
-		"relations": map[string]any{
+		"relations": {
 			"type": "array",
-			"items": map[string]any{
+			"items": {
 				"type": "object",
-				"properties": map[string]any{
-					"source": map[string]any{"type": "string"},
-					"target": map[string]any{"type": "string"},
-					"type":   map[string]any{"type": "string"},
-					"fact":   map[string]any{"type": "string"},
+				"properties": {
+					"source": {"type": "string"},
+					"target": {"type": "string"},
+					"type": {"type": "string"},
+					"fact": {"type": "string"}
 				},
-				"required": []string{"source", "target", "type", "fact"},
-			},
-		},
+				"required": ["source", "target", "type", "fact"]
+			}
+		}
 	},
-	"required": []string{"entities", "relations"},
-}
+	"required": ["entities", "relations"]
+}`)
+
+var _ types.OntologyExtractor = (*OllamaExtractor)(nil)
 
 // Extract implements types.Extractor.
 func (e *OllamaExtractor) Extract(ctx context.Context, text string) ([]types.ExtractedEntity, []types.ExtractedRelation, error) {
-	prompt := BuildExtractionPrompt(text, nil)
+	return e.ExtractWithOntology(ctx, text, nil)
+}
+
+// ExtractWithOntology implements types.OntologyExtractor: the prompt lists
+// the ontology's entity and relation types so the model uses them.
+func (e *OllamaExtractor) ExtractWithOntology(ctx context.Context, text string, ont *types.Ontology) ([]types.ExtractedEntity, []types.ExtractedRelation, error) {
+	prompt := BuildExtractionPrompt(text, ont)
 
 	raw, err := e.client.GenerateWithModel(ctx, prompt, e.client.Model, jsonFormat, nil)
 	if err != nil {

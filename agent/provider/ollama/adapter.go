@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -31,29 +34,55 @@ func (a *Adapter) Model() string { return a.Client.Model }
 func (a *Adapter) WithModel(model string) types.Provider {
 	client := *a.Client
 	client.Model = model
-	return &Adapter{Client: &client}
+	return &Adapter{Client: &client, toolChoice: a.toolChoice}
 }
 
 // Adapter wraps the Ollama Client and implements types.Provider.
 type Adapter struct {
 	Client *Client
+
+	toolChoice *types.ToolChoice
 }
 
 // NewAdapter creates a new Ollama Provider adapter.
-func NewAdapter(client *Client) *Adapter {
-	return &Adapter{Client: client}
+func NewAdapter(client *Client, opts ...AdapterOption) *Adapter {
+	a := &Adapter{Client: client}
+	for _, o := range opts {
+		o(a)
+	}
+	return a
 }
 
 // Validate checks explicitly configured controls. The low-level Client remains
 // a wire client; use Adapter when model capability enforcement is required.
 func (a *Adapter) Validate() error {
+	o, err := a.clientOptions()
+	if err != nil {
+		return err
+	}
+	if err := a.Capabilities().ValidateOptions(o); err != nil {
+		return err
+	}
+	return a.validateToolChoice()
+}
+
+// EffectiveOptions implements types.OptionsReporter: the client's think flag
+// and sampling options as request options. The emulated tool choice is not
+// included, since it is not a request control on the wire.
+func (a *Adapter) EffectiveOptions() types.RequestOptions {
+	o, _ := a.clientOptions()
+	return o
+}
+
+// clientOptions decodes the client's configured controls.
+func (a *Adapter) clientOptions() (types.RequestOptions, error) {
 	o := types.RequestOptions{ReasoningEnabled: a.Client.Think}
 	if a.Client.ChatOptions != nil {
 		// Decode the actual wire representation: maps can express zero values,
 		// whereas the legacy Options struct omits its zero-valued fields.
 		data, err := json.Marshal(a.Client.ChatOptions)
 		if err != nil {
-			return a.Capabilities().OptionError("options", "cannot encode options")
+			return o.Clone(), a.Capabilities().OptionError("options", "cannot encode options")
 		}
 		var g struct {
 			Temperature *float64 `json:"temperature"`
@@ -64,7 +93,7 @@ func (a *Adapter) Validate() error {
 			Stop        []string `json:"stop"`
 		}
 		if err := json.Unmarshal(data, &g); err != nil {
-			return a.Capabilities().OptionError("options", "invalid sampling option types")
+			return o.Clone(), a.Capabilities().OptionError("options", "invalid sampling option types")
 		}
 		o.Temperature, o.TopP, o.Seed, o.StopSequences = g.Temperature, g.TopP, g.Seed, g.Stop
 		if g.TopK != nil {
@@ -75,12 +104,17 @@ func (a *Adapter) Validate() error {
 			o.MaxOutputTokens = g.NumPredict
 		}
 	}
-
-	return a.Capabilities().ValidateOptions(o)
+	return o.Clone(), nil
 }
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	// The emulated tool choice decides which tools are sent, so the request
+	// is checked against the filtered set.
+	tools, err := a.filterTools(tools)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
 		return nil, err
 	}
@@ -94,19 +128,20 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 
 	rx, err := a.Client.ChatStream(ctx, oMsgs, oTools)
 	if err != nil {
-		return nil, &types.ProviderError{
-			Provider: "ollama",
-			Model:    a.Client.Model,
-			Kind:     classifyOllamaError(err),
-			Err:      err,
-		}
+		return nil, classifyOllamaError(a.Client.Model, err)
 	}
 
-	return a.translateDeltas(rx), nil
+	return a.translateDeltas(ctx, rx, false), nil
 }
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	// The emulated tool choice decides which tools are sent, so the request
+	// is checked against the filtered set.
+	tools, err := a.filterTools(tools)
+	if err != nil {
+		return nil, err
+	}
 	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
 		return nil, err
 	}
@@ -125,27 +160,47 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 
 	rx, err := a.Client.ChatStreamWithFormat(ctx, oMsgs, oTools, format)
 	if err != nil {
-		return nil, &types.ProviderError{
-			Provider: "ollama",
-			Model:    a.Client.Model,
-			Kind:     classifyOllamaError(err),
-			Err:      err,
-		}
+		return nil, classifyOllamaError(a.Client.Model, err)
 	}
 
-	return a.translateDeltas(rx), nil
+	return a.translateDeltas(ctx, rx, schema != nil), nil
 }
 
 // translateDeltas converts Ollama ChatChunk stream to types.Delta stream.
-func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
+//
+// A stream counts as complete only when a chunk with done:true arrives. A
+// server error line, a client read failure, or a channel that closes early
+// ends the stream with an ErrorDelta, so a partial answer is never reported
+// as a clean finish (and never admitted to a response cache). A structured
+// response that stopped at done_reason "length" is a truncation error, since
+// its JSON is incomplete.
+//
+//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
+func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, structured bool) <-chan types.Delta {
+	model := a.Client.Model
 	out := make(chan types.Delta, 64)
 	go func() {
 		defer close(out)
 
 		textStarted := false
 		thinkStarted := false
+		emitted := false
+		done := false
+		var failure *types.ProviderError
 		for chunk := range rx {
+			if chunk.Err != nil {
+				failure = streamcheck.StreamError("ollama", model, chunk.Err, !emitted)
+				break
+			}
+			if chunk.Error != "" {
+				failure = streamcheck.StreamError("ollama", model, fmt.Errorf("ollama stream error: %s", chunk.Error), !emitted)
+				break
+			}
+			if chunk.Message.Thinking != "" || chunk.Message.Content != "" || len(chunk.Message.ToolCalls) > 0 {
+				emitted = true
+			}
 			if chunk.Done {
+				done = true
 				if thinkStarted {
 					// Ollama has no signature token to round-trip.
 					out <- types.ThinkingEndDelta{}
@@ -168,6 +223,9 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 					ud.FinishReasons = []string{"stop"}
 				}
 				out <- ud
+				if structured && types.IsTruncationFinishReason(chunk.DoneReason) {
+					failure = streamcheck.Truncated("ollama", model, chunk.DoneReason, chunk.EvalCount, 0)
+				}
 				continue
 			}
 
@@ -205,8 +263,12 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 				}
 				for _, tc := range chunk.Message.ToolCalls {
 					id := types.NewID()
+					args := tc.Function.Arguments
+					if args == nil {
+						args = map[string]any{}
+					}
 					out <- types.ToolCallStartDelta{ID: id, Name: tc.Function.Name}
-					out <- types.ToolCallEndDelta{Arguments: tc.Function.Arguments}
+					out <- types.ToolCallEndDelta{ID: id, Arguments: args}
 				}
 			}
 		}
@@ -217,6 +279,25 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 		if textStarted {
 			out <- types.TextEndDelta{}
 		}
+		if failure == nil && !done {
+			cause := streamcheck.ErrIncompleteStream
+			if err := ctx.Err(); err != nil {
+				cause = err
+			}
+			failure = streamcheck.StreamError("ollama", model, cause, !emitted)
+		}
+		if failure == nil {
+			return
+		}
+		select {
+		case out <- types.ErrorDelta{Error: failure}:
+		case <-ctx.Done():
+			// The consumer may be gone; deliver only if there is room.
+			select {
+			case out <- types.ErrorDelta{Error: failure}:
+			default:
+			}
+		}
 	}()
 
 	return out
@@ -226,8 +307,17 @@ func (a *Adapter) translateDeltas(rx <-chan ChatChunk) <-chan types.Delta {
 // whose capabilities follow the pulled weights rather than the endpoint, so an
 // unrecognised model resolves to the conservative baseline (Known false) and
 // callers that must fail closed can see that.
+//
+// A model that calls tools also reports CapToolChoice, because the adapter
+// emulates none and named choices by filtering the tools it sends (see
+// WithToolChoice). Required cannot be emulated and is still rejected before
+// any request.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
-	return catalog.MustLookup("ollama", a.Client.Model)
+	caps := catalog.MustLookup("ollama", a.Client.Model)
+	if caps.Supports(types.CapTools) {
+		caps = caps.With(types.CapToolChoice)
+	}
+	return caps
 }
 
 // ContentSupport implements types.ContentNegotiator.
@@ -411,14 +501,13 @@ func propertyDefToMap(p types.PropertyDef) map[string]any {
 	return p.JSONSchema()
 }
 
-// classifyOllamaError inspects the error to determine if it's transient.
-func classifyOllamaError(err error) types.ErrorKind {
-	s := err.Error()
-	if strings.Contains(s, "connection refused") ||
-		strings.Contains(s, "timeout") ||
-		strings.Contains(s, "returned 5") ||
-		strings.Contains(s, "returned 429") {
-		return types.ErrorKindTransient
+// classifyOllamaError maps a request error to a ProviderError. A non-200
+// response is classified by status, body, and Retry-After. Anything else is a
+// transport failure (refused, reset, timeout), which is transient.
+func classifyOllamaError(model string, err error) *types.ProviderError {
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return streamcheck.HTTPError("ollama", model, statusErr.Code, statusErr.Header, statusErr.Body, err)
 	}
-	return types.ErrorKindPermanent
+	return streamcheck.StreamError("ollama", model, err, true)
 }

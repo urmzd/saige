@@ -2,6 +2,9 @@ package research
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	agenttypes "github.com/urmzd/saige/agent/types"
@@ -97,5 +100,42 @@ func TestNoGraphOmitsKnowledgeTools(t *testing.T) {
 		if !hasTool(tools, name) {
 			t.Fatalf("expected file tool %s", name)
 		}
+	}
+}
+
+// ingestGraph returns a fixed ingest outcome.
+type ingestGraph struct {
+	stubGraph
+	result *kgtypes.IngestResult
+	err    error
+}
+
+func (g ingestGraph) IngestEpisode(context.Context, *kgtypes.EpisodeInput) (*kgtypes.IngestResult, error) {
+	return g.result, g.err
+}
+
+func TestStoreKnowledgePartialEpisode(t *testing.T) {
+	stored := &kgtypes.IngestResult{EntityNodes: make([]kgtypes.Entity, 2)}
+	tests := []struct {
+		name    string
+		graph   ingestGraph
+		want    string
+		wantErr bool
+	}{
+		{name: "stored", graph: ingestGraph{result: stored}, want: "Stored 2 entities and 0 relations."},
+		{name: "partial is a warning", graph: ingestGraph{result: stored, err: fmt.Errorf("%w: relation x failed", kgtypes.ErrPartialEpisode)},
+			want: "Stored 2 entities and 0 relations. Warning: "},
+		{name: "other errors fail", graph: ingestGraph{err: errors.New("db down")}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewStoreKnowledgeTool(tt.graph).Execute(context.Background(), map[string]any{"text": "facts"})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !strings.HasPrefix(out, tt.want) {
+				t.Fatalf("out = %q, want prefix %q", out, tt.want)
+			}
+		})
 	}
 }
