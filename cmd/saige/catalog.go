@@ -238,7 +238,7 @@ func newCatalogCmd(ctx context.Context) *cobra.Command {
 			"Layers merge in order: embedded default, ~/.config/saige/catalog.json,\n" +
 			".saige/catalog.json in the project, $SAIGE_CATALOG, then each --catalog.",
 	}
-	cmd.AddCommand(newCatalogShowCmd(), newCatalogValidateCmd(ctx), newCatalogLayersCmd(),
+	cmd.AddCommand(newCatalogShowCmd(), newCatalogExplainCmd(), newCatalogValidateCmd(ctx), newCatalogLayersCmd(),
 		newCatalogSchemaCmd(), newCatalogExportCmd())
 	return cmd
 }
