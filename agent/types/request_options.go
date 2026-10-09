@@ -45,6 +45,18 @@ type RequestOptions struct {
 	// ToolChoice constrains whether and which tool the model calls. Nil leaves
 	// the provider default (auto).
 	ToolChoice *ToolChoice
+
+	// Dials are model-neutral intents at request scope, compiled per attempt
+	// against the serving model (see ResolveDials). A raw option above that
+	// sets the same parameter wins and stays strictly validated.
+	Dials Dials
+	// DialLayers are dials from lower scopes, lowest first, such as the
+	// catalog entry an adapter was built from or the agent's WithDials.
+	// Dials apply on top of them.
+	DialLayers []DialLayer
+	// DialPolicy overrides how dials a model cannot honor are handled. Nil
+	// uses each dial's class.
+	DialPolicy *DialPolicy
 }
 
 // ToolChoiceMode says how the model may use the offered tools.
@@ -324,7 +336,9 @@ func (o RequestOptions) OptionNames() []string {
 // Merge returns o with every option set in over replacing o's value, field by
 // field. The reasoning controls are one option: when over sets any of them,
 // over's reasoning replaces o's whole, matching the adapters' rule of one
-// reasoning control per request. Neither input is modified.
+// reasoning control per request. Dials merge the same way, over's dial
+// layers follow o's, and over's dial policy replaces o's. Neither input is
+// modified.
 func (o RequestOptions) Merge(over RequestOptions) RequestOptions {
 	out := o.Clone()
 	over = over.Clone()
@@ -360,6 +374,13 @@ func (o RequestOptions) Merge(over RequestOptions) RequestOptions {
 	}
 	if over.ToolChoice != nil {
 		out.ToolChoice = over.ToolChoice
+	}
+	out.Dials = out.Dials.Merge(over.Dials)
+	if len(over.DialLayers) > 0 {
+		out.DialLayers = append(out.DialLayers, over.DialLayers...)
+	}
+	if over.DialPolicy != nil {
+		out.DialPolicy = over.DialPolicy
 	}
 	return out
 }
@@ -406,6 +427,11 @@ func (o RequestOptions) Clone() RequestOptions {
 		ParallelTools: clonePtr(o.ParallelTools), ReasoningEnabled: clonePtr(o.ReasoningEnabled),
 		ReasoningEffort: clonePtr(o.ReasoningEffort), ReasoningBudget: clonePtr(o.ReasoningBudget),
 		ToolChoice: clonePtr(o.ToolChoice),
+		Dials:      o.Dials.Clone(), DialLayers: cloneLayers(o.DialLayers),
+	}
+	if o.DialPolicy != nil {
+		p := o.DialPolicy.Clone()
+		out.DialPolicy = &p
 	}
 	if o.StopSequences != nil {
 		out.StopSequences = append([]string(nil), o.StopSequences...)

@@ -1,6 +1,9 @@
 package types
 
-import "sort"
+import (
+	"reflect"
+	"sort"
+)
 
 // Capability names one thing a model can do, or one request knob it accepts.
 //
@@ -206,6 +209,10 @@ type ModelCapabilities struct {
 	// StructuredOutput records how schema constraint is achieved.
 	StructuredOutput StructuredOutputMode
 
+	// DialMap maps model-neutral dials to this model's raw options. A part
+	// left empty is derived from the declarations above; see ResolveDials.
+	DialMap DialMap `json:",omitzero"`
+
 	// Pricing is the model's rate card. The zero value means unpriced, which a
 	// Budget treats as unenforceable rather than free.
 	Pricing Pricing
@@ -307,6 +314,7 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 	out.SamplingRequiresNoReasoning = append([]Capability(nil), mc.SamplingRequiresNoReasoning...)
 	out.ServerTools = append([]ServerToolKind(nil), mc.ServerTools...)
 	out.Notes = append([]string(nil), mc.Notes...)
+	out.DialMap = mc.DialMap.Clone()
 	out.Media = ContentSupport{NativeTypes: map[MediaType]bool{}}
 	for mt, ok := range mc.Media.NativeTypes {
 		if ok {
@@ -401,6 +409,11 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 		}
 	}
 	out.Notes = append(append([]string(nil), mc.Notes...), other.Notes...)
+	// A dial map carries over only when both sides declare the same one;
+	// otherwise it is derived from the intersected declarations.
+	if reflect.DeepEqual(mc.DialMap, other.DialMap) {
+		out.DialMap = mc.DialMap.Clone()
+	}
 	return out
 }
 
