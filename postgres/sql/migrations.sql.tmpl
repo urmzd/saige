@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS vector
----
 CREATE EXTENSION IF NOT EXISTS pg_trgm
 ---
 CREATE TABLE IF NOT EXISTS kg_entity (
@@ -164,6 +162,8 @@ CREATE TABLE IF NOT EXISTS rag_variant (
 CREATE INDEX IF NOT EXISTS idx_rag_variant_section ON rag_variant(section_id)
 ---
 CREATE INDEX IF NOT EXISTS idx_rag_variant_embedding ON rag_variant USING hnsw (embedding vector_cosine_ops)
+---
+CREATE INDEX IF NOT EXISTS idx_rag_variant_bm25 ON rag_variant USING bm25 (id, text) WITH (key_field = 'id')
 ---
 CREATE TABLE IF NOT EXISTS agent_node (
     id          BIGSERIAL PRIMARY KEY,

@@ -41,10 +41,10 @@ func hashEmbedder() *textEmbedder {
 	}}
 }
 
-// TestRAGSearchFindsDocumentsIngestedByAnotherPipeline mirrors running
-// `saige rag ingest` and `saige rag search` as two separate processes: the
-// search pipeline is built fresh and must still find the ingested document.
-func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
+// ragTestPool connects to SAIGE_TEST_POSTGRES_DSN the way the CLI does and
+// empties the rag tables. It skips the test when the variable is unset.
+func ragTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv("SAIGE_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("SAIGE_TEST_POSTGRES_DSN not set; skipping PostgreSQL test")
@@ -68,6 +68,65 @@ func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	if _, err := pool.Exec(ctx, `TRUNCATE rag_document, rag_original, rag_section, rag_variant`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
+	return pool
+}
+
+// TestRAGKeywordSearchSurvivesProcessBoundary mirrors `saige rag ingest`
+// followed by `saige rag search` in a new process: the BM25 arm of the fresh
+// pipeline must find the document, because its index lives in Postgres
+// rather than in the ingesting process's memory.
+func TestRAGKeywordSearchSurvivesProcessBoundary(t *testing.T) {
+	pool := ragTestPool(t)
+	ctx := context.Background()
+
+	newPipeline := func() ragtypes.Pipeline {
+		p, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder())...)
+		if err != nil {
+			t.Fatalf("pipeline: %v", err)
+		}
+		return p
+	}
+
+	ingest := newPipeline()
+	for uri, text := range map[string]string{
+		"file://okapi.txt": "The okapi is a forest giraffe native to the Congo.",
+		"file://kiwi.txt":  "The kiwi is a flightless bird native to New Zealand.",
+	} {
+		if _, err := ingest.Ingest(ctx, &ragtypes.RawDocument{SourceURI: uri, MIMEType: "text/plain", Data: []byte(text)}); err != nil {
+			t.Fatalf("ingest %s: %v", uri, err)
+		}
+	}
+	_ = ingest.Close(ctx)
+
+	search := newPipeline()
+	defer func() { _ = search.Close(ctx) }()
+	res, err := search.Search(ctx, "okapi", ragtypes.WithLimit(5))
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var bm25 *ragtypes.RetrievalStat
+	for i := range res.Retrievals {
+		if res.Retrievals[i].Retriever == "bm25" {
+			bm25 = &res.Retrievals[i]
+		}
+	}
+	if bm25 == nil {
+		t.Fatalf("no bm25 retrieval in %+v", res.Retrievals)
+	}
+	if bm25.Error != "" || bm25.Hits != 1 {
+		t.Fatalf("bm25 retrieval = %+v, want exactly the okapi document", *bm25)
+	}
+	if len(res.Hits) == 0 || res.Hits[0].Provenance.SourceURI != "file://okapi.txt" {
+		t.Fatalf("top hit = %+v, want file://okapi.txt", res.Hits)
+	}
+}
+
+// TestRAGSearchFindsDocumentsIngestedByAnotherPipeline mirrors running
+// `saige rag ingest` and `saige rag search` as two separate processes: the
+// search pipeline is built fresh and must still find the ingested document.
+func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
+	pool := ragTestPool(t)
+	ctx := context.Background()
 
 	newPipeline := func() ragtypes.Pipeline {
 		p, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder())...)

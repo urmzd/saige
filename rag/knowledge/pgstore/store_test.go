@@ -17,7 +17,7 @@ import (
 // are skipped when the env var is unset (e.g. plain `go test ./...`).
 // The database needs the pgvector extension available; a disposable instance:
 //
-//	docker run --rm -e POSTGRES_PASSWORD=test -p 5433:5432 pgvector/pgvector:pg17
+//	docker run --rm -e POSTGRES_PASSWORD=test -p 5433:5432 paradedb/paradedb:0.26.1-pg18
 //	SAIGE_TEST_POSTGRES_DSN=postgres://postgres:test@localhost:5433/postgres go test ./rag/knowledge/pgstore/
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

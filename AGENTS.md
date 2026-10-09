@@ -40,7 +40,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `rag/fusion/` | Rank fusion strategies: RRF, Weighted |
 | `rag/otel/` | OpenTelemetry adapter for the rag Observer |
 | `rag/types/` | Core RAG types: Document, Section, Variant, Pipeline/Store interfaces |
-| `rag/pgstore/` | PostgreSQL + pgvector RAG Store implementation (HNSW vector search) |
+| `rag/pgstore/` | PostgreSQL 18 RAG Store implementation (pgvector HNSW vector search, pg_search BM25 keyword search) |
 | `rag/memstore/` | In-memory RAG Store (for testing, no external deps) |
 | `rag/chunker/` | Recursive and semantic text chunking |
 | `rag/bm25retriever/` | In-memory BM25 lexical search |

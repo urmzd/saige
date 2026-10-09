@@ -119,3 +119,68 @@ func TestRunMigrationsStopsAtFirstFailure(t *testing.T) {
 		t.Error("later statements ran after the first failure")
 	}
 }
+
+func TestCheckServerVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		num     int
+		version string
+		wantErr bool
+	}{
+		{name: "postgres 16", num: 160004, version: "16.4", wantErr: true},
+		{name: "postgres 17", num: 170006, version: "17.6", wantErr: true},
+		{name: "postgres 18.0", num: 180000, version: "18.0"},
+		{name: "postgres 18 minor", num: 180006, version: "18.6"},
+		{name: "postgres 19", num: 190000, version: "19.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkServerVersion(tt.num, tt.version)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("checkServerVersion(%d) = %v, wantErr %v", tt.num, err, tt.wantErr)
+			}
+			if err == nil {
+				return
+			}
+			if !errors.Is(err, ErrUnsupportedServer) {
+				t.Errorf("error %v does not wrap ErrUnsupportedServer", err)
+			}
+			if !strings.Contains(err.Error(), "PostgreSQL 18") || !strings.Contains(err.Error(), tt.version) {
+				t.Errorf("error %q should name the server version and the requirement", err)
+			}
+		})
+	}
+}
+
+// TestRunMigrationsCreatesSearchExtensions checks that a fresh database gets
+// both required extensions and the BM25 index over variant text.
+func TestRunMigrationsCreatesSearchExtensions(t *testing.T) {
+	pool := freshDatabase(t)
+	ctx := context.Background()
+	if err := RunMigrations(ctx, pool, MigrationOptions{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var num int
+	if err := pool.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&num); err != nil {
+		t.Fatal(err)
+	}
+	if num < MinServerVersionNum {
+		t.Fatalf("migrations succeeded on server_version_num %d", num)
+	}
+	for _, ext := range []string{"vector", "pg_search"} {
+		var installed bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = $1)`, ext).Scan(&installed); err != nil {
+			t.Fatal(err)
+		}
+		if !installed {
+			t.Errorf("extension %s not created", ext)
+		}
+	}
+	var hasIndex bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('idx_rag_variant_bm25') IS NOT NULL`).Scan(&hasIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !hasIndex {
+		t.Error("idx_rag_variant_bm25 not created")
+	}
+}

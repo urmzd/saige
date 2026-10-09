@@ -73,7 +73,7 @@ fuzz PACKAGE FUNC DURATION="30s":
 # docker compose plugin or standalone docker-compose, whichever is installed
 compose := `docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose"`
 
-# Start local integration infra (pgvector Postgres on :5433)
+# Start local integration infra (Postgres 18 with pgvector and pg_search on :5433)
 integration-up:
     {{compose}} -f integration/docker-compose.yml up -d --wait postgres
 

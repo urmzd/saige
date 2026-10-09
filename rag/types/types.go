@@ -472,6 +472,17 @@ type DocumentReplacer interface {
 	ReplaceDocument(ctx context.Context, oldUUID string, doc *Document) error
 }
 
+// KeywordSearcher is an optional Store interface for stores that run lexical
+// (BM25) search themselves, over an index kept with the data. It applies the
+// same scope, time-range, content-type, and metadata filters as
+// SearchByEmbedding, before the limit. A pipeline built with WithBM25 over a
+// store that implements it searches through the store instead of an
+// in-memory index, so the index survives restarts and is shared across
+// processes.
+type KeywordSearcher interface {
+	SearchByKeyword(ctx context.Context, query string, opts *SearchOptions) ([]SearchHit, error)
+}
+
 // GraphEpisodeDeleter is an optional interface for knowledge graphs that
 // support deleting all episodes (and their derived facts) belonging to a
 // group. A graph that cannot delete by document (see GraphDocumentDeleter)

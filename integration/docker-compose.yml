@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: paradedb/paradedb:0.26.1-pg18
     environment:
       POSTGRES_PASSWORD: test
     ports:

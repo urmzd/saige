@@ -43,15 +43,10 @@ pipe, _ := rag.NewPipeline(
     rag.WithContentExtractor(myExtractor),
     rag.WithEmbedders(myEmbedderRegistry),
     rag.WithRecursiveChunker(512, 50),
-    rag.WithBM25(nil),
+    rag.WithBM25(nil), // BM25 runs in Postgres through pg_search
     rag.WithMMR(0.7),
 )
 defer pipe.Close(ctx)
-
-// BM25 keeps its index in memory: load it from the store at startup.
-if err := rag.RebuildIndex(ctx, pipe); err != nil {
-    log.Fatal(err)
-}
 
 pipe.Ingest(ctx, &types.RawDocument{
     SourceURI: "https://example.com/paper.pdf",
@@ -88,7 +83,7 @@ type Pipeline interface {
 }
 ```
 
-Stores: [`rag/pgstore`](pgstore/) (PostgreSQL + pgvector HNSW) and [`rag/memstore`](memstore/) (in-memory, no external deps).
+Stores: [`rag/pgstore`](pgstore/) (PostgreSQL 18 + pgvector HNSW + pg_search BM25; see [deployment](../docs/deployment.md)) and [`rag/memstore`](memstore/) (in-memory, no external deps).
 
 Ingest behavior:
 
@@ -181,7 +176,7 @@ Asymmetric models need different inputs for queries and documents. `embedderregi
 | Retriever | Description |
 |-----------|-------------|
 | Vector | Embed query, cosine similarity search |
-| BM25 | In-memory inverted index with configurable K1/B |
+| BM25 | On `pgstore`, a pg_search BM25 index in Postgres (`pgstore.NewKeywordRetriever`); on other stores, an in-memory inverted index with configurable K1/B |
 | Graph | Knowledge graph facts resolved to document variants via episode provenance |
 | Parent | Wraps any retriever, expands hits to full parent section context |
 
@@ -209,7 +204,7 @@ Search options that shape the result:
 
 `SearchPipelineResult.Retrievals` reports each retriever call: name, query index, hit count, duration, and error, so a slow, empty, or failing arm is visible without tracing.
 
-The BM25 index lives in process memory. Indexing a document again replaces its postings, and a replaced or deleted document leaves the index. Over a persistent store, call `rag.RebuildIndex(ctx, pipe)` after startup; it needs a store that implements `types.DocumentLister` (memstore and pgstore do). BM25 hits carry the document timestamp and filter on merged document and variant metadata when the store implements `types.VariantRecordsGetter` or `types.VariantRecordGetter` (memstore and pgstore implement both). BM25 resolves ranked candidates in batches, one store lookup per batch, and returns store errors other than a missing variant. Index and Remove calls made during `RebuildIndex` are replayed onto the new index before it is swapped in.
+On `pgstore`, `rag.WithBM25` searches the pg_search BM25 index in Postgres (`types.KeywordSearcher`): the index lives with the data, applies the same scope and filters as vector search, and needs no rebuild. On other stores the BM25 index lives in process memory. Indexing a document again replaces its postings, and a replaced or deleted document leaves the index. Over a persistent store without keyword search, call `rag.RebuildIndex(ctx, pipe)` after startup; it needs a store that implements `types.DocumentLister` (memstore and pgstore do). BM25 hits carry the document timestamp and filter on merged document and variant metadata when the store implements `types.VariantRecordsGetter` or `types.VariantRecordGetter` (memstore and pgstore implement both). BM25 resolves ranked candidates in batches, one store lookup per batch, and returns store errors other than a missing variant. Index and Remove calls made during `RebuildIndex` are replayed onto the new index before it is swapped in.
 
 The graph retriever resolves each fact to the variant named by its asserting episode's `variant_uuid` metadata, then applies `ContentTypes` and metadata filters to that variant. A fact whose stored variant exists but fails the search's scope, time range, or filters is dropped. A fact that resolves to no variant becomes a text hit built from the fact, unless filters or a time range are set, `ContentTypes` excludes text, or the search names a scope other than the retriever's graph group; then it is dropped. A partial graph failure returns the surviving hits with `types.ErrPartialSearch`.
 

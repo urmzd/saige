@@ -107,10 +107,11 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 // search must embed with the same provider and model, or stored vectors will
 // not match query vectors, so both go through this one constructor.
 //
-// The pipeline retrieves by vector similarity only. An in-memory BM25 index
-// starts empty in every process and is filled only by Ingest in that same
-// process, so in a CLI that runs one command per process it would never
-// contain the documents a search is looking for.
+// The pipeline runs hybrid search: vector similarity plus BM25 keyword
+// search, fused by the pipeline. BM25 runs in Postgres through ParadeDB
+// pg_search (pgstore.Store implements ragtypes.KeywordSearcher), so the
+// index lives with the data and a search in a new process finds documents
+// that an earlier `saige rag ingest` stored.
 //
 // withEmbedder is false for commands that never embed (lookup, delete), so
 // they work with any --provider, including one with no embedding API.
@@ -131,12 +132,14 @@ func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, wi
 }
 
 // ragPipelineOptions lists the pipeline options newRAGPipeline uses. A nil
-// emb leaves the pipeline without embedders.
+// emb leaves the pipeline without embedders. WithBM25 searches through store
+// when it implements ragtypes.KeywordSearcher, as pgstore does.
 func ragPipelineOptions(store ragtypes.Store, emb ragtypes.VariantEmbedder) []rag.Option {
 	opts := []rag.Option{
 		rag.WithStore(store),
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithRecursiveChunker(512, 64),
+		rag.WithBM25(nil),
 	}
 	if emb != nil {
 		opts = append(opts, rag.WithEmbedders(newSingleEmbedderRegistry(emb)))

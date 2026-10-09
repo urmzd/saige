@@ -164,9 +164,13 @@ func WithContextAssembler(a ragtypes.ContextAssembler) Option {
 
 // WithBM25 adds a BM25 lexical retriever to the pipeline. If cfg is nil, defaults are used.
 //
-// The BM25 index lives in process memory and starts empty. Over a persistent
-// store such as pgstore, call RebuildIndex after NewPipeline so documents
-// ingested by an earlier process are found by lexical search.
+// When the store implements ragtypes.KeywordSearcher, as pgstore does with
+// ParadeDB pg_search, the retriever searches through the store: the index
+// lives with the data, survives restarts, and is shared by every process,
+// and cfg is ignored because the store does its own scoring. Otherwise, as
+// with memstore, the index lives in process memory and starts empty; over a
+// persistent store without keyword search, call RebuildIndex after
+// NewPipeline so documents ingested by an earlier process are found.
 func WithBM25(cfg *bm25retriever.Config) Option {
 	return func(c *Config) {
 		if cfg == nil {
@@ -287,7 +291,11 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 
 	// Add BM25 retriever if configured.
 	if cfg.bm25Config != nil {
-		retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
+		if ks, ok := cfg.Store.(ragtypes.KeywordSearcher); ok {
+			retrievers = append(retrievers, storeKeywordRetriever{ks})
+		} else {
+			retrievers = append(retrievers, bm25retriever.New(cfg.Store, cfg.bm25Config))
+		}
 	}
 
 	// Add a graph retriever so WithGraph contributes to search fusion, not
@@ -355,3 +363,16 @@ func RebuildIndex(ctx context.Context, pipe ragtypes.Pipeline) error {
 	}
 	return rebuilder.RebuildIndex(ctx)
 }
+
+// storeKeywordRetriever runs BM25 search through a store that keeps its own
+// keyword index. It reports the same name as bm25retriever so fusion
+// weights keyed by "bm25" apply to either backend.
+type storeKeywordRetriever struct {
+	searcher ragtypes.KeywordSearcher
+}
+
+func (r storeKeywordRetriever) Retrieve(ctx context.Context, query string, opts *ragtypes.SearchOptions) ([]ragtypes.SearchHit, error) {
+	return r.searcher.SearchByKeyword(ctx, query, opts)
+}
+
+func (storeKeywordRetriever) Name() string { return "bm25" }

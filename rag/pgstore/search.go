@@ -12,17 +12,26 @@ import (
 	"github.com/urmzd/saige/rag/types"
 )
 
-// searchBaseSQL is the vector-search projection and joins; buildSearchSQL
-// appends filter clauses, ordering, and the limit.
-const searchBaseSQL = `SELECT v.uuid, v.content_type, v.mime_type, v.data, v.text, v.embedding, v.metadata,
+// searchProjectionSQL is the column list and joins shared by vector and
+// keyword search; scanSearchHits reads rows in this order, with the score
+// last.
+const searchProjectionSQL = `SELECT v.uuid, v.content_type, v.mime_type, v.data, v.text, v.embedding, v.metadata,
 	                 s.uuid, s.heading, s.idx,
 	                 d.uuid, d.title, d.source_uri, d.metadata,
 	                 ` + docTimeSQL + ` AS doc_ts,
-	                 1 - (v.embedding <=> $1) AS score
+	                 %s AS score
 	          FROM rag_variant v
 	          JOIN rag_section s ON s.id = v.section_id
 	          JOIN rag_document d ON d.id = s.document_id
-	          WHERE v.embedding IS NOT NULL AND d.scope = $2`
+	          WHERE %s AND d.scope = $2`
+
+// vectorScoreSQL is the cosine similarity between a variant and the query
+// embedding in $1.
+const vectorScoreSQL = `1 - (v.embedding <=> $1)`
+
+// searchBaseSQL is the vector-search projection and joins; buildSearchSQL
+// appends filter clauses, ordering, and the limit.
+var searchBaseSQL = fmt.Sprintf(searchProjectionSQL, vectorScoreSQL, `v.embedding IS NOT NULL`)
 
 // docTimeSQL is the document's effective time, matching
 // types.Document.EffectiveTime.
@@ -45,12 +54,20 @@ const mergedMetadataSQL = `(COALESCE(d.metadata, '{}'::jsonb) || COALESCE(v.meta
 //
 // Unknown filter operators are ignored, matching the previous in-Go behavior.
 func buildSearchSQL(embedding any, opts *types.SearchOptions, limit int) (string, []any) {
-	query := searchBaseSQL
+	return buildScopedSQL(searchBaseSQL, vectorScoreSQL, " ORDER BY v.embedding <=> $1", embedding, opts, limit)
+}
+
+// buildScopedSQL appends the filters shared by vector and keyword search to
+// base, whose $1 is first and whose $2 is the scope. scoreExpr is the score
+// that MinScore compares against, and orderBy ranks the rows before the
+// limit.
+func buildScopedSQL(base, scoreExpr, orderBy string, first any, opts *types.SearchOptions, limit int) (string, []any) {
+	query := base
 	scope := ""
 	if opts != nil {
 		scope = opts.Scope
 	}
-	args := []any{embedding, scope}
+	args := []any{first, scope}
 
 	if opts != nil {
 		if !opts.Since.IsZero() {
@@ -72,7 +89,7 @@ func buildSearchSQL(embedding any, opts *types.SearchOptions, limit int) (string
 		}
 
 		if opts.MinScore > 0 {
-			query += fmt.Sprintf(" AND 1 - (v.embedding <=> $1) >= $%d", len(args)+1)
+			query += fmt.Sprintf(" AND %s >= $%d", scoreExpr, len(args)+1)
 			args = append(args, opts.MinScore)
 		}
 
@@ -95,7 +112,7 @@ func buildSearchSQL(embedding any, opts *types.SearchOptions, limit int) (string
 		}
 	}
 
-	query += fmt.Sprintf(" ORDER BY v.embedding <=> $1 LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf("%s LIMIT $%d", orderBy, len(args)+1)
 	args = append(args, limit)
 
 	return query, args
@@ -186,7 +203,7 @@ func scanSearchHits(ctx context.Context, q querier, query string, args []any) ([
 		var (
 			hit   types.SearchHit
 			ct    string
-			vEmb  pgvector.Vector
+			vEmb  *pgvector.Vector // NULL for variants a keyword search finds without an embedding
 			vMeta []byte
 			dMeta []byte
 		)
@@ -201,7 +218,9 @@ func scanSearchHits(ctx context.Context, q querier, query string, args []any) ([
 		}
 
 		hit.Variant.ContentType = types.ContentType(ct)
-		hit.Variant.Embedding = vEmb.Slice()
+		if vEmb != nil {
+			hit.Variant.Embedding = vEmb.Slice()
+		}
 		hit.Variant.Metadata = decodeMetadata(vMeta)
 
 		results = append(results, hit)

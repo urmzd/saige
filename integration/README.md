@@ -29,7 +29,7 @@ broken (unreachable host, missing model), tests fail loudly on purpose.
 ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
 
-# 2. Postgres with pgvector:
+# 2. Postgres 18 with pgvector and pg_search (ParadeDB image):
 just integration-up          # docker compose up, listens on :5433
 
 # 3. Run everything:
@@ -42,7 +42,7 @@ just integration-down
 Postgres only, no Ollama: `just test-postgres` runs the tests that need just a
 database (this package's Postgres-only tests, the `pgstore` packages, and the
 CLI's RAG round trip). CI runs the same set on every pull request against a
-pgvector service container; tests that also need Ollama or DBOS skip there.
+ParadeDB (PostgreSQL 18, pgvector, pg_search) service container; tests that also need Ollama or DBOS skip there.
 
 No native Ollama? Use the containerized one:
 
@@ -63,9 +63,10 @@ docker compose -f integration/docker-compose.yml exec ollama ollama pull nomic-e
 
 ## AlloyDB
 
-The same suite runs against AlloyDB: it is pgvector-compatible and the tests
-create the `vector` extension themselves. Point the DSN at your instance
-(via the AlloyDB Auth Proxy or a private IP):
+The suite runs against AlloyDB only when the instance offers PostgreSQL 18
+and both the `vector` and `pg_search` extensions; migrations refuse a server
+without them (see [deployment](../docs/deployment.md)). Point the DSN at your
+instance (via the AlloyDB Auth Proxy or a private IP):
 
 ```sh
 # e.g. through the auth proxy listening on localhost:5432
@@ -74,7 +75,7 @@ go test ./integration/ -v -count=1 -timeout 30m
 ```
 
 Requirements: the role needs `CREATE` on the database (migrations, `CREATE
-EXTENSION vector`, and DBOS creates its own `dbos` schema and system tables).
+EXTENSION vector` and `pg_search`, and DBOS creates its own `dbos` schema and system tables).
 DBOS and the app share the one DSN.
 
 ## Notes and troubleshooting

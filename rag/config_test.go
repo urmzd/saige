@@ -212,3 +212,44 @@ func TestBM25ThroughParentContextDeleteAndRebuild(t *testing.T) {
 		})
 	}
 }
+
+// keywordStore is a memstore whose keyword search is served by the store, as
+// pgstore does with pg_search. It records the options each search received.
+type keywordStore struct {
+	*memstore.Store
+	queries []string
+	opts    []*ragtypes.SearchOptions
+}
+
+func (s *keywordStore) SearchByKeyword(_ context.Context, query string, opts *ragtypes.SearchOptions) ([]ragtypes.SearchHit, error) {
+	s.queries = append(s.queries, query)
+	s.opts = append(s.opts, opts)
+	return []ragtypes.SearchHit{{Variant: ragtypes.ContentVariant{UUID: "store-hit"}, Score: 1}}, nil
+}
+
+func TestBM25UsesStoreKeywordSearch(t *testing.T) {
+	ctx := context.Background()
+	store := &keywordStore{Store: memstore.New()}
+	pipe, err := rag.NewPipeline(
+		rag.WithStore(store),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing is ingested: an in-memory index would be empty.
+	result, err := pipe.Search(ctx, "zebra", ragtypes.WithScope("tenant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.queries) != 1 || store.queries[0] != "zebra" {
+		t.Fatalf("store keyword queries = %v, want [zebra]", store.queries)
+	}
+	if store.opts[0] == nil || store.opts[0].Scope != "tenant" {
+		t.Errorf("store keyword search scope = %+v, want tenant", store.opts[0])
+	}
+	if len(result.Retrievals) != 1 || result.Retrievals[0].Retriever != "bm25" {
+		t.Errorf("retrievals = %+v, want one bm25 call", result.Retrievals)
+	}
+}

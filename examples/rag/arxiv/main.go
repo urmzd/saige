@@ -176,7 +176,8 @@ func main() {
 	fmt.Printf("Fetched: %s (%d bytes)\n\n", raw.Metadata["title"], len(raw.Data))
 
 	// 2. Build the pipeline with hybrid search (vector + BM25), recursive chunking, and MMR reranking.
-	// For persistent storage with HNSW vector search, use PostgreSQL + pgvector:
+	// For persistent storage, use PostgreSQL 18 with pgvector (HNSW vector
+	// search) and pg_search (BM25, which WithBM25 then runs in Postgres):
 	//   pool, _ := postgres.NewPool(ctx, postgres.Config{URL: os.Getenv("DATABASE_URL")})
 	//   postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{RAGEmbeddingDim: embedDim})
 	//   store := ragpgstore.NewStore(pool, nil)

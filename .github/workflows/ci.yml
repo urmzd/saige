@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: paradedb/paradedb:0.26.1-pg18
         env:
           POSTGRES_PASSWORD: test
         ports:

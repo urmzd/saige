@@ -41,7 +41,7 @@ import (
     "github.com/urmzd/saige/postgres"
 )
 
-// Connect to PostgreSQL (requires pgvector extension).
+// Connect to PostgreSQL 18 (requires the pgvector and pg_search extensions).
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
