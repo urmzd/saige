@@ -80,6 +80,7 @@ const (
 	CodeServerTool       = "invalid_server_tool"
 	CodeNotDeclared      = "model_not_declared"
 	CodeUntrusted        = "untrusted_field"
+	CodeDial             = "invalid_dial"
 
 	WarnInferredModel   = "inferred_model"
 	WarnSmallerWindow   = "smaller_context_window"
@@ -87,6 +88,14 @@ const (
 	WarnUnpriced        = "unpriced_model"
 	WarnSignedReasoning = "signed_reasoning_failover"
 	WarnExceedsWindow   = "output_exceeds_context_window"
+	// WarnDialMapped and WarnDialDropped report an advisory dial an entry's
+	// model cannot honor exactly; WarnDialOverridden a dial a raw option
+	// overrides. WarnPreferDial suggests a dial for a raw option a preset
+	// shares across vendors.
+	WarnDialMapped     = "dial_mapped"
+	WarnDialDropped    = "dial_dropped"
+	WarnDialOverridden = "dial_overridden"
+	WarnPreferDial     = "prefer_dial"
 )
 
 // ValidationError carries every issue found in one catalog. errors.Is(err,

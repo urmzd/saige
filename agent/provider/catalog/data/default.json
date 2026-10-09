@@ -73,6 +73,14 @@
           "source": "vendor list price"
         }
       },
+      "dials": {
+        "creativity": {
+          "requires_reasoning_off": true
+        },
+        "reasoning": {
+          "change_resets_cache": true
+        }
+      },
       "notes": [
         "max_tokens is required on every request; the adapter defaults it to 4096",
         "thinking blocks carry a signature that must round-trip or multi-turn tool use breaks",

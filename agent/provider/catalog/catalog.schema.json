@@ -1,5 +1,89 @@
 {
   "$defs": {
+    "CacheDialSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "$ref": "#/$defs/PromptCacheSpec"
+        }
+      },
+      "type": "object"
+    },
+    "CreativityDialSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "levels": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OptionsSpec"
+          },
+          "propertyNames": {
+            "enum": [
+              "deterministic",
+              "focused",
+              "balanced",
+              "creative"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "requires_reasoning_off": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Dials": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "boolean"
+        },
+        "creativity": {
+          "enum": [
+            "deterministic",
+            "focused",
+            "balanced",
+            "creative"
+          ],
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningDial"
+        },
+        "reproducible": {
+          "type": "integer"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolChoice"
+        }
+      },
+      "type": "object"
+    },
+    "DialsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/CacheDialSpec"
+        },
+        "creativity": {
+          "$ref": "#/$defs/CreativityDialSpec"
+        },
+        "defaults": {
+          "$ref": "#/$defs/Dials"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningDialSpec"
+        }
+      },
+      "type": "object"
+    },
     "EntrySpec": {
       "additionalProperties": false,
       "properties": {
@@ -12,6 +96,9 @@
         },
         "base_url": {
           "type": "string"
+        },
+        "dials": {
+          "$ref": "#/$defs/Dials"
         },
         "id": {
           "type": "string"
@@ -53,7 +140,14 @@
               "reasoning",
               "tool_choice",
               "prompt_cache",
-              "server_tools"
+              "server_tools",
+              "dials.creativity",
+              "dials.reasoning",
+              "dials.max_output",
+              "dials.tools",
+              "dials.parallel",
+              "dials.reproducible",
+              "dials.cache"
             ],
             "type": "string"
           },
@@ -263,6 +357,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/OptionsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dials": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DialsSpec"
             },
             {
               "type": "null"
@@ -555,6 +659,9 @@
         "description": {
           "type": "string"
         },
+        "dials": {
+          "$ref": "#/$defs/Dials"
+        },
         "extends": {
           "type": "string"
         },
@@ -656,6 +763,84 @@
       "required": [
         "mode"
       ],
+      "type": "object"
+    },
+    "ReasoningDial": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "enum": [
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "off",
+            "adaptive",
+            "on"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ReasoningDialSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptive": {
+          "$ref": "#/$defs/OptionsSpec"
+        },
+        "change_resets_cache": {
+          "type": "boolean"
+        },
+        "depth": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OptionsSpec"
+          },
+          "propertyNames": {
+            "enum": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "depth_change": {
+          "enum": [
+            "",
+            "per_request"
+          ],
+          "type": "string"
+        },
+        "off": {
+          "$ref": "#/$defs/OptionsSpec"
+        },
+        "on": {
+          "$ref": "#/$defs/OptionsSpec"
+        },
+        "with_tools": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OptionsSpec"
+          },
+          "propertyNames": {
+            "enum": [
+              "chat",
+              "responses"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
       "type": "object"
     },
     "ReasoningOption": {
@@ -881,6 +1066,27 @@
       ],
       "type": "object"
     },
+    "ToolChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "none",
+            "required",
+            "named"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
     "VertexSpec": {
       "additionalProperties": false,
       "properties": {
@@ -909,6 +1115,9 @@
     },
     "default_preset": {
       "type": "string"
+    },
+    "dials": {
+      "$ref": "#/$defs/Dials"
     },
     "inherit_default": {
       "type": "boolean"

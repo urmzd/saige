@@ -72,6 +72,9 @@ type Entry struct {
 	// Defaults are the model-level option defaults a preset entry starts
 	// from. Nil means none.
 	Defaults *OptionsSpec
+	// Dials is the row's dials declaration, merged through its templates.
+	// Caps.DialMap holds its compiled form. Nil means none.
+	Dials *DialsSpec `json:",omitempty"`
 
 	// removed marks a tombstone: a row a later Install no longer declares.
 	removed bool
@@ -116,6 +119,7 @@ func cloneEntry(e Entry) Entry {
 		e.ServerToolFees = fees
 	}
 	e.Defaults = e.Defaults.clone()
+	e.Dials = e.Dials.clone()
 	return e
 }
 

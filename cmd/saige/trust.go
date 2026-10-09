@@ -24,12 +24,14 @@ import (
 //   - inherit_default false discards the trusted layers below;
 //   - vertex.project and vertex.location bill and send prompts to a Google
 //     Cloud project the user did not choose, with the user's own
-//     Application Default Credentials.
+//     Application Default Credentials;
+//   - dials are closed until their effect on untrusted layers is decided:
+//     a dial can turn on prompt caching or change reasoning spend.
 var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.Catalog](): {
 		"$schema": true, "version": true, "revision": true, "templates": true, "models": true,
 		"baselines": true, "presets": true, "default_preset": true,
-		"inherit_default": false,
+		"inherit_default": false, "dials": false,
 	},
 	reflect.TypeFor[catalog.ModelSpec](): {
 		"provider": true, "prefix": true, "extends": true, "tier": true, "superseded_by": true,
@@ -37,6 +39,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 		"reasoning": true, "structured_output": true, "media": true, "server_tools": true,
 		"server_tool_fees": true, "pricing": true, "defaults": true, "notes": true,
 		"$replace": true, "$delete": true, "chat_completions_tools": true,
+		"dials": false,
 	},
 	reflect.TypeFor[catalog.LimitsSpec](): {
 		"context_window": true, "max_output_tokens": true, "default_max_output_tokens": true,
@@ -72,6 +75,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.PresetSpec](): {
 		"description": true, "extends": true, "options": true, "tool_choice": true, "output_mode": true,
 		"llm_timeout": true, "retry": true, "routing": true, "require_declared": true, "chain": true,
+		"dials": false,
 	},
 	reflect.TypeFor[catalog.RetrySpec](): {
 		"max_attempts": true, "base_delay": true, "max_delay": true, "multiplier": true,
@@ -84,7 +88,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.EntrySpec](): {
 		"id": true, "provider": true, "model": true, "options": true, "unset": true, "inherit": true,
 		"retry": true, "attempt_timeout": true, "optional": true,
-		"base_url": false, "api_key_env": false, "vertex": true,
+		"base_url": false, "api_key_env": false, "vertex": true, "dials": false,
 	},
 	// An untrusted layer may ask for Vertex on an entry, but not name the
 	// project or location it bills and sends prompts to.

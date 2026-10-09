@@ -95,7 +95,8 @@ func cloneOptionsPtr(p *RequestOptions) *RequestOptions {
 }
 
 // EffectiveDialMap returns the declared dial map with every part it leaves
-// unset derived from the other declarations:
+// unset derived from the other declarations, and each declared level,
+// depth or surface overriding the derived one of the same key:
 //   - creativity from temperature support, with reasoning conflicts taken
 //     from SamplingRequiresNoReasoning;
 //   - reasoning depth from the effort list by name, from a budget range by
@@ -103,11 +104,11 @@ func cloneOptionsPtr(p *RequestOptions) *RequestOptions {
 //   - the cache mode from the provider's prompt cache capability.
 func (mc ModelCapabilities) EffectiveDialMap() DialMap {
 	d := mc.DialMap.Clone()
-	if c, derived := d.Creativity, deriveCreativity(mc); c == nil {
+	if derived := deriveCreativity(mc); d.Creativity == nil {
 		d.Creativity = derived
-	} else if len(c.Levels) == 0 && derived != nil {
-		c.Levels = derived.Levels
-		c.RequiresReasoningOff = c.RequiresReasoningOff || derived.RequiresReasoningOff
+	} else if derived != nil {
+		d.Creativity.Levels = overlayOptions(derived.Levels, d.Creativity.Levels)
+		d.Creativity.RequiresReasoningOff = d.Creativity.RequiresReasoningOff || derived.RequiresReasoningOff
 	}
 	derived := deriveReasoning(mc)
 	if r := d.Reasoning; r == nil {
@@ -122,12 +123,8 @@ func (mc ModelCapabilities) EffectiveDialMap() DialMap {
 		if r.Adaptive == nil {
 			r.Adaptive = derived.Adaptive
 		}
-		if r.Depth == nil {
-			r.Depth = derived.Depth
-		}
-		if r.WithTools == nil {
-			r.WithTools = derived.WithTools
-		}
+		r.Depth = overlayOptions(derived.Depth, r.Depth)
+		r.WithTools = overlayOptions(derived.WithTools, r.WithTools)
 	}
 	if d.CacheMode == "" {
 		switch {
@@ -145,6 +142,18 @@ const (
 	providerAnthropic = "anthropic"
 	providerOpenAI    = "openai"
 )
+
+// overlayOptions returns base with every key of over replacing base's.
+func overlayOptions[K comparable](base, over map[K]RequestOptions) map[K]RequestOptions {
+	if base == nil {
+		return over
+	}
+	out := cloneOptionMap(base)
+	for k, v := range over {
+		out[k] = v.Clone()
+	}
+	return out
+}
 
 func f64p(v float64) *float64 { return &v }
 func i64p(v int64) *int64     { return &v }

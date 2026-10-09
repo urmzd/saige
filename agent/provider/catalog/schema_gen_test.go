@@ -65,7 +65,13 @@ func enums() map[string][]string {
 		"output_mode":  {"auto", "native", "tool", "prompt"},
 		"prompt_cache": {PromptCacheOff, PromptCacheMarkers, PromptCacheAutomatic},
 		"options_tool": {"auto", "none"},
-		"unset":        optionNames(),
+		"unset":        unsetNames(),
+		"creativity":   {"deterministic", "focused", "balanced", "creative"},
+		"mode":         {"off", "adaptive", "on"},
+		"depth":        {"minimal", "low", "medium", "high", "max"},
+		"surface":      {types.SurfaceChat, types.SurfaceResponses},
+		"depth_change": {"", types.DepthChangePerRequest},
+		"tool_mode":    {"auto", "none", "required", "named"},
 	}
 }
 
@@ -139,6 +145,22 @@ func (g *schemaGen) field(owner reflect.Type, name string, t reflect.Type) map[s
 		return enum("options_tool")
 	case owner == reflect.TypeFor[PromptCacheSpec]() && name == "mode":
 		return enum("prompt_cache")
+	case t == reflect.TypeFor[*types.Creativity]():
+		return enum("creativity")
+	case t == reflect.TypeFor[types.ReasoningMode]():
+		return enum("mode")
+	case t == reflect.TypeFor[types.Depth]():
+		return enum("depth")
+	case t == reflect.TypeFor[map[types.Creativity]OptionsSpec]():
+		return map[string]any{"type": "object", "propertyNames": enum("creativity"), "additionalProperties": g.ref(reflect.TypeFor[OptionsSpec]())}
+	case t == reflect.TypeFor[map[types.Depth]OptionsSpec]():
+		return map[string]any{"type": "object", "propertyNames": enum("depth"), "additionalProperties": g.ref(reflect.TypeFor[OptionsSpec]())}
+	case owner == reflect.TypeFor[ReasoningDialSpec]() && name == "with_tools":
+		return map[string]any{"type": "object", "propertyNames": enum("surface"), "additionalProperties": g.ref(reflect.TypeFor[OptionsSpec]())}
+	case owner == reflect.TypeFor[ReasoningDialSpec]() && name == "depth_change":
+		return enum("depth_change")
+	case owner == reflect.TypeFor[types.ToolChoice]() && name == "mode":
+		return enum("tool_mode")
 	case owner == reflect.TypeFor[Catalog]() && name == "presets":
 		return map[string]any{"type": "object", "additionalProperties": map[string]any{
 			"anyOf": []any{g.ref(reflect.TypeFor[PresetSpec]()), map[string]any{"type": "null"}}}}

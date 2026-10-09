@@ -50,7 +50,11 @@ func (c *Catalog) check(full bool) issues {
 		}
 		seen[k] = i
 		if !m.Delete && !m.Replace {
-			c.resolveSpec(path, m, &found, full)
+			// A layer's row may extend a template a lower layer defines,
+			// so its dial values are checked only on the merged catalog.
+			if e, ok := c.resolveSpec(path, m, &found, full); ok && full {
+				checkRowDials(path, e, &found)
+			}
 		}
 	}
 	for _, p := range sortedKeys(c.Baselines) {
@@ -60,6 +64,9 @@ func (c *Catalog) check(full bool) issues {
 	}
 	for _, name := range sortedKeys(c.Presets) {
 		c.checkPresetShape("presets."+name, c.Presets[name], &found)
+	}
+	if c.Dials != nil {
+		checkDialValues("dials", *c.Dials, &found)
 	}
 	if !full {
 		return found
@@ -108,6 +115,7 @@ func (c *Catalog) checkSpec(path string, s ModelSpec, found *issues, kind specKi
 	if s.Defaults != nil {
 		checkOptionsShape(path+".defaults", s.Defaults, found)
 	}
+	checkDialsShape(path+".dials", s.Dials, found)
 }
 
 // checkSpecNames validates the capability, media, tier and tool names a spec
@@ -263,6 +271,17 @@ func checkOptionsShape(path string, o *OptionsSpec, found *issues) {
 func (c *Catalog) checkPresetShape(path string, p PresetSpec, found *issues) {
 	if p.Options != nil {
 		checkOptionsShape(path+".options", p.Options, found)
+		if len(p.Chain) > 1 {
+			for _, n := range []string{types.OptionTemperature, types.OptionTopP, types.OptionTopK, types.OptionReasoning} {
+				if slices.Contains(p.Options.requestOptions().OptionNames(), n) {
+					found.warnf(path+".options."+n, WarnPreferDial,
+						"%s is a raw option every entry must accept; prefer the creativity or reasoning dial, which each model maps or drops", n)
+				}
+			}
+		}
+	}
+	if p.Dials != nil {
+		checkDialValues(path+".dials", *p.Dials, found)
 	}
 	if _, err := parseToolChoice(p.ToolChoice); err != nil {
 		found.errorf(path+".tool_choice", CodeToolChoice, "%v", err)
@@ -305,14 +324,17 @@ func (c *Catalog) checkPresetShape(path string, p PresetSpec, found *issues) {
 		if e.Options != nil {
 			checkOptionsShape(ep+".options", e.Options, found)
 		}
+		if e.Dials != nil {
+			checkDialValues(ep+".dials", *e.Dials, found)
+		}
 		switch e.Inherit {
 		case "", "all", "none":
 		default:
 			found.errorf(ep+".inherit", CodeBadValue, "inherit must be \"all\" or \"none\"")
 		}
 		for j, name := range e.Unset {
-			if !slices.Contains(optionNames(), name) {
-				found.errorf(fmt.Sprintf("%s.unset[%d]", ep, j), CodeUnset, "unknown option %q%s", name, hint(name, optionNames()))
+			if !slices.Contains(unsetNames(), name) {
+				found.errorf(fmt.Sprintf("%s.unset[%d]", ep, j), CodeUnset, "unknown option %q%s", name, hint(name, unsetNames()))
 			}
 		}
 		checkRetry(ep+".retry", e.Retry, found)

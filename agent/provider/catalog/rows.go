@@ -98,6 +98,10 @@ func (s ModelSpec) apply(e *Entry) {
 	if s.Defaults != nil {
 		e.Defaults = s.Defaults.clone()
 	}
+	if s.Dials != nil {
+		e.Dials = e.Dials.merge(s.Dials)
+		c.DialMap = e.Dials.dialMap()
+	}
 	if s.Notes != nil {
 		c.Notes = append([]string(nil), s.Notes...)
 	}
