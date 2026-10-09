@@ -37,6 +37,9 @@ type HandoffDef struct {
 	Provider types.Provider
 	Tools    *types.ToolRegistry
 	MaxIter  int // 0 = inherit entry agent's MaxIter
+	// Dials replace the entry agent's dials while this member is active.
+	// Nil inherits them.
+	Dials *types.Dials
 
 	// CanHandOffTo restricts which agents this one may transfer to. Empty means
 	// it may hand off to anyone in the group (including back to the entry agent).
@@ -111,6 +114,7 @@ type handoffMember struct {
 	provider     types.Provider
 	tools        *types.ToolRegistry // includes every handoff_to_* tool it may use
 	maxIter      int
+	dials        *types.Dials // nil inherits the entry agent's
 }
 
 // buildHandoffGroup validates the defs and wires each member's handoff tools.
@@ -160,6 +164,10 @@ func buildHandoffGroup(entry *handoffMember, defs []HandoffDef, policies ...Link
 			provider:     provider,
 			tools:        tools,
 			maxIter:      maxIter,
+		}
+		if d.Dials != nil {
+			dials := d.Dials.Clone()
+			members[d.Name].dials = &dials
 		}
 		descByName[d.Name] = d.Description
 	}
