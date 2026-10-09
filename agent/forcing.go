@@ -270,6 +270,10 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 			return err
 		}
 	}
+	opts, err := a.attachDials(ctx, active, opts, tools)
+	if err != nil {
+		return err
+	}
 	msg, usage, err := a.getAssistantMessage(ctx, stream, active.provider, messages, tools, opts, fmt.Sprintf("llm-%s-final", branch))
 	if err != nil {
 		return err

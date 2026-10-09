@@ -164,6 +164,14 @@ type AgentConfig struct {
 	// ForceFinalPrompt replaces DefaultForceFinalPrompt for MaxIterForceFinal.
 	ForceFinalPrompt string
 
+	// Dials are the agent's model-neutral generation intents, sent with every
+	// call and compiled for the model that serves it (see types.ResolveDials).
+	// A ConfigContent.Dials in the conversation applies on top of them.
+	Dials types.Dials
+	// DialPolicy sets how dials the serving model cannot honor are handled.
+	// Nil uses each dial's class.
+	DialPolicy *types.DialPolicy
+
 	// StopAtTools ends the run as soon as one of these tools returns a
 	// successful result. The result becomes the run's output (see
 	// SubAgentResult.StopToolCallID); the model is not called again.
@@ -756,6 +764,10 @@ type resolvedConfig struct {
 	// toolChoice is the latest ConfigContent.ToolChoice. A forced choice is
 	// cleared by the next assistant turn, so it applies to one call.
 	toolChoice *types.ToolChoice
+	// dials merges every ConfigContent.Dials on the branch, in order.
+	dials types.Dials
+	// loop is the open tool loop with signed reasoning, if any.
+	loop signedLoop
 }
 
 // prepareMessages resolves config and strips metadata in a single pass over the
@@ -802,9 +814,11 @@ func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []typ
 				}
 			}
 			if len(filtered) > 0 {
+				rc.loop.observeUser(filtered)
 				out = append(out, types.UserMessage{Content: filtered})
 			}
 		case types.AssistantMessage:
+			rc.loop.observeAssistant(v, rc.dials)
 			// One-shot controls set before this turn have been used.
 			rc.compactNow = false
 			if rc.toolChoice != nil && rc.toolChoice.Forced() {
@@ -843,6 +857,9 @@ func mergeConfig(rc *resolvedConfig, cc types.ConfigContent) {
 	}
 	if cc.ToolChoice != nil {
 		rc.toolChoice = cc.ToolChoice
+	}
+	if cc.Dials != nil {
+		rc.dials = rc.dials.Merge(*cc.Dials)
 	}
 }
 
@@ -1391,6 +1408,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// the way the run ends.
 		active = withOutputTool(active, out)
 		active.messages = withSchemaInstruction(active.messages, out)
+		active.dialLayers = dialLayers(active, resolved)
 
 		// Check the step limits. If the cap fires while the last assistant turn
 		// left tool calls pending (pendingWork), the run was truncated, not
@@ -1455,6 +1473,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		choice := a.toolChoice(resolved, forcedSpent)
 		toolDefs, opts, err := toolChoiceRequest(active.provider, choice, active.toolDefs)
 		if err != nil {
+			return err
+		}
+		if opts, err = a.attachDials(ctx, active, opts, toolDefs); err != nil {
 			return err
 		}
 		// Get the assistant message as a durable step (provider call + aggregation).
@@ -1742,6 +1763,12 @@ type activeContext struct {
 	tools    *types.ToolRegistry
 	name     string
 	messages []types.Message
+	// dials and dialScope are the active agent's own dials: the entry
+	// agent's, or a handoff member's when it sets its own.
+	dials     types.Dials
+	dialScope string
+	// dialLayers are every dial layer of the next call, turn included.
+	dialLayers []types.DialLayer
 }
 
 // resolveActive selects the active agent for this iteration and overlays its
@@ -1753,10 +1780,16 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 		tools:    a.tools,
 		name:     a.cfg.Name,
 		messages: llmMessages,
+
+		dials:     a.cfg.Dials,
+		dialScope: types.DialScopeAgent,
 	}
 	member := a.activeMember(resolved.activeAgent)
 	if member == nil {
 		return ac
+	}
+	if member.dials != nil {
+		ac.dials, ac.dialScope = member.dials.Clone(), types.DialScopeMember
 	}
 	ac.provider = member.provider
 	ac.tools = member.tools
@@ -1939,6 +1972,13 @@ func (a *Agent) getAssistantMessage(
 			partial = interruptedPartial(agg)
 			return types.StepResult{Kind: types.StepKindLLM, Message: partial, Usage: liveUsage}, errTurnInterrupted
 		}
+		// A provider that reports no routes of its own, such as a single
+		// adapter, gets its dial decisions reported here, so the turn and
+		// evals record them as they do a router's.
+		localRoute := localDialRoute(provider, opts, toolDefs)
+		if localRoute != nil {
+			stream.send(*localRoute)
+		}
 		rx, llmErr := a.callProvider(stepCtx, provider, out, llmMessages, toolDefs, opts)
 		if llmErr != nil {
 			if interruptRequested(stepCtx) {
@@ -1948,7 +1988,7 @@ func (a *Agent) getAssistantMessage(
 			return types.StepResult{}, llmErr
 		}
 		var streamErr error
-		var lastRoute *types.RouteDelta
+		lastRoute := localRoute
 		for delta := range rx {
 			switch d := delta.(type) {
 			case types.UsageDelta:

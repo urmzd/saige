@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -116,6 +117,7 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 		Scope:           cfg.Scope,
 		Since:           cfg.Since,
 		Until:           cfg.Until,
+		Keyword:         cfg.Keyword,
 	}
 
 	lists, stats, retrieveErr, err := p.retrieveAll(ctx, queries, searchOpts)
@@ -286,7 +288,7 @@ func (p *pipelineImpl) retrieveAll(ctx context.Context, queries []string, search
 // whatever the number of retrievers and transformed queries. A fuser without
 // a ceiling is normalized by the best fused score of the search.
 func (p *pipelineImpl) fuse(lists []ragtypes.RankedList, cfg *ragtypes.SearchConfig, candidateK int) []ragtypes.SearchHit {
-	fuseOpts := ragtypes.FuseOptions{K: cfg.FusionK}
+	fuseOpts := p.fuseOptions(cfg)
 	merged := p.cfg.Fuser.Fuse(lists, fuseOpts)
 
 	// Optional time-decay recency blending (opt-in via WithRecency).
@@ -323,6 +325,27 @@ func (p *pipelineImpl) fuse(lists []ragtypes.RankedList, cfg *ragtypes.SearchCon
 		merged = merged[:candidateK]
 	}
 	return merged
+}
+
+// fuseOptions resolves a search's fusion settings: its own rank constant,
+// else the pipeline's, and the pipeline's retriever weights overlaid with
+// the search's.
+func (p *pipelineImpl) fuseOptions(cfg *ragtypes.SearchConfig) ragtypes.FuseOptions {
+	opts := ragtypes.FuseOptions{K: cfg.FusionK}
+	if opts.K <= 0 {
+		opts.K = p.cfg.FusionK
+	}
+	switch {
+	case len(cfg.FusionWeights) == 0:
+		opts.Weights = p.cfg.FusionWeights
+	case len(p.cfg.FusionWeights) == 0:
+		opts.Weights = cfg.FusionWeights
+	default:
+		opts.Weights = make(map[string]float64, len(p.cfg.FusionWeights)+len(cfg.FusionWeights))
+		maps.Copy(opts.Weights, p.cfg.FusionWeights)
+		maps.Copy(opts.Weights, cfg.FusionWeights)
+	}
+	return opts
 }
 
 // dedupByContent keeps the first hit of each fusion.ContentKey. hits must be
@@ -392,6 +415,7 @@ func (p *pipelineImpl) expandNeighbors(ctx context.Context, hits []ragtypes.Sear
 			}
 		}
 		var texts []string
+		offset := 0
 		for i := lo; i <= hi; i++ {
 			seen[secs[i].Index] = true
 			text := hit.Variant.Text
@@ -399,10 +423,17 @@ func (p *pipelineImpl) expandNeighbors(ctx context.Context, hits []ragtypes.Sear
 				text = sectionText(&secs[i])
 			}
 			if strings.TrimSpace(text) != "" {
+				if i == pos {
+					offset = len(strings.Join(texts, "\n\n"))
+					if len(texts) > 0 {
+						offset += len("\n\n")
+					}
+				}
 				texts = append(texts, text)
 			}
 		}
 		hit.Variant.Text = strings.Join(texts, "\n\n")
+		hit.Highlight = hit.Highlight.Shifted(offset)
 		hit.Provenance.Window = &ragtypes.SectionWindow{First: secs[lo].Index, Last: secs[hi].Index}
 		out = append(out, hit)
 	}

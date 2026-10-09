@@ -253,3 +253,112 @@ func TestBM25UsesStoreKeywordSearch(t *testing.T) {
 		t.Errorf("retrievals = %+v, want one bm25 call", result.Retrievals)
 	}
 }
+
+// wrappedStore is a store decorator that hides the wrapped store's
+// optional interfaces and exposes it through Unwrap.
+type wrappedStore struct {
+	ragtypes.Store
+}
+
+func (w wrappedStore) Unwrap() ragtypes.Store { return w.Store }
+
+// TestBM25UnwrapsStoreForKeywordSearch checks that WithBM25 finds the
+// keyword search of a store hidden behind a decorator, instead of falling
+// back to an empty in-memory index.
+func TestBM25UnwrapsStoreForKeywordSearch(t *testing.T) {
+	ctx := context.Background()
+	inner := &keywordStore{Store: memstore.New()}
+	pipe, err := rag.NewPipeline(
+		rag.WithStore(wrappedStore{wrappedStore{inner}}),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := pipe.Search(ctx, "zebra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inner.queries) != 1 {
+		t.Fatalf("store keyword queries = %v, want one through the wrappers", inner.queries)
+	}
+	if len(result.Hits) != 1 || result.Hits[0].Variant.UUID != "store-hit" {
+		t.Errorf("hits = %+v, want the store's hit", result.Hits)
+	}
+}
+
+// TestKeywordQueryReachesStore checks that WithKeywordQuery travels to the
+// store with the search options.
+func TestKeywordQueryReachesStore(t *testing.T) {
+	ctx := context.Background()
+	store := &keywordStore{Store: memstore.New()}
+	pipe, err := rag.NewPipeline(
+		rag.WithStore(store),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := ragtypes.KeywordQuery{Mode: ragtypes.KeywordPhrase, Slop: 1}
+	if _, err := pipe.Search(ctx, "striped horse", ragtypes.WithKeywordQuery(q)); err != nil {
+		t.Fatal(err)
+	}
+	got := store.opts[0].Keyword
+	if got == nil || got.Mode != ragtypes.KeywordPhrase || got.Slop != 1 {
+		t.Fatalf("store keyword query = %+v, want the phrase query", got)
+	}
+	if run := ragtypes.KeywordQueryFor(store.queries[0], store.opts[0]); run.Text != "striped horse" {
+		t.Errorf("keyword query text = %q, want the search query", run.Text)
+	}
+}
+
+// rankedRetriever returns fixed hits in order under a fixed name.
+type rankedRetriever struct {
+	name string
+	ids  []string
+}
+
+func (r rankedRetriever) Name() string { return r.name }
+
+func (r rankedRetriever) Retrieve(_ context.Context, _ string, _ *ragtypes.SearchOptions) ([]ragtypes.SearchHit, error) {
+	hits := make([]ragtypes.SearchHit, len(r.ids))
+	for i, id := range r.ids {
+		hits[i] = ragtypes.SearchHit{Variant: ragtypes.ContentVariant{UUID: id, ContentType: ragtypes.ContentText, Text: id}, Score: 1}
+	}
+	return hits, nil
+}
+
+// TestFusionWeightsPerPipelineAndQuery checks that pipeline fusion weights
+// decide the order and that a search's own weights override them.
+func TestFusionWeightsPerPipelineAndQuery(t *testing.T) {
+	ctx := context.Background()
+	pipe, err := rag.NewPipeline(
+		rag.WithStore(memstore.New()),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithRetrievers(rankedRetriever{"vector", []string{"v"}}, rankedRetriever{"bm25", []string{"k"}}),
+		rag.WithFusionWeights(map[string]float64{"bm25": 3}),
+		rag.WithFusionK(10),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := func(opts ...ragtypes.SearchOption) (string, float64) {
+		t.Helper()
+		res, err := pipe.Search(ctx, "q", opts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Hits[0].Variant.UUID, res.Hits[0].Score
+	}
+	if id, score := first(); id != "k" || score != 3.0/11 {
+		t.Errorf("pipeline weights: top = %s %v, want k 3/11", id, score)
+	}
+	if id, _ := first(ragtypes.WithFusionWeights(map[string]float64{"vector": 5})); id != "v" {
+		t.Errorf("query weights: top = %s, want v", id)
+	}
+	if id, score := first(ragtypes.WithFusionK(1)); id != "k" || score != 3.0/2 {
+		t.Errorf("query k: top = %s %v, want k 3/2", id, score)
+	}
+}

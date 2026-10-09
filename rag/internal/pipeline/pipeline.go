@@ -53,6 +53,12 @@ type Config struct {
 	Scope string
 	// Fuser merges retriever lists. Nil means fusion.RRF.
 	Fuser ragtypes.Fuser
+	// FusionK is the rank constant for searches that set none. Zero means
+	// the fuser's own.
+	FusionK int
+	// FusionWeights are per-retriever fusion weights, keyed by retriever
+	// name, for every search. A search's weights override them key by key.
+	FusionWeights map[string]float64
 	// Observer receives spans and metrics. Nil means ragtypes.NoopObserver.
 	Observer ragtypes.Observer
 }

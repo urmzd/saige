@@ -44,13 +44,18 @@ type AgentRun struct {
 // RouteRecord names the configuration that served one provider call.
 type RouteRecord struct {
 	Profile         string `json:"profile,omitempty"`
+	Model           string `json:"model,omitempty"`
 	Preset          string `json:"preset,omitempty"`
 	ConfigHash      string `json:"config_hash,omitempty"`
 	CatalogRevision string `json:"catalog_revision,omitempty"`
+	// Dials records how the call's dials compiled: the effective raw
+	// options and each decision. Nil when the call carried no dials.
+	Dials *types.DialReport `json:"dials,omitempty"`
 }
 
 // AddProvenance records the run's response models, serving catalog
-// configurations, and the versions of the tools it ran on p.
+// configurations, what each dial was sent as, and the versions of the tools
+// it ran on p.
 func (r AgentRun) AddProvenance(p *topeval.Provenance) {
 	p.AddModels(r.Models...)
 	for _, c := range r.ToolCalls {
@@ -58,7 +63,25 @@ func (r AgentRun) AddProvenance(p *topeval.Provenance) {
 	}
 	for _, rt := range r.Routes {
 		p.AddRoute(rt.Profile, rt.Preset, rt.ConfigHash, rt.CatalogRevision)
+		if rt.Dials == nil {
+			continue
+		}
+		for _, d := range rt.Dials.Decisions {
+			p.AddDial(string(d.Dial), d.Requested, dialSent(d))
+		}
 	}
+}
+
+// dialSent is what a decision sent, for provenance: the raw parameters, or
+// the action when nothing was sent.
+func dialSent(d types.DialDecision) string {
+	switch {
+	case d.Action == types.DialDropped || d.Action == types.DialRejected:
+		return string(d.Action)
+	case d.Sent == "":
+		return "nothing"
+	}
+	return d.Sent
 }
 
 // CollectAgentRun drains ch into an [AgentRun], starting the clock now.
@@ -96,8 +119,13 @@ func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
 		}
 		if u, ok := delta.(types.UsageDelta); ok {
 			if route != nil {
-				run.Routes = append(run.Routes, RouteRecord{Profile: route.Profile, Preset: route.Preset,
-					ConfigHash: route.ConfigHash, CatalogRevision: route.CatalogRevision})
+				rec := RouteRecord{Profile: route.Profile, Model: route.Model, Preset: route.Preset,
+					ConfigHash: route.ConfigHash, CatalogRevision: route.CatalogRevision}
+				if route.Dials != nil {
+					d := route.Dials.Clone()
+					rec.Dials = &d
+				}
+				run.Routes = append(run.Routes, rec)
 				route = nil
 			}
 			run.TurnCount++

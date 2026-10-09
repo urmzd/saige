@@ -141,8 +141,11 @@ func (r *ResponsesAdapter) ChatStreamWithSchema(ctx context.Context, messages []
 // rules of Adapter.ChatStreamWithOptions and also rejects the controls the
 // Responses API does not have.
 func (r *ResponsesAdapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	base, err := r.base.withRequestOptions(opts)
+	base, err := r.base.withRequestOptions(opts.Raw())
 	if err != nil {
+		return nil, err
+	}
+	if base, err = base.compileDials(opts, tools, false, types.SurfaceResponses); err != nil {
 		return nil, err
 	}
 	c := &ResponsesAdapter{base: *base}
@@ -205,6 +208,11 @@ func (r *ResponsesAdapter) buildParams(messages []types.Message, tools []types.T
 }
 
 func (r *ResponsesAdapter) stream(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	base, err := r.base.compileDials(types.RequestOptions{}, tools, schema != nil, types.SurfaceResponses)
+	if err != nil {
+		return nil, err
+	}
+	r = &ResponsesAdapter{base: *base}
 	params, err := r.buildParams(messages, tools, schema)
 	if err != nil {
 		return nil, err

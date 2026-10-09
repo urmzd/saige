@@ -80,6 +80,17 @@ type Config struct {
 	HTTPClient *http.Client
 	// Options are applied through the adapter's own options.
 	Options types.RequestOptions
+	// Dials are global dials, compiled per request against the model (see
+	// types.ResolveDials). The model's own dial defaults apply above them.
+	// A raw option in Options that sets the same parameter wins.
+	Dials types.Dials
+	// DialLayers are dial layers already resolved, such as a catalog preset
+	// entry's. When set, Dials and the model's dial defaults are not added
+	// again.
+	DialLayers []types.DialLayer
+	// DialPolicy sets how dials the model cannot honor are handled. Nil
+	// uses each dial's class.
+	DialPolicy *types.DialPolicy
 	// ServerTools enables provider-executed tools on adapters that send them
 	// (Anthropic and Google).
 	ServerTools []types.ServerTool
@@ -234,6 +245,9 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	if err := checkExpressible(caps, name, cfg); err != nil {
 		return nil, err
 	}
+	if cfg, err = withDials(cfg, caps); err != nil {
+		return nil, err
+	}
 
 	var p types.Provider
 	switch name {
@@ -359,6 +373,12 @@ func buildAnthropic(cfg Config, model, key string, caps types.ModelCapabilities)
 		opts = append(opts, anthropic.WithPromptCachePolicy(anthropic.PromptCachePolicy{
 			TTL: pc.TTL, Tools: pc.Tools, System: pc.System, Conversation: pc.Conversation}))
 	}
+	if len(cfg.DialLayers) > 0 {
+		opts = append(opts, anthropic.WithDials(cfg.DialLayers...))
+	}
+	if cfg.DialPolicy != nil {
+		opts = append(opts, anthropic.WithDialPolicy(*cfg.DialPolicy))
+	}
 	return anthropic.NewAdapter(key, model, opts...), nil
 }
 
@@ -404,10 +424,26 @@ func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities) (t
 	if pc := cfg.PromptCache; pc != nil && pc.Mode == catalog.PromptCacheAutomatic {
 		opts = append(opts, openai.WithPromptCache(pc.Key, pc.Retention))
 	}
-	if caps.ChatCompletionsTools == types.ChatToolsResponsesOnly {
+	if len(cfg.DialLayers) > 0 {
+		opts = append(opts, openai.WithDials(cfg.DialLayers...))
+	}
+	if cfg.DialPolicy != nil {
+		opts = append(opts, openai.WithDialPolicy(*cfg.DialPolicy))
+	}
+	switch caps.ChatCompletionsTools {
+	case types.ChatToolsResponsesOnly:
 		// The model calls tools only through the Responses API, so it is
 		// served there for every request, not only those with tools.
 		return openai.NewResponsesAdapter(key, model, opts...), nil
+	case types.ChatToolsNoReasoning:
+		// Chat Completions would turn a reasoning dial off whenever tools
+		// are offered; the Responses API keeps it. A configuration the
+		// Responses API cannot send stays on Chat Completions.
+		if r := mergedDials(cfg.DialLayers).Reasoning; r != nil && r.Mode != types.ReasoningOff {
+			if ra := openai.NewResponsesAdapter(key, model, opts...); ra.Validate() == nil {
+				return ra, nil
+			}
+		}
 	}
 	return openai.NewAdapter(key, model, opts...), nil
 }
@@ -467,6 +503,12 @@ func buildGoogle(ctx context.Context, cfg Config, model, key string, vertex *Ver
 	if len(cfg.ServerTools) > 0 {
 		opts = append(opts, google.WithServerTools(cfg.ServerTools...))
 	}
+	if len(cfg.DialLayers) > 0 {
+		opts = append(opts, google.WithDials(cfg.DialLayers...))
+	}
+	if cfg.DialPolicy != nil {
+		opts = append(opts, google.WithDialPolicy(*cfg.DialPolicy))
+	}
 	// Two reasoning controls cannot both reach the adapter, so check the
 	// combination here, where the caller's options are still whole.
 	if err := caps.ValidateOptions(o); err != nil {
@@ -523,6 +565,12 @@ func buildOllama(cfg Config, model string, getenv func(string) string, caps type
 	var adapterOpts []ollama.AdapterOption
 	if o.ToolChoice != nil {
 		adapterOpts = append(adapterOpts, ollama.WithToolChoice(*o.ToolChoice))
+	}
+	if len(cfg.DialLayers) > 0 {
+		adapterOpts = append(adapterOpts, ollama.WithDials(cfg.DialLayers...))
+	}
+	if cfg.DialPolicy != nil {
+		adapterOpts = append(adapterOpts, ollama.WithDialPolicy(*cfg.DialPolicy))
 	}
 	return ollama.NewAdapter(ollama.NewClient(host, model, "", clientOpts...), adapterOpts...), nil
 }

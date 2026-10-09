@@ -1,0 +1,120 @@
+name: Catalog Check
+
+# Monthly check that the embedded model catalog still matches what the
+# providers serve. New models become stub rows in a pull request that a
+# human completes before merging; see docs/catalog.md.
+
+on:
+  schedule:
+    - cron: '23 7 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-check
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: catalog/reconcile
+      CATALOG: agent/provider/catalog/data/default.json
+      HAS_APP_KEY: ${{ secrets.SR_RELEASER_PRIVATE_KEY != '' }}
+    steps:
+      # A pull request opened with the app token runs CI; one opened with
+      # GITHUB_TOKEN does not, so the app is preferred when its key is set.
+      - name: Generate app token
+        id: app-token
+        if: env.HAS_APP_KEY == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liUsXGDICnIdo3Ev
+          private-key: ${{ secrets.SR_RELEASER_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Reconcile the catalog
+        id: reconcile
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          providers=()
+          for pair in anthropic:ANTHROPIC_API_KEY openai:OPENAI_API_KEY google:GOOGLE_API_KEY; do
+            name="${pair%%:*}" var="${pair#*:}"
+            if [ -n "${!var:-}" ]; then
+              providers+=("$name")
+            else
+              echo "::notice title=Catalog check::Skipping $name: the $var secret is not set."
+            fi
+          done
+          if [ "${#providers[@]}" -eq 0 ]; then
+            echo "::notice title=Catalog check::No provider secret is set; nothing to check."
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          list="$(IFS=,; echo "${providers[*]}")"
+          go run ./cmd/saige catalog reconcile --providers "$list" \
+            --ignore-file .github/catalog-ignore.txt --write "$CATALOG" > report.md
+          code=$?
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          case "$code" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+
+      - name: Open or update the pull request
+        if: steps.reconcile.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "The monthly catalog check found drift. Before merging:"
+            echo
+            echo "- [ ] Fill in each stub row: tier, limits, capabilities and reasoning from the vendor's model page."
+            echo "- [ ] Add a price with \`as_of\` and \`source\` from the vendor's price list, or leave the row unpriced."
+            echo "- [ ] Remove the \`needs review\` note from every row you completed."
+            echo "- [ ] Set \`superseded_by\` on rows that disappeared upstream, or add them to \`.github/catalog-ignore.txt\`."
+            echo "- [ ] Bump \`revision\` and regenerate the lookup golden file: \`go test ./agent/provider/catalog -run TestDefaultLookupGolden -update\`."
+            echo
+            cat report.md
+          } > body.md
+          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            # Never overwrite a branch a reviewer may already be editing:
+            # refresh the report only.
+            gh pr edit "$open_pr" --body-file body.md
+            echo "::notice title=Catalog check::Updated the report on #$open_pr."
+            exit 0
+          fi
+          if git diff --quiet -- "$CATALOG"; then
+            echo "::error title=Catalog check::Drift found but there are no new models to add as stub rows. See the job summary."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$CATALOG"
+          git commit -m "feat(catalog): add stub rows for models the providers now list"
+          git push --force origin "$BRANCH"
+          gh pr create --head "$BRANCH" \
+            --title "feat(catalog): review models the providers now list" --body-file body.md

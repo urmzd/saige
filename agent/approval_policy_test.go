@@ -497,3 +497,31 @@ func TestApprovalStateSurvivesCompaction(t *testing.T) {
 		t.Fatalf("c6 = %+v", end)
 	}
 }
+
+func TestApprovalPolicyComposesWithDials(t *testing.T) {
+	focused := types.CreativityFocused
+	deps := &weatherDeps{base: 1}
+	cfg := AgentConfig{Provider: &agenttest.ScriptedProvider{}}
+	for _, opt := range []AgentOption{
+		WithDials(types.Dials{Creativity: &focused}),
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2}),
+		WithDeps(deps),
+	} {
+		opt(&cfg)
+	}
+	if cfg.Dials.Creativity == nil || cfg.ApprovalPolicy == nil || cfg.ApprovalPolicy.DenyAfter != 2 || cfg.Deps != deps {
+		t.Fatalf("options did not compose: %+v", cfg)
+	}
+	child := childConfig(t, cfg, SubAgentDef{Name: "worker"})
+	if child.Dials.Creativity == nil || *child.Dials.Creativity != focused {
+		t.Fatalf("child dials = %+v", child.Dials)
+	}
+	if child.ApprovalPolicy != cfg.ApprovalPolicy || child.Deps != deps {
+		t.Fatalf("child policy %+v, deps %v", child.ApprovalPolicy, child.Deps)
+	}
+	// A child's own options replace one setting without dropping the other.
+	child = childConfig(t, cfg, SubAgentDef{Name: "worker", Options: []AgentOption{WithApprovalPolicy(ApprovalPolicy{DenyAfter: 5})}})
+	if child.ApprovalPolicy.DenyAfter != 5 || child.Dials.Creativity == nil {
+		t.Fatalf("override: policy %+v, dials %+v", child.ApprovalPolicy, child.Dials)
+	}
+}

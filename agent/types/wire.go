@@ -503,18 +503,19 @@ type wireRoute struct {
 	ConfigHash      string       `json:"config_hash,omitempty"`
 	CatalogRevision string       `json:"catalog_revision,omitempty"`
 	Options         *wireOptions `json:"options,omitempty"`
+	Dials           *DialReport  `json:"dials,omitempty"`
 }
 
 func toWireRoute(r RouteDelta) wireRoute {
 	return wireRoute{Profile: r.Profile, Provider: r.Provider, Model: r.Model, Experiment: r.Experiment,
 		Variant: r.Variant, Reason: r.Reason, Preset: r.Preset, ConfigHash: r.ConfigHash,
-		CatalogRevision: r.CatalogRevision, Options: toWireOptions(r.Options)}
+		CatalogRevision: r.CatalogRevision, Options: toWireOptions(r.Options), Dials: r.Dials}
 }
 
 func (w wireRoute) delta() RouteDelta {
 	return RouteDelta{Profile: w.Profile, Provider: w.Provider, Model: w.Model, Experiment: w.Experiment,
 		Variant: w.Variant, Reason: w.Reason, Preset: w.Preset, ConfigHash: w.ConfigHash,
-		CatalogRevision: w.CatalogRevision, Options: w.Options.requestOptions()}
+		CatalogRevision: w.CatalogRevision, Options: w.Options.requestOptions(), Dials: w.Dials}
 }
 
 // wireOptions is the snake_case wire form of RequestOptions.

@@ -10,6 +10,7 @@ The catalog is data. It declares what each model accepts (capabilities, limits, 
 - [Building a preset](#building-a-preset)
 - [Recording the serving configuration](#recording-the-serving-configuration)
 - [CLI](#cli)
+- [Freshness check](#freshness-check)
 
 ## File format
 
@@ -25,6 +26,7 @@ A catalog is one JSON object. The JSON Schema is `agent/provider/catalog/catalog
 | `baselines` | The conservative row per provider for unknown models. |
 | `presets` | Named configurations. |
 | `default_preset` | Used by the CLI when neither `--preset` nor `--model` is given. |
+| `dials` | Global [dials](dials.md), the lowest dial layer of every chain entry. |
 
 A model row matches model IDs by longest prefix. Only an exact match is a declaration (`Known` true); a dated or tagged ID inherits the family row with `Known` false.
 
@@ -40,7 +42,7 @@ A model row matches model IDs by longest prefix. Only an exact match is a declar
 }
 ```
 
-Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults` and `notes`.
+Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults`, `dials` and `notes`.
 
 Two fields describe request shapes a vendor rejects for one model:
 
@@ -62,6 +64,33 @@ The same shape appears in model `defaults`, preset `options` and entry `options`
 | `server_tools` | `[{"kind": "web_search", "max_uses": 3}]`. A remote MCP server's `url` must be `https` with a host, and its token is never part of a catalog. |
 
 JSON `null` is not accepted inside an options object. Remove an inherited option with the entry's `unset`, so that every removal is written down.
+
+### Dials
+
+[Dials](dials.md) are model-neutral intents such as `{"creativity": "focused", "reasoning": {"depth": "high"}}`. Unlike options, a dial an entry's model cannot honor exactly is mapped to the nearest declared value or dropped when it is advisory, and rejected only when it is contractual (`tools`, `parallel: false`, `reproducible`).
+
+A dials object appears in three places:
+
+| Where | Shape | Meaning |
+| --- | --- | --- |
+| top-level `dials`, preset `dials`, entry `dials` | the dial values | What to ask every entry, a preset's entries, or one entry for. |
+| model row (or template) `dials` | `creativity`, `reasoning`, `cache`, `defaults` | How the row compiles dials to options, and the model's own dial defaults. |
+
+A row needs no `dials`: its mapping is derived from `reasoning`, the sampling capabilities and the prompt cache capabilities. Declare one only to override a part of it:
+
+| Key | Meaning |
+| --- | --- |
+| `creativity.levels` | An options object per level (`deterministic`, `focused`, `balanced`, `creative`). |
+| `creativity.requires_reasoning_off` | Drop creativity while reasoning is active. The Anthropic thinking rows declare it. |
+| `reasoning.off`, `reasoning.on`, `reasoning.adaptive` | The options object for each mode. `{}` means the mode is expressed by sending nothing. |
+| `reasoning.depth` | An options object per depth (`minimal`, `low`, `medium`, `high`, `max`). A depth missing here maps to the nearest declared one. |
+| `reasoning.depth_change` | `per_request` when a depth change applies even inside a tool loop with signed reasoning. |
+| `reasoning.change_resets_cache` | A reasoning change invalidates the provider's cached prompt prefix. The Anthropic thinking rows declare it. |
+| `reasoning.with_tools` | Options per API surface (`chat`, `responses`) that replace the compiled reasoning when the request offers tools. |
+| `cache.on` | The `prompt_cache` object the cache dial turns on. |
+| `defaults` | The model's own dial values, below the preset's. |
+
+A declared level, depth or surface overrides the derived one of the same key, so an overlay can patch `models[].dials.creativity.levels.focused` and keep the rest. Templates and rows merge `dials` field by field, and maps key by key.
 
 ## Sources and layers
 
@@ -140,7 +169,7 @@ _, err := catalog.Use(ctx, catalog.Layered(catalog.EmbeddedSource(), s3src))
 }
 ```
 
-Preset keys: `description`, `extends`, `options`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `retry`, `routing`, `require_declared` and `chain`.
+Preset keys: `description`, `extends`, `options`, `dials`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `retry`, `routing`, `require_declared` and `chain`.
 
 Routing keys:
 
@@ -155,7 +184,7 @@ Routing keys:
 
 Setting `fail_threshold` or `reprobe_after` without a `policy` selects `affinity`; with `policy: sticky` it is an error. Other permanent errors never fail over.
 
-Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `unset`, `inherit` (`all` or `none`), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
+Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `dials`, `unset` (option names, and inherited dials as `dials.<name>`), `inherit` (`all` or `none`, which also skips the preset's dials), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
 
 `vertex` serves a Google entry through Vertex AI instead of the Gemini API: `{"project": "...", "location": "..."}`. Empty fields default from `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, and the location then defaults to `global`. Vertex authenticates with Application Default Credentials, so the entry needs a project, not an API key. Setting `GOOGLE_GENAI_USE_VERTEXAI=true` serves every Google entry through Vertex the same way. A `vertex` block on another provider's entry is rejected. An optional entry is dropped when its credentials are missing, and an optional entry that needs none (a local Ollama model) is dropped when its server does not answer a reachability check at build time (`preset.Options.Probe`, by default `preset.ProbeOllama`).
 
@@ -171,6 +200,8 @@ Options resolve field by field, lowest first:
 6. A per-request override at call time, merged by the adapter. It is not part of the configuration hash.
 
 There is one reasoning control: a higher layer that sets any `reasoning` key replaces the lower layer's reasoning whole.
+
+Dials resolve the same way in their own layers: the top-level `dials`, the row's `dials.defaults`, the preset's `dials` (skipped with `"inherit": "none"`), the entry's `dials`, then the entry's `unset`. The adapter compiles them on each request against its own model, under any dials the agent or the request adds ([precedence](dials.md#setting-dials)). An option that sets the same parameter as a dial wins over it. When the merged dials turn `cache` on and no `prompt_cache` option is set, the row's prompt cache is selected, with origin of the dial's layer.
 
 ## Validation
 
@@ -192,7 +223,14 @@ presets.p.chain[1].options.temperature: not declared supported for openai/gpt-6.
 
 On `gpt-6-luna`, which accepts sampling only with reasoning effort `none` and defaults to `medium`, the same option fails with `requires reasoning to be disabled` unless the entry also sets `"reasoning": {"effort": "none"}`.
 
-The fix is written in the file: `"unset": ["temperature"]`, an entry override, or `"inherit": "none"`.
+The fix is written in the file: `"unset": ["temperature"]`, an entry override, or `"inherit": "none"`. A preset with more than one entry whose shared options set `temperature`, `top_p`, `top_k` or `reasoning` also gets a `prefer_dial` warning: the creativity and reasoning dials adapt to each entry's model instead.
+
+Dials are checked as well:
+
+- every options object a row declares for a dial must pass the row's own validation and be expressible by its adapter, so a bad mapping fails at load time (`invalid_dial` at, for example, `models[3].dials.reasoning.depth.high`);
+- each entry's dials are compiled for its own model as a request without tools would be. A contractual dial the model cannot honor is an error that names the layer it came from; an advisory dial that is mapped or dropped is a `dial_mapped` or `dial_dropped` warning, and a dial a raw option overrides is a `dial_overridden` warning.
+
+The configuration hash covers an entry's dials and what they compile to, so changing a row's mapping changes the hash. An entry without dials keeps the hash it had before dials existed.
 
 Warnings do not fail validation: an inferred model, a fallback with a smaller context window than the primary, a superseded model, an unpriced entry under a budget, and a primary whose signed reasoning blocks failover during a tool loop.
 
@@ -222,7 +260,7 @@ a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "..."}, agent.WithPreset(bun
 
 ## Recording the serving configuration
 
-Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision` and the effective `Options` (the entry's options merged with the request override). The agent attaches the last route of the committed call to the assistant turn as `types.RouteContent`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
+Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision`, the effective `Options` (the entry's options merged with the request override, every dial compiled) and, when the attempt had dials, a `Dials` report of each decision ([dials](dials.md#seeing-what-was-sent)). The agent attaches the last route of the committed call to the assistant turn as `types.RouteContent`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
 
 ## CLI
 
@@ -242,7 +280,8 @@ A project file can arrive with a cloned repository, so it is checked against an 
 - `mcp_server` on a server tool, wherever options appear (preset, entry, model defaults, templates, baselines), which makes the provider connect to that server;
 - `routing.failover_on_content_filter` or `routing.failover_on_auth`, which send a refused or failed request to another vendor;
 - `inherit_default: false`, which discards the trusted layers below;
-- `vertex.project` or `vertex.location` on a chain entry, which bill and send prompts to a Google Cloud project you did not choose, with your own credentials. An empty `vertex` block, which uses your environment, is allowed.
+- `vertex.project` or `vertex.location` on a chain entry, which bill and send prompts to a Google Cloud project you did not choose, with your own credentials. An empty `vertex` block, which uses your environment, is allowed;
+- `dials`, at the top level, on a row or template, on a preset or on an entry, which can turn on prompt caching or raise reasoning spend.
 
 A field the allowlist does not name is refused too. Such a file fails validation unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the same file is named with `--catalog`, which loads it once, as a trusted explicit layer. Explicit references, including remote URLs, are trusted.
 
@@ -250,11 +289,13 @@ A field the allowlist does not name is refused too. Such a file fails validation
 saige --preset balanced chat
 saige catalog show balanced           # effective options per entry, with origins and hashes
 saige catalog show openai/gpt-6-luna  # a one-entry chain from the model's defaults
+saige catalog explain default --dials '{"creativity":"focused"}'  # per entry: dial decisions and raw options sent
 saige catalog validate --strict       # exit 1 on errors, or on warnings with --strict
 saige catalog validate --dry-build    # also build every adapter with a placeholder key
 saige catalog layers                  # paths, trust state and revisions
 saige catalog schema                  # the JSON Schema
 saige catalog export                  # the merged catalog as canonical JSON
+saige catalog reconcile               # compare provider model lists with the catalog
 ```
 
 The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
@@ -272,3 +313,61 @@ The shipped presets:
 `--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
 
 `--base-url` applies to the entries of the selected provider: `--provider` when given, otherwise the one provider the chain uses. On a chain that spans several vendors without `--provider` it is an error, never ignored.
+
+## Freshness check
+
+Vendors add and retire models on their own schedule, and no list endpoint reports prices. `saige catalog reconcile` compares what each provider lists with the active catalog, and a monthly workflow turns what it finds into a pull request.
+
+### Reconcile
+
+```
+saige catalog reconcile                                  # anthropic, openai, google
+saige catalog reconcile --providers openai,ollama        # ollama is checked only when named
+saige catalog reconcile --ignore-file .github/catalog-ignore.txt --write agent/provider/catalog/data/default.json
+saige --format json catalog reconcile                    # machine-readable report
+```
+
+A provider is checked when its credentials are set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. The report lists:
+
+| Finding | Meaning | Drift |
+| --- | --- | --- |
+| New models | Listed models that only the provider baseline covers. | yes |
+| Limit drift | The endpoint reports a context window or output cap that disagrees with the row (Anthropic and Google report limits; OpenAI does not). | yes |
+| Disappeared upstream | Rows no listed model matches and that set no `superseded_by`: candidates for `superseded_by` or removal. A model the key cannot access is missing too, so check before acting. Not reported for Ollama, which lists only pulled weights. | yes |
+| Pending review | Rows that still carry the note `needs review`. | yes |
+| Stale pricing | Prices and server tool fees whose `as_of` is older than `--stale-days` (90), or is not a date. | no, a reminder |
+
+Dated or tagged IDs that a family row covers (`gpt-6-luna-2026-09-01`) are inferred, not new. `--ignore` and `--ignore-file` take globs over model IDs and row prefixes, bare or as `provider/glob`, for models the catalog deliberately does not describe, such as speech, image and moderation endpoints.
+
+Exit status: `0` no drift, `1` drift, `2` error (a listing failed, no provider was configured, or a flag or file was invalid). The human report is Markdown, so it reads in a terminal and serves as a pull request body.
+
+`--write <path>` appends a stub row for each new model to a catalog file, or creates the file as an overlay layer when it does not exist. A stub has:
+
+- the provider baseline's capability fields (its `extends`, capability lists, limits and media), so it declares nothing the baseline does not already assume;
+- no tier, successor, defaults or price;
+- the note `needs review`.
+
+One stub covers the dated IDs that start with its prefix. Rows already in the file are skipped, the stubs are inserted before the closing bracket of the `models` array, and no existing byte of the file changes. Reconcile never edits an existing row's prices or capabilities. Once a stub is in the catalog, the exact model ID resolves with `Known` true, so a stub must be completed before it is merged; until its note is removed, every later run reports it as pending review.
+
+### The scheduled workflow
+
+`.github/workflows/catalog-check.yml` runs on the first of each month and on demand (`workflow_dispatch`):
+
+1. It checks each provider whose secret is set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) and posts a notice for each one it skips.
+2. It runs reconcile with `.github/catalog-ignore.txt` and `--write agent/provider/catalog/data/default.json`, and adds the report to the job summary.
+3. On drift with new stub rows, it commits them to the `catalog/reconcile` branch and opens a pull request whose body is a review checklist followed by the report. When that pull request is already open, it only refreshes the body, so a reviewer's edits on the branch are never overwritten.
+4. On drift with no stub rows to propose (only disappeared rows or limit drift), the job fails with the report in its summary, so the finding is not lost.
+
+The pull request is opened with the release app's token when `SR_RELEASER_PRIVATE_KEY` is set, so CI runs on it; otherwise with `GITHUB_TOKEN`, and CI must be started by hand (close and reopen the pull request, or push to the branch).
+
+### Reviewing a catalog pull request
+
+For each stub row:
+
+1. Look the model up on the vendor's model page. Set `tier`, `limits` and `extends` (a template such as `openai.reasoning` or `anthropic.adaptive` usually fits better than the baseline), then adjust capabilities with `add_capabilities` and `remove_capabilities`. Declare only what the vendor documents.
+2. Price it from the vendor's price list with `as_of` and `source`, or leave it unpriced; a budget refuses an unpriced model, which is the safe failure.
+3. Remove the `needs review` note. Keep a note for anything a caller should know.
+
+For each disappeared row, set `superseded_by` to the current family, or add the prefix to `.github/catalog-ignore.txt` when the key simply cannot see it. For limit drift, confirm the new limit on the vendor's page before changing the row. Refresh stale prices the same way, updating `as_of`.
+
+Then bump `revision`, regenerate the lookup golden file (`go test ./agent/provider/catalog -run TestDefaultLookupGolden -update`) and review its diff, run `saige catalog validate --dry-build`, and merge. CI fails while any row in the embedded catalog still carries `needs review`.

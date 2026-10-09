@@ -34,7 +34,7 @@ func (a *Adapter) Model() string { return a.Client.Model }
 func (a *Adapter) WithModel(model string) types.Provider {
 	client := *a.Client
 	client.Model = model
-	return &Adapter{Client: &client, toolChoice: a.toolChoice}
+	return &Adapter{Client: &client, toolChoice: a.toolChoice, dials: a.dials, dialPolicy: a.dialPolicy}
 }
 
 // Adapter wraps the Ollama Client and implements types.Provider.
@@ -42,6 +42,8 @@ type Adapter struct {
 	Client *Client
 
 	toolChoice *types.ToolChoice
+	dials      []types.DialLayer
+	dialPolicy *types.DialPolicy
 }
 
 // NewAdapter creates a new Ollama Provider adapter.
@@ -71,7 +73,8 @@ func (a *Adapter) Validate() error {
 // included, since it is not a request control on the wire.
 func (a *Adapter) EffectiveOptions() types.RequestOptions {
 	o, _ := a.clientOptions()
-	return o
+	o.DialLayers, o.DialPolicy = a.dials, a.dialPolicy
+	return o.Clone()
 }
 
 // clientOptions decodes the client's configured controls.
@@ -109,9 +112,13 @@ func (a *Adapter) clientOptions() (types.RequestOptions, error) {
 
 // ChatStream implements types.Provider.
 func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, false)
+	if err != nil {
+		return nil, err
+	}
 	// The emulated tool choice decides which tools are sent, so the request
 	// is checked against the filtered set.
-	tools, err := a.filterTools(tools)
+	tools, err = a.filterTools(tools)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +143,13 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 
 // ChatStreamWithSchema implements types.StructuredOutputProvider.
 func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
+	if err != nil {
+		return nil, err
+	}
 	// The emulated tool choice decides which tools are sent, so the request
 	// is checked against the filtered set.
-	tools, err := a.filterTools(tools)
+	tools, err = a.filterTools(tools)
 	if err != nil {
 		return nil, err
 	}

@@ -21,8 +21,11 @@ var _ types.OptionsProvider = (*Adapter)(nil)
 // context cache bound, the tool configuration belongs to the cached resource,
 // so a per-call tool choice that changes it is rejected.
 func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	c, err := a.withRequestOptions(opts)
+	c, err := a.withRequestOptions(opts.Raw())
 	if err != nil {
+		return nil, err
+	}
+	if c, err = c.compileDials(opts, tools, false); err != nil {
 		return nil, err
 	}
 	return c.ChatStream(ctx, messages, tools)

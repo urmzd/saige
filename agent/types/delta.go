@@ -287,9 +287,12 @@ type RouteDelta struct {
 	ConfigHash      string
 	CatalogRevision string
 	// Options are the effective options of this attempt: the profile's
-	// configured options merged with the request's overrides. Nil when the
-	// profile does not report them.
+	// configured options merged with the request's overrides, with every
+	// dial compiled. Nil when the profile does not report them.
 	Options *RequestOptions
+	// Dials reports how the attempt's dials compiled for its model. Nil
+	// when the attempt carried no dials.
+	Dials *DialReport
 }
 
 func (RouteDelta) isDelta() {}

@@ -166,13 +166,14 @@ Model capabilities and named presets come from the model catalog: the embedded d
 
 ```bash
 saige catalog show                    # the preset that would run, with option origins and hashes
+saige catalog explain default --dials '{"reasoning":{"depth":"high"}}'  # each entry's dial decisions and raw options
 saige catalog validate --strict       # exit 1 on errors, or warnings with --strict
 saige catalog layers                  # which files were merged, and whether each is trusted
 saige catalog export                  # the merged catalog as canonical JSON
 saige catalog schema                  # the JSON Schema of the file format
 ```
 
-A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth` or `inherit_default` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
+A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
 
 ## Provider Auto-Detection
 

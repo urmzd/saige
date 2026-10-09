@@ -29,6 +29,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // AnnotationSubjectError is the annotation key [PopulateAll] sets, as a JSON
@@ -295,6 +297,9 @@ func Populate(ctx context.Context, observations []Observation, subject Subject) 
 // observations not yet started are marked with the context's error.
 func PopulateAll(ctx context.Context, observations []Observation, subject Subject, opts ...Option) error {
 	cfg := newConfig(opts)
+	if cfg.dialPolicy != nil {
+		ctx = types.ContextWithDialPolicy(ctx, *cfg.dialPolicy)
+	}
 	errs := make([]error, len(observations))
 
 	sem := make(chan struct{}, cfg.Concurrency)

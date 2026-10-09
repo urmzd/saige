@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // Merge layers overlays onto base, lowest first, and validates the result
@@ -79,6 +81,14 @@ func (c *Catalog) apply(o *Catalog) error {
 	}
 	if o.DefaultPreset != "" {
 		c.DefaultPreset = o.DefaultPreset
+	}
+	if o.Dials != nil {
+		var base types.Dials
+		if c.Dials != nil {
+			base = *c.Dials
+		}
+		d := base.Merge(*o.Dials)
+		c.Dials = &d
 	}
 	var err error
 	if c.Templates, err = patchMap(c.Templates, o.Templates); err != nil {

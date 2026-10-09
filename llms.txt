@@ -14,6 +14,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
 - [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
+- [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
 - [docs/func-tools.md](docs/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
 - [docs/approval-policy.md](docs/approval-policy.md): Approval policy: grants by scope and expiry, denial limits, capability defaults, replay
 - [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
