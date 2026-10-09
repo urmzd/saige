@@ -42,3 +42,8 @@ google/gemini-1.5-*
 # Access-gated rows: the Mythos models are not listed for general API keys,
 # so their absence from a listing is not a retirement. Check them by hand.
 anthropic/claude-mythos-5*
+
+# Gemini Omni Flash generates video. The vendor's model and price pages
+# document gemini-omni-1.1-flash, not this preview ID, and not as a chat
+# model, so the catalog leaves it out.
+google/gemini-omni-*
