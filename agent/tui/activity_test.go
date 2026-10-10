@@ -200,7 +200,7 @@ func TestActivityErrorsAndFinish(t *testing.T) {
 }
 
 func renderEntries(a activity, tmpl Template) string {
-	return logRenderer{entries: a.entries, spinner: spinner.New(), template: tmpl}.renderLog()
+	return logRenderer{entries: a.entries, spin: spinner.New().View(), template: tmpl}.renderLog()
 }
 
 func TestLogRendererTools(t *testing.T) {

@@ -434,7 +434,7 @@ func TestRunnerShortTerminal(t *testing.T) {
 	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
 	m := newRunnerModel(a, context.Background(), TemplateDefault)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 3})
-	if h := model.(runnerModel).viewport.Height; h < 1 {
+	if h := model.(runnerModel).scroll.vp.Height; h < 1 {
 		t.Fatalf("viewport height = %d on a short terminal", h)
 	}
 	_ = model.View()
@@ -449,17 +449,17 @@ func TestRunnerScrollKeysMoveViewport(t *testing.T) {
 		m.act.addUser("line", false)
 	}
 	m.refresh()
-	if !m.viewport.AtBottom() {
+	if !m.scroll.vp.AtBottom() {
 		t.Fatal("transcript does not follow new output")
 	}
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	m = model.(runnerModel)
-	if m.viewport.AtBottom() {
+	if m.scroll.vp.AtBottom() {
 		t.Fatal("pgup did not scroll the transcript")
 	}
 	m.act.addUser("new", false)
 	m.refresh()
-	if m.viewport.AtBottom() {
+	if m.scroll.vp.AtBottom() {
 		t.Fatal("new output yanked the view back while scrolled up")
 	}
 }

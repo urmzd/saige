@@ -522,3 +522,65 @@ func TestACPUserMessageRejectsEmptyAndBadData(t *testing.T) {
 		t.Fatalf("part 1 = %#v", msg.Parts[1])
 	}
 }
+
+func TestACPUserMessageUsesClientChecks(t *testing.T) {
+	if _, err := acpUserMessage([]acp.ContentBlock{{Image: &acp.ContentBlockImage{MimeType: "image/png", Uri: acp.Ptr("file:///etc/passwd")}}}); !errors.Is(err, agenthost.ErrURIScheme) {
+		t.Fatalf("file image URI: err = %v", err)
+	}
+	msg, err := acpUserMessage([]acp.ContentBlock{
+		{Image: &acp.ContentBlockImage{MimeType: "image/png", Uri: acp.Ptr("https://example.com/a.png")}},
+		acp.ResourceLinkBlock("plain", "http://example.com/a.png"),
+		acp.ResourceBlock(acp.EmbeddedResourceResource{BlobResourceContents: &acp.BlobResourceContents{
+			Uri: "file:///r/shot.png", Blob: base64.StdEncoding.EncodeToString([]byte("PNG")), MimeType: acp.Ptr("image/png"),
+		}}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img, ok := msg.Parts[0].(types.ImagePart); !ok || img.Source.URI != "https://example.com/a.png" {
+		t.Fatalf("part 0 = %#v", msg.Parts[0])
+	}
+	if _, ok := msg.Parts[1].(types.TextPart); !ok {
+		t.Fatalf("an http link became media: %#v", msg.Parts[1])
+	}
+	img, ok := msg.Parts[2].(types.ImagePart)
+	if !ok || img.Source.URI != "" || img.Source.Filename != "shot.png" || string(img.Source.Inline) != "PNG" || img.Source.Digest == "" {
+		t.Fatalf("blob part = %#v", msg.Parts[2])
+	}
+}
+
+func TestACPMediaBlock(t *testing.T) {
+	tests := []struct {
+		name string
+		part types.Part
+		want func(acp.ContentBlock) bool
+	}{
+		{name: "inline image out", part: types.ImageOutPart{Source: types.Bytes("image/png", []byte("PNG"))},
+			want: func(b acp.ContentBlock) bool { return b.Image != nil && b.Image.MimeType == "image/png" }},
+		{name: "inline audio", part: types.Audio(types.Bytes("audio/wav", []byte("RIFF"))),
+			want: func(b acp.ContentBlock) bool { return b.Audio != nil }},
+		{name: "artifact ref", part: types.ImageOutPart{Source: types.Artifact("saige-artifact://ab", "image/png")},
+			want: func(b acp.ContentBlock) bool {
+				return b.ResourceLink != nil && b.ResourceLink.Uri == "saige-artifact://ab" && *b.ResourceLink.MimeType == "image/png"
+			}},
+		{name: "inline document is an embedded blob", part: types.Document(types.Bytes("application/pdf", []byte("%PDF"))),
+			want: func(b acp.ContentBlock) bool {
+				r := b.Resource
+				return r != nil && r.Resource.BlobResourceContents != nil && r.Resource.BlobResourceContents.Blob == "JVBERg==" &&
+					strings.HasPrefix(r.Resource.BlobResourceContents.Uri, "saige-artifact://")
+			}},
+		{name: "unresolved", part: types.VideoOutPart{Source: types.Source{MediaType: "video/mp4", Unresolved: "storage full"}},
+			want: func(b acp.ContentBlock) bool { return b.Text != nil && strings.Contains(b.Text.Text, "storage full") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, ok := acpMediaBlock(tt.part)
+			if !ok || !tt.want(b) {
+				t.Fatalf("block = %+v", b)
+			}
+		})
+	}
+	if _, ok := acpMediaBlock(types.Text("x")); ok {
+		t.Fatal("text mapped as media")
+	}
+}

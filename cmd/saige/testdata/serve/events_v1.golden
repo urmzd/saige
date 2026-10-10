@@ -1,0 +1,11 @@
+{"v":1,"seq":1,"run_id":"t_RUN","kind":"reasoning.start","data":{}}
+{"v":1,"seq":2,"run_id":"t_RUN","kind":"reasoning.delta","data":{"content":"look at it"}}
+{"v":1,"seq":3,"run_id":"t_RUN","kind":"reasoning.end","data":{"signature":"sig"}}
+{"v":1,"seq":4,"run_id":"t_RUN","kind":"text.start","data":{}}
+{"v":1,"seq":5,"run_id":"t_RUN","kind":"text.delta","data":{"content":"A red square."}}
+{"v":1,"seq":6,"run_id":"t_RUN","kind":"text.end","data":{}}
+{"v":1,"seq":7,"run_id":"t_RUN","kind":"error","data":{"message":"output has no form in this wire version: image_out part in wire version 1","kind":"permanent","retryable":false,"codes":["wire_unrepresentable"]}}
+{"v":1,"seq":10,"run_id":"t_RUN","kind":"citation","data":{"citation":{"ordinal":1,"uri":"https://example.com/colors","title":"Colors"}}}
+{"v":1,"seq":11,"run_id":"t_RUN","kind":"error","data":{"message":"output has no form in this wire version: refusal part in wire version 1","kind":"permanent","retryable":false,"codes":["wire_unrepresentable"]}}
+{"v":1,"seq":13,"run_id":"t_RUN","kind":"usage","data":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"latency_ms":0}}
+{"v":1,"seq":14,"run_id":"t_RUN","kind":"done","data":{}}

@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────────────────────────────────────────╮
+│ demo                                                                                   │
+│ Provider: scripted                                                                     │
+│ Tools:    chart                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+you > chart the data
+  ⚙ chart ✓
+    ◆ [image image/png 64x32 · 4.9 KB · bars.png · sha256:7ca5bd879f39…]
+  ▸ thinking (8 words, ctrl+t expands)
+  Here is the chart you asked for.
+  ◆ [image image/png 1024x768 · 120 KB · chart.png · saige-artifact://9f1c9f1c9f1c…]
+  [1] Dataset https://example.com/data
+  [2] Method https://example.com/method
+  ⊘ declined (privacy): I won't share the raw rows.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+> Type a message (/continue resumes, /quit exits)

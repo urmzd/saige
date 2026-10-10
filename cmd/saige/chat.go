@@ -10,7 +10,7 @@ import (
 )
 
 func newChatCmd(ctx context.Context) *cobra.Command {
-	var verbose bool
+	var verbose, noAnimation bool
 	var tmplName, agentRef string
 	var hf harnessFlags
 
@@ -29,7 +29,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 					return reported(out, err)
 				}
 				defer run.cleanup()
-				runner := &tui.Runner{Title: run.bound.Resolved.Name, Verbose: verbose, Template: tmpl, Output: out}
+				runner := &tui.Runner{Title: run.bound.Resolved.Name, Verbose: verbose, Template: tmpl, Output: out, NoAnimation: noAnimation}
 				return agentsdk.Run(ctx, run.bound.NewAgent(), runner)
 			}
 
@@ -60,10 +60,11 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 			agent := agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness))
 
 			runner := &tui.Runner{
-				Title:    cliName,
-				Verbose:  verbose,
-				Template: tmpl,
-				Output:   out,
+				Title:       cliName,
+				Verbose:     verbose,
+				Template:    tmpl,
+				Output:      out,
+				NoAnimation: noAnimation,
 			}
 
 			return agentsdk.Run(ctx, agent, runner)
@@ -71,6 +72,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Use plain-text streaming instead of interactive TUI")
+	cmd.Flags().BoolVar(&noAnimation, "no-animation", false, "Turn off the spinner, fade-in and smooth scrolling (also off with NO_COLOR or SAIGE_REDUCED_MOTION)")
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 	addHarnessFlags(cmd, &hf, toolsReadOnly)
 	cmd.Flags().StringVar(&agentRef, "agent", "", "Chat with an agent definition: NAME or NAME@RANGE (see saige agent list)")

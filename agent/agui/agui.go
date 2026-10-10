@@ -1,8 +1,11 @@
 // Package agui maps an agent's Delta stream to AG-UI protocol events, so an
 // AG-UI client can render a run without knowing this module's wire format.
 //
-// Text, tool calls, tool results and thinking map to their AG-UI events.
-// Every other delta (markers, interrupts, usage, routes, handoffs, sub-agent
+// Text, tool calls, tool results and thinking map to their AG-UI events,
+// keyed by part index. Media the model produced, and media in a tool
+// result, become a CUSTOM event named MediaEventName that carries a link to
+// the media (or, when it has none, its bytes as an attachment); a refusal
+// becomes a CUSTOM event named RefusalEventName. Every other delta (markers, interrupts, usage, routes, handoffs, sub-agent
 // output) becomes a CUSTOM event named CustomEventName whose value is the
 // delta's wire envelope from the agent/types codec, so no information is lost
 // and a client that knows the codec can decode it.
@@ -43,6 +46,37 @@ const (
 
 // CustomEventName names the CUSTOM events that carry a wire envelope.
 const CustomEventName = "saige.delta"
+
+// MediaEventName names the CUSTOM events that carry one media part as a
+// Media value.
+const MediaEventName = "saige.media"
+
+// RefusalEventName names the CUSTOM events that carry a refusal as a
+// Refusal value.
+const RefusalEventName = "saige.refusal"
+
+// Media is the value of a MediaEventName event. URL links to the bytes;
+// Data carries them only when there is no link. Unresolved says why the
+// bytes were not kept.
+type Media struct {
+	Kind       types.PartKind  `json:"kind"`
+	Index      *int            `json:"index,omitempty"`
+	MediaType  types.MediaType `json:"media_type,omitempty"`
+	Filename   string          `json:"filename,omitempty"`
+	Size       int64           `json:"size,omitempty"`
+	Digest     string          `json:"sha256,omitempty"`
+	URL        string          `json:"url,omitempty"`
+	Data       []byte          `json:"data,omitempty"`
+	Transcript string          `json:"transcript,omitempty"`
+	Unresolved string          `json:"unresolved,omitempty"`
+}
+
+// Refusal is the value of a RefusalEventName event.
+type Refusal struct {
+	Index    int    `json:"index"`
+	Text     string `json:"text,omitempty"`
+	Category string `json:"category,omitempty"`
+}
 
 // CodeIncompleteStream is the RUN_ERROR code for a stream that ended
 // without a done or error delta.
@@ -87,17 +121,35 @@ type Mapper struct {
 	// parts maps the index of each open part to its kind and, for a tool
 	// call, its ID.
 	parts map[int]openPart
+	link  func(types.Source) string
 }
 
 type openPart struct {
 	kind types.PartKind
 	id   string
+	// text accumulates a refusal or an audio transcript.
+	text string
+}
+
+// Option configures a Mapper.
+type Option func(*Mapper)
+
+// WithMediaLink sets how a media source becomes the URL of a media event,
+// such as a download route for a saige-artifact:// ref. An empty result
+// falls back to the source's URI, then its ref. Without it, the URI or ref
+// is used as is.
+func WithMediaLink(link func(types.Source) string) Option {
+	return func(m *Mapper) { m.link = link }
 }
 
 // NewMapper returns a Mapper for one run of a thread. Message IDs are
 // derived from runID, so they are stable across a replay of the same run.
-func NewMapper(threadID, runID string) *Mapper {
-	return &Mapper{threadID: threadID, runID: runID}
+func NewMapper(threadID, runID string, opts ...Option) *Mapper {
+	m := &Mapper{threadID: threadID, runID: runID}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
 }
 
 // Start returns the RUN_STARTED event.
@@ -138,11 +190,20 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 			out = m.closeText(out)
 			out = m.closeThinking(out)
 			out = append(out, Event{Type: ToolCallStart, ToolCallID: v.ID, ToolCallName: v.Name, ParentMessageID: m.lastMessage})
+		case types.KindRefusal, types.KindImageOut, types.KindAudioOut, types.KindVideoOut:
+			// Reported whole when the part ends.
 		default:
 			return m.custom(d)
 		}
 	case types.PartDelta:
 		p := m.parts[v.Index]
+		if p.kind == types.KindRefusal || isMediaOut(p.kind) {
+			// Refusal text and transcripts are reported with the part's
+			// end; media bytes are reported by link, never streamed.
+			p.text += v.Refusal + v.Transcript
+			m.parts[v.Index] = p
+			return nil, nil
+		}
 		switch {
 		case v.Text != "":
 			out = m.closeThinking(out)
@@ -173,6 +234,32 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 			out = m.closeThinking(out)
 		case types.KindToolCall:
 			out = append(out, Event{Type: ToolCallEnd, ToolCallID: p.id})
+		case types.KindRefusal:
+			r := Refusal{Index: v.Index, Text: p.text}
+			if rp, ok := v.Part.(types.RefusalPart); ok {
+				r.Text, r.Category = firstNonEmpty(rp.Text, p.text), rp.Category
+			}
+			out = m.closeOpen(out)
+			ev, err := valueEvent(RefusalEventName, r)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, ev)
+		case types.KindImageOut, types.KindAudioOut, types.KindVideoOut:
+			if v.Part == nil {
+				return m.custom(d)
+			}
+			idx := v.Index
+			media := m.media(v.Part)
+			media.Index = &idx
+			if media.Transcript == "" {
+				media.Transcript = p.text
+			}
+			ev, err := valueEvent(MediaEventName, media)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, ev)
 		default:
 			return m.custom(d)
 		}
@@ -182,6 +269,17 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 			content = v.Error
 		}
 		out = append(out, Event{Type: ToolCallResult, MessageID: m.nextID(), ToolCallID: v.ToolCallID, Content: content, Role: roleTool})
+		for _, p := range v.Parts {
+			if !types.IsMedia(p) {
+				continue
+			}
+			ev, err := valueEvent(MediaEventName, m.media(p))
+			if err != nil {
+				return nil, err
+			}
+			ev.ToolCallID = v.ToolCallID
+			out = append(out, ev)
+		}
 	case types.DoneDelta:
 		out = m.closeOpen(out)
 		out = append(out, Event{Type: RunFinished, ThreadID: m.threadID, RunID: m.runID})
@@ -194,6 +292,50 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 		return m.custom(d)
 	}
 	return out, nil
+}
+
+func isMediaOut(k types.PartKind) bool {
+	return k == types.KindImageOut || k == types.KindAudioOut || k == types.KindVideoOut
+}
+
+// media describes a media part for a media event: a link when the source
+// has one, else its bytes.
+func (m *Mapper) media(p types.Part) Media {
+	src, _ := types.SourceOf(p)
+	out := Media{Kind: p.Kind(), MediaType: src.MediaType, Filename: src.Filename, Size: src.Size,
+		Digest: src.Digest, Unresolved: src.Unresolved}
+	if out.Size == 0 {
+		out.Size = int64(len(src.Inline))
+	}
+	if a, ok := p.(types.AudioOutPart); ok {
+		out.Transcript = a.Transcript
+	}
+	if m.link != nil {
+		out.URL = m.link(src)
+	}
+	out.URL = firstNonEmpty(out.URL, src.URI, src.Ref)
+	if out.URL == "" {
+		out.Data = src.Inline
+	}
+	return out
+}
+
+func firstNonEmpty(s ...string) string {
+	for _, v := range s {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// valueEvent returns a CUSTOM event named name whose value is v.
+func valueEvent(name string, v any) (Event, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{Type: Custom, Name: name, Value: raw}, nil
 }
 
 // custom maps a delta with no AG-UI event of its own to a CUSTOM event.

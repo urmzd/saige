@@ -105,6 +105,9 @@ type Session[H any] struct {
 	ID string
 	// Host is the host's state. The session never reads it.
 	Host H
+	// Artifacts holds the media the session's client uploaded and the
+	// media the host externalized from its runs.
+	Artifacts *Artifacts
 
 	mu        sync.Mutex
 	agent     Agent
@@ -258,6 +261,9 @@ type Options struct {
 	IdleTTL time.Duration
 	// Prefix starts every session ID, such as "s_".
 	Prefix string
+	// ArtifactBudget caps the bytes each session's artifacts hold; 0
+	// means DefaultArtifactBudget.
+	ArtifactBudget int64
 }
 
 // Manager holds a host's sessions.
@@ -314,7 +320,7 @@ func (m *Manager[H]) Create(id string, host H, build func() (Agent, error)) (*Se
 		}
 		return nil, fmt.Errorf("session %s already exists", id)
 	}
-	s := &Session[H]{ID: id, Host: host, agent: a, idleSince: time.Now()}
+	s := &Session[H]{ID: id, Host: host, Artifacts: NewArtifacts(m.opts.ArtifactBudget), agent: a, idleSince: time.Now()}
 	m.sessions[id] = s
 	return s, nil
 }
