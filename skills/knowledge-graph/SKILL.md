@@ -22,7 +22,7 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
+client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "nomic-embed-text")
 graph, _ := knowledge.NewGraph(ctx,
     knowledge.WithPostgres(pool),
     knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),

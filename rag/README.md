@@ -53,8 +53,8 @@ pipe.Ingest(ctx, &types.RawDocument{
     Data:      pdfBytes,
 })
 
-result, _ := pipe.Search(ctx, "attention mechanism", types.WithLimit(5))
-fmt.Println(result.AssembledContext.Prompt) // context with citations
+result, _ := pipe.Search(ctx, "attention mechanism", types.WithLimit(5), types.WithContextAssembly(4096))
+fmt.Println(result.Context.Prompt) // context with citations
 ```
 
 See [`examples/rag/arxiv/`](../examples/rag/arxiv/) for a full pipeline over arXiv papers.
