@@ -195,7 +195,7 @@ func TestNotifierCloseAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if err := n.Close(ctx); err != nil {
+	if err := n.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := <-ch; ok {
@@ -207,7 +207,7 @@ func TestNotifierCloseAndCancel(t *testing.T) {
 	if _, _, err := n.Subscribe(context.Background(), "c"); !errors.Is(err, types.ErrNotifierClosed) {
 		t.Fatalf("Subscribe after Close = %v", err)
 	}
-	_ = n.Close(ctx)
+	_ = n.Close(context.Background())
 }
 
 // Subscribe waits for the listener; a cancelled context ends the wait.
