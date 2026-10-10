@@ -22,6 +22,7 @@ const (
 	contentTypeRoute      = "route"
 	contentTypeApproval   = "approval"
 	contentTypeGuardrail  = "guardrail"
+	contentTypeCompaction = "compaction"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -185,6 +186,8 @@ func systemContentType(c types.SystemContent) string {
 		return contentTypeApproval
 	case types.GuardrailContent:
 		return contentTypeGuardrail
+	case types.CompactionContent:
+		return contentTypeCompaction
 	default:
 		return contentTypeUnknown
 	}
@@ -256,6 +259,9 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeGuardrail:
 		var c types.GuardrailContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeCompaction:
+		var c types.CompactionContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)

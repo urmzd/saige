@@ -76,7 +76,7 @@ func (a *Agent) validateDurableConfiguration() error {
 	if runner, ok := asPrefixRunner(a.cfg.StepRunner); ok && runner.SharedBudgetOnly() && a.cfg.Budget != runner.parentBudget {
 		return errors.New("durable child budgets require separate receipt ownership; use the shared run budget")
 	}
-	if _, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok && a.cfg.CompactCfg != nil && a.cfg.CompactCfg.ToCompactor() != nil {
+	if _, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok && a.cfg.CompactCfg.Enabled() {
 		return errors.New("durable approval replay requires compaction checkpoints; automatic compaction is unsupported")
 	}
 	return nil

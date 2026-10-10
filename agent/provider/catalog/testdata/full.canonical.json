@@ -151,6 +151,22 @@
       "tool_choice": "auto",
       "output_mode": "auto",
       "llm_timeout": "2m0s",
+      "compaction": {
+        "strategy": "chain",
+        "max_input_tokens": 100000,
+        "chain": [
+          {
+            "strategy": "clear_tool_results",
+            "keep_tool_results": 3
+          },
+          {
+            "strategy": "relevant_plus_summary",
+            "keep_turns": 4,
+            "select_k": 3,
+            "summary_model": "claude-haiku-5-5"
+          }
+        ]
+      },
       "retry": {
         "max_attempts": 3,
         "base_delay": "500ms",

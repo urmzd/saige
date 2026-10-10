@@ -126,7 +126,7 @@ A subagent gets its config from `inheritConfig` in `agent/subagent.go`. `SubAgen
 | `OnMaxIter` | `MaxIterForceFinal`, whatever the parent's. Override it in `Options` | The entry agent's |
 | `ForceFinalPrompt`, `MaxConsecutiveErrors`, `MaxRepeatIterations` | Inherited | The entry agent's |
 | `InterruptTTL`, `InterruptPolicy` | Inherited | The entry agent's |
-| `CompactCfg` | Inherited | Not usable: a handoff group rejects compaction (see below) |
+| `CompactCfg`, `CompactProvider` | Inherited, unless `Options` set one | Only a disabled policy: a handoff group rejects every active strategy (see below) |
 | `Budget` | Shared by pointer, not copied. Set `WithBudget` in `Options` to cap one child separately | The entry agent's |
 | `Workspace` | A private scratch over a read-only view of the parent's. See [private scratch](#private-scratch) | The entry agent's |
 | `StepRunner` | A durable parent runner is shared with step names prefixed `sub-<toolCallID>-`. An inline parent leaves the child inline | The entry agent's |
@@ -272,17 +272,17 @@ For tracing spans across parents and children, see [observability](observability
 
 Do not wrap handoff, clarification, or sub-agent tools with `Spill`; the loop recognizes them by type. A spilled tool inside a child spills into the child's private scratch, even when it was built for the parent's workspace, and the parent reads the spill through `SubAgentResult.Scratch`. A child can still read artifacts the parent stored, so pass a `saige-artifact://` URI in the task instead of the content.
 
-Compaction (`agent/overflow.go`, `agent/types/compactor.go`):
+Compaction (`agent/overflow.go`, `agent/types/compactor.go`, `agent/types/compact_strategy.go`; full guide: [context management](context-management.md)):
 
 | Trigger | When it fires |
 | --- | --- |
-| No `MaxInputTokens` | The strategy's compactor decides from the history: `summarize` past `Threshold` messages, keeping `KeepLast` (default 4); `sliding_window` past `WindowSize`; `clear_tool_results` on every turn, keeping `KeepToolResults` (default 3) |
-| `MaxInputTokens` set | Before a turn whose input exceeds it. Input is the larger of the last reported prompt tokens and the tokenizer's estimate. `summarize` and an empty strategy summarize the older half of the branch. A turn is compacted again while it is still over and the last compaction shrank it, up to 5 times |
+| No `MaxInputTokens` | The strategy's own rule: `keep_recent` past `KeepTurns` turns, `summary` and `relevant_plus_summary` past `Threshold` messages, `summarize` past `Threshold` keeping `KeepLast` (default 4), `sliding_window` past `WindowSize`, `clear_tool_results` past `KeepToolResults` results (default 3) |
+| `MaxInputTokens` set | Before a turn whose input exceeds it. Input is the larger of the last reported prompt tokens and the tokenizer's estimate. `summarize` and an empty strategy summarize the older half of the branch; a `chain` stops once the history fits `TargetTokens` (default `MaxInputTokens`). A turn is compacted again while it is still over and the last compaction shrank it, up to 5 times |
 | Context-length error | The branch is compacted and the turn retried, up to 3 times. It needs a `CompactCfg` whose strategy is not `none`. Otherwise, or after 3 attempts, the run returns the first context-length error |
 
-Compaction writes a new branch and makes it active. It does not count as an iteration.
+Compaction writes a new branch, makes it active, records a `CompactionContent` on it and streams a `CompactionDelta`. It does not count as an iteration.
 
-**Handoff groups reject compaction** (D-11 in `DESIGN_DECISIONS.md`). A shared summary would erase ownership boundaries. Any `CompactCfg` on a handoff group, including `Strategy: types.CompactNone`, fails the run before its first provider call with `handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported`. A context-length error in a handoff group is returned at once. A subagent inherits the parent's `CompactCfg` and compacts its own tree, except under a durable approval runner; see [durable execution](durable-execution.md).
+**Handoff groups reject active compaction** (D-11 in `DESIGN_DECISIONS.md`). A shared summary would erase ownership boundaries. A handoff group with an active strategy, including an empty one, fails the run before its first provider call with `handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported`. A disabled policy (`Strategy: types.CompactNone` or `agent.WithoutCompaction()`) is accepted. A context-length error in a handoff group is returned at once. A subagent inherits the parent's `CompactCfg` unless its `Options` set one, and compacts its own tree, so an orchestrator with compaction off can delegate to children that compact; under a durable approval runner only a disabled policy is accepted. See [durable execution](durable-execution.md).
 
 Output truncation (`agent/forcing.go`, `agent/submit.go`):
 

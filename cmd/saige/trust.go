@@ -75,7 +75,15 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.PresetSpec](): {
 		"description": true, "extends": true, "options": true, "tool_choice": true, "output_mode": true,
 		"llm_timeout": true, "retry": true, "routing": true, "require_declared": true, "chain": true,
-		"dials": false,
+		"dials": false, "compaction": false,
+	},
+	// Unreachable while compaction itself is refused: a repository layer
+	// must not choose what the agent forgets or which model it pays to
+	// summarize with.
+	reflect.TypeFor[catalog.CompactionSpec](): {
+		"strategy": false, "max_input_tokens": false, "target_tokens": false, "keep_turns": false,
+		"select_k": false, "threshold": false, "keep_last": false, "window_size": false,
+		"keep_tool_results": false, "exclude_tools": false, "summary_model": false, "chain": false,
 	},
 	reflect.TypeFor[catalog.RetrySpec](): {
 		"max_attempts": true, "base_delay": true, "max_delay": true, "multiplier": true,

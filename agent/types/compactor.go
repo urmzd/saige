@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"slices"
 	"strings"
 )
 
@@ -22,6 +23,19 @@ const (
 	// CompactClearToolResults replaces older tool results with a short stub.
 	// It needs no model call.
 	CompactClearToolResults CompactStrategy = "clear_tool_results"
+	// CompactKeepRecent keeps the system prompt, the original task and the
+	// last KeepTurns turns, and drops the rest. It needs no model call.
+	CompactKeepRecent CompactStrategy = "keep_recent"
+	// CompactSummary keeps the system prompt, the original task and the
+	// last KeepTurns turns, and replaces the rest with a system-role summary.
+	CompactSummary CompactStrategy = "summary"
+	// CompactRelevantPlusSummary keeps the last KeepTurns turns and the
+	// SelectK older spans most relevant to the latest user turn by BM25,
+	// and summarizes the rest.
+	CompactRelevantPlusSummary CompactStrategy = "relevant_plus_summary"
+	// CompactChain applies the strategies in Chain in order until the
+	// history fits TargetTokens.
+	CompactChain CompactStrategy = "chain"
 )
 
 // CompactConfig is a serialisable description of a compaction strategy.
@@ -46,6 +60,69 @@ type CompactConfig struct {
 	KeepToolResults int
 	// ExcludeTools names tools whose results clear_tool_results never clears.
 	ExcludeTools []string
+
+	// KeepTurns is how many recent turns keep_recent, summary and
+	// relevant_plus_summary keep (default 4). A turn is an assistant message
+	// with the tool results that answer it and the user messages before it.
+	KeepTurns int `json:",omitempty"`
+	// SelectK is how many older spans relevant_plus_summary keeps verbatim
+	// (default 3).
+	SelectK int `json:",omitempty"`
+	// SummaryModel names the model that writes summaries, switched on the
+	// active provider (for example a cheaper model of the same vendor, or
+	// a catalog preset served by a router). Empty uses the active model.
+	// AgentConfig.CompactProvider, when set, writes them instead.
+	SummaryModel string `json:",omitempty"`
+	// Chain lists the strategies a chain applies, in order.
+	Chain []CompactConfig `json:",omitempty"`
+	// TargetTokens is the input size a chain stops at. Zero uses
+	// MaxInputTokens; with neither, a chain applies every step.
+	TargetTokens int `json:",omitempty"`
+}
+
+// Clone returns a deep copy of cc.
+func (cc CompactConfig) Clone() CompactConfig {
+	out := cc
+	out.ExcludeTools = slices.Clone(cc.ExcludeTools)
+	if cc.Chain != nil {
+		out.Chain = make([]CompactConfig, len(cc.Chain))
+		for i, step := range cc.Chain {
+			out.Chain[i] = step.Clone()
+		}
+	}
+	return out
+}
+
+// Enabled reports whether cc compacts at all. A nil config and the none
+// strategy never compact.
+func (cc *CompactConfig) Enabled() bool {
+	return cc != nil && cc.Strategy != CompactNone
+}
+
+// ToStrategy converts the config into a CompactionStrategy. None, and an
+// empty strategy, return nil: the agent summarizes for an empty strategy
+// through the tree under input pressure.
+func (cc CompactConfig) ToStrategy() CompactionStrategy {
+	switch cc.Strategy {
+	case CompactKeepRecent:
+		return NewKeepRecent(cc.KeepTurns)
+	case CompactSummary:
+		return &Summary{KeepTurns: cc.KeepTurns, Threshold: cc.Threshold}
+	case CompactRelevantPlusSummary:
+		return &RelevantPlusSummary{KeepTurns: cc.KeepTurns, K: cc.SelectK, Threshold: cc.Threshold}
+	case CompactChain:
+		var chain Chain
+		for _, step := range cc.Chain {
+			if s := step.ToStrategy(); s != nil {
+				chain = append(chain, s)
+			}
+		}
+		return chain
+	case CompactSlidingWindow, CompactSummarize, CompactClearToolResults:
+		return AsStrategy(cc.ToCompactor())
+	default:
+		return nil
+	}
 }
 
 // ToCompactor converts the config into a Compactor implementation.
@@ -57,6 +134,11 @@ func (cc CompactConfig) ToCompactor() Compactor {
 		return NewSummarizeCompactor(cc.Threshold, cc.KeepLast)
 	case CompactClearToolResults:
 		return NewClearToolResultsCompactor(cc.KeepToolResults, cc.ExcludeTools...)
+	case CompactKeepRecent, CompactSummary, CompactRelevantPlusSummary, CompactChain:
+		if s, ok := cc.ToStrategy().(Compactor); ok {
+			return s
+		}
+		return NoopCompactor{}
 	default:
 		return NoopCompactor{}
 	}
@@ -84,8 +166,8 @@ func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, 
 	}
 	// Keep first (system) + last N, but don't split a tool-result from its tool-call.
 	cut := len(messages) - c.WindowSize
-	if cut > 0 && cut < len(messages) && hasToolResult(messages[cut]) {
-		cut-- // include the preceding assistant message with the tool call
+	for cut > 1 && hasToolResult(messages[cut]) {
+		cut-- // include the assistant message with the tool call
 	}
 	if cut <= 0 {
 		return messages, nil
@@ -146,9 +228,15 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 		return messages, nil
 	}
 
-	keepLast := min(c.KeepLast, len(messages)-1)
+	// The kept suffix never starts with a tool result: it moves back to
+	// include the call the result answers.
+	keepFrom := len(messages) - min(c.KeepLast, len(messages)-1)
+	for keepFrom > 1 && hasToolResult(messages[keepFrom]) {
+		keepFrom--
+	}
+	keepLast := len(messages) - keepFrom
 
-	toSummarize := messages[1 : len(messages)-keepLast]
+	toSummarize := messages[1:keepFrom]
 	// The summary itself costs a user+assistant pair, so summarizing fewer
 	// than 3 messages cannot shrink history: skip before paying an LLM call.
 	if len(toSummarize) < 3 {

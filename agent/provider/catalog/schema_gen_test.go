@@ -72,6 +72,8 @@ func enums() map[string][]string {
 		"surface":      {types.SurfaceChat, types.SurfaceResponses},
 		"depth_change": {"", types.DepthChangePerRequest},
 		"tool_mode":    {"auto", "none", "required", "named"},
+		"compaction": {"none", "sliding_window", "summarize", "clear_tool_results",
+			"keep_recent", "summary", "relevant_plus_summary", "chain"},
 	}
 }
 
@@ -139,6 +141,8 @@ func (g *schemaGen) field(owner reflect.Type, name string, t reflect.Type) map[s
 		return array(enum("unset"))
 	case owner == reflect.TypeFor[PresetSpec]() && name == "output_mode":
 		return enum("output_mode")
+	case owner == reflect.TypeFor[CompactionSpec]() && name == "strategy":
+		return enum("compaction")
 	case owner == reflect.TypeFor[PresetSpec]() && name == "tool_choice":
 		return map[string]any{"type": "string", "pattern": "^(auto|none|required|named:.+)$"}
 	case owner == reflect.TypeFor[OptionsSpec]() && name == "tool_choice":

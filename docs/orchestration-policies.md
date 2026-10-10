@@ -190,7 +190,7 @@ Independent processes, durable ownership transfer, and remote handoff workers ar
 
 The transfer limit stops repeated handoffs. The iteration limit also applies.
 Multiple handoff calls in one turn are ambiguous. Saige rejects that tool batch before execution.
-Automatic compaction is rejected for handoff groups until compaction has per-owner checkpoints.
+Automatic compaction is rejected for handoff groups until compaction has per-owner checkpoints. A disabled policy (`CompactNone`) is accepted.
 A shared summary would lose ownership boundaries and could expose another owner's context.
 
 ## Routing and model configurations
@@ -540,16 +540,18 @@ a := agent.NewAgent(agent.AgentConfig{
 | `MaxInputTokens` with `summarize` | Summarizes the older half of the branch onto a new branch |
 | `MaxInputTokens` with `clear_tool_results` | Replaces all but the newest results with a stub, with no model call |
 | `MaxInputTokens` with `sliding_window` | Keeps the system prompt and the last `WindowSize` messages |
+| `MaxInputTokens` with `keep_recent`, `summary`, `relevant_plus_summary` or `chain` | See [context management](context-management.md#strategies) |
 | `AgentConfig.Tokenizer` | Measures input before the first usage report. The default estimates four characters per token |
 
 Without `MaxInputTokens`, `clear_tool_results` runs on every turn and copies the history to a new branch each time it clears a result. Set a token limit for long runs.
 Input size is the larger of the last reported prompt tokens and the estimate of the current history.
 A turn is compacted at most once before it is sent. Compaction does not count as an iteration.
-The summary call uses the active provider. It is reserved on the budget before it is sent, like a turn, and its usage is streamed as a `UsageDelta`.
+The summary call uses `CompactProvider`, else the active provider switched to `SummaryModel`, else the active provider. It is reserved on the budget before it is sent, like a turn, and its usage is streamed as a `UsageDelta`.
 A summary that would separate a tool result from its call is skipped before any model call. The `none` strategy never summarizes.
 A context-length error from the provider compacts the branch and retries, up to three times.
 Recovery needs a `CompactCfg`. Without one, or after three attempts, the run returns the first context-length error.
 Handoff groups reject compaction, so they return the error at once.
+Strategies that keep recent turns, select relevant older ones, summarize with a cheaper model or chain several steps are covered in [context management](context-management.md).
 
 A turn that stops at the output token limit is committed and reported with `TruncatedDelta`, which names the node and the finish reason.
 Its tool calls never run. A truncated turn with tool calls fails the run with `ResponseTruncatedError`.

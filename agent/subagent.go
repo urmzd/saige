@@ -109,7 +109,7 @@ type SubAgentDef struct {
 // parent's config. The split is deliberate:
 //
 //   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
-//     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolGate,
+//     MaxParallelTools, CompactCfg, CompactProvider, Resolvers, Extractors, ToolGate,
 //     ToolPolicy, ApprovalPolicy, Deps, ToolContext, Tokenizer, ToolRedactor,
 //     OnMaxIter, ForceFinalPrompt, MaxConsecutiveErrors, MaxRepeatIterations,
 //     InterruptTTL, InterruptPolicy, Dials and DialPolicy. These describe how
@@ -174,6 +174,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		ToolTimeout:      parent.ToolTimeout,
 		MaxParallelTools: parent.MaxParallelTools,
 		CompactCfg:       parent.CompactCfg,
+		CompactProvider:  parent.CompactProvider,
 		Resolvers:        parent.Resolvers,
 		Extractors:       parent.Extractors,
 		ToolGate:         parent.ToolGate,

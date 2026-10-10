@@ -58,6 +58,11 @@ func wireRoundTripCases() []Delta {
 		PartialJSONDelta{JSON: json.RawMessage(`{"title":"dra"}`)},
 		GuardrailDelta{Guardrail: "pii", Phase: GuardrailPhaseOutput, Action: GuardrailActionRewrite, Reason: "email", Text: "[REDACTED:EMAIL]"},
 		GuardrailDelta{Guardrail: "policy", Phase: GuardrailPhaseInput, Action: GuardrailActionBlock, Reason: "off topic", Canceled: true},
+		CompactionDelta{Branch: "compact-1", NodeID: "n9", Record: CompactionContent{
+			Strategy: "chain(clear_tool_results,summary)", Steps: []string{"summary"}, Trigger: CompactionTriggerInputPressure,
+			TokensBefore: 900, TokensAfter: 300, FromBranch: "main", Kept: []NodeID{"a"}, Selected: []NodeID{"b"},
+			Cleared: []NodeID{"c"}, Summarized: []NodeID{"d"}, Dropped: []NodeID{"e"}, SummaryNode: "s",
+		}},
 	}
 }
 

@@ -282,7 +282,7 @@ func (RouteContent) isAssistantContent() {}
 func IsMetadataContent(c any) bool {
 	switch c.(type) {
 	case ConfigContent, HandoffContent, FeedbackContent, SteerContent, TruncationContent, RouteContent, ApprovalContent,
-		GuardrailContent:
+		GuardrailContent, CompactionContent:
 		return true
 	default:
 		return false

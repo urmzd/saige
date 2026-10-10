@@ -420,6 +420,10 @@ func (b *Bundle) Defaults() types.PresetDefaults {
 		tc := *rp.ToolChoice
 		d.ToolChoice = &tc
 	}
+	if rp.Compaction != nil {
+		cc := rp.Compaction.Clone()
+		d.Compaction = &cc
+	}
 	return d
 }
 

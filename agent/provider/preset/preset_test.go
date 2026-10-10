@@ -346,3 +346,17 @@ func TestSplitArmsArePresets(t *testing.T) {
 		t.Fatalf("variant route %+v", last)
 	}
 }
+
+func TestDefaultsCarryCompaction(t *testing.T) {
+	cat := overlay(t, `{"version":1,"presets":{"p":{"compaction":{"strategy":"keep_recent","keep_turns":6},
+		"chain":[{"provider":"openai","model":"gpt-4.1"}]}}}`)
+	b, err := preset.Build(context.Background(), cat, "p", nil, preset.Options{Getenv: everyone, Factory: newRecorder().factory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Close() }()
+	cc := b.Defaults().Compaction
+	if cc == nil || cc.Strategy != types.CompactKeepRecent || cc.KeepTurns != 6 {
+		t.Fatalf("compaction = %+v", cc)
+	}
+}

@@ -233,6 +233,8 @@ type PresetSpec struct {
 	OutputMode string `json:"output_mode,omitempty"`
 	// LLMTimeout bounds one provider call, as a Go duration string.
 	LLMTimeout Duration `json:"llm_timeout,omitzero"`
+	// Compaction is the agent's default compaction strategy.
+	Compaction *CompactionSpec `json:"compaction,omitempty"`
 	// Retry is the default retry policy of every entry.
 	Retry   *RetrySpec   `json:"retry,omitempty"`
 	Routing *RoutingSpec `json:"routing,omitempty"`
@@ -240,6 +242,38 @@ type PresetSpec struct {
 	RequireDeclared *bool `json:"require_declared,omitempty"`
 	// Chain lists the entries in failover order. Entry 0 is the primary.
 	Chain []EntrySpec `json:"chain,omitempty"`
+}
+
+// CompactionSpec is the JSON form of types.CompactConfig.
+type CompactionSpec struct {
+	// Strategy is none, sliding_window, summarize, clear_tool_results,
+	// keep_recent, summary, relevant_plus_summary or chain.
+	Strategy        string           `json:"strategy"`
+	MaxInputTokens  int              `json:"max_input_tokens,omitempty"`
+	TargetTokens    int              `json:"target_tokens,omitempty"`
+	KeepTurns       int              `json:"keep_turns,omitempty"`
+	SelectK         int              `json:"select_k,omitempty"`
+	Threshold       int              `json:"threshold,omitempty"`
+	KeepLast        int              `json:"keep_last,omitempty"`
+	WindowSize      int              `json:"window_size,omitempty"`
+	KeepToolResults int              `json:"keep_tool_results,omitempty"`
+	ExcludeTools    []string         `json:"exclude_tools,omitempty"`
+	SummaryModel    string           `json:"summary_model,omitempty"`
+	Chain           []CompactionSpec `json:"chain,omitempty"`
+}
+
+// Config converts the spec to a types.CompactConfig.
+func (s CompactionSpec) Config() types.CompactConfig {
+	cc := types.CompactConfig{
+		Strategy: types.CompactStrategy(s.Strategy), MaxInputTokens: s.MaxInputTokens, TargetTokens: s.TargetTokens,
+		KeepTurns: s.KeepTurns, SelectK: s.SelectK, Threshold: s.Threshold, KeepLast: s.KeepLast,
+		WindowSize: s.WindowSize, KeepToolResults: s.KeepToolResults, SummaryModel: s.SummaryModel,
+		ExcludeTools: append([]string(nil), s.ExcludeTools...),
+	}
+	for _, step := range s.Chain {
+		cc.Chain = append(cc.Chain, step.Config())
+	}
+	return cc
 }
 
 // RetrySpec is the JSON form of the retry decorator's configuration.

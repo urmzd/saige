@@ -316,6 +316,13 @@ Data-driven context management:
 | `CompactNone` | No compaction |
 | `CompactSlidingWindow` | Keep system prompt + last N messages |
 | `CompactSummarize` | Summarize older messages via the provider |
+| `CompactClearToolResults` | Replace older tool results with a stub |
+| `CompactKeepRecent` | Keep the system prompt, the task and the last N turns |
+| `CompactSummary` | Keep the last N turns and a system-role summary of the rest |
+| `CompactRelevantPlusSummary` | Also keep the K older spans most relevant to the latest user turn (BM25) |
+| `CompactChain` | Apply strategies in order until the history fits `TargetTokens` |
+
+Every compaction streams a `CompactionDelta` and records a `CompactionContent` on its new branch. See [context management](../docs/context-management.md).
 
 ## Conversation Tree
 
