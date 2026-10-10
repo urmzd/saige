@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -85,6 +86,9 @@ var (
 	// ErrNoInterruptRouter is returned when a run needs a human decision but
 	// nothing can deliver it. It fails the run immediately instead of waiting.
 	ErrNoInterruptRouter = errors.New("interrupt needs a decision but no router is configured")
+	// ErrInterruptPayload is returned when an interrupt's payload or a
+	// reply's answer does not have the shape its kind defines.
+	ErrInterruptPayload = errors.New("interrupt payload does not match its kind")
 )
 
 // InterruptKind says what the run is waiting for.
@@ -122,9 +126,12 @@ type Interrupt struct {
 	RunID string
 	// Path lists tool call IDs from the root run down to the run that raised
 	// the interrupt. It is empty for the root run.
-	Path      []string
-	Kind      InterruptKind
-	Payload   json.RawMessage // kind-specific detail, e.g. a question or the tool arguments
+	Path []string
+	Kind InterruptKind
+	// Payload is the kind-specific detail: a ClarificationPayload for a
+	// clarification, the ToolCallPart for an approval a durable runner
+	// posts. Read it with Clarification, ToolCall or InterruptPayload.
+	Payload   json.RawMessage
 	Markers   []Marker
 	CreatedAt time.Time
 	ExpiresAt time.Time // zero means no expiry
@@ -142,7 +149,87 @@ type InterruptReply struct {
 	ID             string
 	IdempotencyKey string
 	Decision       ApprovalDecision // used by approval interrupts
-	Answer         json.RawMessage  // used by clarification and input interrupts
+	// Answer is used by clarification and input interrupts: a JSON string
+	// for a clarification. Build it with Answer; read it with ReplyAnswer.
+	Answer json.RawMessage
+}
+
+// ClarificationPayload is the Payload of an InterruptClarification
+// interrupt: the question the model asked.
+type ClarificationPayload struct {
+	Question string `json:"question"`
+}
+
+// InterruptPayload decodes i.Payload as a T. An empty payload, or one that
+// does not decode, is an error wrapping ErrInterruptPayload.
+func InterruptPayload[T any](i Interrupt) (T, error) {
+	var v T
+	if len(i.Payload) == 0 {
+		return v, fmt.Errorf("%w: interrupt %s has no payload", ErrInterruptPayload, i.ID)
+	}
+	if err := json.Unmarshal(i.Payload, &v); err != nil {
+		return v, fmt.Errorf("%w: interrupt %s: %w", ErrInterruptPayload, i.ID, err)
+	}
+	return v, nil
+}
+
+// Clarification returns the question of an InterruptClarification
+// interrupt. Another kind is an error wrapping ErrInterruptPayload.
+func (i Interrupt) Clarification() (ClarificationPayload, error) {
+	if i.Kind != InterruptClarification {
+		return ClarificationPayload{}, fmt.Errorf("%w: interrupt %s is %q, not %q", ErrInterruptPayload, i.ID, i.Kind, InterruptClarification)
+	}
+	return InterruptPayload[ClarificationPayload](i)
+}
+
+// ToolCall returns the tool call an approval or budget interrupt asks
+// about, as a durable runner records it in the payload. Another kind, or an
+// interrupt without the call, is an error wrapping ErrInterruptPayload.
+func (i Interrupt) ToolCall() (ToolCallPart, error) {
+	if i.Kind != InterruptApproval && i.Kind != InterruptBudget {
+		return ToolCallPart{}, fmt.Errorf("%w: interrupt %s is %q, not an approval", ErrInterruptPayload, i.ID, i.Kind)
+	}
+	return InterruptPayload[ToolCallPart](i)
+}
+
+// ReplyAnswer decodes r.Answer as a T: a string for a clarification. An
+// empty answer, or one that does not decode, is an error wrapping
+// ErrInterruptPayload.
+func ReplyAnswer[T any](r InterruptReply) (T, error) {
+	var v T
+	if len(r.Answer) == 0 {
+		return v, fmt.Errorf("%w: reply to %s has no answer", ErrInterruptPayload, r.ID)
+	}
+	if err := json.Unmarshal(r.Answer, &v); err != nil {
+		return v, fmt.Errorf("%w: reply to %s: %w", ErrInterruptPayload, r.ID, err)
+	}
+	return v, nil
+}
+
+// Answer returns a reply to interrupt id carrying answer as JSON, such as
+// the text that answers a clarification.
+func Answer(id string, answer any) (InterruptReply, error) {
+	raw, err := json.Marshal(answer)
+	if err != nil {
+		return InterruptReply{}, fmt.Errorf("%w: %w", ErrInterruptPayload, err)
+	}
+	return InterruptReply{ID: id, Answer: raw}, nil
+}
+
+// ModifiedArgsAs decodes the arguments an approver substituted into a T.
+// ok is false when the decision kept the model's arguments.
+func ModifiedArgsAs[T any](d ApprovalDecision) (v T, ok bool, err error) {
+	if d.ModifiedArgs == nil {
+		return v, false, nil
+	}
+	raw, err := json.Marshal(d.ModifiedArgs)
+	if err != nil {
+		return v, true, err
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return v, true, fmt.Errorf("%w: modified arguments: %w", ErrInterruptPayload, err)
+	}
+	return v, true, nil
 }
 
 // InterruptRouter delivers interrupts to whoever can answer them and routes

@@ -432,6 +432,7 @@ var wireSentinels = []wireSentinel{
 	{"wire_unrepresentable", ErrWireUnrepresentable},
 	{"wire_inline_too_large", ErrWireInlineTooLarge},
 	{"invalid_config", ErrInvalidConfig},
+	{"interrupt_payload", ErrInterruptPayload},
 	// rank cannot import this package, so its sentinel is listed here.
 	{"selector.rank.empty_query", rank.ErrEmptyQuery},
 	{"batch_ambiguous", ErrBatchAmbiguous},

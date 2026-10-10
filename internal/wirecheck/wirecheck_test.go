@@ -159,6 +159,7 @@ func sentinels() []sentinel {
 		{"agent/types", "ErrGuardrailTripped", types.ErrGuardrailTripped},
 		{"agent/types", "ErrHookAborted", types.ErrHookAborted},
 		{"agent/types", "ErrInterruptExpired", types.ErrInterruptExpired},
+		{"agent/types", "ErrInterruptPayload", types.ErrInterruptPayload},
 		{"agent/types", "ErrInterruptNotFound", types.ErrInterruptNotFound},
 		{"agent/types", "ErrInvalidChannel", types.ErrInvalidChannel},
 		{"agent/types", "ErrInvalidConfig", types.ErrInvalidConfig},
