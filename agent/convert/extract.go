@@ -2,14 +2,11 @@ package convert
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/rag/extractor"
-	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
 // extract runs a types.Extractor: a document (or any media type it is
@@ -88,45 +85,9 @@ func Documents() types.Converter {
 	return ExtractWith("documents", "1", DocumentExtractor(), DocumentMedia...)
 }
 
-// DocumentExtractor is the types.Extractor behind Documents.
+// DocumentExtractor is the types.Extractor behind Documents: the RAG
+// extractor registry (rag/extractor.Auto) as a part extractor, so ingestion
+// and conversion read documents the same way.
 func DocumentExtractor() types.Extractor {
-	auto := extractor.NewAuto()
-	return types.ExtractorFunc(func(ctx context.Context, data []byte, mt types.MediaType) ([]types.UserPart, error) {
-		doc, err := auto.Extract(ctx, &ragtypes.RawDocument{MIMEType: string(baseType(mt)), Data: data})
-		if err != nil {
-			return nil, err
-		}
-		text := documentText(doc)
-		if strings.TrimSpace(text) == "" {
-			return nil, errors.New("no text could be extracted")
-		}
-		return []types.UserPart{types.TextPart{Text: text}}, nil
-	})
-}
-
-func documentText(doc *ragtypes.Document) string {
-	var b strings.Builder
-	if doc.Title != "" {
-		fmt.Fprintf(&b, "# %s\n", doc.Title)
-	}
-	for _, s := range doc.Sections {
-		var body []string
-		for _, v := range s.Variants {
-			if v.Text != "" {
-				body = append(body, v.Text)
-			}
-		}
-		if len(body) == 0 {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		if s.Heading != "" {
-			fmt.Fprintf(&b, "## %s\n", s.Heading)
-		}
-		b.WriteString(strings.Join(body, "\n"))
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String())
+	return extractor.NewAuto().PartExtractor()
 }

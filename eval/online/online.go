@@ -30,6 +30,7 @@ import (
 	"time"
 
 	agenteval "github.com/urmzd/saige/agent/eval"
+	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 )
 
@@ -68,10 +69,23 @@ type Ref struct {
 type Record struct {
 	Ref        Ref       `json:"ref"`
 	FinishedAt time.Time `json:"finished_at"`
-	// Input is the user message that started the run; Output is the
-	// assistant text that ended it.
+	// Input is the text of the user message that started the run; Output
+	// is the assistant text that ended it.
 	Input  string `json:"input"`
 	Output string `json:"output"`
+	// InputParts are the text and media parts of the user message that
+	// started the run. Media is kept by locator (a workspace ref or uri),
+	// never by bytes.
+	InputParts []types.UserPart `json:"-"`
+	// Parts are the content parts of the assistant message that ended the
+	// run: text, thinking, citations, refusal and media output.
+	Parts []types.AssistantPart `json:"-"`
+	// Conversions lists how the run's media reached its models, from the
+	// routes recorded on its turns.
+	Conversions []types.ConversionDecision `json:"conversions,omitempty"`
+	// Citations are the sources the run's tools cited, when the record was
+	// built from a collected stream.
+	Citations []types.Citation `json:"citations,omitempty"`
 	// Model and Preset name the configuration of the run's last provider
 	// call, empty when no route was recorded.
 	Model  string `json:"model,omitempty"`
@@ -100,9 +114,12 @@ func (r Record) Tools() []string {
 }
 
 // Observation converts the record to an [eval.Observation] that the
-// agent/eval scorers can read: the tool calls and turn count are set under
-// their annotation keys, Input and Output are JSON strings, and the labels
-// carry the source, conversation, node, model, preset, and error flag.
+// agent/eval scorers can read: the tool calls, turn count, final parts,
+// conversions and citations are set under their annotation keys, Output is
+// a JSON string, and the labels carry the source, conversation, node,
+// model, preset, and error flag. Input is a JSON string, or, when the input
+// carries media, the parts form of [eval.DecodeInput] with the media
+// referenced by locator.
 func (r Record) Observation() (eval.Observation, error) {
 	labels := eval.Labels{}
 	maps.Copy(labels, r.Labels)
@@ -118,7 +135,7 @@ func (r Record) Observation() (eval.Observation, error) {
 	}
 	obs := eval.Observation{ID: r.Ref.Node, Labels: labels, Timing: r.Timing}
 	var err error
-	if obs.Input, err = json.Marshal(r.Input); err != nil {
+	if obs.Input, err = r.encodeInput(); err != nil {
 		return obs, err
 	}
 	if obs.Output, err = json.Marshal(r.Output); err != nil {
@@ -140,7 +157,35 @@ func (r Record) Observation() (eval.Observation, error) {
 		}
 		obs.Annotations[key] = raw
 	}
+	if r.Parts != nil {
+		if err := agenteval.AnnotateParts(&obs, r.Parts); err != nil {
+			return obs, err
+		}
+	}
+	optional := map[string]any{}
+	if len(r.Conversions) > 0 {
+		optional[agenteval.AnnotationConversions] = r.Conversions
+	}
+	if len(r.Citations) > 0 {
+		optional[agenteval.AnnotationCitations] = r.Citations
+	}
+	for key, v := range optional {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return obs, fmt.Errorf("annotate %s: %w", key, err)
+		}
+		obs.Annotations[key] = raw
+	}
 	return obs, nil
+}
+
+// encodeInput is the observation input: the text as a JSON string, or the
+// parts form when the input carries media.
+func (r Record) encodeInput() (json.RawMessage, error) {
+	if !slices.ContainsFunc(r.InputParts, func(p types.UserPart) bool { return types.IsMedia(p) }) {
+		return json.Marshal(r.Input)
+	}
+	return eval.EncodeInput(r.InputParts, eval.InputOptions{})
 }
 
 // Window is a half-open time range [From, To) of run finish times. A zero

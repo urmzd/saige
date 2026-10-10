@@ -60,8 +60,8 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go, agent/types/compact_strategy.go
 - Tree: agent/tree/tree.go, agent/tree/compact.go, agent/tree/serialize.go
 - Knowledge: rag/knowledge/config.go, rag/knowledge/types/types.go, rag/knowledge/pgstore/store.go, rag/knowledge/tool/tools.go, rag/knowledge/graph/format.go
-- RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/tool/tools.go
-- Eval: eval/eval.go, eval/experiment.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
+- RAG: rag/config.go, rag/types/types.go, rag/types/parts.go, rag/internal/pipeline/pipeline.go, rag/extractor/parts.go, rag/tool/tools.go
+- Eval: eval/eval.go, eval/input.go, eval/experiment.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, agent/eval/partscorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
 - Research: tools/research/tools.go, tools/research/web_search.go, tools/research/file_search.go, tools/research/read_file.go, tools/research/search_knowledge.go, tools/research/store_knowledge.go, tools/research/get_graph.go
 - Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go
 - SearXNG: rag/source/searxng/searxng.go

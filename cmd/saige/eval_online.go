@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/online"
@@ -37,6 +38,7 @@ type evalOnlineFlags struct {
 	judgeRubric                                  string
 	judgeBudget                                  float64
 	judgeMaxCalls                                int
+	judgeMedia                                   string
 	promote                                      string
 	promoteBelow                                 float64
 	watch                                        bool
@@ -57,7 +59,11 @@ runs every time, and scored with each --scorer (a kind from saige eval
 scorers, or a JSON scorer spec). --judge adds an LLM judge on the model
 selected by --provider and --model; pick a cheap one. Judge calls are
 charged to a budget of --judge-budget USD and --judge-max-calls calls, and
-are skipped once it is spent.
+are skipped once it is spent. A run whose input carries media (an image, a
+document) is judged with that media: --judge-media native sends it only when
+the judge model takes it (otherwise the score errors), extract sends the text
+of documents the model cannot read, and omit judges the text with a notice in
+place of media the model cannot take.
 
 Results are recorded as one run labeled source=online, with one unit per
 scored run whose labels name its conversation and node.
@@ -98,6 +104,7 @@ Lines, with personal data redacted.`,
 	fl.StringVar(&f.judgeRubric, "judge-rubric", "Score 1 when the response correctly and helpfully answers the request, 0 when it does not.", "Rubric for --judge")
 	fl.Float64Var(&f.judgeBudget, "judge-budget", 0.10, "Most USD the judge may spend")
 	fl.IntVar(&f.judgeMaxCalls, "judge-max-calls", 100, "Most judge calls")
+	fl.StringVar(&f.judgeMedia, "judge-media", "native", "How --judge sees input media its model cannot take: native|extract|omit")
 	fl.StringVar(&f.promote, "promote", "", "Write failing units as redacted dataset cases to this JSON Lines file")
 	fl.Float64Var(&f.promoteBelow, "promote-below", 0.5, "Score of a --promote-metric below which --promote takes a unit")
 	fl.StringArrayVar(&f.promoteMetrics, "promote-metric", []string{"judge_score"}, "Metric on a 0 to 1 scale compared with --promote-below (repeatable)")
@@ -117,6 +124,9 @@ func runEvalOnline(ctx context.Context, cmd *cobra.Command, f evalOnlineFlags) e
 	}
 	if f.rate < 0 || f.rate > 1 {
 		return invalidInput(fmt.Errorf("--rate must be between 0 and 1"))
+	}
+	if _, err := judgeConversion(f.judgeMedia); err != nil {
+		return invalidInput(err)
 	}
 	scorers, err := buildOnlineScorers(f.scorers)
 	if err != nil {
@@ -156,7 +166,11 @@ func runEvalOnline(ctx context.Context, cmd *cobra.Command, f evalOnlineFlags) e
 			return err
 		}
 		s.Budget = types.NewBudget(types.BudgetPolicy{Limit: types.USD(f.judgeBudget), MaxRequests: f.judgeMaxCalls})
-		s.Judges = []eval.Scorer{eval.NewJudgeScorer(&online.BudgetedGenerator{Provider: p, Budget: s.Budget},
+		conv, err := judgeConversion(f.judgeMedia)
+		if err != nil {
+			return invalidInput(err)
+		}
+		s.Judges = []eval.Scorer{eval.NewJudgeScorer(&online.BudgetedGenerator{Provider: p, Budget: s.Budget, Conversion: conv},
 			eval.WithJudgeName("judge_score"), eval.WithJudgeRubric(f.judgeRubric))}
 		s.Provenance.AddModels(types.ProviderModel(p))
 	}
@@ -305,4 +319,20 @@ func printOnlineReport(cmd *cobra.Command, rep online.Report, budget *types.Budg
 		fmt.Fprintf(tw, "%s\t%.4g\n", name, rep.Run.Aggregate[name])
 	}
 	return tw.Flush()
+}
+
+// judgeConversion is the conversion policy of --judge-media.
+func judgeConversion(mode string) (types.ConversionPolicy, error) {
+	switch mode {
+	case "", "native":
+		return types.ConversionPolicy{}, nil
+	case "extract":
+		return types.ConversionPolicy{
+			Dial:       types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{types.ModalityDocument: {types.ActExtract}}},
+			Converters: []types.Converter{convert.Documents()},
+		}, nil
+	case "omit":
+		return types.ConversionPolicy{Dial: types.ModalityDial{Default: types.ActOmit}}, nil
+	}
+	return types.ConversionPolicy{}, fmt.Errorf("--judge-media %q: want native, extract or omit", mode)
 }

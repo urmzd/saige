@@ -42,6 +42,38 @@ type Provenance struct {
 	// Dials records, per dial name, what each requested value compiled to
 	// on the run's calls. See AddDial.
 	Dials map[string][]DialOutcome `json:"dials,omitempty"`
+	// Conversions records how the run's media reached its models: one
+	// entry per part kind, executed action and converter (or offering)
+	// that ran it, such as "image native" or "document extracted via
+	// documents@1". See AddConversion.
+	Conversions []ConversionOutcome `json:"conversions,omitempty"`
+}
+
+// ConversionOutcome is one way media of one kind reached a model in a run.
+type ConversionOutcome struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	// Via is the converter, as name@version, or the offering that did it;
+	// empty for native media.
+	Via string `json:"via,omitempty"`
+}
+
+// AddConversion records that a part of kind was handled by action through
+// via on one call, such as AddConversion("audio", "transcribed",
+// "transcribe@1"). Entries are deduplicated and kept sorted. Calls with an
+// empty kind or action are ignored.
+func (p *Provenance) AddConversion(kind, action, via string) {
+	if kind == "" || action == "" {
+		return
+	}
+	o := ConversionOutcome{Kind: kind, Action: action, Via: via}
+	if slices.Contains(p.Conversions, o) {
+		return
+	}
+	p.Conversions = append(p.Conversions, o)
+	slices.SortFunc(p.Conversions, func(a, b ConversionOutcome) int {
+		return strings.Compare(a.Kind+"\x00"+a.Action+"\x00"+a.Via, b.Kind+"\x00"+b.Action+"\x00"+b.Via)
+	})
 }
 
 // AddTool records that a version of a tool ran. Calls with an empty name or
@@ -133,11 +165,13 @@ func (p *Provenance) AddRoute(profile, preset, configHash, revision string) {
 // ConfigDrift lists the differences between two runs' configurations that
 // make their scores incomparable: the same profile ID served with a
 // different configuration hash, a different catalog revision, a dial held at
-// the same value in both runs that was sent as different raw parameters, or
-// the same tool run at a different version. The catalog checks need catalog
-// provenance on both runs.
+// the same value in both runs that was sent as different raw parameters,
+// the same tool run at a different version, or media of a kind reaching the
+// models differently (native in one run, described in the other). The
+// catalog checks need catalog provenance on both runs.
 func ConfigDrift(base, exp Provenance) []string {
 	out := append(dialDrift(base, exp), toolDrift(base, exp)...)
+	out = append(out, conversionDrift(base, exp)...)
 	if base.Catalog == nil || exp.Catalog == nil {
 		return out
 	}
@@ -263,6 +297,33 @@ func toolDrift(base, exp Provenance) []string {
 	for _, name := range names {
 		if v, ok := exp.Tools[name]; ok && v != base.Tools[name] {
 			out = append(out, fmt.Sprintf("tool %s: version %s vs %s", name, base.Tools[name], v))
+		}
+	}
+	return out
+}
+
+// conversionDrift lists the part kinds both runs converted whose handling
+// differs between them.
+func conversionDrift(base, exp Provenance) []string {
+	if len(base.Conversions) == 0 || len(exp.Conversions) == 0 {
+		return nil
+	}
+	byKind := func(p Provenance) map[string][]string {
+		m := map[string][]string{}
+		for _, o := range p.Conversions {
+			h := o.Action
+			if o.Via != "" {
+				h += " via " + o.Via
+			}
+			m[o.Kind] = append(m[o.Kind], h)
+		}
+		return m
+	}
+	b, e := byKind(base), byKind(exp)
+	var out []string
+	for _, kind := range slices.Sorted(maps.Keys(b)) {
+		if ev, ok := e[kind]; ok && !slices.Equal(b[kind], ev) {
+			out = append(out, fmt.Sprintf("%s media: %s vs %s", kind, strings.Join(b[kind], ", "), strings.Join(ev, ", ")))
 		}
 	}
 	return out
