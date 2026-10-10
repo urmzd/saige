@@ -147,8 +147,20 @@ func TestAwaitSubAgentDeliversOnce(t *testing.T) {
 		agenttest.ToolCallResponse("w1", AwaitSubAgentTool, map[string]any{"handle": "s1"}),
 		agenttest.TextResponse("final answer"),
 	}}
-	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("worker found it")}}
-	run := runSpawn(t, parent, child, SubAgentDef{}, nil)
+	// The child holds until await_subagent is running. A child that finished
+	// before the parent's second turn would be injected at that turn's safe
+	// point, and the await would then not be the delivery under test.
+	release := make(chan struct{})
+	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.ToolCallResponse("hold", "hold", nil),
+		agenttest.TextResponse("worker found it"),
+	}}
+	def := SubAgentDef{Tools: types.NewToolRegistry(holdTool("hold", release))}
+	run := runSpawn(t, parent, child, def, func(_ *EventStream, d types.Delta) {
+		if s, ok := d.(types.ToolExecStartDelta); ok && s.ToolCallID == "w1" {
+			close(release)
+		}
+	})
 	if run.err != nil {
 		t.Fatal(run.err)
 	}
