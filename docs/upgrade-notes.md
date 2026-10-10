@@ -2,6 +2,21 @@
 
 These behavior changes can affect existing code. Each entry says what changed and what to do.
 
+## Messages, streams and providers
+
+Messages are ordered lists of typed parts, model output streams as part deltas, and providers take one request value.
+
+| Change | What to do |
+| --- | --- |
+| Message fields are named `Parts` (`UserMessage.Parts`, and so on), and the content types are parts: `TextContent` is `TextPart`, `ToolUseContent` is `ToolCallPart`, `ThinkingContent` is `ThinkingPart` (its text field is `Text`), `ToolResultContent` is `ToolResultPart` (its ID field is `CallID`), and the role interfaces are `SystemPart`, `UserPart` and `AssistantPart`. The metadata types are `ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart` and `CompactionPart`; the old names remain as deprecated aliases for one release. | Rename the fields and types. Build messages with `UserMsg(Text("hi"))`, `SystemMsg`, `AssistantMsg`, `ToolResults` and `UserToolResults`; `NewUserMessage` and the other string constructors remain as deprecated shims for one release. |
+| Media is a part with a `Source`: `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart` and `FilePart`, built with `Image`, `Document`, `Media` and the like from `Bytes`, `URL`, `Artifact` or `VendorFileID`. `FileContent` is no longer a message part. | Replace `FileContent{URI: u}` with `Media(URL(u, mediaType))`. `FileContent.Part()` converts an old value. |
+| A tool result holds `Parts []ToolOutputPart` (text, JSON, images, documents, audio, files). `ToolResult.Text` and `ToolResultPart.Text` are methods that join the text and JSON parts. `ToolResultBlock` is deprecated; `ToolResultBlock.Part()` converts one. `ToolExecEndDelta`, `AfterToolEvent` and `StepResult` carry parts instead of blocks. | Return `ToolResult{Parts: []types.ToolOutputPart{types.Text(s)}}` or `TextResult(s)`. Read `r.Text()` instead of `r.Text`. |
+| `Provider` has one method, `Stream(ctx, Request)`. `Request` carries the messages, tools, an optional `Schema` and optional `Options` (`*RequestOptions`). `ChatStreamWithSchema` and `ChatStreamWithOptions` are gone; a provider declares that it applies a schema or options with `SupportsSchema() bool` and `SupportsOptions() bool`, and `types.AcceptsSchema` and `types.AcceptsOptions` test for them. `Generate(ctx, prompt)` stays as a text convenience. | Rename `ChatStream` to `Stream` and read `req.Messages` and `req.Tools`; fold the schema and options methods into it and add the matching `Supports` method. The built-in adapters reject a request that carries both a schema and options. |
+| Model output streams as `PartStart`, `PartDelta` and `PartEnd`, each with an `Index` that is the part's position in the final message. Deltas for different parts may interleave. A tool call's `PartEnd` carries the complete `ToolCallPart`. Server tool calls and their results are separate parts (`PairServerTools` joins them), and model citations arrive as `CitationPart` parts, numbered by the agent and stored with the turn. The text, thinking, tool-call and server-tool deltas of the previous release remain only as the input of `NewV1Upgrader` and `UpgradeV1Stream`. | Switch consumers to the part deltas: read `PartDelta.Text` for text and `PartEnd.Part` for finished parts, or build the turn with `types.NewPartAssembler`. A provider that still emits the old deltas can wrap its stream with `types.UpgradeV1Stream`. |
+| The wire format is version 2: model output uses the kinds `part.start`, `part.delta` and `part.end`, and media bytes in one field are limited to 256 KiB (`ErrWireInlineTooLarge`). Version 1 envelopes still decode. | Use `types.NewEncoder(types.EncodeOptions{Version: 1})` for a client that reads only version 1. Output with no version 1 form, such as a refusal or a generated image, becomes an error envelope with the code `wire_unrepresentable`. |
+| The response cache and the tool cache store entries in a new format (codec version 2). | None. Entries written by an earlier release miss and are recorded again. |
+| Durable step records register the part types under their new names. A journal written by an earlier release cannot replay a step that holds a message or tool output. | Let in-flight durable runs finish before upgrading. |
+
 ## Providers
 
 | Change | What to do |
