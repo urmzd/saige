@@ -26,6 +26,11 @@ type AgentConfig struct {
 	Provider     types.Provider
 	Tools        *types.ToolRegistry
 	CompactCfg   *types.CompactConfig // initial compaction config (replaces Compactor)
+	// CompactProvider writes compaction summaries, for example a cheaper
+	// model. Nil uses the active provider, switched to
+	// CompactConfig.SummaryModel when set. Summary calls are charged to the
+	// budget either way.
+	CompactProvider types.Provider
 	// MaxIter caps the model turns of one user turn. 0 uses 10, and
 	// NoIterLimit (any negative value) removes the cap, which suits an
 	// orchestrator whose sub-agents carry their own bounded budgets.
@@ -237,9 +242,23 @@ type AgentConfig struct {
 // AgentOption configures an AgentConfig using the functional options pattern.
 type AgentOption func(*AgentConfig)
 
-// WithCompactConfig sets the compaction strategy.
+// WithCompactConfig sets the compaction strategy. Sub-agents inherit it
+// unless their own options set one.
 func WithCompactConfig(cfg *types.CompactConfig) AgentOption {
 	return func(c *AgentConfig) { c.CompactCfg = cfg }
+}
+
+// WithoutCompaction turns automatic compaction off: no strategy runs before a
+// turn, CompactNow is ignored, and a context-length error is returned instead
+// of compacted. Sub-agents inherit it unless their options set a strategy.
+// A handoff group accepts it.
+func WithoutCompaction() AgentOption {
+	return WithCompactConfig(&types.CompactConfig{Strategy: types.CompactNone})
+}
+
+// WithCompactProvider sets the provider that writes compaction summaries.
+func WithCompactProvider(p types.Provider) AgentOption {
+	return func(c *AgentConfig) { c.CompactProvider = p }
 }
 
 // WithSubAgents registers sub-agents for delegation.
@@ -367,6 +386,10 @@ func WithPreset(p types.Preset) AgentOption {
 		}
 		if c.LLMTimeout == 0 {
 			c.LLMTimeout = d.LLMTimeout
+		}
+		if c.CompactCfg == nil && d.Compaction != nil {
+			cc := d.Compaction.Clone()
+			c.CompactCfg = &cc
 		}
 	}
 }
@@ -758,7 +781,7 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 	}
 	clone := *a
 	clone.cfg.StepRunner = runner
-	if _, durableApprovals := runner.(types.ApprovalRunner); durableApprovals && clone.cfg.CompactCfg != nil && clone.cfg.CompactCfg.ToCompactor() != nil {
+	if _, durableApprovals := runner.(types.ApprovalRunner); durableApprovals && clone.cfg.CompactCfg.Enabled() {
 		return nil, errors.New("durable approval replay requires compaction checkpoints; automatic compaction is unsupported")
 	}
 
@@ -1542,7 +1565,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			return a.finishAtLimit(ctx, stream, tr, branch, active, limitErr)
 		}
 
-		if a.handoffs != nil && resolved.compactor != nil {
+		if a.handoffs != nil && resolved.compactCfg.Enabled() {
 			return errors.New("handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported")
 		}
 		// Resolve file URIs to data.

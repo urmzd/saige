@@ -42,6 +42,14 @@ func TestMessageRoundTrip(t *testing.T) {
 			}},
 		},
 		{
+			name: "compaction record",
+			msg: types.SystemMessage{Content: []types.SystemContent{types.CompactionContent{
+				Strategy: "chain(clear_tool_results,summary)", Steps: []string{"summary"}, Trigger: types.CompactionTriggerRule,
+				TokensBefore: 10, TokensAfter: 4, FromBranch: "main", Kept: []types.NodeID{"a"}, Selected: []types.NodeID{"b"},
+				Cleared: []types.NodeID{"c"}, Summarized: []types.NodeID{"d"}, Dropped: []types.NodeID{"e"}, SummaryNode: "s",
+			}}},
+		},
+		{
 			name: "system route",
 			msg: types.SystemMessage{Content: []types.SystemContent{
 				types.TextContent{Text: "s"}, types.RouteContent{Profile: "p"},

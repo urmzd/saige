@@ -77,8 +77,10 @@ type ResolvedPreset struct {
 	ToolChoice      *types.ToolChoice
 	OutputMode      string
 	LLMTimeout      time.Duration
-	Routing         RoutingSpec
-	Warnings        []Issue
+	// Compaction is the preset's compaction strategy, nil when it sets none.
+	Compaction *types.CompactConfig
+	Routing    RoutingSpec
+	Warnings   []Issue
 }
 
 // PresetNames returns the preset names, sorted.
@@ -188,6 +190,9 @@ func (c *Catalog) flatten(name string, found *issues) (PresetSpec, bool) {
 		if s.LLMTimeout != 0 {
 			out.LLMTimeout = s.LLMTimeout
 		}
+		if s.Compaction != nil {
+			out.Compaction = s.Compaction
+		}
 		if s.Retry != nil {
 			out.Retry = s.Retry
 		}
@@ -221,6 +226,10 @@ func (c *Catalog) resolveSpec2(name, path string, spec PresetSpec, v view) (Reso
 		OutputMode: spec.OutputMode, LLMTimeout: time.Duration(spec.LLMTimeout)}
 	if rp.OutputMode == "auto" {
 		rp.OutputMode = ""
+	}
+	if spec.Compaction != nil {
+		cc := spec.Compaction.Config()
+		rp.Compaction = &cc
 	}
 	if spec.Routing != nil {
 		rp.Routing = *spec.Routing

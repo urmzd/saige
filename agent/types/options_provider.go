@@ -56,6 +56,9 @@ type PresetDefaults struct {
 	OutputMode string
 	// LLMTimeout bounds one provider call. Zero leaves the agent default.
 	LLMTimeout time.Duration
+	// Compaction is the preset's compaction strategy. Nil leaves the
+	// agent's.
+	Compaction *CompactConfig
 }
 
 // Preset is a provider chain built from a declared configuration, together

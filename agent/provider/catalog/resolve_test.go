@@ -308,3 +308,39 @@ func TestExpressibleSharedTable(t *testing.T) {
 		t.Fatal("prompt cache table")
 	}
 }
+
+func TestPresetCompaction(t *testing.T) {
+	c := mustOverlay(t, `{"version":1,"presets":{"base":{"compaction":{"strategy":"chain","max_input_tokens":50000,"chain":[
+			{"strategy":"clear_tool_results","keep_tool_results":2},
+			{"strategy":"relevant_plus_summary","keep_turns":3,"select_k":2,"summary_model":"claude-haiku-5-5"}]},
+		"chain":[{"provider":"anthropic","model":"claude-haiku-5-5"}]},
+		"child":{"extends":"base"}}}`)
+	for _, name := range []string{"base", "child"} {
+		rp, err := c.Resolve(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cc := rp.Compaction
+		if cc == nil || cc.Strategy != types.CompactChain || cc.MaxInputTokens != 50000 || len(cc.Chain) != 2 {
+			t.Fatalf("%s: compaction = %+v", name, cc)
+		}
+		if s := cc.Chain[1]; s.Strategy != types.CompactRelevantPlusSummary || s.KeepTurns != 3 || s.SelectK != 2 || s.SummaryModel != "claude-haiku-5-5" {
+			t.Fatalf("%s: step = %+v", name, s)
+		}
+	}
+}
+
+func TestPresetCompactionIsValidated(t *testing.T) {
+	tests := []struct {
+		spec, path string
+	}{
+		{`{"strategy":"shrink"}`, "presets.p.compaction.strategy"},
+		{`{"strategy":"chain"}`, "presets.p.compaction.chain"},
+		{`{"strategy":"summary","chain":[{"strategy":"keep_recent"}]}`, "presets.p.compaction.chain"},
+		{`{"strategy":"chain","chain":[{"strategy":"keep_recent","keep_turns":-1}]}`, "presets.p.compaction.chain[0].keep_turns"},
+	}
+	for _, tt := range tests {
+		_, err := Load(strings.NewReader(`{"version":1,"presets":{"p":{"compaction":` + tt.spec + `,"chain":[{"provider":"anthropic","model":"claude-haiku-5-5"}]}}}`))
+		issueAt(t, err, tt.path, CodeBadValue)
+	}
+}

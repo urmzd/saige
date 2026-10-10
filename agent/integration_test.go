@@ -3581,7 +3581,7 @@ func TestRunCompactionWithCompactor(t *testing.T) {
 			rc := resolvedConfig{maxIter: 10, compactor: tt.compactor}
 			active := activeContext{provider: member, messages: msgs}
 
-			newBranch, compacted, err := a.runCompaction(ctx, stream, &overflowState{}, rc, active, tr, "main", false)
+			newBranch, compacted, err := a.runCompaction(ctx, stream, &overflowState{}, rc, active, tr, "main", types.CompactionTriggerRule)
 			if err != nil {
 				t.Fatal(err)
 			}

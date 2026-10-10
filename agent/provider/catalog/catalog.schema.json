@@ -9,6 +9,67 @@
       },
       "type": "object"
     },
+    "CompactionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "items": {
+            "$ref": "#/$defs/CompactionSpec"
+          },
+          "type": "array"
+        },
+        "exclude_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "keep_last": {
+          "type": "integer"
+        },
+        "keep_tool_results": {
+          "type": "integer"
+        },
+        "keep_turns": {
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "type": "integer"
+        },
+        "select_k": {
+          "type": "integer"
+        },
+        "strategy": {
+          "enum": [
+            "none",
+            "sliding_window",
+            "summarize",
+            "clear_tool_results",
+            "keep_recent",
+            "summary",
+            "relevant_plus_summary",
+            "chain"
+          ],
+          "type": "string"
+        },
+        "summary_model": {
+          "type": "string"
+        },
+        "target_tokens": {
+          "type": "integer"
+        },
+        "threshold": {
+          "type": "integer"
+        },
+        "window_size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "type": "object"
+    },
     "CreativityDialSpec": {
       "additionalProperties": false,
       "properties": {
@@ -658,6 +719,9 @@
             "$ref": "#/$defs/EntrySpec"
           },
           "type": "array"
+        },
+        "compaction": {
+          "$ref": "#/$defs/CompactionSpec"
         },
         "description": {
           "type": "string"

@@ -64,6 +64,7 @@ const (
 	WireServerToolCall     = "server_tool.call"
 	WireServerToolResult   = "server_tool.result"
 	WirePartialJSON        = "partial_json"
+	WireCompaction         = "compaction"
 	WireInterrupt          = "interrupt"
 	WireInterruptReplyKind = "interrupt.reply"
 	WireGuardrail          = "guardrail"
@@ -561,6 +562,12 @@ func (w *wireOptions) requestOptions() *RequestOptions {
 		ToolChoice: w.ToolChoice}
 }
 
+type wireCompaction struct {
+	Branch string `json:"branch"`
+	NodeID string `json:"node_id,omitempty"`
+	CompactionContent
+}
+
 type wireRunControl struct {
 	NodeID       string `json:"node_id,omitempty"`
 	Reason       string `json:"reason,omitempty"`
@@ -713,6 +720,8 @@ func encodeDelta(d Delta) (string, any, error) {
 		return WirePartialJSON, wirePartialJSON(v), nil
 	case GuardrailDelta:
 		return WireGuardrail, wireGuardrail(v), nil
+	case CompactionDelta:
+		return WireCompaction, wireCompaction{Branch: string(v.Branch), NodeID: v.NodeID, CompactionContent: v.Record}, nil
 	case nil:
 		return "", nil, fmt.Errorf("%w: nil delta", ErrUnknownWireKind)
 	default:
@@ -843,6 +852,9 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 	case WireGuardrail:
 		w, err := decodeAs[wireGuardrail](kind, data)
 		return GuardrailDelta(w), err
+	case WireCompaction:
+		w, err := decodeAs[wireCompaction](kind, data)
+		return CompactionDelta{Branch: BranchID(w.Branch), NodeID: w.NodeID, Record: w.CompactionContent}, err
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownWireKind, kind)
 	}

@@ -291,6 +291,9 @@ func (c *Catalog) checkPresetShape(path string, p PresetSpec, found *issues) {
 	default:
 		found.errorf(path+".output_mode", CodeOutputMode, "output_mode must be auto, native, tool or prompt")
 	}
+	if p.Compaction != nil {
+		checkCompaction(path+".compaction", *p.Compaction, found)
+	}
 	if p.Routing != nil {
 		switch p.Routing.Policy {
 		case "", PolicySticky, PolicyAffinity:
@@ -353,6 +356,40 @@ func checkRetry(path string, r *RetrySpec, found *issues) {
 	}
 	if r.MaxDelay != 0 && r.BaseDelay > r.MaxDelay {
 		found.errorf(path+".base_delay", CodeBadValue, "base_delay exceeds max_delay")
+	}
+}
+
+// checkCompaction validates a compaction spec and the steps of a chain.
+func checkCompaction(path string, s CompactionSpec, found *issues) {
+	switch types.CompactStrategy(s.Strategy) {
+	case types.CompactNone, types.CompactSlidingWindow, types.CompactSummarize, types.CompactClearToolResults,
+		types.CompactKeepRecent, types.CompactSummary, types.CompactRelevantPlusSummary:
+		if len(s.Chain) > 0 {
+			found.errorf(path+".chain", CodeBadValue, "chain is only valid with strategy chain")
+		}
+	case types.CompactChain:
+		if len(s.Chain) == 0 {
+			found.errorf(path+".chain", CodeBadValue, "strategy chain needs at least one step")
+		}
+	default:
+		found.errorf(path+".strategy", CodeBadValue,
+			"strategy must be none, sliding_window, summarize, clear_tool_results, keep_recent, summary, relevant_plus_summary or chain")
+	}
+	counts := []struct {
+		name string
+		n    int
+	}{
+		{"max_input_tokens", s.MaxInputTokens}, {"target_tokens", s.TargetTokens}, {"keep_turns", s.KeepTurns},
+		{"select_k", s.SelectK}, {"threshold", s.Threshold}, {"keep_last", s.KeepLast},
+		{"window_size", s.WindowSize}, {"keep_tool_results", s.KeepToolResults},
+	}
+	for _, c := range counts {
+		if c.n < 0 {
+			found.errorf(path+"."+c.name, CodeBadValue, "%s must not be negative", c.name)
+		}
+	}
+	for i, step := range s.Chain {
+		checkCompaction(fmt.Sprintf("%s.chain[%d]", path, i), step, found)
 	}
 }
 

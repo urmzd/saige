@@ -433,6 +433,13 @@ func (t *Tree) Tip(branch types.BranchID) (*types.Node, error) {
 	return t.getNode(tipID)
 }
 
+// Node returns the node with the given ID.
+func (t *Tree) Node(nodeID types.NodeID) (*types.Node, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.getNode(nodeID)
+}
+
 // Path returns the node IDs from root to the given node.
 func (t *Tree) Path(nodeID types.NodeID) ([]types.NodeID, error) {
 	t.mu.RLock()
