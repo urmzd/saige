@@ -15,6 +15,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | --- | --- |
 | [Model catalog and presets](catalog.md) | Catalog JSON schema, sources and layers, merge rules, precedence, validation, building a preset, CLI |
 | [Dials](dials.md) | Model-neutral creativity, reasoning depth, max output, tools, seed and cache, compiled per model |
+| [Modality conversion](modality-conversion.md) | Media a model cannot take: reject by default, or convert, transcribe, describe, extract or omit; scopes, routing, memoization, budget, reports |
 | [Model capabilities](model-capabilities.md) | Capability declarations, tool and cost handling per vendor, and the gaps that remain open |
 
 ## Tools and orchestration

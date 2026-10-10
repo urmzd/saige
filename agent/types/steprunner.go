@@ -28,6 +28,10 @@ const (
 	StepKindApproval StepKind = "approval"
 	// StepKindHook records the outcome of hooks or guardrails at one point.
 	StepKindHook StepKind = "hook"
+	// StepKindConvert records one media conversion: the parts it produced
+	// and what it was billed, so a replay reuses them without calling the
+	// converter's model again.
+	StepKindConvert StepKind = "convert"
 )
 
 // StepResult is the serializable payload a durable step records. It is a
@@ -46,6 +50,10 @@ type StepResult struct {
 	ToolError  string            // non-empty => tool errored (recorded, not retried)
 	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
 	Hook       *HookRecord       // populated when Kind == StepKindHook
+	Conversion *ConversionEntry  // populated when Kind == StepKindConvert
+	// ConversionReceipts are the settlements of the conversions an LLM
+	// step ran, so replaying the step restores their spend too.
+	ConversionReceipts []BudgetReceipt
 }
 
 // NoopStepRunner runs steps inline with no memoization. It is the default,

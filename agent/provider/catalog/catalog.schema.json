@@ -224,6 +224,9 @@
         "max_output": {
           "type": "integer"
         },
+        "modality": {
+          "$ref": "#/$defs/ModalityDial"
+        },
         "parallel": {
           "type": "boolean"
         },
@@ -659,6 +662,24 @@
               "file"
             ],
             "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ModalityDial": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "per": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "type": "object"
         }

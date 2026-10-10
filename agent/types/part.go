@@ -315,6 +315,10 @@ type ThinkingPart struct {
 	Redacted bool `json:"redacted,omitempty"`
 	// Summary marks a summary of the reasoning rather than the reasoning.
 	Summary bool `json:"summary,omitempty"`
+	// Origin names the provider that produced the part, whose signature it
+	// carries. The agent loop records it. Empty is unknown, as for history
+	// written before it was recorded.
+	Origin string `json:"origin,omitempty"`
 }
 
 func (ThinkingPart) Kind() PartKind   { return KindThinking }

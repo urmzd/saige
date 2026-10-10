@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/agent/provider"
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -499,7 +500,7 @@ func buildReconcileLister(ctx context.Context, name string) (catalog.ModelLister
 	if err != nil {
 		return nil, err
 	}
-	l, ok := p.(catalog.ModelLister)
+	l, ok := wrapper.As[catalog.ModelLister](p)
 	if !ok {
 		_ = types.CloseProvider(p)
 		return nil, fmt.Errorf("the %s adapter cannot list models", name)

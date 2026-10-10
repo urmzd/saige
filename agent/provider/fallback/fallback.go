@@ -91,27 +91,6 @@ func (f *Provider) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(out, f.Providers...)
 }
 
-// ContentSupport implements types.ContentNegotiator as the intersection over
-// the chain, for the same reason as Capabilities: a PDF the primary reads
-// natively must still be extracted to text if the secondary cannot.
-func (f *Provider) ContentSupport() types.ContentSupport {
-	if len(f.Providers) == 0 {
-		return types.ContentSupport{}
-	}
-	out := types.ProviderContentSupport(f.Providers[0])
-	for _, p := range f.Providers[1:] {
-		next := types.ProviderContentSupport(p)
-		merged := map[types.MediaType]bool{}
-		for mt := range out.NativeTypes {
-			if out.NativeTypes[mt] && next.NativeTypes[mt] {
-				merged[mt] = true
-			}
-		}
-		out = types.ContentSupport{NativeTypes: merged}
-	}
-	return out
-}
-
 // WithModel implements types.ModelSwitcher. It returns a new fallback provider
 // whose children each target the given model (children that do not implement
 // types.ModelSwitcher are kept as-is). This lets ConfigPart.Model switching
@@ -144,9 +123,14 @@ func (f *Provider) WithTarget(t types.Target) (types.Provider, error) {
 // rejects it because the provider it wraps cannot. When no member can serve
 // the request, the call fails with a FallbackError whose errors match
 // types.ErrInvalidModelConfig.
+//
+// Each member fits the request's parts to its own offering (its conversion
+// decorator plans them per attempt). A member whose plan rejects a part
+// never reached the network, so the next member is tried, whatever
+// FallbackOn says.
 func (f *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
 	if req.Schema == nil && req.Options == nil {
-		return f.stream(ctx, func(p types.Provider) (<-chan types.Delta, error) {
+		return f.streamOver(ctx, f.Providers, f.orModality(f.fallbackOn()), func(p types.Provider) (<-chan types.Delta, error) {
 			return p.Stream(ctx, req)
 		})
 	}
@@ -167,10 +151,10 @@ func (f *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 	}
 	// A rejected schema or options never reached the network, so the next
 	// member can still serve the request even though the error is permanent.
-	shouldFallback := func(err error) bool {
+	shouldFallback := f.orModality(func(err error) bool {
 		return req.Schema != nil && schemacheck.IsUnsupported(err) ||
 			req.Options != nil && optionscheck.IsUnsupported(err) || f.fallbackOn()(err)
-	}
+	})
 	return f.streamOver(ctx, members, shouldFallback, func(p types.Provider) (<-chan types.Delta, error) {
 		return p.Stream(ctx, req)
 	})
@@ -209,15 +193,18 @@ func (f *Provider) fallbackOn() func(error) bool {
 	return f.FallbackOn
 }
 
-// stream tries each provider in order until one returns a channel, then relays
-// its deltas so mid-stream errors can still trigger fallback. If every provider
-// fails before a channel is obtained, the accumulated FallbackError is returned
-// directly (preserving the original synchronous contract).
-func (f *Provider) stream(ctx context.Context, call func(types.Provider) (<-chan types.Delta, error)) (<-chan types.Delta, error) {
-	return f.streamOver(ctx, f.Providers, f.fallbackOn(), call)
+// orModality extends a fallback predicate to a member that rejected the
+// request's parts before sending it.
+func (f *Provider) orModality(next func(error) bool) func(error) bool {
+	return func(err error) bool {
+		return errors.Is(err, types.ErrModalityUnsupported) || next(err)
+	}
 }
 
-// streamOver is stream over an explicit member list and fallback predicate.
+// streamOver tries each provider in order until one returns a channel, then
+// relays its deltas so mid-stream errors can still trigger fallback. If every
+// provider fails before a channel is obtained, the accumulated FallbackError
+// is returned directly (preserving the original synchronous contract).
 func (f *Provider) streamOver(ctx context.Context, providers []types.Provider, shouldFallback func(error) bool, call func(types.Provider) (<-chan types.Delta, error)) (<-chan types.Delta, error) {
 	var errs []error
 	for i, p := range providers {

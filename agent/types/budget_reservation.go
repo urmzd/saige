@@ -42,6 +42,15 @@ type BudgetReservation struct {
 // must bound the configured request for parallel monetary/token admission.
 // With no bound, the attempt reserves all remaining capacity for that limit.
 func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) {
+	return b.ReserveWith(id, pricing, ConversionEstimate{})
+}
+
+// ReserveWith is Reserve with an attempt's planned conversions added to the
+// per-call bounds, so a call that converts media before dispatch reserves
+// for both. The conversions draw on the reservation with Carve. An extra
+// estimate changes nothing when the matching per-call bound is zero, since
+// the attempt then reserves all remaining capacity.
+func (b *Budget) ReserveWith(id string, pricing Pricing, extra ConversionEstimate) (BudgetReservation, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if id == "" {
@@ -60,7 +69,7 @@ func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) 
 	if p.Limit > 0 && pricing.IsZero() && !p.AllowUnpriced {
 		return BudgetReservation{}, ErrUnpriced
 	}
-	r := BudgetReservation{ID: id, Requests: 1, Cost: p.PerCallCost, Tokens: p.PerCallTokens}
+	r := perCall(id, p, extra)
 	var held BudgetReservation
 	for _, v := range b.reservations {
 		held.Cost += v.Cost
@@ -90,6 +99,69 @@ func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) 
 			return r, ErrBudgetBusy
 		}
 	}
+	b.reservations[id] = r
+	return r, nil
+}
+
+// perCall is the reservation one attempt starts from: the per-call bounds,
+// each raised by the attempt's conversion estimate when it is set.
+func perCall(id string, p BudgetPolicy, extra ConversionEstimate) BudgetReservation {
+	r := BudgetReservation{ID: id, Requests: 1, Cost: p.PerCallCost, Tokens: p.PerCallTokens}
+	if r.Cost > 0 {
+		r.Cost += max(0, extra.Cost)
+	}
+	if r.Tokens > 0 {
+		r.Tokens += max(0, extra.InputTokens+extra.OutputTokens)
+	}
+	return r
+}
+
+// Carve moves part of reservation from into a new reservation id, for a
+// call made on behalf of the attempt that holds from, such as a converter's
+// model call before dispatch. The new reservation takes cost and tokens
+// (bounded by what from holds; zero takes all of it) and counts one request.
+// Settle it like any other. When from is not held, Carve reserves id as
+// Reserve does.
+func (b *Budget) Carve(from, id string, pricing Pricing, cost Cost, tokens int) (BudgetReservation, error) {
+	b.mu.Lock()
+	parent, ok := b.reservations[from]
+	if !ok || from == "" {
+		b.mu.Unlock()
+		return b.Reserve(id, pricing)
+	}
+	defer b.mu.Unlock()
+	if id == "" {
+		return BudgetReservation{}, errors.New("budget reservation needs an ID")
+	}
+	if _, held := b.reservations[id]; held {
+		return BudgetReservation{}, ErrReservationActive
+	}
+	if _, done := b.settled[id]; done {
+		return BudgetReservation{}, errors.New("budget reservation ID already settled")
+	}
+	p := b.policy
+	if p.Limit > 0 && pricing.IsZero() && !p.AllowUnpriced {
+		return BudgetReservation{}, ErrUnpriced
+	}
+	if p.OnExceed != BudgetWarn && p.MaxRequests > 0 {
+		held := 0
+		for _, v := range b.reservations {
+			held += v.Requests
+		}
+		if b.usage.Requests+held+1 > p.MaxRequests {
+			return BudgetReservation{}, ErrBudgetExceeded
+		}
+	}
+	if cost <= 0 || cost > parent.Cost {
+		cost = parent.Cost
+	}
+	if tokens <= 0 || tokens > parent.Tokens {
+		tokens = parent.Tokens
+	}
+	parent.Cost -= cost
+	parent.Tokens -= tokens
+	b.reservations[from] = parent
+	r := BudgetReservation{ID: id, Requests: 1, Cost: cost, Tokens: tokens}
 	b.reservations[id] = r
 	return r, nil
 }

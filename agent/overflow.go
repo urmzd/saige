@@ -692,7 +692,7 @@ func (m *meteredProvider) Stream(ctx context.Context, req types.Request) (<-chan
 		m.n++
 		step := fmt.Sprintf("%s-%d", m.step, m.n)
 		m.mu.Unlock()
-		reservation, pricing, err := m.agent.reserveProviderCall(ctx, m.stream, m.Provider, step)
+		reservation, pricing, err := m.agent.reserveProviderCall(ctx, m.stream, m.Provider, step, types.ConversionEstimate{})
 		if err != nil {
 			m.fail(err)
 			return nil, err

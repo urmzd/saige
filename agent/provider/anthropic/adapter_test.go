@@ -7,21 +7,6 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-func TestContentSupportClaimsMatchMapping(t *testing.T) {
-	// ContentSupport must only claim types the adapter maps natively.
-	support := (&Adapter{}).ContentSupport()
-	for _, mt := range []types.MediaType{types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP, types.MediaPDF, types.MediaText} {
-		if !support.Supports(mt) {
-			t.Errorf("expected native support for %s", mt)
-		}
-	}
-	for _, mt := range []types.MediaType{types.MediaCSV, types.MediaWAV, types.MediaMP4} {
-		if support.Supports(mt) {
-			t.Errorf("%s must not be claimed native", mt)
-		}
-	}
-}
-
 // TestEmptySystemPromptIsOmitted checks that blank system text never becomes
 // an empty text block, which the API rejects with 400, and that a request
 // with no system text left sends no system field at all.

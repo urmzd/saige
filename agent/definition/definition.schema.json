@@ -169,6 +169,9 @@
         "max_output": {
           "type": "integer"
         },
+        "modality": {
+          "$ref": "#/$defs/ModalityDial"
+        },
         "parallel": {
           "type": "boolean"
         },
@@ -333,6 +336,24 @@
       "required": [
         "store"
       ],
+      "type": "object"
+    },
+    "ModalityDial": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "per": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        }
+      },
       "type": "object"
     },
     "ModelRef": {

@@ -75,10 +75,3 @@ func TestCacheForwardsCapabilities(t *testing.T) {
 		t.Errorf("caps = %v, want the inner provider's", caps.List())
 	}
 }
-
-func TestCacheForwardsContentSupport(t *testing.T) {
-	p := New(newRich(), Config{})
-	if !types.ProviderContentSupport(p).Supports(types.MediaPDF) {
-		t.Error("native media support must survive the cache decorator, or the file pipeline extracts PDFs the model could read")
-	}
-}

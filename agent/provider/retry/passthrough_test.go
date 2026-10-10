@@ -8,7 +8,6 @@ import (
 )
 
 type capableProvider struct {
-	media map[types.MediaType]bool
 }
 
 func (c *capableProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
@@ -22,20 +21,14 @@ func (c *capableProvider) Capabilities() types.ModelCapabilities {
 		Known: true,
 	}
 }
-func (c *capableProvider) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{NativeTypes: c.media}
-}
 
-func TestRetryForwardsCapabilitiesAndContentSupport(t *testing.T) {
-	inner := &capableProvider{media: map[types.MediaType]bool{types.MediaPNG: true}}
+func TestRetryForwardsCapabilities(t *testing.T) {
+	inner := &capableProvider{}
 	p := New(inner, DefaultConfig())
 
 	caps, ok := types.ProviderCapabilities(p)
 	if !ok || !caps.Supports(types.CapReasoning) {
 		t.Errorf("capabilities must survive the retry decorator, got %v (reported=%v)", caps.List(), ok)
-	}
-	if !types.ProviderContentSupport(p).Supports(types.MediaPNG) {
-		t.Error("native media support must survive the retry decorator")
 	}
 }
 

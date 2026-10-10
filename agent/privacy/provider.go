@@ -58,11 +58,6 @@ func (p *Provider) NewSession() types.Provider {
 	return &Provider{Inner: types.NewProviderSession(p.Inner), Vault: p.Vault}
 }
 
-// ContentSupport implements types.ContentNegotiator.
-func (p *Provider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(p.Inner)
-}
-
 // Capabilities implements types.CapabilityReporter. Controls that need
 // request options are dropped when the inner provider cannot receive them.
 func (p *Provider) Capabilities() types.ModelCapabilities {

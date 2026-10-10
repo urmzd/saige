@@ -91,14 +91,6 @@ func (r *Provider) WithTarget(t types.Target) (types.Provider, error) {
 	return &Provider{Inner: inner, Config: r.Config}, nil
 }
 
-// ContentSupport implements types.ContentNegotiator by delegating to the inner
-// provider. Without this the file pipeline sees a retry-wrapped adapter as
-// supporting no media at all and extracts every attachment to text, silently
-// discarding images the model could have read natively.
-func (r *Provider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(r.Inner)
-}
-
 // Capabilities implements types.CapabilityReporter by delegating to the inner
 // provider. When the inner provider does not report, the zero value is
 // returned: it declares nothing and has Known false, so a caller that must

@@ -18,7 +18,6 @@ var (
 	_ types.ModelProvider            = (*Adapter)(nil)
 	_ types.ModelSwitcher            = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
-	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
 
 // Name implements types.NamedProvider.
@@ -323,19 +322,6 @@ func (a *Adapter) Capabilities() types.ModelCapabilities {
 		caps = caps.With(types.CapToolChoice)
 	}
 	return caps
-}
-
-// ContentSupport implements types.ContentNegotiator.
-// The Ollama images field carries JPEG and PNG, but only a vision model can
-// read them: Capabilities is the model-aware answer, this is the wire-format
-// one.
-func (a *Adapter) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{
-		NativeTypes: map[types.MediaType]bool{
-			types.MediaJPEG: true,
-			types.MediaPNG:  true,
-		},
-	}
 }
 
 // ── Convenience methods (not part of Provider) ──────────────────────

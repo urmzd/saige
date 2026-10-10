@@ -79,8 +79,10 @@ func TestSubAgentInheritsOperationalConfig(t *testing.T) {
 	if child.CompactCfg != compact {
 		t.Error("CompactCfg must be inherited")
 	}
-	if len(child.Resolvers) != 1 || len(child.Extractors) != 1 {
-		t.Error("the file resolver/extractor pipeline must be inherited, or attachments break inside delegated work")
+	// The extractors become extract converters in the conversion policy,
+	// which the child inherits with its cache.
+	if len(child.Resolvers) != 1 || len(child.Conversion.Converters) != 1 || child.Conversion.Cache == nil {
+		t.Error("the file resolver and conversion pipeline must be inherited, or attachments break inside delegated work")
 	}
 	if child.Logger != logger {
 		t.Error("Logger must be inherited")

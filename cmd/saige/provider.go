@@ -15,6 +15,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/provider/preset"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -419,7 +420,7 @@ func cliFactory(cf *commonFlags, verbose bool) func(context.Context, provider.Co
 		if err != nil {
 			return nil, err
 		}
-		if a, ok := p.(*ollama.Adapter); ok {
+		if a, ok := wrapper.As[*ollama.Adapter](p); ok {
 			embedModel := defaultEmbedModels[providerOllama]
 			if cf.resolvedEmbedProvider() == providerOllama {
 				embedModel = cf.resolvedEmbedModel()

@@ -219,3 +219,25 @@ func TestDialsSurviveExportAndCanonicalRoundTrip(t *testing.T) {
 		t.Fatal("export wrote no offerings")
 	}
 }
+
+// The modality dial is read from every catalog layer, merges per modality,
+// and reaches each entry's dial layers for the conversion decorator. An
+// unknown action fails the load.
+func TestModalityDialInCatalogLayers(t *testing.T) {
+	c := mustOverlay(t, `{"version":1,"dials":{"modality":{"per":{"audio":["omit"]}}},"presets":{"p":{
+		"dials":{"modality":{"per":{"document":["extract","omit"]}}},"chain":[
+		{"provider":"anthropic","model":"claude-haiku-5-5","dials":{"modality":{"per":{"audio":["transcribe"]}}}}]}}}`)
+	rp, err := c.Resolve("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mergedDials(rp.Chain[0].Dials).Modality
+	if got == nil || !slices.Equal(got.Per[types.ModalityAudio], []types.ModalityAction{types.ActTranscribe}) ||
+		!slices.Equal(got.Per[types.ModalityDocument], []types.ModalityAction{types.ActExtract, types.ActOmit}) {
+		t.Fatalf("merged modality dial = %+v", got)
+	}
+	if _, err := Load(strings.NewReader(`{"version":1,"dials":{"modality":{"per":{"audio":["shout"]}}}}`)); err == nil ||
+		!strings.Contains(err.Error(), `unknown action "shout"`) {
+		t.Fatalf("an unknown modality action loaded: %v", err)
+	}
+}

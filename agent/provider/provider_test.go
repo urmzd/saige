@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/provider/ollama"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -199,9 +200,19 @@ func TestOllamaHostResolution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if host := p.(*ollama.Adapter).Client.Host; !strings.EqualFold(host, tt.want) {
+			if host := mustAs[*ollama.Adapter](t, p).Client.Host; !strings.EqualFold(host, tt.want) {
 				t.Errorf("host = %s, want %s", host, tt.want)
 			}
 		})
 	}
+}
+
+// mustAs finds T in p's decorator chain.
+func mustAs[T any](t *testing.T, p types.Provider) T {
+	t.Helper()
+	v, ok := wrapper.As[T](p)
+	if !ok {
+		t.Fatalf("%T has no %T in its chain", p, v)
+	}
+	return v
 }

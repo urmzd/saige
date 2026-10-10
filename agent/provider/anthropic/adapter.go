@@ -38,7 +38,6 @@ var (
 	_ types.ModelProvider            = (*Adapter)(nil)
 	_ types.ModelSwitcher            = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
-	_ types.ContentNegotiator        = (*Adapter)(nil)
 	_ types.OptionsReporter          = (*Adapter)(nil)
 )
 
@@ -401,20 +400,6 @@ func (a *Adapter) Capabilities() types.ModelCapabilities {
 		caps = caps.Without(types.CapStructuredOutput)
 	}
 	return caps
-}
-
-// ContentSupport implements types.ContentNegotiator.
-func (a *Adapter) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{
-		NativeTypes: map[types.MediaType]bool{
-			types.MediaJPEG: true,
-			types.MediaPNG:  true,
-			types.MediaGIF:  true,
-			types.MediaWebP: true,
-			types.MediaPDF:  true,
-			types.MediaText: true,
-		},
-	}
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
