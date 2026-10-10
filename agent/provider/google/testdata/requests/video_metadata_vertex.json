@@ -1,0 +1,21 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "fileData": {
+            "fileUri": "gs://bucket/clip.mp4",
+            "mimeType": "video/mp4"
+          },
+          "videoMetadata": {
+            "endOffset": "8s",
+            "fps": 0.5,
+            "startOffset": "2s"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,34 +87,10 @@ func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts ty
 		Meta: map[string]string{metaCount: strconv.Itoa(len(reqs))}}, nil
 }
 
-// batchRequest validates one request and builds its contents and config, as
-// Stream with options and Stream with a schema do.
+// batchRequest validates one request and builds its contents and config,
+// as Stream does.
 func (a *Adapter) batchRequest(r types.BatchRequest) ([]*genai.Content, *genai.GenerateContentConfig, error) {
-	c, err := a.withRequestOptions(r.Options.Raw())
-	if err != nil {
-		return nil, nil, err
-	}
-	if c, err = c.compileDials(r.Options, r.Tools, r.Schema != nil); err != nil {
-		return nil, nil, err
-	}
-	if err := c.Capabilities().ValidateRequest(r.Tools, r.Schema != nil); err != nil {
-		return nil, nil, err
-	}
-	if err := c.Validate(); err != nil {
-		return nil, nil, err
-	}
-	if err := c.checkToolChoice(r.Tools); err != nil {
-		return nil, nil, err
-	}
-	contents, config, err := c.cachedRequest(r.Messages, r.Tools)
-	if err != nil {
-		return nil, nil, err
-	}
-	if r.Schema != nil {
-		config.ResponseMIMEType = string(types.MediaJSON)
-		config.ResponseSchema = parameterSchemaToGemini(*r.Schema)
-	}
-	return contents, config, nil
+	return a.prepare(r.Messages, r.Tools, r.Schema, &r.Options)
 }
 
 // Status implements types.BatchProvider.
@@ -229,8 +204,11 @@ func fillResult(res *types.BatchResult, model string, resp *genai.GenerateConten
 		res.Err = &types.BatchRequestError{Outcome: unfinished}
 	default:
 		res.Outcome = types.BatchSucceeded
-		res.Message, res.FinishReason, res.Usage = responseMessage(resp)
+		var mapErr error
+		res.Message, res.FinishReason, res.Usage, mapErr = responseMessage(resp)
 		switch {
+		case mapErr != nil:
+			res.Err = &types.ProviderError{Provider: providerName, Model: model, Kind: types.ErrorKindPermanent, Err: mapErr}
 		case resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "":
 			res.Err = promptBlockedError(model, resp.PromptFeedback)
 		case types.IsContentFilterFinishReason(res.FinishReason):
@@ -243,51 +221,25 @@ func fillResult(res *types.BatchResult, model string, resp *genai.GenerateConten
 }
 
 // responseMessage converts a complete response as the streaming path does.
-func responseMessage(resp *genai.GenerateContentResponse) (types.AssistantMessage, string, types.UsageDelta) {
-	var msg types.AssistantMessage
-	finish := ""
+func responseMessage(resp *genai.GenerateContentResponse) (types.AssistantMessage, string, types.UsageDelta, error) {
+	var cand *genai.Candidate
 	if len(resp.Candidates) > 0 {
-		cand := resp.Candidates[0]
+		cand = resp.Candidates[0]
+	}
+	var blocked *genai.GenerateContentResponsePromptFeedback
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		blocked = resp.PromptFeedback
+	}
+	parts, err := responseParts(cand, blocked)
+	finish := ""
+	if cand != nil {
 		finish = string(cand.FinishReason)
-		if cand.Content != nil {
-			for _, part := range cand.Content.Parts {
-				switch {
-				case part.Text != "" && part.Thought:
-					sig := ""
-					if len(part.ThoughtSignature) > 0 {
-						sig = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
-					}
-					msg.Parts = append(msg.Parts, types.ThinkingPart{Text: part.Text, Signature: sig})
-				case part.Text != "":
-					msg.Parts = append(msg.Parts, types.TextPart{Text: part.Text})
-				case part.FunctionCall != nil:
-					if len(part.ThoughtSignature) > 0 {
-						msg.Parts = append(msg.Parts, types.ThinkingPart{Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature)})
-					}
-					id := part.FunctionCall.ID
-					if id == "" {
-						id = types.NewID()
-					}
-					args := part.FunctionCall.Args
-					if args == nil {
-						args = map[string]any{}
-					}
-					msg.Parts = append(msg.Parts, types.ToolCallPart{ID: id, Name: part.FunctionCall.Name, Arguments: args})
-				}
-			}
-		}
 	}
-	var usage types.UsageDelta
-	if u := resp.UsageMetadata; u != nil {
-		usage = types.UsageDelta{Cumulative: true, PromptTokens: int(u.PromptTokenCount),
-			CachedPromptTokens: int(u.CachedContentTokenCount),
-			CompletionTokens:   int(u.CandidatesTokenCount + u.ThoughtsTokenCount),
-			TotalTokens:        int(u.TotalTokenCount), ResponseModel: resp.ModelVersion, ResponseID: resp.ResponseID}
-	}
+	usage := usageOf(resp)
 	if finish != "" {
 		usage.FinishReasons = []string{finish}
 	}
-	return msg, finish, usage
+	return types.AssistantMessage{Parts: parts}, finish, usage, err
 }
 
 // Cancel implements types.BatchProvider.
@@ -515,6 +467,8 @@ func restRequest(contents []*genai.Content, c *genai.GenerateContentConfig, key 
 	set("responseSchema", c.ResponseSchema, c.ResponseSchema != nil)
 	set("responseJsonSchema", c.ResponseJsonSchema, c.ResponseJsonSchema != nil)
 	set("thinkingConfig", c.ThinkingConfig, c.ThinkingConfig != nil)
+	set("responseModalities", c.ResponseModalities, len(c.ResponseModalities) > 0)
+	set("speechConfig", c.SpeechConfig, c.SpeechConfig != nil)
 	if len(gen) > 0 {
 		req["generationConfig"] = gen
 	}

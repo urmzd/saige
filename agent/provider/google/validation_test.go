@@ -60,7 +60,7 @@ func TestReasoningValidation(t *testing.T) {
 func TestDynamicThinkingAndModelSwitch(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
 	WithThinkingBudget(-1)(a)
-	_, config := a.buildRequest(nil, nil)
+	_, config, _ := a.buildRequest(nil, 0, nil)
 	if !config.ThinkingConfig.IncludeThoughts || *config.ThinkingConfig.ThinkingBudget != -1 {
 		t.Fatal("dynamic thinking lost")
 	}

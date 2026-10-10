@@ -1,0 +1,22 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "inlineData": {
+            "data": "UklGRiBmYWtl",
+            "mimeType": "audio/wav"
+          }
+        },
+        {
+          "fileData": {
+            "fileUri": "https://example.com/a.mp3",
+            "mimeType": "audio/mpeg"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

@@ -1,0 +1,5 @@
+start 0 audio_out audio/L16;codec=pcm;rate=24000
+delta 0 data="aaaa"
+delta 0 data="bbbb"
+delta 0 data="cc"
+end 0 {"type":"audio_out","source":{"media_type":"audio/L16;codec=pcm;rate=24000","size":10,"sha256":"e5b23841c6af4520d056e6428103d28178e586ff65111e80167d43736ade2f72"},"audio":{"sample_rate":24000,"channels":1,"format":"pcm"}}

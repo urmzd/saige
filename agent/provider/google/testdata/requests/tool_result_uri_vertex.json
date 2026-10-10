@@ -1,0 +1,55 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "take a photo"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "args": {
+              "zoom": 2
+            },
+            "name": "take_photo"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "take_photo",
+            "parts": [
+              {
+                "fileData": {
+                  "fileUri": "gs://bucket/photo.png",
+                  "mimeType": "image/png"
+                }
+              }
+            ],
+            "response": {
+              "result": ""
+            }
+          }
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": "and now?"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

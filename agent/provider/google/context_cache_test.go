@@ -19,7 +19,7 @@ func TestContextCacheBindsExactPrefixAndTools(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
 	prefix := []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reference"))}
 	tools := []types.ToolDef{{Name: "read", Parameters: types.ParameterSchema{Type: "object"}}}
-	contents, config := a.buildRequest(prefix, tools)
+	contents, config, _ := a.buildRequest(prefix, 0, tools)
 	fingerprint, err := cacheFingerprint(contents, config)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestContextCacheFingerprintWithoutToolConfig(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
 	prefix := []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reference"))}
 	tools := []types.ToolDef{{Name: "read", Parameters: types.ParameterSchema{Type: "object"}}}
-	contents, config := a.buildRequest(prefix, tools)
+	contents, config, _ := a.buildRequest(prefix, 0, tools)
 	if config.ToolConfig != nil {
 		t.Fatalf("ToolConfig = %+v, want nil without a tool choice", config.ToolConfig)
 	}

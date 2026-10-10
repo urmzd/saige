@@ -1,0 +1,75 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "q"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": "let me think",
+          "thought": true,
+          "thoughtSignature": "dGhvdWdodC1zaWc="
+        },
+        {
+          "text": "Answer.",
+          "thoughtSignature": "dGV4dC1zaWc="
+        },
+        {
+          "executableCode": {
+            "code": "print(1)",
+            "language": "PYTHON"
+          }
+        },
+        {
+          "codeExecutionResult": {
+            "outcome": "OUTCOME_OK",
+            "output": "1\n"
+          }
+        },
+        {
+          "inlineData": {
+            "data": "iVBORyBmYWtl",
+            "mimeType": "image/png"
+          },
+          "thoughtSignature": "aW1hZ2Utc2ln"
+        },
+        {
+          "inlineData": {
+            "data": "UklGRiBmYWtl",
+            "mimeType": "audio/L16;codec=pcm;rate=24000"
+          }
+        },
+        {
+          "text": "hello there"
+        },
+        {
+          "text": "I cannot help with that."
+        },
+        {
+          "functionCall": {
+            "args": {
+              "q": "x"
+            },
+            "name": "lookup"
+          },
+          "thoughtSignature": "Y2FsbC1zaWc="
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "text": "next"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

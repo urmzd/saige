@@ -44,7 +44,10 @@ func TestFunctionCallSignatureRoundTrip(t *testing.T) {
 		t.Fatalf("first block = %+v", msg.Parts[0])
 	}
 
-	_, contents := toGeminiContents([]types.Message{types.UserMsg(types.Text("weather")), msg})
+	_, contents, err := (&mapper{names: map[string]string{}}).contents([]types.Message{types.UserMsg(types.Text("weather")), msg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := contents[len(contents)-1].Parts
 	if len(parts) != 2 {
 		t.Fatalf("model parts = %d, want the two calls only", len(parts))

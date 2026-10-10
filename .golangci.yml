@@ -49,10 +49,3 @@ linters:
       - path: (^|/)storetest/
         linters:
           - goconst
-      # The adapters still build v1 stream deltas internally and upgrade
-      # them to part deltas where Stream returns, until each emits parts
-      # natively.
-      - path: agent/provider/google/
-        linters:
-          - staticcheck
-        text: "SA1019: types\\.\\w+ is deprecated: v1 stream form"
