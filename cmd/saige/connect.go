@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/saige/agent/types"
 	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/postgres"
 	"github.com/urmzd/saige/rag"
@@ -62,7 +61,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 
 	switch name {
 	case providerOllama:
-		client, err := ollamaProvider.NewClient(ollamaProvider.Config{Host: *cf.ollamaHost, EmbeddingModel: types.ModelID(embedModel)})
+		client, err := ollamaProvider.NewClient(ollamaProvider.Config{Host: *cf.ollamaHost, EmbeddingModel: agenttypes.ModelID(embedModel)})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -80,7 +79,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		if *cf.baseURL != "" {
 			opts = append(opts, openaiProvider.WithBaseURL(*cf.baseURL))
 		}
-		emb, err := openaiProvider.NewEmbedder(openaiProvider.Config{APIKey: apiKey, Model: types.ModelID(embedModel)}, opts...)
+		emb, err := openaiProvider.NewEmbedder(openaiProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)}, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -92,7 +91,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 			if v.Project == "" {
 				return nil, nil, fmt.Errorf("%s is required for vertex embeddings", provider.EnvCloudProject)
 			}
-			emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{Model: types.ModelID(embedModel)}, googleProvider.WithEmbedVertex(v.Project, v.Location))
+			emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{Model: agenttypes.ModelID(embedModel)}, googleProvider.WithEmbedVertex(v.Project, v.Location))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -102,7 +101,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("GOOGLE_API_KEY is required")
 		}
-		emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{APIKey: apiKey, Model: types.ModelID(embedModel)})
+		emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)})
 		if err != nil {
 			return nil, nil, err
 		}

@@ -195,6 +195,14 @@ func check(t *testing.T, c Case) {
 		t.Errorf("Describe = %+v", info)
 	}
 
+	checkForwarding(t, c, p, inner)
+	checkRetarget(t, c, p)
+	checkLifecycle(t, c, p, inner)
+}
+
+// checkForwarding proves capabilities, options and schemas reach inner.
+func checkForwarding(t *testing.T, c Case, p types.Provider, inner *Full) {
+	t.Helper()
 	caps, _ := types.ProviderCapabilities(p)
 	if !caps.SupportsAll(types.CapTools, types.CapStructuredOutput, types.CapToolChoice) {
 		t.Errorf("capabilities = %v", caps.List())
@@ -219,7 +227,12 @@ func check(t *testing.T, c Case) {
 		t.Error("did not forward the schema")
 	}
 
-	// Re-targeting keeps the decorator and reaches the inner provider.
+}
+
+// checkRetarget proves a re-targeted provider keeps the decorator and
+// reaches the inner provider.
+func checkRetarget(t *testing.T, c Case, p types.Provider) {
+	t.Helper()
 	target := types.ModelTarget("other-model")
 	if c.Profiles {
 		target = c.RetargetTo
@@ -242,6 +255,11 @@ func check(t *testing.T, c Case) {
 		t.Errorf("an undefined model target: %v", err)
 	}
 
+}
+
+// checkLifecycle proves sessions and Close reach the inner provider.
+func checkLifecycle(t *testing.T, c Case, p types.Provider, inner *Full) {
+	t.Helper()
 	// A session keeps the decorator and isolates the inner provider.
 	sess := types.NewProviderSession(p)
 	if typeName(sess) != typeName(p) {
