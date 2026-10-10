@@ -118,21 +118,23 @@ Without flags, `saige ask` runs the first vendor whose credentials are set, in t
 
 ```bash
 ollama pull qwen3.5:4b
-saige ask --provider ollama --model qwen3.5:4b "What is retrieval-augmented generation?"
+saige ask --provider ollama "What is retrieval-augmented generation?"
 ```
+
+`--provider ollama` serves `qwen3.5:4b`, or any other chat model you have pulled.
 
 `saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands.
 
 ### The smallest agent
 
-A catalog preset builds the adapters for you. `default` serves the cheapest model of each vendor whose credentials are set, failing over in order, then a local Ollama model.
+A catalog preset builds the adapters for you. `default` serves the cheapest model of each vendor whose credentials are set, failing over in order, then a model pulled into a local Ollama, so it also runs with no key at all.
 
 <!-- fsrc src="examples/quickstart/agent/main.go" fence="auto" -->
 ```go
 // The smallest agent: a catalog preset instead of a hand-built adapter.
 // "default" serves the cheapest model of each vendor whose credentials are
-// set (Anthropic, OpenAI, Google), then a local Ollama model, failing over in
-// that order.
+// set (Anthropic, OpenAI, Google), then a model pulled into a local Ollama,
+// failing over in that order.
 package main
 
 import (
@@ -277,7 +279,7 @@ docker run -d --name saige-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres p
 ollama pull nomic-embed-text
 ```
 
-Then ingest a document and run a hybrid search (vector similarity fused with BM25):
+Then ingest a document and run a hybrid search (vector similarity fused with BM25). `embedderregistry.Text` turns any adapter's text embedder into the pipeline's embedder:
 
 <!-- fsrc src="examples/quickstart/rag/main.go" fence="auto" -->
 ```go
@@ -318,7 +320,7 @@ func main() {
 	pipe, err := rag.NewPipeline(
 		rag.WithStore(pgstore.NewStore(pool, nil)),
 		rag.WithContentExtractor(extractor.NewAuto()),
-		rag.WithEmbedders(embedderregistry.NewTextOnly(textEmbedder{emb})),
+		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
 		rag.WithRecursiveChunker(512, 64),
 		rag.WithBM25(nil), // keyword search runs in Postgres through pg_search
 	)
@@ -338,17 +340,6 @@ func main() {
 	for _, hit := range res.Hits {
 		fmt.Printf("%.3f %s\n", hit.Score, hit.Variant.Text)
 	}
-}
-
-// textEmbedder embeds the text of each content variant.
-type textEmbedder struct{ e *ollama.OllamaEmbedder }
-
-func (t textEmbedder) Embed(ctx context.Context, variants []ragtypes.ContentVariant) ([][]float32, error) {
-	texts := make([]string, len(variants))
-	for i, v := range variants {
-		texts[i] = v.Text
-	}
-	return t.e.Embed(ctx, texts)
 }
 ```
 <!-- /fsrc -->

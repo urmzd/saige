@@ -23,10 +23,12 @@ var (
 // SubAgentDef (a fresh, stateless child per call), a handoff agent shares the
 // entry agent's tree and continues the same conversation via a stable root.
 // A handoff member runs inside the entry agent's loop, so it inherits that
-// agent's operational config (timeouts, metrics, compaction, file pipeline,
-// store, step runner) for free. The three fields it may swap are the ones the
-// loop reads per-iteration: persona, provider, and tool registry. Leaving any
-// of them zero inherits the entry agent's.
+// agent's operational config (timeouts, metrics, file pipeline, store, step
+// runner). Compaction is not available: a run of a handoff group with a
+// compaction config fails, because compacting a shared branch needs
+// per-owner checkpoints. The fields a member may set are the ones the loop
+// reads per iteration: persona, provider, tool registry, MaxIter and dials.
+// Leaving any of them zero inherits the entry agent's.
 type HandoffDef struct {
 	Name         string
 	Description  string // shown to the LLM in the handoff_to_<name> tool

@@ -1,7 +1,7 @@
 // The smallest agent: a catalog preset instead of a hand-built adapter.
 // "default" serves the cheapest model of each vendor whose credentials are
-// set (Anthropic, OpenAI, Google), then a local Ollama model, failing over in
-// that order.
+// set (Anthropic, OpenAI, Google), then a model pulled into a local Ollama,
+// failing over in that order.
 package main
 
 import (

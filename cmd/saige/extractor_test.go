@@ -9,6 +9,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/rag"
+	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/knowledge"
 )
 
@@ -193,7 +194,7 @@ func TestNewRAGPipelineEmbedderOnlyWhenNeeded(t *testing.T) {
 // retriever is an in-memory index that a fresh process starts with empty.
 func TestRAGPipelineOptionsUseEmbeddings(t *testing.T) {
 	var cfg rag.Config
-	for _, o := range ragPipelineOptions(nil, &textEmbedder{}) {
+	for _, o := range ragPipelineOptions(nil, embedderregistry.Text(embedFunc(nil))) {
 		o(&cfg)
 	}
 	if cfg.Embedders == nil {

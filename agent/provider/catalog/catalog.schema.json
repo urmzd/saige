@@ -110,6 +110,9 @@
           ],
           "type": "string"
         },
+        "local_fallback": {
+          "type": "boolean"
+        },
         "model": {
           "type": "string"
         },
