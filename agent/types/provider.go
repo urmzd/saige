@@ -77,9 +77,9 @@ type Closer interface {
 	Close() error
 }
 
-// ProviderName returns the name of a provider if it implements NamedProvider,
+// NameOf returns the name of a provider if it implements NamedProvider,
 // otherwise returns "unknown".
-func ProviderName(p Provider) string {
+func NameOf(p Provider) string {
 	if np, ok := p.(NamedProvider); ok {
 		return np.Name()
 	}

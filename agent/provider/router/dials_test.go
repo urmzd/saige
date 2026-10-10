@@ -11,7 +11,7 @@ import (
 )
 
 func catalogProfile(id, vendor, model string, call func() (<-chan types.Delta, error), got *[]types.RequestOptions) Profile {
-	return Profile{ID: id, Provider: optsProvider{provider: provider{model: model, call: call, caps: catalog.MustLookup(vendor, model)}, got: got}}
+	return Profile{ID: types.ProfileID(id), Provider: optsProvider{provider: provider{model: model, call: call, caps: catalog.MustLookup(types.ProviderName(vendor), model)}, got: got}}
 }
 
 func focusedDials() types.RequestOptions {
@@ -79,7 +79,7 @@ func TestContractualSeedFiltersMember(t *testing.T) {
 			catalogProfile("haiku", "anthropic", "claude-haiku-5-5", ok("x"), &got),
 			catalogProfile("gpt41", "openai", "gpt-4.1", ok("served"), &got),
 		},
-		Groups: map[string][]string{"chain": {"haiku", "gpt41"}}, DefaultGroup: "chain",
+		Groups: map[types.PresetName][]types.ProfileID{"chain": {"haiku", "gpt41"}}, DefaultGroup: "chain",
 	})
 	if err != nil {
 		t.Fatal(err)

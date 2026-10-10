@@ -16,7 +16,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
 - [docs/agent-definitions.md](docs/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
-- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
+- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema (version 2: models, endpoints, offerings), sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
 - [docs/tool-calling.md](docs/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
 - [docs/delegation.md](docs/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration budgets and wrap-up, private scratch, passing tasks and results by reference

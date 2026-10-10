@@ -14,9 +14,14 @@ import (
 
 // explainedEntry is how one chain entry compiles a set of dials.
 type explainedEntry struct {
-	Profile  string `json:"profile"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Profile  types.ProfileID    `json:"profile"`
+	Provider types.ProviderName `json:"provider"`
+	Model    types.ModelID      `json:"model"`
+	Endpoint string             `json:"endpoint,omitempty"`
+	Offering string             `json:"offering,omitempty"`
+	// Fallback lists the offerings the catalog names as equivalents or
+	// larger-context alternatives. They are hints, never failover.
+	Fallback *types.FallbackHints `json:"fallback,omitempty"`
 	// Surface is the API the entry is served on, when it changes the mapping.
 	Surface string `json:"surface,omitempty"`
 	// Effective is the raw options the entry would send, by option name.
@@ -28,7 +33,7 @@ type explainedEntry struct {
 }
 
 type explainedPreset struct {
-	Name     string           `json:"name"`
+	Name     types.PresetName `json:"name"`
 	Revision string           `json:"catalog_revision,omitempty"`
 	Dials    types.Dials      `json:"dials"`
 	Policy   string           `json:"policy"`
@@ -85,19 +90,13 @@ func newCatalogExplainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := ""
+			var name types.PresetName
 			if len(args) == 1 {
-				name = args[0]
+				name = types.PresetName(args[0])
 			} else if name, cat, _, err = cf.selectPreset(cat); err != nil {
 				return err
 			}
-			var rp catalog.ResolvedPreset
-			if _, ok := cat.Presets[name]; ok || !strings.Contains(name, "/") {
-				rp, err = cat.Resolve(name)
-			} else {
-				p, m, _ := strings.Cut(name, "/")
-				rp, err = cat.ResolveModel(p, m)
-			}
+			rp, err := resolveNamed(cat, name)
 			if err != nil {
 				return err
 			}
@@ -121,7 +120,12 @@ func explainPreset(rp catalog.ResolvedPreset, d types.Dials, pol types.DialPolic
 		if !d.IsZero() {
 			layers = append(layers, types.DialLayer{Scope: types.DialScopeRequest, Dials: d.Clone()})
 		}
-		x := explainedEntry{Profile: e.ProfileID, Provider: e.Provider, Model: e.Model, Surface: entrySurface(e, surface)}
+		x := explainedEntry{Profile: e.ProfileID, Provider: e.Provider, Model: e.Model, Endpoint: e.Endpoint, Offering: e.Offering,
+			Surface: entrySurface(e, surface)}
+		if o := e.Caps.Offering; o != nil && (len(o.Fallback.Equivalents) > 0 || len(o.Fallback.LargerContext) > 0) {
+			f := o.Fallback
+			x.Fallback = &f
+		}
 		eff, rep, err := types.ResolveDials(e.Caps, e.Options, types.DialContext{Tools: tools, Surface: x.Surface}, pol, layers...)
 		x.Decisions = rep.Decisions
 		if err != nil {
@@ -145,6 +149,9 @@ func entrySurface(e catalog.ResolvedEntry, asked string) string {
 	}
 	if asked != "" {
 		return asked
+	}
+	if o := e.Caps.Offering; o != nil && o.Endpoint.Surface == types.SurfaceOpenAIResponses {
+		return types.SurfaceResponses
 	}
 	var merged types.Dials
 	for _, l := range e.Dials {
@@ -174,6 +181,11 @@ func writeExplained(w io.Writer, xp explainedPreset, asJSON bool) error {
 			fmt.Fprintf(w, "  (%s)", e.Surface)
 		}
 		fmt.Fprintln(w)
+		fmt.Fprintf(w, "   endpoint %s  offering %s\n", dash(e.Endpoint), dash(e.Offering))
+		if f := e.Fallback; f != nil {
+			fmt.Fprintf(w, "   fallback hints: equivalents %s; larger context %s\n",
+				dash(strings.Join(f.Equivalents, ", ")), dash(strings.Join(f.LargerContext, ", ")))
+		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "   DIAL\tREQUESTED\tACTION\tSENT\tSCOPE\tREASON")
 		for _, d := range e.Decisions {

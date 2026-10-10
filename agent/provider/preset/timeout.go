@@ -41,7 +41,7 @@ func (t *attemptTimeout) Unwrap() types.Provider { return t.Inner }
 // Close closes the inner provider.
 func (t *attemptTimeout) Close() error { return types.CloseProvider(t.Inner) }
 
-func (t *attemptTimeout) Name() string  { return types.ProviderName(t.Inner) }
+func (t *attemptTimeout) Name() string  { return types.NameOf(t.Inner) }
 func (t *attemptTimeout) Model() string { return types.ProviderModel(t.Inner) }
 
 func (t *attemptTimeout) Capabilities() types.ModelCapabilities {

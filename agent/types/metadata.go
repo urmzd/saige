@@ -9,7 +9,9 @@ import "encoding/json"
 // that serialise/restore round-trips include the full agent config.
 // Zero-valued fields mean "no change": only non-zero fields override.
 type ConfigPart struct {
-	Model      string         // model name passed to Provider (empty = use default)
+	// Target re-targets the provider from the next call on: a model, a
+	// router profile or a preset (zero = no change). See ProviderWithTarget.
+	Target     Target         `json:",omitzero"`
 	MaxIter    int            // max loop iterations (0 = use previous/default)
 	Compact    *CompactConfig // compaction strategy (nil = no change)
 	CompactNow bool           // trigger immediate compaction this iteration
@@ -25,6 +27,24 @@ type ConfigPart struct {
 	// Reason records why this block was written, for example the outcome
 	// that made an OutcomePolicy switch models. It has no effect on the loop.
 	Reason string `json:",omitempty"`
+}
+
+// UnmarshalJSON decodes a ConfigPart. A record written before targets
+// existed carries a "Model" string, which is read as a model target.
+func (c *ConfigPart) UnmarshalJSON(b []byte) error {
+	type plain ConfigPart
+	var v struct {
+		plain
+		Model string `json:"Model,omitempty"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*c = ConfigPart(v.plain)
+	if c.Target.IsZero() && v.Model != "" {
+		c.Target = ModelTarget(ModelID(v.Model))
+	}
+	return nil
 }
 
 func (ConfigPart) Kind() PartKind { return KindConfig }

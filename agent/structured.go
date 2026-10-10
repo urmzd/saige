@@ -240,8 +240,8 @@ func repairMessage(mode OutputMode, cause error) types.Message {
 func (a *Agent) branchModel() string {
 	msgs, err := a.cfg.Tree.FlattenBranch(a.cfg.Tree.Active())
 	if err == nil {
-		if rc, _ := a.prepareMessages(msgs); rc.model != "" {
-			return rc.model
+		if rc, _ := a.prepareMessages(msgs); rc.target.Model != "" {
+			return string(rc.target.Model)
 		}
 	}
 	return types.ProviderModel(a.cfg.Provider)

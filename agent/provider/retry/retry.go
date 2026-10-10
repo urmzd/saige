@@ -69,7 +69,7 @@ func New(inner types.Provider, cfg Config) *Provider {
 }
 
 func (r *Provider) Name() string {
-	return "retry(" + types.ProviderName(r.Inner) + ")"
+	return "retry(" + types.NameOf(r.Inner) + ")"
 }
 
 // Model implements types.ModelProvider by delegating to the inner provider.
@@ -79,6 +79,16 @@ func (r *Provider) Model() string { return types.ProviderModel(r.Inner) }
 // when it supports model switching, keeping the same retry config.
 func (r *Provider) WithModel(model string) types.Provider {
 	return &Provider{Inner: types.ProviderWithModel(r.Inner, model), Config: r.Config}
+}
+
+// WithTarget implements types.TargetSwitcher: it re-targets the inner
+// provider, keeping the same retry config.
+func (r *Provider) WithTarget(t types.Target) (types.Provider, error) {
+	inner, err := types.ProviderWithTarget(r.Inner, t)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{Inner: inner, Config: r.Config}, nil
 }
 
 // ContentSupport implements types.ContentNegotiator by delegating to the inner

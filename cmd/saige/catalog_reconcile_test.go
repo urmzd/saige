@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // fakeLister serves a fixed listing.
@@ -50,24 +51,30 @@ func envMap(m map[string]string) func(string) string { return func(k string) str
 // reconciles with no drift.
 func servedRows(provider string) []catalog.RemoteModel {
 	var ids []string
-	for _, m := range catalog.Default().Models {
-		if m.Provider == provider {
-			ids = append(ids, m.Prefix)
+	for k := range catalog.Default().Models {
+		if vendor, prefix, _ := strings.Cut(k, "/"); vendor == provider {
+			ids = append(ids, prefix)
 		}
 	}
+	slices.Sort(ids)
 	return remote(ids...)
 }
 
 func TestStubRowUsesTheBaselineOnly(t *testing.T) {
 	base := catalog.Default()
-	stub := stubRow("anthropic", "claude-new-1", base.Baselines["anthropic"])
-	if stub.Pricing != nil || stub.Tier != "" || stub.SupersededBy != "" || stub.Defaults != nil || stub.ServerToolFees != nil {
-		t.Fatalf("a stub must not assert price, tier, successor, defaults or fees: %+v", stub)
+	stub := newStubRow(base, "anthropic", "claude-new-1")
+	if stub.Key != "anthropic/claude-new-1" || stub.Offering.Model != stub.Key || stub.Offering.Endpoint != "anthropic" ||
+		stub.Offering.Extends != base.Endpoints["anthropic"].DefaultOfferingTemplate {
+		t.Fatalf("stub %+v", stub)
 	}
-	if !slices.Equal(stub.Notes, []string{stubNote}) {
-		t.Fatalf("notes %v", stub.Notes)
+	o := stub.Offering
+	if o.Pricing != nil || stub.Model.Tier != "" || stub.Model.SupersededBy != "" || o.Defaults != nil || o.ServerToolFees != nil || stub.Model.Limits != nil {
+		t.Fatalf("a stub must not assert price, tier, successor, limits, defaults or fees: %+v", stub)
 	}
-	raw, _, err := appendStubRows(nil, []catalog.ModelSpec{stub})
+	if !slices.Equal(stub.Model.Notes, []string{stubNote}) || !slices.Equal(o.Notes, []string{stubNote}) {
+		t.Fatalf("notes %v %v", stub.Model.Notes, o.Notes)
+	}
+	raw, _, err := appendStubRows(nil, []stubRow{stub})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +94,14 @@ func TestStubRowUsesTheBaselineOnly(t *testing.T) {
 	if !got.Pricing.IsZero() {
 		t.Fatalf("stub is priced: %s", got.Pricing.Describe())
 	}
+	if pending := pendingReview(cat); !slices.Contains(pending, "anthropic/claude-new-1") {
+		t.Fatalf("pending review %v", pending)
+	}
 }
 
 func TestCollapsePrefixes(t *testing.T) {
-	got := collapsePrefixes([]string{"gpt-x-2026-01-01", "gpt-x", "a", "gpt-x", "b-1", "b"})
-	if want := []string{"a", "b", "gpt-x"}; !slices.Equal(got, want) {
+	got := collapsePrefixes([]types.ModelID{"gpt-x-2026-01-01", "gpt-x", "a", "gpt-x", "b-1", "b"})
+	if want := []types.ModelID{"a", "b", "gpt-x"}; !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	if got := stubPrefix("ollama", "qwen9:4b"); got != "qwen9" {
@@ -100,25 +110,33 @@ func TestCollapsePrefixes(t *testing.T) {
 }
 
 func TestAppendStubRowsKeepsExistingBytes(t *testing.T) {
-	stubs := []catalog.ModelSpec{
-		{Provider: "openai", Prefix: "gpt-new", Notes: []string{stubNote}},
-		{Provider: "openai", Prefix: "gpt-4o", Notes: []string{stubNote}},
-	}
+	base := catalog.Default()
+	stubs := []stubRow{newStubRow(base, "openai", "gpt-new"), newStubRow(base, "openai", "gpt-4o")}
 	raw := catalog.DefaultJSON()
 	out, added, err := appendStubRows(raw, stubs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(added, []string{"openai/gpt-new"}) {
-		t.Fatalf("added %v: an existing row must be skipped", added)
+		t.Fatalf("added %v: an existing model must be skipped", added)
 	}
 	// Removing the inserted text gives back the file byte for byte.
-	ins := len(out) - len(raw)
-	i := bytes.Index(out, []byte(`,
-    {
-      "provider": "openai",
-      "prefix": "gpt-new"`))
-	if i < 0 || !bytes.Equal(append(slices.Clone(out[:i]), out[i+ins:]...), raw) {
+	mi := bytes.Index(out, []byte(",\n    \"openai/gpt-new\": {"))
+	if mi < 0 {
+		t.Fatalf("model stub not inserted:\n%s", out)
+	}
+	stripped := slices.Clone(out[:mi])
+	rest := out[mi+1:]
+	end := bytes.Index(rest, []byte("\n    }")) + len("\n    }")
+	stripped = append(stripped, rest[end:]...)
+	oi := bytes.Index(stripped, []byte(",\n    {\n      \"model\": \"openai/gpt-new\""))
+	if oi < 0 {
+		t.Fatalf("offering stub not inserted")
+	}
+	orest := stripped[oi+1:]
+	oend := bytes.Index(orest, []byte("\n    }")) + len("\n    }")
+	stripped = append(slices.Clone(stripped[:oi]), orest[oend:]...)
+	if !bytes.Equal(stripped, raw) {
 		t.Fatalf("existing bytes changed")
 	}
 	cat, err := catalog.Load(bytes.NewReader(out))
@@ -129,7 +147,7 @@ func TestAppendStubRowsKeepsExistingBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if e, ok := cat.Describe("openai", "gpt-new"); !ok || e.Prefix != "gpt-new" {
-		t.Fatal("stub row not loaded")
+		t.Fatal("stub not loaded")
 	}
 
 	again, readded, err := appendStubRows(out, stubs)
@@ -137,15 +155,18 @@ func TestAppendStubRowsKeepsExistingBytes(t *testing.T) {
 		t.Fatalf("a second run must add nothing: %v %v", readded, err)
 	}
 
-	empty, _, err := appendStubRows([]byte("{\n  \"version\": 1,\n  \"models\": []\n}\n"), stubs[:1])
+	empty, _, err := appendStubRows([]byte("{\n  \"version\": 2,\n  \"models\": {},\n  \"offerings\": []\n}\n"), stubs[:1])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := catalog.Load(bytes.NewReader(empty)); err != nil {
-		t.Fatalf("empty array: %v\n%s", err, empty)
+		t.Fatalf("empty containers: %v\n%s", err, empty)
 	}
-	if _, _, err := appendStubRows([]byte(`{"version":1}`), stubs); err == nil {
-		t.Fatal("a file without a models array must be refused")
+	if _, _, err := appendStubRows([]byte(`{"version":2}`), stubs); err == nil {
+		t.Fatal("a file without models and offerings must be refused")
+	}
+	if _, _, err := appendStubRows([]byte(`{"version":1,"models":[]}`), stubs); err == nil || !strings.Contains(err.Error(), "migrate") {
+		t.Fatalf("a version 1 file must be refused with a migrate hint: %v", err)
 	}
 	if _, _, err := appendStubRows([]byte(`[]`), stubs); err == nil {
 		t.Fatal("a non-object file must be refused")
@@ -196,7 +217,8 @@ func TestReconcileWithFakeLister(t *testing.T) {
 	if oa.Status != reconcileChecked || oa.Ignored != 1 || oa.Inferred < 1 || len(oa.New) != 2 || oa.New[0].Created != "2026-10-09" {
 		t.Fatalf("openai %+v", oa)
 	}
-	if len(rep.Stubs) != 1 || rep.Stubs[0].Prefix != "gpt-9-nova" || rep.Stubs[0].Extends != "openai.chat" {
+	if len(rep.Stubs) != 1 || rep.Stubs[0].Key != "openai/gpt-9-nova" || rep.Stubs[0].Offering.Endpoint != "openai-chat" ||
+		rep.Stubs[0].Offering.Extends != "baseline.openai" {
 		t.Fatalf("stubs %+v", rep.Stubs)
 	}
 	an := byName["anthropic"]
@@ -273,7 +295,7 @@ func TestReconcileReportFormat(t *testing.T) {
 				LimitDrift: []limitDrift{{ID: "claude-y", Family: "claude-y", Drift: []string{"context window: endpoint 1, catalog 2"}}}},
 			{Provider: "google", Status: reconcileSkipped, Reason: "GOOGLE_API_KEY is not set"},
 		},
-		Stubs:         []catalog.ModelSpec{{Provider: "openai", Prefix: "gpt-9"}},
+		Stubs:         []stubRow{{Key: "openai/gpt-9", Offering: catalog.OfferingSpec{Model: "openai/gpt-9", Endpoint: "openai-chat"}}},
 		Written:       &reconcileWriteState{Path: "c.json", Added: []string{"openai/gpt-9"}},
 		PendingReview: []string{"openai/gpt-8"},
 		StalePricing:  []stalePrice{{Row: "openai/gpt-4o", Field: "pricing", AsOf: "2026-01-01", AgeDays: 281}},

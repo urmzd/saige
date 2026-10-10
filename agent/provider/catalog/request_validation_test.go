@@ -38,7 +38,7 @@ func TestEveryAdapterRejectsUnsupportedRequestBeforeHTTP(t *testing.T) {
 			t.Run(provider+"/"+string(missing), func(t *testing.T) {
 				model := "request-validation-" + string(missing)
 				caps := types.ModelCapabilities{}.With(types.CapStreaming, types.CapTools, types.CapStructuredOutput, types.CapMaxOutputTokens).Without(missing)
-				catalog.Register(catalog.Entry{Provider: provider, Prefix: model, Caps: caps})
+				catalog.Register(catalog.Entry{Provider: types.ProviderName(provider), Prefix: types.ModelID(model), Caps: caps})
 				var p types.Provider
 				switch provider {
 				case "openai":

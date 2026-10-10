@@ -631,7 +631,7 @@ func (a *Agent) beforeModelCallHooks(ctx context.Context, stream *EventStream, p
 		var r types.HookRecord
 		live = runHooks(ctx, a, HookBeforeModelCall, pickBeforeModelCall, &BeforeModelCallEvent{
 			HookRun: a.hookRun(ctx, stream), Step: step,
-			Provider: types.ProviderName(provider), Model: types.ProviderModel(provider),
+			Provider: types.NameOf(provider), Model: types.ProviderModel(provider),
 			Messages: messages, Tools: tools, Options: cloneOptions(opts),
 		})
 		abortRecord(&r, live)
@@ -649,7 +649,7 @@ func (a *Agent) afterModelCallHooks(ctx context.Context, stream *EventStream, pr
 	}
 	ev := AfterModelCallEvent{
 		HookRun: a.hookRun(ctx, stream), Step: step,
-		Provider: types.ProviderName(provider), Model: types.ProviderModel(provider),
+		Provider: types.NameOf(provider), Model: types.ProviderModel(provider),
 		Options: cloneOptions(opts), Message: msg, Err: callErr, Replayed: replayed,
 	}
 	if usage != nil {

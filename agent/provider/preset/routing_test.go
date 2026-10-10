@@ -42,7 +42,7 @@ func TestFailoverOnAuthIsOptIn(t *testing.T) {
 			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"lenient":{"extends":"strict","routing":{"failover_on_auth":true}}}}`)
 	for _, tt := range []struct {
-		name   string
+		name   types.PresetName
 		served string
 	}{{"strict", ""}, {"lenient", "gemini-3.1-flash-lite"}} {
 		rec := newRecorder()
@@ -70,7 +70,7 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"returns":{"extends":"sticky","routing":{"fail_threshold":1,"reprobe_after":1}}}}`)
 	for _, tt := range []struct {
-		name        string
+		name        types.PresetName
 		wantPrimary bool
 	}{{"sticky", false}, {"returns", true}} {
 		rec := newRecorder()

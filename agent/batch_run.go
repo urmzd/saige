@@ -88,7 +88,7 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 	}
 	id := cfg.JobID
 	if id == "" {
-		provider, model := types.ProviderName(p), types.ProviderModel(p)
+		provider, model := types.NameOf(p), types.ProviderModel(p)
 		m, err := batch.Manifest(provider, model, reqs)
 		if err != nil {
 			return nil, err

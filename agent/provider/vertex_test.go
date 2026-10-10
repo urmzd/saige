@@ -110,7 +110,7 @@ func TestBuildVertexTarget(t *testing.T) {
 // Completions.
 func TestBuildRoutesResponsesOnlyModels(t *testing.T) {
 	for model, wantResponses := range map[string]bool{"gpt-6.1-sol": true, "gpt-6-astra": true, "gpt-6-luna": false} {
-		p, err := Build(context.Background(), Config{Provider: OpenAI, Model: model, APIKey: "k", Getenv: env(nil)})
+		p, err := Build(context.Background(), Config{Provider: OpenAI, Model: types.ModelID(model), APIKey: "k", Getenv: env(nil)})
 		if err != nil {
 			t.Fatal(err)
 		}

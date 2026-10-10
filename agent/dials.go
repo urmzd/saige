@@ -121,7 +121,7 @@ func (a *Agent) attachDials(ctx context.Context, ac activeContext, opts *types.R
 	if a.output(ctx).native() && len(tools) == 0 {
 		if len(ac.dialLayers) > 0 {
 			a.cfg.Logger.Warn("dials are not sent with a native response schema; set them on the provider",
-				"agent", a.cfg.Name, "provider", types.ProviderName(ac.provider))
+				"agent", a.cfg.Name, "provider", types.NameOf(ac.provider))
 		}
 		return opts, nil
 	}
@@ -130,12 +130,12 @@ func (a *Agent) attachDials(ctx context.Context, ac activeContext, opts *types.R
 		for _, n := range merged.Names() {
 			if n.Class(merged) == types.DialContractual {
 				return nil, fmt.Errorf("%w: dial %s: provider %q does not accept request options",
-					types.ErrInvalidModelConfig, n, types.ProviderName(ac.provider))
+					types.ErrInvalidModelConfig, n, types.NameOf(ac.provider))
 			}
 		}
 		if len(ac.dialLayers) > 0 {
 			a.cfg.Logger.Warn("dials are not sent: the provider does not accept request options",
-				"agent", a.cfg.Name, "provider", types.ProviderName(ac.provider))
+				"agent", a.cfg.Name, "provider", types.NameOf(ac.provider))
 		}
 		return opts, nil
 	}

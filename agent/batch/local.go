@@ -61,7 +61,7 @@ func NewLocal(p types.Provider, concurrency int) *Local {
 func (l *Local) Ephemeral() bool { return true }
 
 // Name returns the wrapped provider's name.
-func (l *Local) Name() string { return types.ProviderName(l.provider) }
+func (l *Local) Name() string { return types.NameOf(l.provider) }
 
 // Model returns the wrapped provider's model.
 func (l *Local) Model() string { return types.ProviderModel(l.provider) }

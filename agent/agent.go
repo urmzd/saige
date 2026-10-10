@@ -840,7 +840,7 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 // resolvedConfig holds the effective configuration for a single iteration,
 // derived by walking all ConfigPart blocks in the tree.
 type resolvedConfig struct {
-	model       string
+	target      types.Target
 	maxIter     int
 	maxIterSet  bool // true once a ConfigPart block explicitly set MaxIter
 	compactor   types.Compactor
@@ -927,8 +927,8 @@ func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []typ
 }
 
 func mergeConfig(rc *resolvedConfig, cc types.ConfigPart) {
-	if cc.Model != "" {
-		rc.model = cc.Model
+	if !cc.Target.IsZero() {
+		rc.target = cc.Target
 	}
 	if cc.MaxIter != 0 {
 		rc.maxIter = cc.MaxIter
@@ -1023,7 +1023,7 @@ func checkStructuredOutput(provider types.Provider) error {
 	}
 	if !types.AcceptsSchema(provider) {
 		return fmt.Errorf("%w: response schema: provider %q does not support structured output",
-			types.ErrInvalidModelConfig, types.ProviderName(provider))
+			types.ErrInvalidModelConfig, types.NameOf(provider))
 	}
 	return nil
 }
@@ -1534,7 +1534,10 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// Resolve config + active agent (handoff group only). With no group this
 		// is byte-for-byte the non-handoff path.
 		resolved, llmMessages := a.prepareMessages(messages)
-		active := a.applyModel(a.resolveActive(&resolved, llmMessages), resolved.model)
+		active, err := a.applyTarget(a.resolveActive(&resolved, llmMessages), resolved.target)
+		if err != nil {
+			return err
+		}
 		active, err = a.selectHandoffContext(ctx, active, messages)
 		if err != nil {
 			return err
@@ -2009,28 +2012,30 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 	return ac
 }
 
-// applyModel re-targets the active provider when a ConfigPart block set a
-// model. A provider that cannot switch (no types.ModelSwitcher) is used
-// unchanged, with a warning so a requested model is never dropped silently.
-func (a *Agent) applyModel(ac activeContext, model string) activeContext {
-	if model == "" {
-		return ac
+// applyTarget re-targets the active provider when a ConfigPart block set a
+// target. A provider that can switch neither targets nor models is used
+// unchanged, with a warning so a requested model is never dropped
+// silently. A target the provider rejects, such as a profile a router
+// does not define, fails the turn.
+func (a *Agent) applyTarget(ac activeContext, t types.Target) (activeContext, error) {
+	if t.IsZero() {
+		return ac, nil
 	}
-	switched := types.ProviderWithModel(ac.provider, model)
-	// A session provider (such as a router session) records a pin only when
-	// WithModel is called, even when it already reports the requested model,
-	// so the switch is never skipped for one.
-	if _, session := ac.provider.(types.SessionProvider); session {
-		if ms, ok := ac.provider.(types.ModelSwitcher); ok {
-			switched = ms.WithModel(model)
+	_, ts := ac.provider.(types.TargetSwitcher)
+	_, ms := ac.provider.(types.ModelSwitcher)
+	if !ts && !ms {
+		if t.Model == "" || types.ProviderModel(ac.provider) != string(t.Model) {
+			a.cfg.Logger.Warn("config requested a target but the provider cannot switch",
+				"agent", a.cfg.Name, "target", t.String(), "provider", types.NameOf(ac.provider))
 		}
+		return ac, nil
 	}
-	if switched == ac.provider && types.ProviderModel(ac.provider) != model {
-		a.cfg.Logger.Warn("config requested a model but the provider cannot switch models",
-			"agent", a.cfg.Name, "requested_model", model, "provider", types.ProviderName(ac.provider))
+	switched, err := types.ProviderWithTarget(ac.provider, t)
+	if err != nil {
+		return ac, fmt.Errorf("config target: %w", err)
 	}
 	ac.provider = switched
-	return ac
+	return ac, nil
 }
 
 // numberCitation gives a citation part the model produced its number in the
@@ -2217,7 +2222,7 @@ func (a *Agent) modelStep(
 		// SubmitInterruptReplace, with an error that still matches
 		// context.Canceled for the step runner.
 		stopped := func() (types.StepResult, error) {
-			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), errTurnInterrupted)
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.NameOf(provider), time.Since(llmStart), errTurnInterrupted)
 			partial = interruptedPartial(agg)
 			return types.StepResult{Kind: types.StepKindLLM, Message: partial, Usage: liveUsage}, errTurnInterrupted
 		}
@@ -2233,7 +2238,7 @@ func (a *Agent) modelStep(
 			if interruptRequested(stepCtx) {
 				return stopped()
 			}
-			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), llmErr)
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.NameOf(provider), time.Since(llmStart), llmErr)
 			return types.StepResult{}, llmErr
 		}
 		var streamErr error
@@ -2272,7 +2277,7 @@ func (a *Agent) modelStep(
 			return stopped()
 		}
 		if streamErr != nil {
-			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), streamErr)
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.NameOf(provider), time.Since(llmStart), streamErr)
 			return types.StepResult{}, streamErr
 		}
 		// (timeouts) A well-behaved provider observes stepCtx and closes its
@@ -2281,12 +2286,12 @@ func (a *Agent) modelStep(
 		// clean finish.
 		if a.cfg.LLMTimeout > 0 && stepCtx.Err() == context.DeadlineExceeded {
 			toErr := &types.ProviderError{
-				Provider: types.ProviderName(provider),
+				Provider: types.NameOf(provider),
 				Model:    types.ProviderModel(provider),
 				Kind:     types.ErrorKindTransient,
 				Err:      fmt.Errorf("llm call exceeded timeout %s: %w", a.cfg.LLMTimeout, context.DeadlineExceeded),
 			}
-			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), toErr)
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.NameOf(provider), time.Since(llmStart), toErr)
 			return types.StepResult{}, toErr
 		}
 		if stepCtx.Err() != nil {
@@ -2305,10 +2310,10 @@ func (a *Agent) modelStep(
 		// would make the turn look like a clean text-only finish.
 		if open := agg.OpenToolCalls(); len(open) > 0 {
 			truncErr := fmt.Errorf("%w: stream ended with open tool calls %v", types.ErrResponseTruncated, open)
-			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.ProviderName(provider), time.Since(llmStart), truncErr)
+			a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", types.NameOf(provider), time.Since(llmStart), truncErr)
 			return types.StepResult{}, truncErr
 		}
-		providerName := types.ProviderName(provider)
+		providerName := types.NameOf(provider)
 		a.cfg.Metrics.RecordProviderCall(stepCtx, "chat", providerName, time.Since(llmStart), nil)
 		// (token metric) Record token usage once per completed LLM call with the
 		// merged prompt/completion counts. Skipped for cache hits (no new tokens

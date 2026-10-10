@@ -27,10 +27,10 @@ func (e *unsupportedError) Is(target error) bool {
 // error is permanent and matches types.ErrInvalidModelConfig.
 func Unsupported(p types.Provider) error {
 	return &types.ProviderError{
-		Provider: types.ProviderName(p),
+		Provider: types.NameOf(p),
 		Model:    types.ProviderModel(p),
 		Kind:     types.ErrorKindPermanent,
-		Err:      &unsupportedError{provider: types.ProviderName(p)},
+		Err:      &unsupportedError{provider: types.NameOf(p)},
 	}
 }
 

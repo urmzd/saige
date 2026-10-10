@@ -235,6 +235,11 @@ type ModelCapabilities struct {
 	// Notes carries caveats worth surfacing in logs, e.g. that a knob is
 	// accepted but silently ignored.
 	Notes []string
+
+	// Offering is the catalog offering this declaration projects, when it
+	// came from one: the precise parameter specification, modality limits,
+	// service tiers and endpoint. Nil for a declaration built by hand.
+	Offering *Offering `json:"-"`
 }
 
 // Supports reports whether c is declared supported.
@@ -321,6 +326,10 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 			out.Media.NativeTypes[mt] = true
 		}
 	}
+	if mc.Offering != nil {
+		o := mc.Offering.Clone()
+		out.Offering = &o
+	}
 	return out
 }
 
@@ -332,6 +341,8 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 //
 // Set membership intersects; declared limits take the smaller non-zero value;
 // Known is true only if both are known.
+//
+//nolint:gocyclo // one rule per field of the declaration
 func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities {
 	out := ModelCapabilities{
 		Provider:               mc.Provider,
@@ -413,6 +424,10 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 	// otherwise it is derived from the intersected declarations.
 	if reflect.DeepEqual(mc.DialMap, other.DialMap) {
 		out.DialMap = mc.DialMap.Clone()
+	}
+	if mc.Offering != nil && other.Offering != nil {
+		o := mc.Offering.Intersect(*other.Offering)
+		out.Offering = &o
 	}
 	return out
 }

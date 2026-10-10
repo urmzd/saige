@@ -23,8 +23,10 @@ func ptr[T any](v T) *T { return &v }
 
 func TestInfer(t *testing.T) {
 	for _, tt := range []struct {
-		model, provider, bare string
-		err                   bool
+		model    string
+		provider types.ProviderName
+		bare     string
+		err      bool
 	}{
 		{"claude-sonnet-4-5", Anthropic, "claude-sonnet-4-5", false},
 		{"gpt-4o-mini", OpenAI, "gpt-4o-mini", false},
@@ -56,7 +58,7 @@ func TestBuildSelectsAdapterAndCredentials(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		cfg      Config
-		provider string
+		provider types.ProviderName
 		model    string
 		check    func(error) bool // nil means success
 	}{
@@ -83,7 +85,7 @@ func TestBuildSelectsAdapterAndCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := p.(types.NamedProvider).Name(); got != tt.provider {
+			if got := p.(types.NamedProvider).Name(); got != string(tt.provider) {
 				t.Errorf("provider = %s, want %s", got, tt.provider)
 			}
 			if got := p.(types.ModelProvider).Model(); got != tt.model {
@@ -161,7 +163,7 @@ func TestBuildAppliesOptions(t *testing.T) {
 			if tt.name == "ollama" {
 				key = "" // the ollama adapter sends no key, so Build rejects one
 			}
-			p, err := Build(context.Background(), Config{Model: tt.model, APIKey: key, BaseURL: server.URL, Options: opts})
+			p, err := Build(context.Background(), Config{Model: types.ModelID(tt.model), APIKey: key, BaseURL: server.URL, Options: opts})
 			if err != nil {
 				t.Fatal(err)
 			}

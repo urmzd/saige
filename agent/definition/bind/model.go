@@ -22,7 +22,7 @@ func entry(ref string) (catalog.EntrySpec, error) {
 	if !ok || prov == "" || model == "" {
 		return catalog.EntrySpec{}, fmt.Errorf("model %q must be provider/model", ref)
 	}
-	e := catalog.EntrySpec{ID: ref, Provider: prov, Model: model}
+	e := catalog.EntrySpec{ID: ref, Provider: types.ProviderName(prov), Model: types.ModelID(model)}
 	if prov == vertexProvider {
 		e.Provider, e.Vertex = "google", &catalog.VertexSpec{}
 	}
@@ -31,8 +31,8 @@ func entry(ref string) (catalog.EntrySpec, error) {
 
 // presetChain returns the chain a preset runs, following extends to the
 // nearest preset that declares one.
-func presetChain(cat *catalog.Catalog, name string) []catalog.EntrySpec {
-	seen := map[string]bool{}
+func presetChain(cat *catalog.Catalog, name types.PresetName) []catalog.EntrySpec {
+	seen := map[types.PresetName]bool{}
 	for name != "" && !seen[name] {
 		seen[name] = true
 		p, ok := cat.Presets[name]
@@ -50,17 +50,17 @@ func presetChain(cat *catalog.Catalog, name string) []catalog.EntrySpec {
 // modelCatalog returns the catalog and preset name that serve m: the
 // preset itself, or a preset added to a copy of the catalog for a
 // provider/model or a fallback chain.
-func modelCatalog(cat *catalog.Catalog, owner string, m *definition.ModelRef) (*catalog.Catalog, string, error) {
+func modelCatalog(cat *catalog.Catalog, owner string, m *definition.ModelRef) (*catalog.Catalog, types.PresetName, error) {
 	if len(m.Fallback) == 0 && (m.IsPreset() || !strings.HasPrefix(m.Use, vertexProvider+"/")) {
-		return cat, m.Use, nil
+		return cat, types.PresetName(m.Use), nil
 	}
 	var spec catalog.PresetSpec
 	if m.IsPreset() {
-		chain := presetChain(cat, m.Use)
+		chain := presetChain(cat, types.PresetName(m.Use))
 		if chain == nil {
 			return nil, "", fmt.Errorf("unknown preset %q", m.Use)
 		}
-		spec = catalog.PresetSpec{Extends: m.Use, Chain: append([]catalog.EntrySpec(nil), chain...)}
+		spec = catalog.PresetSpec{Extends: types.PresetName(m.Use), Chain: append([]catalog.EntrySpec(nil), chain...)}
 	} else {
 		e, err := entry(m.Use)
 		if err != nil {
@@ -79,10 +79,10 @@ func modelCatalog(cat *catalog.Catalog, owner string, m *definition.ModelRef) (*
 		spec.Chain = append(spec.Chain, e)
 	}
 	spec.Description = "model of agent definition " + owner
-	name := "agent-" + owner
+	name := types.PresetName("agent-" + owner)
 	out := cat.Clone()
 	if out.Presets == nil {
-		out.Presets = map[string]catalog.PresetSpec{}
+		out.Presets = map[types.PresetName]catalog.PresetSpec{}
 	}
 	out.Presets[name] = spec
 	return out, name, nil
@@ -107,10 +107,14 @@ func buildModel(ctx context.Context, env *Env, owner string, m *definition.Model
 func ModelCheck(cat *catalog.Catalog) func(string) error {
 	return func(ref string) error {
 		if !strings.Contains(ref, "/") {
-			if _, ok := cat.Presets[ref]; !ok {
-				return fmt.Errorf("unknown preset %q (available: %s)", ref, strings.Join(cat.PresetNames(), ", "))
+			if _, ok := cat.Presets[types.PresetName(ref)]; !ok {
+				names := make([]string, 0, len(cat.Presets))
+				for _, n := range cat.PresetNames() {
+					names = append(names, string(n))
+				}
+				return fmt.Errorf("unknown preset %q (available: %s)", ref, strings.Join(names, ", "))
 			}
-			_, err := cat.Resolve(ref)
+			_, err := cat.Resolve(types.PresetName(ref))
 			return err
 		}
 		e, err := entry(ref)

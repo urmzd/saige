@@ -227,7 +227,11 @@ func (a *Agent) compactionProvider(active activeContext, cfg *types.CompactConfi
 		return a.cfg.CompactProvider
 	}
 	if cfg != nil && cfg.SummaryModel != "" {
-		return a.applyModel(activeContext{provider: active.provider}, cfg.SummaryModel).provider
+		// A summary model the provider cannot serve falls back to the active
+		// provider: compaction must not fail the turn.
+		if ac, err := a.applyTarget(activeContext{provider: active.provider}, types.ModelTarget(types.ModelID(cfg.SummaryModel))); err == nil {
+			return ac.provider
+		}
 	}
 	return active.provider
 }

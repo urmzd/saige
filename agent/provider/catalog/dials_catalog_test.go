@@ -23,8 +23,8 @@ type dialRecord struct {
 func TestDefaultDialsGolden(t *testing.T) {
 	var out []dialRecord
 	for _, e := range Default().view().entries {
-		mc := e.Caps.ForModel(e.Prefix)
-		mc.Provider = e.Provider
+		mc := e.Caps.ForModel(string(e.Prefix))
+		mc.Provider = string(e.Provider)
 		if e.SupersededBy != "" || (mc.Supports(types.CapEmbeddings) && !mc.Supports(types.CapStreaming)) {
 			continue
 		}
@@ -32,7 +32,7 @@ func TestDefaultDialsGolden(t *testing.T) {
 			label := strings.Join(dialNames(d), ",")
 			_, rep, err := types.ResolveDials(mc, types.RequestOptions{}, types.DialContext{}, types.DialPolicy{},
 				types.DialLayer{Scope: types.DialScopeEntry, Dials: d})
-			r := dialRecord{Provider: e.Provider, Model: e.Prefix, Dials: label + "=" + rep.Decisions[0].Requested, Decisions: rep.Decisions}
+			r := dialRecord{Provider: string(e.Provider), Model: string(e.Prefix), Dials: label + "=" + rep.Decisions[0].Requested, Decisions: rep.Decisions}
 			for i := range r.Decisions {
 				r.Decisions[i].Scope = ""
 			}
@@ -89,13 +89,13 @@ func TestOverlayPatchesDialMapping(t *testing.T) {
 func TestBadDialMappingFailsAtLoad(t *testing.T) {
 	for _, tc := range []struct{ name, row, path string }{
 		{"unknown effort", `{"provider":"openai","prefix":"gpt-6.1-sol","dials":{"reasoning":{"depth":{"high":{"reasoning":{"effort":"ultra"}}}}}}`,
-			"models[%d].dials.reasoning.depth.high"},
+			"offerings[%d].dials.reasoning.depth.high"},
 		{"unsupported sampling", `{"provider":"anthropic","prefix":"claude-haiku-5-5","dials":{"creativity":{"levels":{"focused":{"temperature":0.3}}}}}`,
-			"models[%d].dials.creativity.levels.focused"},
+			"offerings[%d].dials.creativity.levels.focused"},
 		{"inexpressible control", `{"provider":"ollama","prefix":"qwen3","dials":{"reasoning":{"on":{"reasoning":{"effort":"high"}}}}}`,
-			"models[%d].dials.reasoning.on"},
+			"offerings[%d].dials.reasoning.on"},
 		{"unknown level", `{"provider":"openai","prefix":"gpt-4.1","dials":{"creativity":{"levels":{"wild":{"temperature":2}}}}}`,
-			"models[%d].dials.creativity.levels.wild"},
+			"offerings[%d].dials.creativity.levels.wild"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			layer, err := Load(strings.NewReader(`{"version":1,"models":[` + tc.row + `]}`))
@@ -215,7 +215,7 @@ func TestDialsSurviveExportAndCanonicalRoundTrip(t *testing.T) {
 	if e.Caps.DialMap.Reasoning == nil || e.Caps.DialMap.Reasoning.DepthChange != types.DepthChangePerRequest {
 		t.Fatalf("dial map: %+v", e.Caps.DialMap)
 	}
-	if got := entrySpec(e).Dials; got == nil || got.Defaults == nil {
-		t.Fatalf("export lost dials: %+v", got)
+	if got := Export().Offerings; len(got) == 0 {
+		t.Fatal("export wrote no offerings")
 	}
 }

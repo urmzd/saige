@@ -162,7 +162,7 @@ func (m *FunctionModel) declared() (types.ModelCapabilities, bool) {
 		return *m.Caps, true
 	}
 	if provider, model, ok := strings.Cut(m.CatalogModel, "/"); ok {
-		caps, _ := catalog.Lookup(provider, model)
+		caps, _ := catalog.Lookup(types.ProviderName(provider), model)
 		return caps, true
 	}
 	caps := DefaultCapabilities()

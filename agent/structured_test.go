@@ -288,7 +288,7 @@ func TestStructuredOutcomeSwitch(t *testing.T) {
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
 			for _, c := range sm.Parts {
-				if cc, ok := c.(types.ConfigPart); ok && cc.Model == "large" && cc.Reason == string(types.OutcomeSchemaInvalid) {
+				if cc, ok := c.(types.ConfigPart); ok && cc.Target.Model == "large" && cc.Reason == string(types.OutcomeSchemaInvalid) {
 					found = true
 				}
 			}

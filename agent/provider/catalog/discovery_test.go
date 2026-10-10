@@ -10,8 +10,9 @@ import (
 
 func TestInferProvider(t *testing.T) {
 	for _, tt := range []struct {
-		model, want string
-		ok          bool
+		model string
+		want  types.ProviderName
+		ok    bool
 	}{
 		{"claude-sonnet-4-5-20250514", "anthropic", true},
 		{"gpt-4o-mini", "openai", true},
@@ -62,9 +63,10 @@ func TestFits(t *testing.T) {
 
 func TestDescribeTierAndSuccessor(t *testing.T) {
 	for _, tt := range []struct {
-		provider, model string
-		tier            Tier
-		successor       string
+		provider  types.ProviderName
+		model     string
+		tier      Tier
+		successor types.ModelID
 	}{
 		{"anthropic", "claude-opus-5-5", TierFrontier, ""},
 		{"anthropic", "claude-haiku-5-5", TierEconomy, ""},
@@ -162,7 +164,7 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range []struct {
 		id     string
 		status Status
-		family string
+		family types.ModelID
 	}{
 		{"zeta-1", StatusUndeclared, ""},
 		{"alpha-exact", StatusDeclared, "alpha-exact"},
@@ -179,7 +181,7 @@ func TestReconcile(t *testing.T) {
 	if got["beta-1"].SupersededBy != "alpha" {
 		t.Errorf("beta-1 successor = %q", got["beta-1"].SupersededBy)
 	}
-	if !slices.Equal(r.Unserved, []string{"gamma"}) {
+	if !slices.Equal(r.Unserved, []types.ModelID{"gamma"}) {
 		t.Errorf("Unserved = %v, want [gamma]", r.Unserved)
 	}
 	if !slices.Equal(r.Undeclared(), []string{"zeta-1"}) {

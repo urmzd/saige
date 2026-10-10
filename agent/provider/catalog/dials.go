@@ -330,8 +330,8 @@ func checkRowDials(path string, e Entry, found *issues) {
 	if s == nil {
 		return
 	}
-	mc := e.Caps.ForModel(e.Prefix)
-	mc.Provider = e.Provider
+	mc := e.Caps.ForModel(string(e.Prefix))
+	mc.Provider = string(e.Provider)
 	check := func(p string, o types.RequestOptions) {
 		if err := mc.ValidateOptions(o); err != nil {
 			found.errorf(p, CodeDial, "%s for %s/%s", types.OptionReason(err), e.Provider, e.Prefix)
@@ -467,7 +467,7 @@ func checkEntryDials(path string, e ResolvedEntry, found *issues) {
 	if len(e.Dials) == 0 {
 		return
 	}
-	model := e.Provider + "/" + e.Model
+	model := modelKey(e.Provider, e.Model)
 	eff, rep, err := types.ResolveDials(e.Caps, e.Options, types.DialContext{}, types.DialPolicy{}, e.Dials...)
 	for _, d := range rep.Decisions {
 		dp := path + ".dials." + string(d.Dial)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // untrustedFields is the allowlist an untrusted catalog layer (a project file
@@ -22,6 +23,8 @@ import (
 //   - routing.failover_on_content_filter and routing.failover_on_auth send a
 //     refused prompt or a failed credential's request to another vendor;
 //   - inherit_default false discards the trusted layers below;
+//   - an endpoint's transport, auth, location, data handling, model IDs
+//     and primary flag redirect requests, credentials or personal data;
 //   - vertex.project and vertex.location bill and send prompts to a Google
 //     Cloud project the user did not choose, with the user's own
 //     Application Default Credentials;
@@ -29,29 +32,62 @@ import (
 //     a dial can turn on prompt caching or change reasoning spend.
 var untrustedFields = map[reflect.Type]map[string]bool{
 	reflect.TypeFor[catalog.Catalog](): {
-		"$schema": true, "version": true, "revision": true, "templates": true, "models": true,
-		"baselines": true, "presets": true, "default_preset": true,
+		"$schema": true, "version": true, "revision": true, "model_templates": true, "models": true,
+		"endpoints": true, "offering_templates": true, "offerings": true, "presets": true, "default_preset": true,
 		"inherit_default": false, "dials": false,
 	},
 	reflect.TypeFor[catalog.ModelSpec](): {
-		"provider": true, "prefix": true, "extends": true, "tier": true, "superseded_by": true,
-		"capabilities": true, "add_capabilities": true, "remove_capabilities": true, "limits": true,
-		"reasoning": true, "structured_output": true, "media": true, "server_tools": true,
-		"server_tool_fees": true, "pricing": true, "defaults": true, "notes": true,
-		"$replace": true, "$delete": true, "chat_completions_tools": true,
+		"extends": true, "tier": true, "superseded_by": true, "limits": true, "modalities": true, "notes": true,
+		"$replace": true, "$delete": true,
+	},
+	reflect.TypeFor[catalog.ModelLimitsSpec]():     {"context_window": true, "max_output_tokens": true},
+	reflect.TypeFor[catalog.ModelModalitiesSpec](): {"in": true, "out": true},
+	// An endpoint says where requests go and with which credential and
+	// data handling, so an untrusted layer may describe one but not point
+	// it anywhere: no base URL, secret, cloud project, model renaming, data
+	// handling (pii_ok widens what privacy lets out), or primary flag
+	// (which would move a vendor's traffic to the endpoint).
+	reflect.TypeFor[catalog.EndpointSpec](): {
+		"surface": true, "serves": true, "capacity": true, "files": true, "modes": true,
+		"default_offering_template": true, "inherit_offerings": true, "overrides": true,
+		"primary": false, "location": false, "auth": false, "transport": false, "data": false, "model_ids": false,
+	},
+	reflect.TypeFor[catalog.CapacitySpec](): {"requests_per_minute": true, "tokens_per_minute": true, "max_concurrency": true},
+	reflect.TypeFor[catalog.FilesSpec]():    {"api": true, "max_bytes": true, "ttl": true, "uri_schemes": true},
+	reflect.TypeFor[catalog.ModesSpec]():    {"batch": true, "streaming": true},
+	// Unreachable while their fields are refused; listed so every field
+	// of the file format has a decision.
+	reflect.TypeFor[catalog.LocationSpec]():  {"region": false, "project": false},
+	reflect.TypeFor[catalog.AuthSpec]():      {"type": false, "secret": false},
+	reflect.TypeFor[catalog.TransportSpec](): {"base_url": false, "timeout": false},
+	reflect.TypeFor[catalog.DataSpec]():      {"zero_retention": false, "store": false, "residency": false, "pii_ok": false},
+	reflect.TypeFor[catalog.OfferingSpec](): {
+		"model": true, "endpoint": true, "extends": true, "features": true, "add_features": true, "remove_features": true,
+		"params": true, "constraints": true, "modalities": true, "limits": true, "structured_output": true,
+		"server_tools": true, "server_tool_fees": true, "pricing": true, "tiers": true, "modality_pricing": true,
+		"defaults": true, "fallback": true, "notes": true, "$replace": true, "$delete": true,
 		"dials": false,
 	},
-	reflect.TypeFor[catalog.LimitsSpec](): {
-		"context_window": true, "max_output_tokens": true, "default_max_output_tokens": true,
+	reflect.TypeFor[catalog.ParamSpec](): {
+		"type": true, "min": true, "max": true, "values": true, "default": true, "allowed": true, "required": true,
+		"special": true, "wire": true,
 	},
-	reflect.TypeFor[catalog.ReasoningSpec](): {
-		"efforts": true, "default_effort": true, "required": true, "default_enabled": true,
-		"min_budget": true, "max_budget": true, "dynamic_budget": true, "zero_budget": true,
-		"sampling_requires_no_reasoning": true, "forced_tool_choice": true,
+	reflect.TypeFor[types.Constraint]():       {"when": true, "forbid": true, "require": true, "exclusive": true, "reason": true},
+	reflect.TypeFor[types.CondValue]():        {"in": true, "not": true, "bool": true, "set": true},
+	reflect.TypeFor[catalog.ModalitiesSpec](): {"in": true, "out": true, "tool_result": true},
+	reflect.TypeFor[catalog.ModalityLimitSpec](): {
+		"media": true, "sources": true, "max_bytes": true, "max_count": true, "max_pixels": true, "max_pages": true,
+		"max_duration": true, "fps": true, "tokens": true,
 	},
+	reflect.TypeFor[types.TokenRule](): {
+		"base": true, "per_tile": true, "tile": true, "per_page": true, "per_second": true, "per_image": true, "per_pixels": true,
+	},
+	reflect.TypeFor[types.ModalityRate]():   {"input_per_mtok": true, "output_per_mtok": true},
+	reflect.TypeFor[catalog.TierSpec]():     {"transport": true, "discount": true, "cached_input_per_mtok": true, "pricing": true, "wire": true},
+	reflect.TypeFor[catalog.FallbackSpec](): {"equivalents": true, "larger_context": true},
 	reflect.TypeFor[catalog.PricingSpec](): {
 		"currency": true, "input_per_mtok": true, "output_per_mtok": true, "cached_input_per_mtok": true,
-		"cache_write_per_mtok": true, "per_request": true, "batch_discount": true, "batch_cached_input_per_mtok": true, "free": true, "as_of": true, "source": true,
+		"cache_write_per_mtok": true, "per_request": true, "free": true, "as_of": true, "source": true,
 	},
 	reflect.TypeFor[catalog.Fee](): {"currency": true, "per_use": true, "as_of": true, "source": true},
 	reflect.TypeFor[catalog.OptionsSpec](): {
@@ -96,7 +132,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	// local_fallback only picks among models already pulled on the entry's
 	// own server, so it widens nothing an untrusted layer could not name.
 	reflect.TypeFor[catalog.EntrySpec](): {
-		"id": true, "provider": true, "model": true, "options": true, "unset": true, "inherit": true,
+		"id": true, "offering": true, "endpoint": true, "provider": true, "model": true, "options": true, "unset": true, "inherit": true,
 		"retry": true, "attempt_timeout": true, "optional": true, "local_fallback": true,
 		"base_url": false, "api_key_env": false, "vertex": true, "dials": false,
 	},

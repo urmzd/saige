@@ -9,9 +9,9 @@
 // reasoning or cache settings onto another model.
 //
 // The bundle's router has one group per preset, in chain order, and the
-// primary preset is the default group. ConfigPart.Model, or an outcome
-// policy's model switch, can name another built preset or a single profile
-// ID to select it.
+// primary preset is the default group. A ConfigPart target, or an outcome
+// policy's model switch, can name another built preset (types.PresetTarget)
+// or a single profile (types.ProfileTarget) to select it.
 package preset
 
 import (
@@ -108,8 +108,8 @@ func Available(ctx context.Context, e catalog.ResolvedEntry, o Options) error {
 		}
 	}
 	if e.Provider == provider.Ollama && e.LocalFallback {
-		if pulled, err := o.ListLocal(ctx, config(e, "", o)); err == nil && chooseLocalModel(e.Model, pulled) == "" {
-			return noLocalModel(e.Model)
+		if pulled, err := o.ListLocal(ctx, config(e, "", o)); err == nil && chooseLocalModel(string(e.Model), pulled) == "" {
+			return noLocalModel(string(e.Model))
 		}
 	}
 	return nil
@@ -140,8 +140,8 @@ func (o Options) withDefaults() Options {
 // Bundle is a built set of presets behind one router.
 type Bundle struct {
 	router   *router.Router
-	primary  string
-	resolved map[string]catalog.ResolvedPreset
+	primary  types.PresetName
+	resolved map[types.PresetName]catalog.ResolvedPreset
 	revision string
 	warnings []catalog.Issue
 }
@@ -159,20 +159,20 @@ var _ types.Preset = (*Bundle)(nil)
 // another pulled chat model instead (see EntrySpec.LocalFallback), with a
 // WarnLocalModel warning. When the server has no chat model pulled, the
 // entry fails with ErrNoLocalModel, or is dropped when it is optional.
-func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []string, o Options) (*Bundle, error) {
+func Build(ctx context.Context, cat *catalog.Catalog, primary types.PresetName, also []types.PresetName, o Options) (*Bundle, error) {
 	if cat == nil {
 		return nil, errors.New("preset: Build needs a catalog")
 	}
 	o = o.withDefaults()
-	names := []string{primary}
+	names := []types.PresetName{primary}
 	for _, n := range also {
 		if !slices.Contains(names, n) {
 			names = append(names, n)
 		}
 	}
-	b := &Bundle{primary: primary, resolved: map[string]catalog.ResolvedPreset{}, revision: cat.Revision}
+	b := &Bundle{primary: primary, resolved: map[types.PresetName]catalog.ResolvedPreset{}, revision: cat.Revision}
 	var profiles []router.Profile
-	groups := map[string][]string{}
+	groups := map[types.PresetName][]types.ProfileID{}
 	var closers []types.Provider
 	fail := func(err error) (*Bundle, error) {
 		for _, p := range closers {
@@ -201,19 +201,19 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []str
 			key, missing := credentials(e, o.Getenv)
 			if missing {
 				if e.Optional {
-					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + name, Code: "entry_dropped",
+					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + string(name), Code: "entry_dropped",
 						Message: fmt.Sprintf("optional entry %s dropped: no credentials for %s", e.ID, e.Provider), Severity: catalog.SeverityWarning})
 					continue
 				}
-				return fail(&types.ProviderError{Provider: e.Provider, Model: e.Model, Kind: types.ErrorKindAuth,
+				return fail(&types.ProviderError{Provider: string(e.Provider), Model: string(e.Model), Kind: types.ErrorKindAuth,
 					Err: fmt.Errorf("%w: preset %s entry %s: %s", types.ErrAuth, name, e.ID, credentialHint(e))})
 			}
 			if e.Provider == provider.Ollama {
-				if err := noLocal[localKey(e.BaseURL, e.Model)]; err != nil {
+				if err := noLocal[localKey(e.BaseURL, string(e.Model))]; err != nil {
 					if !e.Optional {
 						return fail(fmt.Errorf("preset %s entry %s: %w", name, e.ID, err))
 					}
-					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + name, Code: "entry_dropped",
+					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + string(name), Code: "entry_dropped",
 						Message: fmt.Sprintf("optional entry %s dropped: %v", e.ID, err), Severity: catalog.SeverityWarning})
 					continue
 				}
@@ -223,13 +223,13 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []str
 				// something answers: an optional local server that is not
 				// running is dropped like an optional entry without a key.
 				if err := o.Probe(ctx, config(e, key, o)); err != nil {
-					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + name, Code: "entry_dropped",
+					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + string(name), Code: "entry_dropped",
 						Message: fmt.Sprintf("optional entry %s dropped: %v", e.ID, err), Severity: catalog.SeverityWarning})
 					continue
 				}
 			}
 			if o.Budget != nil && e.Caps.Pricing.IsZero() {
-				b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + name, Code: catalog.WarnUnpriced,
+				b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + string(name), Code: catalog.WarnUnpriced,
 					Message: fmt.Sprintf("entry %s (%s/%s) is unpriced, so the budget cannot be enforced when it serves", e.ID, e.Provider, e.Model), Severity: catalog.SeverityWarning})
 			}
 			p, err := o.Factory(ctx, config(e, key, o))
@@ -294,7 +294,7 @@ func failoverOn(rs catalog.RoutingSpec) func(error) bool {
 // BuildFrom loads src, validates it, and builds from the result. It does not
 // install the catalog: hosts that want Lookup to see its rows call
 // catalog.Use as well.
-func BuildFrom(ctx context.Context, src catalog.Source, primary string, also []string, o Options) (*Bundle, error) {
+func BuildFrom(ctx context.Context, src catalog.Source, primary types.PresetName, also []types.PresetName, o Options) (*Bundle, error) {
 	cat, err := catalog.LoadSource(ctx, src)
 	if err != nil {
 		return nil, err
@@ -303,12 +303,12 @@ func BuildFrom(ctx context.Context, src catalog.Source, primary string, also []s
 }
 
 // resolve accepts a preset name or a "provider/model" reference.
-func resolve(cat *catalog.Catalog, name string) (catalog.ResolvedPreset, error) {
+func resolve(cat *catalog.Catalog, name types.PresetName) (catalog.ResolvedPreset, error) {
 	if _, ok := cat.Presets[name]; ok {
 		return cat.Resolve(name)
 	}
-	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
-		return cat.ResolveModel(p, m)
+	if p, m, ok := strings.Cut(string(name), "/"); ok && p != "" && m != "" {
+		return cat.ResolveModel(types.ProviderName(p), types.ModelID(m))
 	}
 	return cat.Resolve(name)
 }
@@ -415,7 +415,7 @@ func (b *Bundle) Router() *router.Router { return b.router }
 // Defaults implements types.Preset: the primary preset's agent defaults.
 func (b *Bundle) Defaults() types.PresetDefaults {
 	rp := b.resolved[b.primary]
-	d := types.PresetDefaults{Name: rp.Name, CatalogRevision: rp.CatalogRevision, OutputMode: rp.OutputMode, LLMTimeout: rp.LLMTimeout}
+	d := types.PresetDefaults{Name: string(rp.Name), CatalogRevision: rp.CatalogRevision, OutputMode: rp.OutputMode, LLMTimeout: rp.LLMTimeout}
 	if rp.ToolChoice != nil {
 		tc := *rp.ToolChoice
 		d.ToolChoice = &tc
@@ -429,14 +429,14 @@ func (b *Bundle) Defaults() types.PresetDefaults {
 
 // Resolved returns a built preset as resolved, after dropped entries were
 // removed.
-func (b *Bundle) Resolved(name string) (catalog.ResolvedPreset, bool) {
+func (b *Bundle) Resolved(name types.PresetName) (catalog.ResolvedPreset, bool) {
 	rp, ok := b.resolved[name]
 	return rp, ok
 }
 
 // Presets returns the built preset names, primary first.
-func (b *Bundle) Presets() []string {
-	out := []string{b.primary}
+func (b *Bundle) Presets() []types.PresetName {
+	out := []types.PresetName{b.primary}
 	for _, n := range b.router.Groups() {
 		if n != b.primary {
 			out = append(out, n)
@@ -449,8 +449,8 @@ func (b *Bundle) Presets() []string {
 func (b *Bundle) Warnings() []catalog.Issue { return append([]catalog.Issue(nil), b.warnings...) }
 
 // ConfigHashes maps every built profile ID to its configuration hash.
-func (b *Bundle) ConfigHashes() map[string]string {
-	out := map[string]string{}
+func (b *Bundle) ConfigHashes() map[types.ProfileID]string {
+	out := map[types.ProfileID]string{}
 	for _, rp := range b.resolved {
 		for _, e := range rp.Chain {
 			out[e.ProfileID] = e.ConfigHash
@@ -463,20 +463,25 @@ func (b *Bundle) ConfigHashes() map[string]string {
 // response cache (cache.Config.ConfigKey): a hash over the members'
 // configuration hashes in order and the catalog revision. It is empty for an
 // unknown name.
-func (b *Bundle) ConfigKey(name string) string {
+func (b *Bundle) ConfigKey(t types.Target) string {
 	hashes := b.ConfigHashes()
-	ids := b.router.Group(name)
-	if len(ids) == 0 {
-		if _, ok := hashes[name]; !ok {
-			return ""
+	var ids []types.ProfileID
+	switch {
+	case t.Preset != "":
+		ids = b.router.Group(t.Preset)
+	case t.Profile != "":
+		if _, ok := hashes[t.Profile]; ok {
+			ids = []types.ProfileID{t.Profile}
 		}
-		ids = []string{name}
+	}
+	if len(ids) == 0 {
+		return ""
 	}
 	h := sha256.New()
 	h.Write([]byte(b.revision))
 	for _, id := range ids {
 		h.Write([]byte{0})
-		h.Write([]byte(id + "=" + hashes[id]))
+		h.Write([]byte(string(id) + "=" + hashes[id]))
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

@@ -94,7 +94,7 @@ func TestSubAgentInheritsProviderWhenUnset(t *testing.T) {
 	parent := AgentConfig{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
 
 	child := childConfig(t, parent, SubAgentDef{Name: "worker"})
-	if got := types.ProviderName(child.Provider); got != "parent-provider" {
+	if got := types.NameOf(child.Provider); got != "parent-provider" {
 		t.Errorf("provider = %q, want the parent's when the def sets none", got)
 	}
 }
@@ -103,7 +103,7 @@ func TestSubAgentProviderOverridesParent(t *testing.T) {
 	parent := AgentConfig{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
 
 	child := childConfig(t, parent, SubAgentDef{Name: "worker", Provider: &namedProvider{id: "child-provider"}})
-	if got := types.ProviderName(child.Provider); got != "child-provider" {
+	if got := types.NameOf(child.Provider); got != "child-provider" {
 		t.Errorf("provider = %q, want the sub-agent's own", got)
 	}
 }
@@ -175,7 +175,7 @@ func TestHandoffMemberInheritsEntryProvider(t *testing.T) {
 	if m == nil {
 		t.Fatal("specialist must be a member of the group")
 	}
-	if got := types.ProviderName(m.provider); got != "entry-provider" {
+	if got := types.NameOf(m.provider); got != "entry-provider" {
 		t.Errorf("provider = %q, want the entry agent's when the def sets none", got)
 	}
 }
@@ -189,7 +189,7 @@ func TestHandoffMemberProviderOverridesEntry(t *testing.T) {
 		},
 	})
 
-	if got := types.ProviderName(a.activeMember("specialist").provider); got != "specialist-provider" {
+	if got := types.NameOf(a.activeMember("specialist").provider); got != "specialist-provider" {
 		t.Errorf("provider = %q, want the member's own", got)
 	}
 }

@@ -87,7 +87,7 @@ func (r *recorder) factory(_ context.Context, cfg provider.Config) (types.Provid
 func (r *recorder) models() []string {
 	var out []string
 	for _, c := range r.configs {
-		out = append(out, c.Provider+"/"+c.Model)
+		out = append(out, string(c.Provider)+"/"+string(c.Model))
 	}
 	return out
 }

@@ -136,7 +136,7 @@ func toolChoiceRequest(provider types.Provider, choice *types.ToolChoice, tools 
 	}
 	if !accepts {
 		return nil, nil, fmt.Errorf("%w: tool_choice %q: provider %q does not accept request options",
-			types.ErrInvalidModelConfig, choice.Mode, types.ProviderName(provider))
+			types.ErrInvalidModelConfig, choice.Mode, types.NameOf(provider))
 	}
 	return tools, opts, nil
 }

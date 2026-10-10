@@ -103,14 +103,86 @@ func cloneOptionsPtr(p *RequestOptions) *RequestOptions {
 //     fraction, or from a toggle as on and off;
 //   - the cache mode from the provider's prompt cache capability.
 func (mc ModelCapabilities) EffectiveDialMap() DialMap {
-	d := mc.DialMap.Clone()
-	if derived := deriveCreativity(mc); d.Creativity == nil {
+	return effectiveDialMap(mc.DialMap, factsOf(mc))
+}
+
+// EffectiveDialMap is ModelCapabilities.EffectiveDialMap derived from the
+// offering's parameter space rather than from capability flags: a
+// temperature parameter gives creativity, a sampling constraint on
+// reasoning makes creativity need reasoning off, the effort enum, budget
+// range or toggle give reasoning depth, the Chat Completions tools rule
+// gives the reasoning sent with tools, and the prompt cache feature gives
+// the cache mode. Declared overrides in DialMap win, as they do on the
+// projection; the two always agree.
+func (o Offering) EffectiveDialMap() DialMap {
+	return effectiveDialMap(o.DialMap, offeringFacts(o))
+}
+
+// dialFacts are the declarations the derived dial map reads.
+type dialFacts struct {
+	provider                            string
+	temperature, topP, samplingConflict bool
+	effort, budget, toggle              bool
+	efforts                             []string
+	minBudget, maxBudget                int
+	zeroBudget, dynamicBudget, required bool
+	defaultOn                           bool
+	chatTools                           ChatCompletionsTools
+	cacheMarkers, cacheAutomatic        bool
+}
+
+func factsOf(mc ModelCapabilities) dialFacts {
+	return dialFacts{
+		provider: mc.Provider, temperature: mc.Supports(CapTemperature), topP: mc.Supports(CapTopP),
+		samplingConflict: len(mc.SamplingRequiresNoReasoning) > 0,
+		effort:           mc.Supports(CapReasoningEffort), budget: mc.Supports(CapReasoningBudget), toggle: mc.Supports(CapReasoningToggle),
+		efforts: mc.ReasoningEfforts, minBudget: mc.MinReasoningBudget, maxBudget: mc.MaxReasoningBudget,
+		zeroBudget: mc.ZeroReasoningBudget, dynamicBudget: mc.DynamicReasoningBudget, required: mc.ReasoningRequired,
+		defaultOn: mc.ReasoningActive(RequestOptions{}), chatTools: mc.ChatCompletionsTools,
+		cacheMarkers: mc.Supports(CapPromptCacheMarkers), cacheAutomatic: mc.Supports(CapAutomaticPromptCache),
+	}
+}
+
+func offeringFacts(o Offering) dialFacts {
+	ps := o.Params.Params
+	f := dialFacts{provider: string(o.Model.Vendor), temperature: o.Accepted(ParamTemperature), topP: o.Accepted(ParamTopP),
+		effort: o.Accepted(ParamReasoningEffort), budget: o.Accepted(ParamReasoningBudget), toggle: o.Accepted(ParamReasoningEnabled),
+		efforts:      ps[ParamReasoningEffort].Values,
+		cacheMarkers: slices.Contains(o.Features, CapPromptCacheMarkers), cacheAutomatic: slices.Contains(o.Features, CapAutomaticPromptCache)}
+	b := ps[ParamReasoningBudget]
+	if b.Min != nil {
+		f.minBudget = int(*b.Min)
+	}
+	if b.Max != nil {
+		f.maxBudget = int(*b.Max)
+	}
+	_, f.zeroBudget = b.Special["0"]
+	_, f.dynamicBudget = b.Special["-1"]
+	for _, p := range reasoningParams {
+		f.required = f.required || ps[p].Required
+	}
+	enabled, _ := ps[ParamReasoningEnabled].Default.(bool)
+	effort, _ := ps[ParamReasoningEffort].Default.(string)
+	f.defaultOn = f.required || enabled || (effort != "" && effort != reasoningEffortNone)
+	for _, c := range o.Params.Constraints {
+		if rule, ok := chatToolsRule(c); ok {
+			f.chatTools = rule
+		} else if isReasoningCondition(c.When) && len(c.Forbid) > 0 && len(c.Require) == 0 && len(c.Exclusive) == 0 {
+			f.samplingConflict = true
+		}
+	}
+	return f
+}
+
+func effectiveDialMap(declared DialMap, f dialFacts) DialMap {
+	d := declared.Clone()
+	if derived := deriveCreativity(f); d.Creativity == nil {
 		d.Creativity = derived
 	} else if derived != nil {
 		d.Creativity.Levels = overlayOptions(derived.Levels, d.Creativity.Levels)
 		d.Creativity.RequiresReasoningOff = d.Creativity.RequiresReasoningOff || derived.RequiresReasoningOff
 	}
-	derived := deriveReasoning(mc)
+	derived := deriveReasoning(f)
 	if r := d.Reasoning; r == nil {
 		d.Reasoning = derived
 	} else if derived != nil {
@@ -128,9 +200,9 @@ func (mc ModelCapabilities) EffectiveDialMap() DialMap {
 	}
 	if d.CacheMode == "" {
 		switch {
-		case mc.Provider == providerAnthropic && mc.Supports(CapPromptCacheMarkers):
+		case f.provider == providerAnthropic && f.cacheMarkers:
 			d.CacheMode = "markers"
-		case mc.Provider == providerOpenAI && mc.Supports(CapAutomaticPromptCache):
+		case f.provider == providerOpenAI && f.cacheAutomatic:
 			d.CacheMode = "automatic"
 		}
 	}
@@ -160,12 +232,12 @@ func i64p(v int64) *int64     { return &v }
 func strp(v string) *string   { return &v }
 func boolp(v bool) *bool      { return &v }
 
-func deriveCreativity(mc ModelCapabilities) *CreativityMap {
-	if !mc.Supports(CapTemperature) {
+func deriveCreativity(f dialFacts) *CreativityMap {
+	if !f.temperature {
 		return nil
 	}
 	focused := RequestOptions{Temperature: f64p(0.3)}
-	if mc.Supports(CapTopP) {
+	if f.topP {
 		focused.TopP = f64p(0.9)
 	}
 	return &CreativityMap{
@@ -175,7 +247,7 @@ func deriveCreativity(mc ModelCapabilities) *CreativityMap {
 			CreativityBalanced:      {Temperature: f64p(0.7)},
 			CreativityCreative:      {Temperature: f64p(1)},
 		},
-		RequiresReasoningOff: len(mc.SamplingRequiresNoReasoning) > 0,
+		RequiresReasoningOff: f.samplingConflict,
 	}
 }
 
@@ -185,50 +257,50 @@ var depthFraction = map[Depth]float64{DepthMinimal: 0, DepthLow: 0.25, DepthMedi
 // depthBudget is the budget of each depth when no maximum is declared.
 var depthBudget = map[Depth]int64{DepthMinimal: 1024, DepthLow: 2048, DepthMedium: 8192, DepthHigh: 16384, DepthMax: 32768}
 
-func deriveReasoning(mc ModelCapabilities) *ReasoningMap {
-	defaultOn := mc.ReasoningActive(RequestOptions{})
+func deriveReasoning(f dialFacts) *ReasoningMap {
+	defaultOn := f.defaultOn
 	empty := func() *RequestOptions { return &RequestOptions{} }
 	m := &ReasoningMap{}
 	switch {
-	case mc.Supports(CapReasoningEffort) && len(mc.ReasoningEfforts) > 0:
+	case f.effort && len(f.efforts) > 0:
 		m.Depth = map[Depth]RequestOptions{}
 		for _, d := range depthOrder {
-			if slices.Contains(mc.ReasoningEfforts, string(d)) {
+			if slices.Contains(f.efforts, string(d)) {
 				m.Depth[d] = RequestOptions{ReasoningEffort: strp(string(d))}
 			}
 		}
-		hasNone := slices.Contains(mc.ReasoningEfforts, reasoningEffortNone)
-		if hasNone && !mc.ReasoningRequired {
+		hasNone := slices.Contains(f.efforts, reasoningEffortNone)
+		if hasNone && !f.required {
 			m.Off = &RequestOptions{ReasoningEffort: strp(reasoningEffortNone)}
 		}
 		if defaultOn {
 			m.Adaptive = empty()
 		}
-		if mc.ChatCompletionsTools == ChatToolsNoReasoning && hasNone {
+		if f.chatTools == ChatToolsNoReasoning && hasNone {
 			m.WithTools = map[string]RequestOptions{SurfaceChat: {ReasoningEffort: strp(reasoningEffortNone)}}
 		}
-	case mc.Supports(CapReasoningBudget):
+	case f.budget:
 		m.Depth = map[Depth]RequestOptions{}
 		for _, d := range depthOrder {
-			n := max(depthBudget[d], int64(mc.MinReasoningBudget))
-			if hi := int64(mc.MaxReasoningBudget); hi > 0 {
-				lo := max(int64(mc.MinReasoningBudget), 1)
+			n := max(depthBudget[d], int64(f.minBudget))
+			if hi := int64(f.maxBudget); hi > 0 {
+				lo := max(int64(f.minBudget), 1)
 				n = lo + int64(depthFraction[d]*float64(hi-lo))
 			}
 			m.Depth[d] = RequestOptions{ReasoningBudget: i64p(n)}
 		}
-		if mc.ZeroReasoningBudget && !mc.ReasoningRequired {
+		if f.zeroBudget && !f.required {
 			m.Off = &RequestOptions{ReasoningBudget: i64p(0)}
 		}
 		switch {
-		case mc.DynamicReasoningBudget:
+		case f.dynamicBudget:
 			m.Adaptive = &RequestOptions{ReasoningBudget: i64p(-1)}
 		case defaultOn:
 			m.Adaptive = empty()
 		}
-	case mc.Supports(CapReasoningToggle):
+	case f.toggle:
 		m.On = &RequestOptions{ReasoningEnabled: boolp(true)}
-		if !mc.ReasoningRequired {
+		if !f.required {
 			m.Off = &RequestOptions{ReasoningEnabled: boolp(false)}
 		}
 	}

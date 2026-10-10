@@ -55,23 +55,32 @@ func enums() map[string][]string {
 		tools = append(tools, string(k))
 	}
 	return map[string][]string{
-		"capability":   caps,
-		"media":        media,
-		"server_tool":  tools,
-		"tier":         {"frontier", "standard", "economy"},
-		"structured":   {"", "native", "tool_call"},
-		"policy":       {PolicySticky, PolicyAffinity},
-		"inherit":      {"all", "none"},
-		"output_mode":  {"auto", "native", "tool", "prompt"},
-		"prompt_cache": {PromptCacheOff, PromptCacheMarkers, PromptCacheAutomatic},
-		"options_tool": {"auto", "none"},
-		"unset":        unsetNames(),
-		"creativity":   {"deterministic", "focused", "balanced", "creative"},
-		"mode":         {"off", "adaptive", "on"},
-		"depth":        {"minimal", "low", "medium", "high", "max"},
-		"surface":      {types.SurfaceChat, types.SurfaceResponses},
-		"depth_change": {"", types.DepthChangePerRequest},
-		"tool_mode":    {"auto", "none", "required", "named"},
+		"capability":       caps,
+		"media":            media,
+		"server_tool":      tools,
+		"tier":             {"frontier", "standard", "economy"},
+		"structured":       {"", "native", "tool_call"},
+		"policy":           {PolicySticky, PolicyAffinity},
+		"inherit":          {"all", "none"},
+		"output_mode":      {"auto", "native", "tool", "prompt"},
+		"prompt_cache":     {PromptCacheOff, PromptCacheMarkers, PromptCacheAutomatic},
+		"options_tool":     {"auto", "none"},
+		"unset":            unsetNames(),
+		"creativity":       {"deterministic", "focused", "balanced", "creative"},
+		"mode":             {"off", "adaptive", "on"},
+		"depth":            {"minimal", "low", "medium", "high", "max"},
+		"surface":          {types.SurfaceChat, types.SurfaceResponses},
+		"depth_change":     {"", types.DepthChangePerRequest},
+		"tool_mode":        {"auto", "none", "required", "named"},
+		"endpoint_surface": KnownSurfaces(),
+		"modality":         modalityNames(),
+		"param":            paramNames(),
+		"service_tier":     {"priority", "flex", "batch"},
+		"source":           {"inline", "uri", "file"},
+		"auth":             {"api_key", "adc", "none"},
+		"tool_result":      {"", "inline", "follow_up_user", "none"},
+		"transport":        {"", "batch"},
+		"param_type":       {"number", "integer", "boolean", "enum", "string_list"},
 		"compaction": {"none", "sliding_window", "summarize", "clear_tool_results",
 			"keep_recent", "summary", "relevant_plus_summary", "chain"},
 	}
@@ -89,7 +98,7 @@ func (g *schemaGen) ref(t reflect.Type) map[string]any {
 func (g *schemaGen) object(t reflect.Type) map[string]any {
 	props := map[string]any{}
 	var required []string
-	patch := t == reflect.TypeFor[ModelSpec]()
+	patch := t == reflect.TypeFor[ModelSpec]() || t == reflect.TypeFor[OfferingSpec]() || t == reflect.TypeFor[EndpointSpec]()
 	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -97,7 +106,7 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 		}
 		name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
 		s := g.field(t, name, f.Type)
-		if patch && name != "provider" && name != "prefix" {
+		if patch && name != "model" && name != "endpoint" && name != "surface" {
 			s = map[string]any{"anyOf": []any{s, map[string]any{"type": "null"}}}
 		}
 		props[name] = s
@@ -112,11 +121,67 @@ func (g *schemaGen) object(t reflect.Type) map[string]any {
 	return out
 }
 
+func modalityNames() []string {
+	var out []string
+	for _, m := range types.KnownModalities() {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+func paramNames() []string {
+	var out []string
+	for _, p := range knownParams() {
+		out = append(out, string(p))
+	}
+	return out
+}
+
 func (g *schemaGen) field(owner reflect.Type, name string, t reflect.Type) map[string]any {
 	e := enums()
 	enum := func(key string) map[string]any { return map[string]any{"type": "string", "enum": e[key]} }
 	array := func(items map[string]any) map[string]any { return map[string]any{"type": "array", "items": items} }
+	nullable := func(s map[string]any) map[string]any {
+		return map[string]any{"anyOf": []any{s, map[string]any{"type": "null"}}}
+	}
+	keyed := func(key string, elem reflect.Type) map[string]any {
+		return map[string]any{"type": "object", "propertyNames": enum(key), "additionalProperties": nullable(g.ref(elem))}
+	}
 	switch {
+	case t == reflect.TypeFor[[]types.Modality]():
+		return array(enum("modality"))
+	case t == reflect.TypeFor[[]types.SourceKind]():
+		return array(enum("source"))
+	case t == reflect.TypeFor[map[types.ParamName]*ParamSpec]():
+		return keyed("param", reflect.TypeFor[ParamSpec]())
+	case t == reflect.TypeFor[map[types.Modality]*ModalityLimitSpec]():
+		return keyed("modality", reflect.TypeFor[ModalityLimitSpec]())
+	case t == reflect.TypeFor[map[types.ServiceTier]*TierSpec]():
+		return keyed("service_tier", reflect.TypeFor[TierSpec]())
+	case t == reflect.TypeFor[map[types.Modality]*types.ModalityRate]():
+		return keyed("modality", reflect.TypeFor[types.ModalityRate]())
+	case t == reflect.TypeFor[map[string]*types.Constraint]():
+		return map[string]any{"type": "object", "additionalProperties": nullable(g.ref(reflect.TypeFor[types.Constraint]()))}
+	case t == reflect.TypeFor[map[types.Modality]string]():
+		return map[string]any{"type": "object", "propertyNames": enum("modality"), "additionalProperties": enum("tool_result")}
+	case t == reflect.TypeFor[[]types.ParamName]():
+		return array(map[string]any{"type": "string"})
+	case owner == reflect.TypeFor[EndpointSpec]() && name == "surface":
+		return map[string]any{"type": "string", "description": "one of " + strings.Join(e["endpoint_surface"], ", ") + ", or a custom surface"}
+	case owner == reflect.TypeFor[AuthSpec]() && name == "type":
+		return enum("auth")
+	case owner == reflect.TypeFor[AuthSpec]() && name == "secret":
+		return map[string]any{"type": "string", "pattern": "^(env:|op://|file:).+", "description": "a secret reference, never the secret"}
+	case owner == reflect.TypeFor[TierSpec]() && name == "transport":
+		return enum("transport")
+	case owner == reflect.TypeFor[ParamSpec]() && name == "type":
+		return enum("param_type")
+	case owner == reflect.TypeFor[Catalog]() && (name == "models" || name == "model_templates"):
+		return map[string]any{"type": "object", "additionalProperties": nullable(g.ref(reflect.TypeFor[ModelSpec]()))}
+	case owner == reflect.TypeFor[Catalog]() && name == "offering_templates":
+		return map[string]any{"type": "object", "additionalProperties": nullable(g.ref(reflect.TypeFor[OfferingSpec]()))}
+	case owner == reflect.TypeFor[Catalog]() && name == "endpoints":
+		return map[string]any{"type": "object", "additionalProperties": nullable(g.ref(reflect.TypeFor[EndpointSpec]()))}
 	case t == reflect.TypeFor[[]types.Capability]():
 		return array(enum("capability"))
 	case t == reflect.TypeFor[[]types.MediaType]():

@@ -38,7 +38,7 @@ func TestConfigModelPinsRouterSession(t *testing.T) {
 		t.Fatalf("first turn used %q, want a", got)
 	}
 	run(types.UserMessage{Parts: []types.UserPart{
-		types.TextPart{Text: "second"}, types.ConfigPart{Model: "a"},
+		types.TextPart{Text: "second"}, types.ConfigPart{Target: types.ModelTarget("a")},
 	}})
 	if pin := session.RouteState().Pin; pin != "a" {
 		t.Fatalf("pin = %q, want a", pin)

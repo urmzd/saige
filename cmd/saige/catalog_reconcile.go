@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -64,7 +65,7 @@ type reconcileReport struct {
 	PendingReview []string             `json:"pending_review,omitempty"`
 	StalePricing  []stalePrice         `json:"stale_pricing,omitempty"`
 	StaleAfter    int                  `json:"stale_after_days"`
-	Stubs         []catalog.ModelSpec  `json:"stubs,omitempty"`
+	Stubs         []stubRow            `json:"stubs,omitempty"`
 	Written       *reconcileWriteState `json:"written,omitempty"`
 }
 
@@ -129,8 +130,9 @@ func newCatalogReconcileCmd() *cobra.Command {
 			"the active catalog. The report names new models, limits that disagree with\n" +
 			"their row, rows no listed model matches, stub rows still waiting for review,\n" +
 			"and prices whose as_of date is older than --stale-days.\n\n" +
-			"With --write, append a stub row for each new model to a catalog file: the\n" +
-			"provider baseline's capabilities, no price, and the note \"needs review\".\n" +
+			"With --write, add a stub for each new model to a version 2 catalog file: the\n" +
+			"model and an offering extending the endpoint's baseline template, no price,\n" +
+			"and the note \"needs review\".\n" +
 			"Existing rows are never changed.\n\n" +
 			"Exit status: 0 no drift, 1 drift, 2 error.",
 		Args: cobra.NoArgs,
@@ -221,7 +223,7 @@ func reconcileCatalog(ctx context.Context, cat *catalog.Catalog, opts reconcileO
 		pr.Status = reconcileChecked
 		stubs := classify(&pr, catalogProvider(name), remote, opts.ignore)
 		for _, id := range stubs {
-			rep.Stubs = append(rep.Stubs, stubRow(catalogProvider(name), id, cat.Baselines[catalogProvider(name)]))
+			rep.Stubs = append(rep.Stubs, newStubRow(cat, catalogProvider(name), id))
 		}
 		rep.Providers = append(rep.Providers, pr)
 	}
@@ -250,10 +252,10 @@ func listRemote(ctx context.Context, opts reconcileOptions, name string) ([]cata
 
 // classify fills the provider report from one listing and returns the IDs
 // that need a stub row.
-func classify(pr *providerReconcile, name string, remote []catalog.RemoteModel, ignore []string) []string {
+func classify(pr *providerReconcile, name types.ProviderName, remote []catalog.RemoteModel, ignore []string) []types.ModelID {
 	var kept []catalog.RemoteModel
 	for _, rm := range remote {
-		if ignored(ignore, name, rm.ID) {
+		if ignored(ignore, string(name), rm.ID) {
 			pr.Ignored++
 			continue
 		}
@@ -261,7 +263,7 @@ func classify(pr *providerReconcile, name string, remote []catalog.RemoteModel, 
 	}
 	pr.Listed = len(remote)
 	rec := catalog.Reconcile(name, kept)
-	var newIDs []string
+	var newIDs []types.ModelID
 	for _, m := range rec.Models {
 		switch m.Status {
 		case catalog.StatusDeclared:
@@ -277,20 +279,20 @@ func classify(pr *providerReconcile, name string, remote []catalog.RemoteModel, 
 			newIDs = append(newIDs, stubPrefix(name, m.Remote.ID))
 		}
 		if len(m.Drift) > 0 {
-			pr.LimitDrift = append(pr.LimitDrift, limitDrift{ID: m.Remote.ID, Family: m.Family, Drift: m.Drift})
+			pr.LimitDrift = append(pr.LimitDrift, limitDrift{ID: m.Remote.ID, Family: string(m.Family), Drift: m.Drift})
 		}
 	}
 	// A local runtime lists what is pulled, so an unmatched row there is not
 	// a retirement.
 	if name != providerOllama {
 		for _, prefix := range rec.Unserved {
-			if ignored(ignore, name, prefix) {
+			if ignored(ignore, string(name), string(prefix)) {
 				continue
 			}
 			if e, ok := catalog.Describe(name, prefix); ok && e.SupersededBy != "" {
 				continue
 			}
-			pr.Disappeared = append(pr.Disappeared, prefix)
+			pr.Disappeared = append(pr.Disappeared, string(prefix))
 		}
 	}
 	return collapsePrefixes(newIDs)
@@ -298,24 +300,24 @@ func classify(pr *providerReconcile, name string, remote []catalog.RemoteModel, 
 
 // stubPrefix is the row prefix for a new model. An Ollama tag names one
 // build of the weights, so the row is for the model without it.
-func stubPrefix(provider, id string) string {
+func stubPrefix(provider types.ProviderName, id string) types.ModelID {
 	if provider == providerOllama {
 		if i := strings.LastIndex(id, ":"); i > 0 {
-			return id[:i]
+			return types.ModelID(id[:i])
 		}
 	}
-	return id
+	return types.ModelID(id)
 }
 
 // collapsePrefixes sorts and deduplicates IDs and drops each ID another ID
 // is a prefix of, since that shorter row already serves it by family match:
 // "gpt-x" covers "gpt-x-2026-01-01".
-func collapsePrefixes(ids []string) []string {
-	sort.Strings(ids)
+func collapsePrefixes(ids []types.ModelID) []types.ModelID {
+	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	var out []string
+	var out []types.ModelID
 	for _, id := range ids {
-		if len(out) > 0 && strings.HasPrefix(id, out[len(out)-1]) {
+		if len(out) > 0 && strings.HasPrefix(string(id), string(out[len(out)-1])) {
 			continue
 		}
 		out = append(out, id)
@@ -323,34 +325,39 @@ func collapsePrefixes(ids []string) []string {
 	return out
 }
 
-// stubRow is the row reconcile proposes for a new model: the provider
-// baseline's capability fields, nothing more. Tier, successor, defaults,
-// fees and any price the baseline does not itself carry are left for the
-// reviewer, so nothing is asserted that the listing did not report.
-func stubRow(provider, prefix string, base catalog.ModelSpec) catalog.ModelSpec {
-	return catalog.ModelSpec{
-		Provider:             provider,
-		Prefix:               prefix,
-		Extends:              base.Extends,
-		ChatCompletionsTools: base.ChatCompletionsTools,
-		Capabilities:         slices.Clone(base.Capabilities),
-		AddCapabilities:      slices.Clone(base.AddCapabilities),
-		RemoveCapabilities:   slices.Clone(base.RemoveCapabilities),
-		Limits:               base.Limits,
-		Reasoning:            base.Reasoning,
-		StructuredOutput:     base.StructuredOutput,
-		Media:                slices.Clone(base.Media),
-		ServerTools:          slices.Clone(base.ServerTools),
-		Notes:                []string{stubNote},
-	}
+// stubRow is what reconcile proposes for a new model: the model, with no
+// facts, and an offering on the vendor's primary endpoint that extends the
+// endpoint's baseline template. Tier, limits, successor, defaults, fees and
+// prices are left for the reviewer, so nothing is asserted that the
+// listing did not report.
+type stubRow struct {
+	Key      string               `json:"model"`
+	Model    catalog.ModelSpec    `json:"model_spec"`
+	Offering catalog.OfferingSpec `json:"offering"`
 }
 
-// pendingReview lists rows that still carry the stub note.
+func newStubRow(cat *catalog.Catalog, vendor types.ProviderName, prefix types.ModelID) stubRow {
+	key := string(vendor) + "/" + string(prefix)
+	endpoint, _ := cat.PrimaryEndpoint(vendor)
+	tmpl := ""
+	if ep, ok := cat.Endpoints[endpoint]; ok {
+		tmpl = ep.DefaultOfferingTemplate
+	}
+	return stubRow{Key: key, Model: catalog.ModelSpec{Notes: []string{stubNote}},
+		Offering: catalog.OfferingSpec{Model: key, Endpoint: endpoint, Extends: tmpl, Notes: []string{stubNote}}}
+}
+
+// pendingReview lists models that still carry the stub note.
 func pendingReview(cat *catalog.Catalog) []string {
 	var out []string
-	for _, m := range cat.Models {
+	for k, m := range cat.Models {
 		if slices.Contains(m.Notes, stubNote) {
-			out = append(out, m.Provider+"/"+m.Prefix)
+			out = append(out, k)
+		}
+	}
+	for _, o := range cat.Offerings {
+		if slices.Contains(o.Notes, stubNote) && !slices.Contains(out, o.Model) {
+			out = append(out, o.Model)
 		}
 	}
 	sort.Strings(out)
@@ -374,12 +381,12 @@ func stalePricing(cat *catalog.Catalog, now time.Time, maxAge time.Duration) []s
 			out = append(out, stalePrice{Row: row, Field: field, AsOf: asOf, AgeDays: int(age / (24 * time.Hour))})
 		}
 	}
-	for _, m := range cat.Models {
-		e, ok := cat.Describe(m.Provider, m.Prefix)
-		if !ok {
+	for _, row := range slices.Sorted(maps.Keys(cat.Models)) {
+		vendor, prefix, _ := strings.Cut(row, "/")
+		e, ok := cat.Describe(types.ProviderName(vendor), types.ModelID(prefix))
+		if !ok || string(e.Prefix) != prefix {
 			continue
 		}
-		row := m.Provider + "/" + m.Prefix
 		if !e.Caps.Pricing.Free {
 			check(row, "pricing", e.Caps.Pricing.AsOf)
 		}
@@ -436,18 +443,18 @@ func readIgnoreFile(name string) ([]string, error) {
 
 // catalogProvider maps a CLI provider name to the catalog's: Vertex serves
 // Google rows.
-func catalogProvider(name string) string {
+func catalogProvider(name string) types.ProviderName {
 	if name == providerVertex {
 		return providerGoogle
 	}
-	return name
+	return types.ProviderName(name)
 }
 
 // reconcileCredentials reports whether a provider can be listed, or why not.
 func reconcileCredentials(name string, getenv func(string) string) (string, bool) {
 	switch name {
 	case providerAnthropic, providerOpenAI:
-		if env := provider.APIKeyEnv[name][0]; getenv(env) == "" {
+		if env := provider.APIKeyEnv[types.ProviderName(name)][0]; getenv(env) == "" {
 			return env + " is not set", false
 		}
 	case providerGoogle:
@@ -476,9 +483,9 @@ func reconcileCredentials(name string, getenv func(string) string) (string, bool
 // depend on the model.
 func buildReconcileLister(ctx context.Context, name string) (catalog.ModelLister, error) {
 	cf := persistentFlagVars
-	cfg := provider.Config{Provider: catalogProvider(name), Model: name}
+	cfg := provider.Config{Provider: catalogProvider(name), Model: types.ModelID(name)}
 	if cat, err := cf.catalog(); err == nil {
-		if p, ok := cat.Presets[name]; ok && len(p.Chain) > 0 {
+		if p, ok := cat.Presets[types.PresetName(name)]; ok && len(p.Chain) > 0 {
 			cfg.Model = p.Chain[0].Model
 		}
 	}
@@ -500,13 +507,14 @@ func buildReconcileLister(ctx context.Context, name string) (catalog.ModelLister
 	return l, nil
 }
 
-// writeStubRows appends the stub rows whose provider and prefix the file
-// does not already declare, and returns the provider/prefix of each one
-// added. The file's existing bytes are kept as written: the rows are
-// inserted before the closing bracket of its models array, so no existing
-// row is reformatted or changed. A missing file is created as an overlay
-// layer holding only the stubs.
-func writeStubRows(name string, stubs []catalog.ModelSpec) ([]string, error) {
+// writeStubRows adds the stub models and offerings the file does not
+// already declare, and returns the key of each model added. The file's
+// existing bytes are kept as written: the stubs are inserted before the
+// closing brace of its models object and the closing bracket of its
+// offerings array, so nothing existing is reformatted or changed. A
+// missing file is created as an overlay layer holding only the stubs. A
+// version 1 file is refused: migrate it first.
+func writeStubRows(name string, stubs []stubRow) ([]string, error) {
 	raw, err := os.ReadFile(name) //nolint:gosec // path is from a CLI flag, not untrusted input
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -531,73 +539,136 @@ func writeStubRows(name string, stubs []catalog.ModelSpec) ([]string, error) {
 	return added, os.WriteFile(name, out, mode) //nolint:gosec // a catalog holds no secrets; see above
 }
 
-// appendStubRows inserts stubs into a catalog file's models array. See
-// writeStubRows.
-func appendStubRows(raw []byte, stubs []catalog.ModelSpec) ([]byte, []string, error) {
+// appendStubRows inserts stubs into a catalog file. See writeStubRows.
+func appendStubRows(raw []byte, stubs []stubRow) ([]byte, []string, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
+		models := map[string]catalog.ModelSpec{}
+		var offerings []catalog.OfferingSpec
 		var added []string
 		for _, s := range stubs {
-			added = append(added, s.Provider+"/"+s.Prefix)
+			models[s.Key], offerings = s.Model, append(offerings, s.Offering)
+			added = append(added, s.Key)
 		}
-		out, err := json.MarshalIndent(map[string]any{"version": 1, "models": stubs}, "", "  ")
+		out, err := json.MarshalIndent(map[string]any{"version": catalog.SchemaVersion, "models": models, "offerings": offerings}, "", "  ")
 		return append(out, '\n'), added, err
 	}
+	var version struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &version); err != nil {
+		return nil, nil, errors.New("a catalog file must be a JSON object")
+	}
+	if version.Version == catalog.SchemaVersionV1 {
+		return nil, nil, errors.New("the file is a version 1 catalog: run saige catalog migrate --write on it first")
+	}
+	var head struct {
+		Models map[string]json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return nil, nil, fmt.Errorf("models must be an object keyed by vendor/prefix: %w", err)
+	}
+	have := map[string]bool{}
+	for k := range head.Models {
+		have[strings.ToLower(k)] = true
+	}
+	var todo []stubRow
+	for _, s := range stubs {
+		if !have[strings.ToLower(s.Key)] {
+			todo = append(todo, s)
+		}
+	}
+	if len(todo) == 0 {
+		return raw, nil, nil
+	}
+	modelsEnd, modelCount, err := closingOffset(raw, "models", '{')
+	if err != nil {
+		return nil, nil, err
+	}
+	offEnd, offCount, err := closingOffset(raw, "offerings", '[')
+	if err != nil {
+		return nil, nil, err
+	}
+	var mins, oins bytes.Buffer
+	var added []string
+	for i, s := range todo {
+		m, err := json.MarshalIndent(s.Model, "    ", "  ")
+		if err != nil {
+			return nil, nil, err
+		}
+		o, err := json.MarshalIndent(s.Offering, "    ", "  ")
+		if err != nil {
+			return nil, nil, err
+		}
+		if modelCount > 0 || i > 0 {
+			mins.WriteByte(',')
+		}
+		key, _ := json.Marshal(s.Key)
+		fmt.Fprintf(&mins, "\n    %s: %s", key, m)
+		if offCount > 0 || i > 0 {
+			oins.WriteByte(',')
+		}
+		oins.WriteString("\n    ")
+		oins.Write(o)
+		added = append(added, s.Key)
+	}
+	if modelCount == 0 {
+		mins.WriteString("\n  ")
+	}
+	if offCount == 0 {
+		oins.WriteString("\n  ")
+	}
+	// Insert the later position first so the earlier offset stays valid.
+	first, second := insertion{modelsEnd, mins.Bytes()}, insertion{offEnd, oins.Bytes()}
+	if first.at > second.at {
+		first, second = second, first
+	}
+	out := slices.Concat(raw[:first.at], first.data, raw[first.at:second.at], second.data, raw[second.at:])
+	return out, added, nil
+}
+
+type insertion struct {
+	at   int
+	data []byte
+}
+
+// closingOffset finds a top-level key's container and returns the offset
+// just after its last member, and the member count.
+func closingOffset(raw []byte, key string, open json.Delim) (int, int, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return nil, nil, errors.New("a catalog file must be a JSON object")
+		return 0, 0, errors.New("a catalog file must be a JSON object")
 	}
 	for dec.More() {
 		tok, err := dec.Token()
 		if err != nil {
-			return nil, nil, err
+			return 0, 0, err
 		}
-		if tok != "models" {
+		if tok != key {
 			var skip json.RawMessage
 			if err := dec.Decode(&skip); err != nil {
-				return nil, nil, err
+				return 0, 0, err
 			}
 			continue
 		}
-		if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
-			return nil, nil, errors.New("models must be an array")
+		if tok, err := dec.Token(); err != nil || tok != open {
+			return 0, 0, fmt.Errorf("%s has the wrong type", key)
 		}
-		have := map[string]bool{}
-		end, rows := dec.InputOffset(), 0
+		end, n := int(dec.InputOffset()), 0
 		for dec.More() {
-			var row struct{ Provider, Prefix string }
-			if err := dec.Decode(&row); err != nil {
-				return nil, nil, err
+			if open == '{' {
+				if _, err := dec.Token(); err != nil {
+					return 0, 0, err
+				}
 			}
-			have[strings.ToLower(row.Provider+"/"+row.Prefix)] = true
-			end, rows = dec.InputOffset(), rows+1
-		}
-		var ins bytes.Buffer
-		var added []string
-		for _, s := range stubs {
-			k := s.Provider + "/" + s.Prefix
-			if have[strings.ToLower(k)] {
-				continue
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return 0, 0, err
 			}
-			row, err := json.MarshalIndent(s, "    ", "  ")
-			if err != nil {
-				return nil, nil, err
-			}
-			if rows > 0 || len(added) > 0 {
-				ins.WriteByte(',')
-			}
-			ins.WriteString("\n    ")
-			ins.Write(row)
-			added = append(added, k)
+			end, n = int(dec.InputOffset()), n+1
 		}
-		if len(added) == 0 {
-			return raw, nil, nil
-		}
-		if rows == 0 {
-			ins.WriteString("\n  ")
-		}
-		return slices.Concat(raw[:end], ins.Bytes(), raw[end:]), added, nil
+		return end, n, nil
 	}
-	return nil, nil, errors.New("the file has no models array to add rows to")
+	return 0, 0, fmt.Errorf("the file has no %s to add stubs to", key)
 }
 
 // writeReconcileReport renders the report as Markdown, which reads in a
@@ -649,9 +720,9 @@ func writeReconcileReport(w io.Writer, rep reconcileReport) error {
 	if len(rep.Stubs) > 0 {
 		var stubs []string
 		for _, s := range rep.Stubs {
-			stubs = append(stubs, fmt.Sprintf("- `%s/%s`", s.Provider, s.Prefix))
+			stubs = append(stubs, fmt.Sprintf("- `%s` on `%s`", s.Key, s.Offering.Endpoint))
 		}
-		intro := "Stub rows: the provider baseline's capabilities, no price, and the note `needs review`. " +
+		intro := "Stub rows: a model with no facts and an offering on the vendor's primary endpoint that extends its baseline template, no price, and the note `needs review`. " +
 			"A stub's prefix also covers the dated IDs that start with it."
 		if rep.Written != nil {
 			intro += fmt.Sprintf(" Added to `%s`: %d.", rep.Written.Path, len(rep.Written.Added))

@@ -111,8 +111,8 @@ func (cf *commonFlags) resolvedModel() string {
 	if err != nil {
 		cat = catalog.Default()
 	}
-	if p, ok := cat.Presets[cf.resolvedProvider()]; ok && len(p.Chain) > 0 {
-		return p.Chain[0].Model
+	if p, ok := cat.Presets[types.PresetName(cf.resolvedProvider())]; ok && len(p.Chain) > 0 {
+		return string(p.Chain[0].Model)
 	}
 	return ""
 }
@@ -238,24 +238,24 @@ const cliPresetName = "cli"
 // rejected when that is ambiguous; it is never dropped. defaulted is true
 // when no flag chose the preset and the catalog's default_preset applies;
 // the caller then narrows it to one vendor and applies --base-url.
-func (cf *commonFlags) selectPreset(cat *catalog.Catalog) (name string, out *catalog.Catalog, defaulted bool, err error) {
+func (cf *commonFlags) selectPreset(cat *catalog.Catalog) (name types.PresetName, out *catalog.Catalog, defaulted bool, err error) {
 	switch {
 	case *cf.preset != "":
-		if _, ok := cat.Presets[*cf.preset]; !ok {
-			return "", nil, false, fmt.Errorf("unknown preset %q (available: %s)", *cf.preset, strings.Join(cat.PresetNames(), ", "))
+		if _, ok := cat.Presets[types.PresetName(*cf.preset)]; !ok {
+			return "", nil, false, fmt.Errorf("unknown preset %q (available: %s)", *cf.preset, joinNames(cat.PresetNames()))
 		}
-		out, err = cf.applyBaseURL(cat, *cf.preset)
-		return *cf.preset, out, false, err
+		out, err = cf.applyBaseURL(cat, types.PresetName(*cf.preset))
+		return types.PresetName(*cf.preset), out, false, err
 	case *cf.model != "":
-		prov := *cf.provider
+		prov := types.ProviderName(*cf.provider)
 		if prov == "" {
 			if p, _, err := provider.Infer(*cf.model); err == nil {
 				prov = p
 			} else {
-				prov = cf.resolvedProvider()
+				prov = types.ProviderName(cf.resolvedProvider())
 			}
 		}
-		entry := catalog.EntrySpec{ID: prov + "/" + *cf.model, Provider: prov, Model: *cf.model, BaseURL: *cf.baseURL}
+		entry := catalog.EntrySpec{ID: string(prov) + "/" + *cf.model, Provider: prov, Model: types.ModelID(*cf.model), BaseURL: *cf.baseURL}
 		if prov == providerVertex {
 			entry.Provider, entry.Vertex = providerGoogle, &catalog.VertexSpec{}
 		}
@@ -266,16 +266,16 @@ func (cf *commonFlags) selectPreset(cat *catalog.Catalog) (name string, out *cat
 		}
 		out := cat.Clone()
 		if out.Presets == nil {
-			out.Presets = map[string]catalog.PresetSpec{}
+			out.Presets = map[types.PresetName]catalog.PresetSpec{}
 		}
 		out.Presets[cliPresetName] = catalog.PresetSpec{Description: "built from --model", Chain: []catalog.EntrySpec{entry}}
 		return cliPresetName, out, false, nil
 	case *cf.provider != "":
-		if _, ok := cat.Presets[*cf.provider]; !ok {
+		if _, ok := cat.Presets[types.PresetName(*cf.provider)]; !ok {
 			return "", nil, false, fmt.Errorf("no catalog preset named %q: pass --model or --preset", *cf.provider)
 		}
-		out, err = cf.applyBaseURL(cat, *cf.provider)
-		return *cf.provider, out, false, err
+		out, err = cf.applyBaseURL(cat, types.PresetName(*cf.provider))
+		return types.PresetName(*cf.provider), out, false, err
 	case cat.DefaultPreset != "":
 		return cat.DefaultPreset, cat, true, nil
 	}
@@ -284,8 +284,8 @@ func (cf *commonFlags) selectPreset(cat *catalog.Catalog) (name string, out *cat
 
 // presetChain returns the chain a preset runs, following extends to the
 // nearest preset that declares one.
-func presetChain(cat *catalog.Catalog, name string) []catalog.EntrySpec {
-	seen := map[string]bool{}
+func presetChain(cat *catalog.Catalog, name types.PresetName) []catalog.EntrySpec {
+	seen := map[types.PresetName]bool{}
 	for name != "" && !seen[name] {
 		seen[name] = true
 		p, ok := cat.Presets[name]
@@ -303,7 +303,7 @@ func presetChain(cat *catalog.Catalog, name string) []catalog.EntrySpec {
 // withChain returns a copy of cat in which preset name runs chain. The
 // preset keeps its name and every other key, so profile IDs and route
 // events are unchanged.
-func withChain(cat *catalog.Catalog, name string, chain []catalog.EntrySpec) *catalog.Catalog {
+func withChain(cat *catalog.Catalog, name types.PresetName, chain []catalog.EntrySpec) *catalog.Catalog {
 	out := cat.Clone()
 	p := out.Presets[name]
 	p.Chain = chain
@@ -315,24 +315,24 @@ func withChain(cat *catalog.Catalog, name string, chain []catalog.EntrySpec) *ca
 // --provider when given, otherwise the one provider the chain uses. A chain
 // that spans several vendors without --provider is an error, since the
 // flag cannot apply to all of them.
-func (cf *commonFlags) applyBaseURL(cat *catalog.Catalog, name string) (*catalog.Catalog, error) {
+func (cf *commonFlags) applyBaseURL(cat *catalog.Catalog, name types.PresetName) (*catalog.Catalog, error) {
 	if *cf.baseURL == "" {
 		return cat, nil
 	}
 	chain := presetChain(cat, name)
-	var vendors []string
+	var vendors []types.ProviderName
 	for _, e := range chain {
 		if !slices.Contains(vendors, e.Provider) {
 			vendors = append(vendors, e.Provider)
 		}
 	}
-	target := *cf.provider
+	target := types.ProviderName(*cf.provider)
 	switch {
 	case target != "" && !slices.Contains(vendors, target):
 		return nil, fmt.Errorf("--base-url: preset %q has no %s entry", name, target)
 	case target == "" && len(vendors) != 1:
 		return nil, fmt.Errorf("--base-url is ambiguous: preset %q spans %s; pass --provider to choose one, or set base_url on the entries in a catalog",
-			name, strings.Join(vendors, ", "))
+			name, joinNames(vendors))
 	case target == "":
 		target = vendors[0]
 	}
@@ -349,7 +349,7 @@ func (cf *commonFlags) applyBaseURL(cat *catalog.Catalog, name string) (*catalog
 // narrowDefault turns the default preset into a one-entry chain: its first
 // entry that has credentials, or for a local Ollama entry, a server that
 // answers. Failover across vendors is opt-in: name a preset with --preset.
-func (cf *commonFlags) narrowDefault(ctx context.Context, cat *catalog.Catalog, name string, opts preset.Options) (*catalog.Catalog, error) {
+func (cf *commonFlags) narrowDefault(ctx context.Context, cat *catalog.Catalog, name types.PresetName, opts preset.Options) (*catalog.Catalog, error) {
 	rp, err := cat.Resolve(name)
 	if err != nil {
 		return nil, fmt.Errorf("preset %s: %w", name, err)
@@ -440,7 +440,7 @@ func buildProvider(ctx context.Context, cf *commonFlags, verbose bool) (types.Pr
 		return nil, err
 	}
 	name := cf.resolvedProvider()
-	cfg := provider.Config{Provider: name, Model: cf.resolvedModel(), BaseURL: *cf.baseURL}
+	cfg := provider.Config{Provider: types.ProviderName(name), Model: types.ModelID(cf.resolvedModel()), BaseURL: *cf.baseURL}
 	switch name {
 	case providerVertex:
 		cfg.Provider, cfg.Vertex = providerGoogle, &provider.Vertex{}
@@ -456,4 +456,13 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// joinNames lists typed names for a message.
+func joinNames[T ~string](names []T) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = string(n)
+	}
+	return strings.Join(out, ", ")
 }

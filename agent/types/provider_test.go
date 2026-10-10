@@ -30,12 +30,12 @@ func (p *testCloserProvider) Close() error {
 	return nil
 }
 
-func TestProviderName(t *testing.T) {
-	if got := ProviderName(testProvider{}); got != "unknown" {
-		t.Errorf("ProviderName(unnamed) = %q, want unknown", got)
+func TestNameOf(t *testing.T) {
+	if got := NameOf(testProvider{}); got != "unknown" {
+		t.Errorf("NameOf(unnamed) = %q, want unknown", got)
 	}
-	if got := ProviderName(testNamedProvider{}); got != "test-provider" {
-		t.Errorf("ProviderName(named) = %q, want test-provider", got)
+	if got := NameOf(testNamedProvider{}); got != "test-provider" {
+		t.Errorf("NameOf(named) = %q, want test-provider", got)
 	}
 }
 

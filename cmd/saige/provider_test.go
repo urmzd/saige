@@ -165,7 +165,7 @@ func TestResolveProviderWrapsHostedProviders(t *testing.T) {
 			if _, ok := p.(*retry.Provider); ok != tt.wantRetry {
 				t.Fatalf("retry wrapped = %v, want %v (%T)", ok, tt.wantRetry, p)
 			}
-			if got := types.ProviderName(wrapper.Innermost(p)); got != tt.provider {
+			if got := types.NameOf(wrapper.Innermost(p)); got != tt.provider {
 				t.Fatalf("provider name = %q, want %q", got, tt.provider)
 			}
 		})
