@@ -38,6 +38,11 @@ func TestIsInfra(t *testing.T) {
 		{"fallback ends transient", &types.FallbackError{Errors: []error{providerErr(types.ErrorKindInvalidRequest), providerErr(types.ErrorKindUnavailable)}}, true},
 		{"connection refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), true},
 		{"net op error", &net.OpError{Op: "dial", Err: errors.New("no route to host")}, true},
+		{"batch request expired", &types.BatchRequestError{Outcome: types.BatchExpiredOutcome}, true},
+		{"batch request canceled", fmt.Errorf("judge: %w", &types.BatchRequestError{Outcome: types.BatchCanceledOutcome}), true},
+		{"batch request errored without a cause", &types.BatchRequestError{Outcome: types.BatchErrored, Message: "missing from the vendor's results"}, true},
+		{"batch request errored on overload", &types.BatchRequestError{Outcome: types.BatchErrored, Err: providerErr(types.ErrorKindUnavailable)}, true},
+		{"batch request errored on a bad request", &types.BatchRequestError{Outcome: types.BatchErrored, Err: providerErr(types.ErrorKindInvalidRequest)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

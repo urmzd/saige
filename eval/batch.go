@@ -108,7 +108,7 @@ func scoreKeyed(ctx context.Context, arm string, obs Observation, scorers []Scor
 				return nil, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error()})
+			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {

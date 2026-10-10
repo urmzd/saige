@@ -54,15 +54,30 @@ func Infra(err error) error {
 // failure of the system under test: an error marked with [ErrInfra],
 // a context cancellation or deadline, a provider error whose kind is
 // transient (rate limit, unavailable, other retryable statuses) or an
-// authentication failure, or a network failure that
+// authentication failure, a network failure that
 // [types.ClassifyTransportError] recognizes, such as a refused or reset
-// connection. Every other error, nil included, is not.
+// connection, or a batch request (see [types.BatchRequestError]) that was
+// canceled, expired, or errored without a classified cause. A batch request
+// that errored with a classified provider error follows that error's kind,
+// so an invalid request stays a real failure. Every other error, nil
+// included, is not.
 func IsInfra(err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, ErrInfra) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true
+	}
+	var be *types.BatchRequestError
+	if errors.As(err, &be) {
+		switch {
+		case be.Outcome == types.BatchCanceledOutcome, be.Outcome == types.BatchExpiredOutcome:
+			return true
+		case be.Err == nil:
+			// The vendor answered no result and gave no cause it could
+			// classify: the request was never answered.
+			return be.Outcome == types.BatchErrored
+		}
 	}
 	if kind := types.KindOf(err); kind.Transient() || kind == types.ErrorKindAuth {
 		return true

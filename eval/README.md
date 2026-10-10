@@ -186,6 +186,7 @@ A result is a real failure only when the subject answered and the answer was jud
 | `types.ErrorKindRateLimit`, `ErrorKindUnavailable`, `ErrorKindTransient`, `ErrorKindAuth` | `ErrorKindInvalidRequest`, `ErrorKindContextLength`, `ErrorKindContentFilter`, `ErrorKindTruncated` |
 | `context.Canceled`, `context.DeadlineExceeded` | `ErrorKindPermanent` and any unclassified error |
 | network failures `types.ClassifyTransportError` recognizes (refused or reset connections, dial errors, timeouts) | a score below its threshold |
+| batch requests (`types.BatchRequestError`, with `WithBatch` or `saige eval run --batch`) that expired, were canceled, or errored without a classified cause | a batch request that errored with a classified real cause, such as an invalid request |
 | errors wrapped with `eval.Infra(err)` or matching `eval.ErrInfra`, such as an unreachable connector | |
 
 `PopulateAll` marks an inconclusive subject failure with the `eval.subject_inconclusive` annotation next to `eval.subject_error` (`eval.MarkSubjectError` does the same for code that records failures itself), and `Run` sets `Score.Inconclusive` on a scorer error `IsInfra` reports, such as a judge whose provider was down. `SuiteResult.Inconclusive` counts the results that could not be measured; they are left out of aggregates, `PassRate`, `GroupPassRate`, `MinPassRate`, and the paired statistics, so a Wilson interval covers only measured cases and `Completeness` shows the gap.

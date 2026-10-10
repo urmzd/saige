@@ -133,3 +133,70 @@ func TestWithBatchCompare(t *testing.T) {
 		t.Fatalf("comparison = %+v", cmp)
 	}
 }
+
+// expiringBatches expires, in the nth submitted batch, the request at
+// position expire[n], as a vendor does when the completion window passes.
+// Requests go out sorted by case, so the position is the case number.
+type expiringBatches struct {
+	*batch.Local
+	expire map[int]int
+	mu     sync.Mutex
+	jobs   map[string]int
+}
+
+func (e *expiringBatches) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
+	h, err := e.Local.Submit(ctx, reqs, opts)
+	e.mu.Lock()
+	e.jobs[h.ID] = len(e.jobs)
+	e.mu.Unlock()
+	return h, err
+}
+
+func (e *expiringBatches) Results(ctx context.Context, h types.BatchHandle) iter.Seq2[types.BatchResult, error] {
+	e.mu.Lock()
+	n := e.jobs[h.ID]
+	e.mu.Unlock()
+	return func(yield func(types.BatchResult, error) bool) {
+		i := 0
+		for r, err := range e.Local.Results(ctx, h) {
+			if pos, ok := e.expire[n]; ok && err == nil && i == pos {
+				r = types.BatchResult{CustomID: r.CustomID, Outcome: types.BatchExpiredOutcome,
+					Err: &types.BatchRequestError{Outcome: types.BatchExpiredOutcome}}
+			}
+			i++
+			if !yield(r, err) {
+				return
+			}
+		}
+	}
+}
+
+// TestWithBatchExpiredRequestsAreInconclusive checks that a subject call and
+// a judge call lost to an expired batch leave their cases inconclusive, not
+// failed.
+func TestWithBatchExpiredRequestsAreInconclusive(t *testing.T) {
+	// The subject batch loses case-1; the judge batch, which has no call
+	// for case-1, loses case-2.
+	eb := &expiringBatches{Local: batch.NewLocal(scriptedModel{}, 8), expire: map[int]int{0: 1, 1: 1}, jobs: map[string]int{}}
+	r := batch.NewRunner(eb, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, 5*time.Millisecond))
+	c := batch.NewCoalescer(r, batch.WithMaxWait(10*time.Second))
+	obs := batchDataset(4)
+	ctx := context.Background()
+	_ = PopulateAll(ctx, obs, generatorSubject(c), WithBatch(c))
+	if !SubjectInconclusive(obs[1]) {
+		t.Fatalf("expired subject call recorded as %q, not inconclusive", SubjectError(obs[1]))
+	}
+	gate := Assertion{Metric: "judge_score", Op: GTE, Threshold: 0.5}
+	suite, err := Run(ctx, "batched", obs, []Scorer{NewJudgeScorer(c)}, WithBatch(c), WithAssertions(gate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suite.Inconclusive != 2 || suite.Outcome != OutcomeInconclusive {
+		t.Fatalf("inconclusive %d, outcome %s; want 2 and inconclusive: %v", suite.Inconclusive, suite.Outcome, suite.Violations)
+	}
+	for _, r := range suite.Results {
+		if r.Observation.ID == "case-2" && (len(r.Scores) != 1 || !r.Scores[0].Inconclusive) {
+			t.Fatalf("expired judge call scored %+v", r.Scores)
+		}
+	}
+}
