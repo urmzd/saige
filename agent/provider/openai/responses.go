@@ -2,19 +2,13 @@ package openai
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
-	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
-	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -28,24 +22,6 @@ var (
 	_ types.ContentNegotiator        = (*ResponsesAdapter)(nil)
 	_ types.OptionsProvider          = (*ResponsesAdapter)(nil)
 	_ catalog.ModelLister            = (*ResponsesAdapter)(nil)
-)
-
-// Responses API stream event and item types the adapter reads.
-const (
-	eventOutputItemAdded   = "response.output_item.added"
-	eventOutputItemDone    = "response.output_item.done"
-	eventArgumentsDelta    = "response.function_call_arguments.delta"
-	eventArgumentsDone     = "response.function_call_arguments.done"
-	eventOutputTextDelta   = "response.output_text.delta"
-	eventRefusalDelta      = "response.refusal.delta"
-	eventCompleted         = "response.completed"
-	eventIncomplete        = "response.incomplete"
-	eventFailed            = "response.failed"
-	eventError             = "error"
-	itemFunctionCall       = "function_call"
-	finishStop             = "stop"
-	finishLength           = "length"
-	incompleteOutputTokens = "max_output_tokens"
 )
 
 // ResponsesAdapter is an OpenAI provider that uses the Responses API instead
@@ -87,8 +63,23 @@ func (r *ResponsesAdapter) WithModel(model string) types.Provider {
 func (r *ResponsesAdapter) Capabilities() types.ModelCapabilities { return r.base.Capabilities() }
 
 // ContentSupport implements types.ContentNegotiator. Audio input is not part
-// of the Responses API input format, so audio files are described in text.
-func (r *ResponsesAdapter) ContentSupport() types.ContentSupport { return r.base.ContentSupport() }
+// of the Responses API input format; documents beyond PDF are.
+func (r *ResponsesAdapter) ContentSupport() types.ContentSupport {
+	cs := r.base.ContentSupport()
+	for _, mt := range []types.MediaType{types.MediaText, types.MediaCSV, types.MediaJSON, types.MediaHTML,
+		types.MediaDOCX, types.MediaXLSX, types.MediaPPTX} {
+		cs.NativeTypes[mt] = true
+	}
+	return cs
+}
+
+func validSummary(mode string) bool {
+	switch shared.ReasoningSummary(mode) {
+	case shared.ReasoningSummaryAuto, shared.ReasoningSummaryConcise, shared.ReasoningSummaryDetailed:
+		return true
+	}
+	return false
+}
 
 // EffectiveOptions implements types.OptionsReporter.
 func (r *ResponsesAdapter) EffectiveOptions() types.RequestOptions { return r.base.EffectiveOptions() }
@@ -119,6 +110,10 @@ func (r *ResponsesAdapter) checkUnsupported(p genParams) error {
 		return caps.OptionError("frequency_penalty", reason)
 	case p.presencePenalty != nil:
 		return caps.OptionError("presence_penalty", reason)
+	case p.audio != nil:
+		return caps.OptionError("audio_output", "the OpenAI Responses API has no audio output; use NewAdapter with an audio model")
+	case p.reasoningSummary != nil && !validSummary(*p.reasoningSummary):
+		return caps.OptionError("reasoning_summary", fmt.Sprintf("%q: use auto, concise or detailed", *p.reasoningSummary))
 	}
 	return nil
 }
@@ -129,27 +124,16 @@ func (r *ResponsesAdapter) Generate(ctx context.Context, prompt string) (string,
 	return generate.Text(ctx, r, prompt)
 }
 
-// Stream implements types.Provider. A request may carry a schema or
-// options, not both.
+// Stream implements types.Provider. A request may carry a schema, options,
+// or both. Every part is mapped natively or the request fails before it is
+// sent (see toResponsesInput).
 func (r *ResponsesAdapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	var (
-		ch  <-chan types.Delta
-		err error
-	)
-	switch {
-	case req.Options != nil && req.Schema != nil:
-		return nil, r.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
-	case req.Options != nil:
-		ch, err = r.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
-	case req.Schema != nil:
-		ch, err = r.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
-	default:
-		ch, err = r.streamPlain(ctx, req.Messages, req.Tools)
-	}
+	c, params, err := r.requestParams(req)
 	if err != nil {
 		return nil, err
 	}
-	return types.UpgradeV1Stream(ch), nil
+	s := c.base.client.Responses.NewStreaming(ctx, params)
+	return c.consume(s, req.Schema != nil), nil
 }
 
 // SupportsSchema implements types.StructuredOutputProvider.
@@ -158,27 +142,19 @@ func (r *ResponsesAdapter) SupportsSchema() bool { return true }
 // SupportsOptions implements types.OptionsProvider.
 func (r *ResponsesAdapter) SupportsOptions() bool { return true }
 
-func (r *ResponsesAdapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return r.stream(ctx, messages, tools, nil)
-}
-
-func (r *ResponsesAdapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return r.stream(ctx, messages, tools, schema)
-}
-
-// streamOptions serves Request.Options. It follows the
-// rules of Adapter.Stream with options and also rejects the controls the
-// Responses API does not have.
-func (r *ResponsesAdapter) streamOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	base, err := r.base.withRequestOptions(opts.Raw())
+// requestParams applies req's options and dials and builds the request. The
+// returned adapter carries the request's options.
+func (r *ResponsesAdapter) requestParams(req types.Request) (*ResponsesAdapter, responses.ResponseNewParams, error) {
+	base, err := r.base.forRequest(req, types.SurfaceResponses)
 	if err != nil {
-		return nil, err
-	}
-	if base, err = base.compileDials(opts, tools, false, types.SurfaceResponses); err != nil {
-		return nil, err
+		return nil, responses.ResponseNewParams{}, err
 	}
 	c := &ResponsesAdapter{base: *base}
-	return c.stream(ctx, messages, tools, nil)
+	params, err := c.buildParams(req.Messages, req.Tools, req.Schema)
+	if err != nil {
+		return nil, params, err
+	}
+	return c, params, nil
 }
 
 // buildParams validates the request and encodes it. It sends nothing.
@@ -187,15 +163,20 @@ func (r *ResponsesAdapter) buildParams(messages []types.Message, tools []types.T
 	if err := r.Validate(); err != nil {
 		return params, err
 	}
-	if err := r.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
+	caps := r.Capabilities()
+	if err := caps.ValidateRequest(tools, schema != nil); err != nil {
 		return params, err
 	}
 	if err := r.base.checkToolChoice(tools); err != nil {
 		return params, err
 	}
+	input, err := toResponsesInput(messages)
+	if err != nil {
+		return params, wrapPartError(caps, err)
+	}
 
 	params.Model = shared.ResponsesModel(r.base.model)
-	params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: toResponsesInput(messages)}
+	params.Input = responses.ResponseNewParamsInputUnion{OfInputItemList: input}
 	params.Store = openai.Bool(false)
 
 	p := r.base.params
@@ -209,7 +190,15 @@ func (r *ResponsesAdapter) buildParams(messages []types.Message, tools []types.T
 		params.TopP = openai.Float(*p.topP)
 	}
 	if p.reasoningEffort != nil {
-		params.Reasoning = shared.ReasoningParam{Effort: shared.ReasoningEffort(*p.reasoningEffort)}
+		params.Reasoning.Effort = shared.ReasoningEffort(*p.reasoningEffort)
+	}
+	if p.reasoningSummary != nil {
+		params.Reasoning.Summary = shared.ReasoningSummary(*p.reasoningSummary)
+	}
+	if caps.Supports(types.CapReasoning) {
+		// Requests are not stored, so a reasoning item can be sent back in a
+		// later turn only with its encrypted content.
+		params.Include = []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent}
 	}
 	if p.parallelTools != nil {
 		params.ParallelToolCalls = openai.Bool(*p.parallelTools)
@@ -234,20 +223,6 @@ func (r *ResponsesAdapter) buildParams(messages []types.Message, tools []types.T
 		}
 	}
 	return params, nil
-}
-
-func (r *ResponsesAdapter) stream(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	base, err := r.base.compileDials(types.RequestOptions{}, tools, schema != nil, types.SurfaceResponses)
-	if err != nil {
-		return nil, err
-	}
-	r = &ResponsesAdapter{base: *base}
-	params, err := r.buildParams(messages, tools, schema)
-	if err != nil {
-		return nil, err
-	}
-	s := r.base.client.Responses.NewStreaming(ctx, params)
-	return r.consume(s, schema != nil), nil
 }
 
 // applyPromptCache encodes WithPromptCache. The Responses API spells the
@@ -294,320 +269,5 @@ func toResponsesTools(defs []types.ToolDef) []responses.ToolUnionParam {
 			Strict:      openai.Bool(false),
 		}}
 	}
-	return out
-}
-
-// toResponsesInput converts the conversation to Responses input items. Text
-// and files become messages, a tool call becomes a function_call item, and a
-// tool result becomes a function_call_output item. Images in a tool result
-// follow as a user message, since a function_call_output here carries text.
-func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
-	var out responses.ResponseInputParam
-	for _, m := range msgs {
-		switch v := m.(type) {
-		case types.SystemMessage:
-			var text []string
-			var results []types.ToolResultPart
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					text = append(text, bc.Text)
-				case types.ToolResultPart:
-					results = append(results, bc)
-				}
-			}
-			if len(text) > 0 {
-				out = append(out, responses.ResponseInputItemParamOfMessage(strings.Join(text, ""), responses.EasyInputMessageRoleSystem))
-			}
-			out = appendResponsesToolResults(out, results)
-
-		case types.UserMessage:
-			var parts responses.ResponseInputMessageContentListParam
-			var results []types.ToolResultPart
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					parts = append(parts, inputText(bc.Text))
-				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
-					fc, _ := legacyparts.MediaOf(bc)
-					parts = append(parts, fileContentToInput(fc))
-				case types.ToolResultPart:
-					results = append(results, bc)
-				}
-			}
-			out = appendResponsesToolResults(out, results)
-			if len(parts) > 0 {
-				out = append(out, responses.ResponseInputItemParamOfMessage(parts, responses.EasyInputMessageRoleUser))
-			}
-
-		case types.AssistantMessage:
-			var text strings.Builder
-			flush := func() {
-				if text.Len() > 0 {
-					out = append(out, responses.ResponseInputItemParamOfMessage(text.String(), responses.EasyInputMessageRoleAssistant))
-					text.Reset()
-				}
-			}
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					text.WriteString(bc.Text)
-				case types.ToolCallPart:
-					flush()
-					args, _ := json.Marshal(bc.Arguments)
-					out = append(out, responses.ResponseInputItemParamOfFunctionCall(string(args), bc.ID, bc.Name))
-				}
-			}
-			flush()
-		}
-	}
-	return out
-}
-
-// appendResponsesToolResults appends a function_call_output per result, then
-// one user message per image block.
-func appendResponsesToolResults(out responses.ResponseInputParam, results []types.ToolResultPart) responses.ResponseInputParam {
-	for _, tr := range results {
-		item := responses.ResponseInputItemParamOfFunctionCallOutput(openAIToolResultText(tr))
-		item.OfFunctionCallOutput.CallID = param.NewOpt(tr.CallID)
-		out = append(out, item)
-	}
-	for _, tr := range results {
-		for _, b := range legacyparts.Blocks(tr.Parts) {
-			if b.Kind == legacyparts.BlockImage && b.Data != nil && isImageType(b.MediaType) {
-				img := inputImage(dataURI(b.MediaType, b.Data))
-				out = append(out, responses.ResponseInputItemParamOfMessage(
-					responses.ResponseInputMessageContentListParam{img}, responses.EasyInputMessageRoleUser))
-			}
-		}
-	}
-	return out
-}
-
-func dataURI(mt types.MediaType, data []byte) string {
-	return fmt.Sprintf("data:%s;base64,%s", mt, base64.StdEncoding.EncodeToString(data))
-}
-
-func inputText(text string) responses.ResponseInputContentUnionParam {
-	return responses.ResponseInputContentUnionParam{OfInputText: &responses.ResponseInputTextParam{Text: text}}
-}
-
-func inputImage(url string) responses.ResponseInputContentUnionParam {
-	return responses.ResponseInputContentUnionParam{OfInputImage: &responses.ResponseInputImageParam{
-		ImageURL: openai.String(url),
-		Detail:   responses.ResponseInputImageDetailAuto,
-	}}
-}
-
-// fileContentToInput maps a file to an input part: images and PDFs pass
-// through, readable text is inlined, and anything else is described.
-func fileContentToInput(fc legacyparts.Media) responses.ResponseInputContentUnionParam {
-	switch {
-	case fc.Data != nil && isImageType(fc.MediaType):
-		return inputImage(dataURI(fc.MediaType, fc.Data))
-	case fc.URI != "" && isImageType(fc.MediaType):
-		return inputImage(fc.URI)
-	case fc.Data != nil && fc.MediaType == types.MediaPDF:
-		name := fc.Filename
-		if name == "" {
-			name = defaultPDFName
-		}
-		return responses.ResponseInputContentUnionParam{OfInputFile: &responses.ResponseInputFileParam{
-			FileData: openai.String(dataURI(fc.MediaType, fc.Data)),
-			Filename: openai.String(name),
-		}}
-	}
-	desc := fmt.Sprintf("[File: %s, type: %s]", fc.Filename, fc.MediaType)
-	if fc.Data != nil && isTextType(fc.MediaType) {
-		desc += "\n" + string(fc.Data)
-	}
-	return inputText(desc)
-}
-
-// responsesStream is the part of the SDK stream the adapter reads.
-type responsesStream interface {
-	Next() bool
-	Current() responses.ResponseStreamEventUnion
-	Err() error
-}
-
-// responsesCall tracks one streamed function call by its output item ID.
-type responsesCall struct {
-	id, name string
-	args     strings.Builder
-	ended    bool
-}
-
-// responsesState is the translation state of one streamed response.
-type responsesState struct {
-	out         chan<- types.Delta
-	emitted     bool
-	textStarted bool
-	calls       map[string]*responsesCall
-	order       []string
-	argsFailure streamcheck.ArgsFailure
-	// finish is the normalized finish reason: stop, length, or the
-	// incomplete reason the API reported. Empty means the response did not
-	// reach a terminal event.
-	finish       string
-	outputTokens int
-	failure      error
-}
-
-func (s *responsesState) emit(d types.Delta) {
-	if _, usage := d.(types.UsageDelta); !usage {
-		s.emitted = true
-	}
-	s.out <- d
-}
-
-func (s *responsesState) endText() {
-	if s.textStarted {
-		s.emit(types.TextEndDelta{})
-		s.textStarted = false
-	}
-}
-
-// closeCall closes c. complete reports that the model finished writing it.
-func (s *responsesState) closeCall(c *responsesCall, complete bool) {
-	if c == nil || c.ended {
-		return
-	}
-	c.ended = true
-	args, err := streamcheck.DecodeArguments(c.args.String())
-	switch {
-	case err == nil:
-		s.emit(types.ToolCallEndDelta{ID: c.id, Arguments: args})
-	case complete:
-		s.emit(types.ToolCallEndDelta{ID: c.id, ArgumentsError: err.Error()})
-	default:
-		s.argsFailure.Set(c.id, c.name, err)
-	}
-}
-
-func (s *responsesState) closeAll(complete bool) {
-	for _, id := range s.order {
-		s.closeCall(s.calls[id], complete)
-	}
-}
-
-func (s *responsesState) text(delta string) {
-	if delta == "" {
-		return
-	}
-	if !s.textStarted {
-		s.emit(types.TextStartDelta{})
-		s.textStarted = true
-	}
-	s.emit(types.TextContentDelta{Content: delta})
-}
-
-// handle translates one stream event.
-func (s *responsesState) handle(model string, ev responses.ResponseStreamEventUnion) {
-	switch ev.Type {
-	case eventOutputTextDelta, eventRefusalDelta:
-		s.text(ev.Delta)
-	case eventOutputItemAdded:
-		if ev.Item.Type != itemFunctionCall {
-			return
-		}
-		s.endText()
-		// The model writes items in sequence, so a new call means every
-		// earlier one is complete.
-		s.closeAll(true)
-		c := &responsesCall{id: ev.Item.CallID, name: ev.Item.Name}
-		s.calls[ev.Item.ID] = c
-		s.order = append(s.order, ev.Item.ID)
-		s.emit(types.ToolCallStartDelta{ID: c.id, Name: c.name})
-	case eventArgumentsDelta:
-		if c := s.calls[ev.ItemID]; c != nil && !c.ended && ev.Delta != "" {
-			c.args.WriteString(ev.Delta)
-			s.emit(types.ToolCallArgumentDelta{ID: c.id, Content: ev.Delta})
-		}
-	case eventArgumentsDone:
-		if c := s.calls[ev.ItemID]; c != nil && !c.ended {
-			if c.args.Len() == 0 && ev.Arguments != "" {
-				c.args.WriteString(ev.Arguments)
-			}
-			s.closeCall(c, true)
-		}
-	case eventOutputItemDone:
-		if ev.Item.Type == itemFunctionCall {
-			s.closeCall(s.calls[ev.Item.ID], true)
-		}
-	case eventCompleted, eventIncomplete:
-		s.finish = finishStop
-		if ev.Type == eventIncomplete {
-			s.finish = ev.Response.IncompleteDetails.Reason
-			if s.finish == incompleteOutputTokens || s.finish == "" {
-				s.finish = finishLength
-			}
-		}
-		s.endText()
-		// A call cut off by the output limit or the safety system is not
-		// complete.
-		s.closeAll(!types.IsTruncationFinishReason(s.finish) && !types.IsContentFilterFinishReason(s.finish))
-		s.usage(ev.Response)
-	case eventFailed:
-		s.failure = streamcheck.EventError(providerName, model, ev.Response.Error.RawJSON(),
-			fmt.Errorf("response failed: %s", ev.Response.Error.Message))
-	case eventError:
-		s.failure = streamcheck.EventError(providerName, model, ev.RawJSON(),
-			fmt.Errorf("stream error: %s", ev.Message))
-	}
-}
-
-func (s *responsesState) usage(resp responses.Response) {
-	u := resp.Usage
-	s.outputTokens = int(u.OutputTokens)
-	if u.TotalTokens == 0 {
-		return
-	}
-	s.emit(types.UsageDelta{Cumulative: true,
-		PromptTokens:       int(u.InputTokens),
-		CachedPromptTokens: int(u.InputTokensDetails.CachedTokens),
-		CompletionTokens:   int(u.OutputTokens),
-		TotalTokens:        int(u.TotalTokens),
-		ResponseID:         resp.ID,
-		ResponseModel:      string(resp.Model),
-		FinishReasons:      []string{s.finish},
-	})
-}
-
-// consume translates the event stream into deltas. Failure handling matches
-// the Chat Completions adapter: a call the model finished writing whose
-// arguments do not decode closes with ArgumentsError, a call cut off by the
-// output limit is never closed and the turn fails as truncated, and a stream
-// that ends without a terminal event fails as incomplete.
-func (r *ResponsesAdapter) consume(stream responsesStream, structured bool) <-chan types.Delta {
-	model := string(r.base.model)
-	maxTokens := 0
-	if r.base.params.maxTokens != nil {
-		maxTokens = int(*r.base.params.maxTokens)
-	}
-	out := make(chan types.Delta, 64)
-	go func() {
-		defer close(out)
-		s := &responsesState{out: out, calls: map[string]*responsesCall{}}
-		for s.failure == nil && stream.Next() {
-			s.handle(model, stream.Current())
-		}
-		err := stream.Err()
-		s.endText()
-		switch {
-		case s.failure != nil:
-			out <- types.ErrorDelta{Error: s.failure}
-		case err != nil:
-			out <- types.ErrorDelta{Error: classifyOpenAIError(model, err, !s.emitted)}
-		case s.finish == "":
-			out <- types.ErrorDelta{Error: streamcheck.StreamError(providerName, model, streamcheck.ErrIncompleteStream, !s.emitted)}
-		case types.IsContentFilterFinishReason(s.finish):
-			out <- types.ErrorDelta{Error: streamcheck.Refused(providerName, model, s.finish)}
-		case s.argsFailure.Failed():
-			out <- types.ErrorDelta{Error: s.argsFailure.Error(providerName, model, s.finish, s.outputTokens, maxTokens)}
-		case structured && types.IsTruncationFinishReason(s.finish):
-			out <- types.ErrorDelta{Error: streamcheck.Truncated(providerName, model, s.finish, s.outputTokens, maxTokens)}
-		}
-	}()
 	return out
 }

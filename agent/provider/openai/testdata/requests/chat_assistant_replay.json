@@ -1,0 +1,25 @@
+{
+  "messages": [
+    {
+      "content": "q",
+      "role": "user"
+    },
+    {
+      "refusal": "no",
+      "audio": {
+        "id": "audio_1"
+      },
+      "content": "a",
+      "role": "assistant"
+    },
+    {
+      "content": "earlier words",
+      "role": "assistant"
+    },
+    {
+      "content": "next",
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

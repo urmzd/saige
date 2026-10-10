@@ -1,0 +1,40 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "arguments": "{\"q\":\"x\"}",
+      "call_id": "call_1",
+      "name": "snapshot",
+      "type": "function_call"
+    },
+    {
+      "output": "approved",
+      "call_id": "call_1",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "and summarize",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "tools": [
+    {
+      "strict": false,
+      "parameters": {
+        "type": "object"
+      },
+      "name": "snapshot",
+      "description": "Takes a snapshot",
+      "type": "function"
+    }
+  ]
+}

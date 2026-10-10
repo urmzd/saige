@@ -1,0 +1,41 @@
+{
+  "max_output_tokens": 50,
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "color?",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "reasoning": {
+    "effort": "none"
+  },
+  "text": {
+    "format": {
+      "name": "response",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "color"
+        ],
+        "type": "object"
+      },
+      "strict": true,
+      "type": "json_schema"
+    }
+  }
+}

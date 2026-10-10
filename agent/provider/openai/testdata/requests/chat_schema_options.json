@@ -1,0 +1,30 @@
+{
+  "messages": [
+    {
+      "content": "color?",
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "max_completion_tokens": 50,
+  "reasoning_effort": "none",
+  "response_format": {
+    "json_schema": {
+      "name": "response",
+      "strict": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "color"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "json_schema"
+  }
+}

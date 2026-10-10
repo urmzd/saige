@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "content": "say hi",
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "audio": {
+    "format": "pcm16",
+    "voice": "alloy"
+  },
+  "modalities": [
+    "text",
+    "audio"
+  ]
+}

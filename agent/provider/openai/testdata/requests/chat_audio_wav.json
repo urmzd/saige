@@ -1,0 +1,21 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "transcribe",
+          "type": "text"
+        },
+        {
+          "input_audio": {
+            "data": "UklGRgAAAABXQVZFZm10IGZpeHR1cmU=",
+            "format": "wav"
+          },
+          "type": "input_audio"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

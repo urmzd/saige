@@ -1,0 +1,12 @@
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Go 1.26 shipped "}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"content": "in Feb [1]."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"annotations": [{"type": "url_citation", "url_citation": {"url": "https://go.dev/doc/go1.26", "title": "Go 1.26 Release Notes", "start_index": 0, "end_index": 15}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 5, "total_tokens": 14}}
+
+data: [DONE]
+

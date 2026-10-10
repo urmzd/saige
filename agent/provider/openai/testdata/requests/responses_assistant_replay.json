@@ -1,0 +1,56 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "q",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "encrypted_content": "enc-1",
+      "summary": [
+        {
+          "text": "summary",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "encrypted_content": "enc-2",
+      "summary": [],
+      "type": "reasoning"
+    },
+    {
+      "content": "a",
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "refusal": "no",
+          "type": "refusal"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "content": [
+        {
+          "text": "next",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

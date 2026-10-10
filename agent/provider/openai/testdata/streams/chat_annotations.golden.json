@@ -1,0 +1,23 @@
+{
+  "parts": [
+    {
+      "type": "text",
+      "text": "Go 1.26 shipped in Feb [1]."
+    },
+    {
+      "type": "citation",
+      "citation": {
+        "kind": "web",
+        "uri": "https://go.dev/doc/go1.26",
+        "title": "Go 1.26 Release Notes",
+        "end": 15,
+        "producer": "openai"
+      },
+      "anchor": {
+        "part_index": 0,
+        "start": 0,
+        "end": 15
+      }
+    }
+  ]
+}

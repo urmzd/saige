@@ -1,0 +1,14 @@
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"role": "assistant", "audio": {"id": "audio_fx1", "transcript": "Hel"}}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"audio": {"data": "AAECAwQFBgc=", "transcript": "lo"}}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"audio": {"data": "CAkKCwwNDg8="}}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"audio": {"expires_at": 1791609449}}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 5, "total_tokens": 14}}
+
+data: [DONE]
+

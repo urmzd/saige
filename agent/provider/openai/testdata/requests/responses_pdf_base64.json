@@ -1,0 +1,23 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "summarize",
+          "type": "input_text"
+        },
+        {
+          "file_data": "data:application/pdf;base64,JVBERi0xLjQgZml4dHVyZQ==",
+          "filename": "paper.pdf",
+          "type": "input_file"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

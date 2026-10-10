@@ -2,57 +2,14 @@ package openai
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/types"
 )
-
-func TestFileContentToPartPDFIsNativeFilePart(t *testing.T) {
-	pdf := []byte("%PDF-1.4 fake")
-	part := fileContentToPart(legacyparts.Media{
-		MediaType: types.MediaPDF,
-		Data:      pdf,
-		Filename:  "paper.pdf",
-	})
-	if part.OfFile == nil {
-		t.Fatal("PDF FileContent must map to a native file part, not text")
-	}
-	wantData := "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(pdf)
-	if got := part.OfFile.File.FileData.Value; got != wantData {
-		t.Errorf("file_data = %q, want %q", got, wantData)
-	}
-	if got := part.OfFile.File.Filename.Value; got != "paper.pdf" {
-		t.Errorf("filename = %q, want paper.pdf", got)
-	}
-}
-
-func TestFileContentToPartPDFDefaultsFilename(t *testing.T) {
-	part := fileContentToPart(legacyparts.Media{MediaType: types.MediaPDF, Data: []byte("%PDF-")})
-	if part.OfFile == nil {
-		t.Fatal("expected a file part")
-	}
-	if got := part.OfFile.File.Filename.Value; got != "document.pdf" {
-		t.Errorf("filename = %q, want document.pdf", got)
-	}
-}
-
-func TestFileContentToPartImageAndFallback(t *testing.T) {
-	img := fileContentToPart(legacyparts.Media{MediaType: types.MediaPNG, Data: []byte{0x89}})
-	if img.OfImageURL == nil {
-		t.Fatal("PNG must map to an image part")
-	}
-	// Non-native media without a native mapping degrades to text.
-	txt := fileContentToPart(legacyparts.Media{MediaType: types.MediaCSV, Data: []byte("a,b"), Filename: "d.csv"})
-	if txt.OfText == nil {
-		t.Fatalf("CSV should degrade to text, got %+v", txt)
-	}
-}
 
 func TestContentSupportClaimsMatchMapping(t *testing.T) {
 	support := (&Adapter{}).ContentSupport()

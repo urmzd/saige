@@ -1,0 +1,20 @@
+{
+  "parts": [
+    {
+      "type": "audio_out",
+      "source": {
+        "media_type": "audio/pcm",
+        "size": 16,
+        "sha256": "be45cb2605bf36bebde684841a28f0fd43c69850a3dce5fedba69928ee3a8991"
+      },
+      "audio": {
+        "sample_rate": 24000,
+        "channels": 1,
+        "format": "pcm16"
+      },
+      "transcript": "Hello",
+      "vendor_id": "audio_fx1",
+      "expires_at": "2026-10-10T05:17:29Z"
+    }
+  ]
+}

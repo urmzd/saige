@@ -1,0 +1,9 @@
+{
+  "parts": [
+    {
+      "type": "refusal",
+      "text": "I can't help with that."
+    }
+  ],
+  "error": "content_filter"
+}

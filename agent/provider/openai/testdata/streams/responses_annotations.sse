@@ -1,0 +1,30 @@
+event: response.output_item.added
+data: {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "msg_fx", "role": "assistant", "status": "in_progress", "content": []}, "sequence_number": 0}
+
+event: response.content_part.added
+data: {"type": "response.content_part.added", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}, "sequence_number": 1}
+
+event: response.output_text.delta
+data: {"type": "response.output_text.delta", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "delta": "Go 1.26 shipped in Feb [1].", "sequence_number": 2}
+
+event: response.output_text.annotation.added
+data: {"type": "response.output_text.annotation.added", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "annotation_index": 0, "annotation": {"type": "url_citation", "url": "https://go.dev/doc/go1.26", "title": "Go 1.26 Release Notes", "start_index": 0, "end_index": 15}, "sequence_number": 3}
+
+event: response.output_text.delta
+data: {"type": "response.output_text.delta", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "delta": " See the notes [2].", "sequence_number": 4}
+
+event: response.output_text.annotation.added
+data: {"type": "response.output_text.annotation.added", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "annotation_index": 1, "annotation": {"type": "file_citation", "file_id": "file-fx", "filename": "notes.pdf", "index": 46}, "sequence_number": 5}
+
+event: response.output_text.done
+data: {"type": "response.output_text.done", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "text": "Go 1.26 shipped in Feb [1]. See the notes [2].", "sequence_number": 6}
+
+event: response.content_part.done
+data: {"type": "response.content_part.done", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": "Go 1.26 shipped in Feb [1]. See the notes [2].", "annotations": []}, "sequence_number": 7}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_fx", "role": "assistant", "status": "completed", "content": []}, "sequence_number": 8}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_fx", "object": "response", "model": "gpt-6-luna", "status": "completed", "output": [], "usage": {"input_tokens": 5, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 7, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 12}}, "sequence_number": 9}
+

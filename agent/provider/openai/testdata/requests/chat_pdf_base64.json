@@ -1,0 +1,21 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "summarize",
+          "type": "text"
+        },
+        {
+          "file": {
+            "file_data": "data:application/pdf;base64,JVBERi0xLjQgZml4dHVyZQ==",
+            "filename": "paper.pdf"
+          },
+          "type": "file"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
@@ -386,31 +385,6 @@ func TestEmbedderKeepsSDKRetries(t *testing.T) {
 				t.Fatalf("requests = %d, want %d", got, tc.wantCalls)
 			}
 		})
-	}
-}
-
-func TestFileContentToPartAudioAndBinary(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		mt         types.MediaType
-		wantFormat string
-	}{
-		{"wav", types.MediaWAV, "wav"},
-		{"mp3", types.MediaMP3, "mp3"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			part := fileContentToPart(legacyparts.Media{MediaType: tc.mt, Data: []byte{0x52, 0x49, 0x46, 0x46}})
-			if part.OfInputAudio == nil {
-				t.Fatalf("audio must map to an input_audio part, got %+v", part)
-			}
-			if part.OfInputAudio.InputAudio.Format != tc.wantFormat || part.OfInputAudio.InputAudio.Data != "UklGRg==" {
-				t.Fatalf("input_audio = %+v", part.OfInputAudio.InputAudio)
-			}
-		})
-	}
-	video := fileContentToPart(legacyparts.Media{MediaType: types.MediaMP4, Filename: "clip.mp4", Data: []byte{0, 0, 0, 0x18, 0xff}})
-	if video.OfText == nil || strings.ContainsRune(video.OfText.Text, 0xff) || strings.ContainsRune(video.OfText.Text, 0) {
-		t.Fatalf("binary bytes must not be sent as text: %+v", video)
 	}
 }
 

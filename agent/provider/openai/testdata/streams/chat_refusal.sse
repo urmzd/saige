@@ -1,0 +1,10 @@
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"role": "assistant", "refusal": "I can't help"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {"refusal": " with that."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+data: {"id": "chatcmpl-fx", "object": "chat.completion.chunk", "created": 0, "model": "gpt-audio", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 5, "total_tokens": 14}}
+
+data: [DONE]
+
