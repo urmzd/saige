@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.29.0 (2026-10-10)
+
+### Features
+
+- **agent**: run-lifecycle hooks and input/output guardrails (#79) ([718402e](https://github.com/urmzd/saige/commit/718402e9a6dd00fe58afc55e97a2c89116a7a274))
+
+### Misc
+
+- **deps**: update vendor SDKs and adopt native Anthropic structured output (#81) ([36258de](https://github.com/urmzd/saige/commit/36258de2d183392dccb026530757be1df26c72bc))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.28.0...v0.29.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
