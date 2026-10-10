@@ -14,9 +14,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/harness"
-	"github.com/urmzd/saige/eval/store"
-	"github.com/urmzd/saige/eval/store/filestore"
 )
+
+// resolveStoreSpec returns the manifest's store: a PostgreSQL URL as given,
+// a directory relative to the manifest.
+func resolveStoreSpec(m *harness.Manifest) string {
+	if isPostgresStore(m.Store) {
+		return m.Store
+	}
+	return m.Resolve(m.Store)
+}
 
 func newEvalCmd(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
@@ -31,6 +38,7 @@ func newEvalCmd(ctx context.Context) *cobra.Command {
 		newEvalRunsCmd(),
 		newEvalShowCmd(),
 		newEvalScorersCmd(),
+		newEvalOnlineCmd(ctx),
 	)
 
 	return cmd
@@ -39,7 +47,7 @@ func newEvalCmd(ctx context.Context) *cobra.Command {
 // evalRunFlags holds the flags of saige eval run.
 type evalRunFlags struct {
 	manifest, experimentsDir, idFilter, flowSpec, model, apiBase, apiKey string
-	storeDir, suite, resume                                              string
+	storeDir, tenant, suite, resume                                      string
 	count, concurrency                                                   int
 	force, continueOnError, dryRun, allowUnknownModel                    bool
 	asserts                                                              []string
@@ -109,7 +117,8 @@ manifest or corpus is invalid.`,
 		"Keep running remaining experiments after one fails; failures are written to <experiment>/error.json")
 	fl.IntVar(&f.concurrency, "concurrency", 1, "Experiments to run at once")
 	fl.StringVar(&f.storeDir, "store", "",
-		"Results store directory; when set, the run and one unit per flow turn are recorded there for saige eval runs and saige eval show")
+		"Results store, a directory or a PostgreSQL URL (postgres://...); when set, the run and one unit per flow turn are recorded there for saige eval runs and saige eval show")
+	fl.StringVar(&f.tenant, "tenant", "", tenantFlagUsage)
 	fl.StringVar(&f.suite, "suite", harness.DefaultSuite, "Suite name for the run recorded with --store")
 	fl.StringVar(&f.resume, "resume", "",
 		"Continue a stored run: experiments it completed are copied into the new run, the rest run again (needs --store)")
@@ -166,13 +175,10 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 	if plan.store != "" {
 		// A dry run only reads the store (to plan a resume) and never
 		// creates it.
-		open := func(dir string) (store.Store, error) { return filestore.Open(dir) }
-		if f.dryRun {
-			open = openResultsStore
-		}
-		results, err := open(plan.store)
+		results, closeStore, err := openEvalStore(ctx, plan.store, f.tenant, !f.dryRun)
 		switch {
 		case err == nil:
+			defer closeStore()
 			runner.Results = results
 		case !f.dryRun || f.resume != "":
 			return err
@@ -215,7 +221,7 @@ func resolveEvalPlan(cmd *cobra.Command, f evalRunFlags) (evalPlan, error) {
 		idPrefix:        m.IDPrefix,
 		count:           m.Count,
 		flows:           m.FlowNames(),
-		store:           m.Resolve(m.Store),
+		store:           resolveStoreSpec(m),
 		suite:           m.Name,
 		concurrency:     m.Policy.Concurrency,
 		continueOnError: m.ContinueOnError(),

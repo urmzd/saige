@@ -145,6 +145,9 @@ saige eval run --manifest evals/saige.eval.json --store eval-results --resume <r
 saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=2000'
 saige eval runs --store eval-results [--suite S] [--limit N]
 saige eval show <run-id> --store eval-results
+saige eval runs --store postgres://user:pass@host/db --tenant acme   # a PostgreSQL results store
+saige eval online --store postgres://user:pass@host/db --since 24h --rate 0.1 --scorer tool_success_rate
+saige eval online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
 saige eval scorers
 ```
 
