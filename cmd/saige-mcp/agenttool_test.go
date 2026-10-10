@@ -51,7 +51,7 @@ func scriptedAgent(p agenttypes.Provider, tools ...agenttypes.Tool) agentTool {
 			if len(tools) > 0 {
 				cfg.Tools = reg
 			}
-			return agentsdk.NewAgent(cfg)
+			return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{}))
 		},
 	}
 }

@@ -6,8 +6,10 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 
 | Package | Role |
 |---------|------|
-| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `agent` (definitions), `models`, `update`, `version` |
-| `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) over stdio JSON-RPC |
+| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
+| `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) and an agent definition as a tool, holding approvals for clients without elicitation |
+| `cmd/internal/agenthost/` | Session layer shared by serve, acp and saige-mcp: pinned binding, one turn at a time, grant checks |
+| `cmd/internal/approvals/` | File store of held approvals that `saige approvals` decides |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
 | `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
@@ -92,6 +94,10 @@ saige agent list                               # every definition, highest versi
 saige agent show repo-steward@^1               # digests, sub-agents, skill hashes, the file
 saige agent validate examples/agents           # offline checks; exit 2 when invalid
 saige ask --agents-dir examples/agents --agent assistant "question"   # also chat and serve
+saige acp --agents-dir examples/agents --agent assistant             # ACP agent over stdio for editors
+saige export claude --agents-dir examples/agents --agent assistant --dry-run   # also codex, gemini, opencode, cursor, skills
+saige launch claude --agents-dir examples/agents --agent assistant -- -p "question"
+saige approvals list                          # held approvals; approve or deny TOKEN
 
 # Evals
 saige eval init evals                          # scaffold a corpus and manifest

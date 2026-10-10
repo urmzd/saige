@@ -1,0 +1,6 @@
+create           .codex/config.toml
+create           .agents/skills/tidy/SKILL.md
+create           .agents/skills/tidy/scripts/tidy.sh
+create           .codex/agents/helper.toml
+note: Codex reads a project's .codex/config.toml only once the project is trusted; approvals reach you through elicitation when approval_policy allows mcp_elicitations, and through saige approvals otherwise
+note: Codex's agent format cannot express approval, model anthropic/claude-haiku-5-5, limits.max_iterations of agent helper; the saige-helper MCP tool runs the agent with all of them

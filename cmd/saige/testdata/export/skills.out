@@ -1,0 +1,6 @@
+create           .agents/skills/tidy/SKILL.md
+create           .agents/skills/tidy/scripts/tidy.sh
+create           .claude/skills/tidy/SKILL.md
+create           .claude/skills/tidy/scripts/tidy.sh
+create           .kiro/skills/tidy/SKILL.md
+create           .kiro/skills/tidy/scripts/tidy.sh

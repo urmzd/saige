@@ -1,0 +1,27 @@
+== .agents/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .agents/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
+== .codex/agents/helper.toml ==
+name = "helper"
+description = "Answers questions about the project and edits files."
+sandbox_mode = "workspace-write"
+developer_instructions = '''
+You are a careful helper.
+Answer briefly.
+'''
+== .codex/config.toml ==
+[mcp_servers.saige-helper]
+command = "saige-mcp"
+args = ["--agents-dir", "$PROJECT/agents", "--agent", "helper", "--root", "$PROJECT", "--tools", "none"]
+env_vars = ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_PROJECT", "GOOGLE_GENAI_USE_VERTEXAI", "OLLAMA_HOST", "OPENAI_API_KEY", "SAIGE_CATALOG"]

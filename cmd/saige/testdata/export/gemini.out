@@ -1,0 +1,5 @@
+create           .gemini/settings.json
+create           .agents/skills/tidy/SKILL.md
+create           .agents/skills/tidy/scripts/tidy.sh
+create           .gemini/agents/helper.md
+note: Gemini CLI's agent format cannot express approval, model anthropic/claude-haiku-5-5 of agent helper; the saige-helper MCP tool runs the agent with all of them

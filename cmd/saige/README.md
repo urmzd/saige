@@ -232,6 +232,18 @@ saige ask --agent assistant "question"  # also chat, and serve (one pinned agent
 
 A project's `.saige/agents` is untrusted unless `SAIGE_TRUST_PROJECT_AGENTS=1` or it is named with `--agents-dir`: it may not connect to MCP servers, use memory, loosen approvals, or use the `exec` and `web` harness groups. See [agent definitions](../../docs/agent-definitions.md).
 
+## Harnesses and ACP
+
+Run a definition inside another harness or editor. See [harnesses](../../docs/harnesses.md).
+
+```bash
+saige export claude --agent reviewer --dry-run   # also codex, gemini, opencode, cursor, skills; --user for user-level files
+saige launch codex --agent reviewer -- exec "review the last commit"
+saige acp --agent reviewer --sessions-dir ~/.local/state/saige/acp   # ACP agent over stdio for Zed, JetBrains, Neovim, Emacs
+saige approvals list                             # approvals held for MCP clients without elicitation
+saige approvals approve TOKEN --grant tool
+```
+
 ## Provider Auto-Detection
 
 `--provider` names a saige adapter, not always a model vendor: `ollama` is a local runtime that serves open-weight models such as qwen3.5:4b. See [vendors, runtimes and adapters](../../docs/concepts.md#vendors-runtimes-and-adapters).

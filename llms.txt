@@ -15,6 +15,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
+- [docs/harnesses.md](docs/harnesses.md): Running a saige agent in other harnesses: saige export and saige launch for Claude Code, Codex, Gemini CLI, opencode and Cursor (MCP entry, skills, native agent files, merge rules, dry run, user scope), saige acp (ACP v1 for Zed, JetBrains and other editors: config options, permission requests, cancel, load), held approvals with saige approvals for clients without elicitation, verified vs unverified matrix
 - [docs/agent-definitions.md](docs/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
 - [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema (version 2: models, endpoints, offerings), sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
