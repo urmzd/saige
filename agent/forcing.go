@@ -293,8 +293,11 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if len(final.Content) == 0 {
 		return limitErr
 	}
-	_, err = a.appendNode(ctx, tr, branch, final)
-	return err
+	if _, err := a.appendNode(ctx, tr, branch, final); err != nil {
+		return err
+	}
+	stream.forced, stream.forcedReason = true, limitErr.Error()
+	return nil
 }
 
 // withoutToolCalls returns msg without its tool-use blocks.

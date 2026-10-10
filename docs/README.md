@@ -24,7 +24,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | [Tool calling](tool-calling.md) | Tool call lifecycle, client and server tools, parallel and sequential execution, tool choice, where each knob lives |
 | [Typed function tools](func-tools.md) | `agent.Func`, `RunContext`, schema-hash versions, `agent.AIFunc` |
 | [Nullable tool properties](tool-schemas.md) | Optional and nullable parameters across vendor APIs and MCP |
-| [Handoffs and subagents](delegation.md) | Handoff vs delegate vs spawn: context in, data out, transcripts, size and iteration limits |
+| [Handoffs and subagents](delegation.md) | Handoff vs delegate vs spawn: context in, data out, transcripts, size and iteration limits, sub-agent budgets, scratch, and references |
 | [Orchestration policies](orchestration-policies.md) | Conversation ownership, subagent results, handoff return links, sticky routing, approval limits |
 | [Approval policy and grants](approval-policy.md) | Grants by scope and expiry, denial limits, capability defaults, replay |
 | [MCP client](mcp-client.md) | Pooled sessions, retries, drift detection, `.mcp.json` loading |

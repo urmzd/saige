@@ -59,6 +59,10 @@ These behavior changes can affect existing code. Each entry says what changed an
 | `WithTracing` sets `AgentConfig.RunTracer`, so each run opens an `invoke_agent` span. The loop records cache token usage and the run outcome through `types.CacheUsageRecorder` and `types.AgentOutcomeRecorder`. | Remove a manual `NewAgentTracer(...).StartAgent` around `Invoke`, or the run gets two spans. |
 | A marked tool is found through decorators that implement `Unwrap() types.Tool`, so it prompts for approval even when a decorator hides it. | None. |
 | A repeated decision for an answered marker returns `agent.ErrMarkerResolved`; `saige serve` answers it with 409. | Treat 409 as already decided. |
+| A sub-agent at its step limit gives a forced final answer (`MaxIterForceFinal`) instead of inheriting the parent's `OnMaxIter`, and gets a wrap-up note two iterations before its cap. A forced result reaches the parent model with a note saying so. | Add `agent.WithOnMaxIter(agent.MaxIterError)` to `SubAgentDef.Options` to fail the delegation at the limit. Set `WrapUpAt: -1` to send no note. |
+| A negative `MaxIter` means no cap (`agent.NoIterLimit`); it used to mean 10. A sub-agent under an uncapped parent defaults to `DefaultSubAgentMaxIter`. | Pass 0 for the default of 10. |
+| Each sub-agent invocation gets a private in-memory scratch over a read-only view of the parent's workspace, and a child with tools gets `scratch_write`, `scratch_read` and `scratch_search`. Child writes and spills now succeed into the scratch instead of failing with `workspace.ErrReadOnly`. | Set `SubAgentDef.Scratch.Off` for the previous behavior, or `Scratch.NoTools` to keep the scratch without the tools. |
+| A delegated task or result over about 2000 estimated tokens goes by reference: the model sees a `saige-artifact://` URI and a preview, and reads more with `read_artifact`. An agent with sub-agents gets `read_artifact` and `search_artifact`. `SubAgentResult.Output` still holds the whole result. | Set `SubAgentDef.References.Off` to keep everything inline, or raise `InputTokens` and `ResultTokens`. See [delegation](delegation.md). |
 
 ## Storage
 
