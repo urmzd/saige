@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.28.0 (2026-10-10)
+
+### Features
+
+- serve a pulled Ollama model by default, add embedderregistry.Text, fix stale comments (#77) ([24394bf](https://github.com/urmzd/saige/commit/24394bf183d16aff06649e84b704cedc8f70efe7))
+- **tools**: add a default harness toolset with a Docker sandbox (#78) ([b9ff793](https://github.com/urmzd/saige/commit/b9ff79388ef377262cb05dbc24cc0ce9c8a344c9))
+
+### Misc
+
+- **agent**: order the spawn finish-injection test on the parent's second turn (#80) ([44aa36e](https://github.com/urmzd/saige/commit/44aa36e373e741554d49e6206b8d3aafec505c9b))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.27.0...v0.28.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
