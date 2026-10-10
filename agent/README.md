@@ -35,7 +35,7 @@ import (
     "github.com/urmzd/saige/agent/provider/ollama"
 )
 
-client := ollama.NewClient("http://localhost:11434", "qwen2.5", "nomic-embed-text")
+client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "nomic-embed-text")
 a := agent.NewAgent(agent.AgentConfig{
     Name:         "assistant",
     SystemPrompt: "You are a helpful assistant.",
@@ -59,7 +59,7 @@ See [`examples/agent/`](../examples/agent/) for runnable programs covering every
 
 ## Provider Interface
 
-Implement one method to integrate any LLM backend:
+The interface is named `Provider`, but each implementation is an **adapter**: a Go type that speaks one serving API. An adapter can target a model vendor's API (Anthropic, OpenAI, Google) or a local runtime such as Ollama, which serves open-weight models like qwen and gemma. Implement one method to add another backend:
 
 ```go
 type Provider interface {
@@ -67,20 +67,20 @@ type Provider interface {
 }
 ```
 
-**Built-in providers:**
+**Built-in adapters:**
 
-| Provider | Package | Structured Output | Content Negotiation | Embedder |
-|----------|---------|:-:|:-:|:-:|
-| Ollama | `agent/provider/ollama` | yes | JPEG, PNG | yes |
-| OpenAI | `agent/provider/openai` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
-| Anthropic | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | no |
-| Google | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
+| Adapter for | Serving API | Package | Structured Output | Content Negotiation | Embedder |
+|-------------|-------------|---------|:-:|:-:|:-:|
+| Ollama (local runtime) | Ollama native API | `agent/provider/ollama` | yes | JPEG, PNG | yes |
+| OpenAI (vendor) | Chat Completions, Responses | `agent/provider/openai` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
+| Anthropic (vendor) | Messages | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | no |
+| Google (vendor) | Gemini API, Vertex AI | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
 
 The OpenAI package has two adapters. `openai.NewAdapter` uses Chat Completions, and `openai.NewResponsesAdapter` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
 
-> **Note:** Anthropic does not offer an embedding API. When using Anthropic as your LLM
-> provider with RAG or Knowledge Graph features, supply a separate embedder from another
-> provider. In the CLI: `--provider anthropic` with an additional API key set
+> **Note:** Anthropic does not offer an embedding API. When Anthropic serves the chat model
+> and you use RAG or Knowledge Graph features, supply a separate embedder from another
+> vendor or from Ollama. In the CLI: `--provider anthropic` with an additional API key set
 > (e.g. `OPENAI_API_KEY`). In Go code: construct the Anthropic adapter for `Provider`
 > and a separate OpenAI/Google/Ollama adapter for the `Embedder`.
 

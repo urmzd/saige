@@ -68,8 +68,8 @@ result, err := pipe.Ingest(ctx, &types.RawDocument{
 ### Search
 
 ```go
-results, err := pipe.Search(ctx, "attention mechanism", types.WithLimit(5))
-fmt.Println(results.AssembledContext.Prompt) // context with citations
+results, err := pipe.Search(ctx, "attention mechanism", types.WithLimit(5), types.WithContextAssembly(4096))
+fmt.Println(results.Context.Prompt) // context with citations
 ```
 
 ### With knowledge graph integration

@@ -351,9 +351,13 @@ The shipped presets use the cheapest current model per vendor
 grounding and code execution (`google.WithServerTools`) and Anthropic web
 search and code execution (`anthropic.WithServerTools`) are sent and their
 calls stream back as `ServerToolCallDelta` and `ServerToolResultDelta`.
-Anthropic remote MCP is rejected, because it needs the MCP connector. OpenAI's
-server tools need the Responses API, which the adapter does not use, and the
-`provider.Build` factory rejects server tools for OpenAI and Ollama.
+Anthropic remote MCP is rejected, because it needs the MCP connector. OpenAI
+has a Responses API adapter (`openai.NewResponsesAdapter`,
+`agent/provider/openai/responses.go`): `provider.Build` serves
+`responses_only` rows (gpt-6.1-sol, gpt-6-astra) through it, and a
+`no_reasoning` row (gpt-6-luna, gpt-6-sol) when a reasoning dial is on. That
+adapter does not send server tools yet, so `provider.Build` still rejects
+server tools for OpenAI and Ollama (`catalog.ExpressibleServerTools`).
 
 **Tool choice per adapter.** Each adapter takes a tool choice at construction
 (`WithToolChoice`) and per request through `types.OptionsProvider`
@@ -371,11 +375,12 @@ reads and writes. OpenAI, Anthropic, and Google populate those fields.
 The budget separates cache tiers, but cache storage and TTL-specific write
 prices still need a complete rate model. See [cache contracts](cache-contracts.md).
 
-**D. Pricing coverage is incomplete.** Claude 5 and Gemini 3 rows are
-deliberately unpriced rather than guessed. A `Budget` refuses to run against
-them unless `AllowUnpriced` is set. Supply rates in a catalog layer (see
-[model catalog and presets](catalog.md)) or with `catalog.Register`; either
-appends a revision.
+**D. Pricing coverage is incomplete.** The current model IDs are priced, but
+family-prefix rows (such as `claude-haiku-5` and `gemini-3-pro`), older rows
+such as `gpt-5.2`, and every Ollama model are unpriced rather than guessed. A
+`Budget` refuses to run against them unless `AllowUnpriced` is set. Supply
+rates in a catalog layer (see [model catalog and presets](catalog.md)) or with
+`catalog.Register`; either appends a revision.
 
 **E. Tiered pricing is flattened.** Gemini 2.5 Pro charges more above a prompt
 length threshold; the table declares the lower tier. Long-prompt runs will
@@ -391,8 +396,9 @@ vision. Unrecognised local models resolve to the baseline with `Known == false`;
 there is no runtime probe.
 
 **H. Server-tool calls are invisible to telemetry.** Provider-executed tools
-emit no `ToolExec*` deltas, so a run that used web search five times looks
-identical to one that used it none. Only citations hint at it.
+stream as `ServerToolCallDelta` and `ServerToolResultDelta`, but they emit no
+`ToolExec*` deltas, tool spans or tool metrics, so traces and metrics do not
+count them.
 
 ## Verification
 
