@@ -27,6 +27,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | [Nullable tool properties](tool-schemas.md) | Optional and nullable parameters across vendor APIs and MCP |
 | [Handoffs and subagents](delegation.md) | Handoff vs delegate vs spawn: context in, data out, transcripts, size and iteration limits, sub-agent budgets, scratch, and references |
 | [Orchestration policies](orchestration-policies.md) | Conversation ownership, subagent results, handoff return links, sticky routing, approval limits |
+| [Context management](context-management.md) | Compaction strategies, chains, triggers, summary budget, records, per-agent policy and handoff groups |
 | [Approval policy and grants](approval-policy.md) | Grants by scope and expiry, denial limits, capability defaults, replay |
 | [Run hooks](hooks.md) | Lifecycle events that observe, change or abort a run; ordering, timeouts, durable replay, inheritance |
 | [Guardrails](guardrails.md) | Input and output checks that pass, block or rewrite; parallel mode, tripwires, built-ins, budget, relation to gates and redaction |

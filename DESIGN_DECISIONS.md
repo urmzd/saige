@@ -96,6 +96,7 @@ Because the reply is a write-once record, a repeated reply is a no-op and a chan
 
 A shared summary can erase ownership boundaries and expose another owner's context.
 Automatic compaction is therefore rejected for handoff groups.
+A disabled policy (`none`) is accepted: it never compacts, so it cannot cross an owner's boundary.
 Per-owner checkpoints and summaries must exist before this restriction can be removed.
 This is a deliberate limit, not an implicit promise that long handoff sessions fit every model.
 
@@ -382,3 +383,12 @@ A block is a tripwire: a typed `GuardrailTrippedError`, a `GuardrailDelta`, and 
 A parallel input guardrail races the first model call to save latency. When it blocks, the call is cancelled, its turn discarded, its usage charged, and the cancellation recorded. It cannot rewrite, because the model already has the text, so a rewrite counts as a block.
 Output guardrails run after the answer streamed. A rewrite is announced with its replacement text; hosts that must never show raw output put `privacy.Provider` in front of the model.
 Model calls a guardrail makes go through the run's budget, admitted and charged like a turn (D-09).
+
+## D-41: Compose compaction strategies and record every compaction
+
+No single strategy fits every run. Clearing tool results is free but cannot shrink a conversation without tools; a summary always shrinks but costs a call and loses detail.
+Strategies are therefore small values behind one interface (`types.CompactionStrategy`) and a `chain` applies them in order until the history fits. The turn-based strategies keep the system prompt and the original task and drop or summarize whole turns, so a tool call never loses its result. Every compacted history is still checked before it is used, and one that would separate a pair is discarded.
+Relevance selection uses the same BM25 ranker as tool search: lexical, local and deterministic, so a replayed run selects the same messages.
+A summary is a system message, so providers read it as context, not as words the user or the model said. It is written by a configurable provider or model and charged to the budget like a turn (D-09).
+Compaction never deletes: the original branch keeps every message, and the new branch carries a record of the strategy, the trigger, the token counts and what happened to each message, by node. The same record is streamed as a delta.
+Compaction is an operational setting, so subagents inherit it and may override it. Handoff groups keep rejecting every active strategy (D-11).

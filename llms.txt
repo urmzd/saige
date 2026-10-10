@@ -52,7 +52,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - Presets: agent/provider/catalog/data/default.json, agent/provider/preset/preset.go
 - CLI: cmd/saige/main.go, cmd/saige/serve.go, cmd/saige/serve_server.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/catalog.go, cmd/saige/connect.go
 - MCP: cmd/saige-mcp/main.go, cmd/saige-mcp/bridge.go, cmd/saige-mcp/http.go, cmd/saige-mcp/agenttool.go, cmd/saige-mcp/packs.go, cmd/saige-mcp/deps.go, agent/mcp/mcp.go, agent/mcp/pool.go, agent/mcp/catalog.go, agent/mcp/config.go
-- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go
+- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go, agent/types/compact_strategy.go
 - Tree: agent/tree/tree.go, agent/tree/compact.go, agent/tree/serialize.go
 - Knowledge: rag/knowledge/config.go, rag/knowledge/types/types.go, rag/knowledge/pgstore/store.go, rag/knowledge/tool/tools.go, rag/knowledge/graph/format.go
 - RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/tool/tools.go

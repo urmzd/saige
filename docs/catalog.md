@@ -169,7 +169,7 @@ _, err := catalog.Use(ctx, catalog.Layered(catalog.EmbeddedSource(), s3src))
 }
 ```
 
-Preset keys: `description`, `extends`, `options`, `dials`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `retry`, `routing`, `require_declared` and `chain`.
+Preset keys: `description`, `extends`, `options`, `dials`, `tool_choice` (`auto`, `none`, `required` or `named:<tool>`), `output_mode` (`auto`, `native`, `tool` or `prompt`), `llm_timeout`, `compaction` (the agent's compaction strategy; see [context management](context-management.md#presets)), `retry`, `routing`, `require_declared` and `chain`.
 
 Routing keys:
 
@@ -254,7 +254,7 @@ a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "..."}, agent.WithPreset(bun
 
 `preset.Build` builds every entry with `provider.Build` and its own resolved options, wraps it in its own retry decorator and optional per-attempt deadline, and puts all entries behind one router. Each preset is a router group in chain order, and the primary is the default group, so failover follows the chain exactly. `preset.BuildFrom(ctx, src, ...)` takes a `Source`. Neither installs anything: hosts touch global state only through `catalog.Install` or `catalog.Use`.
 
-`agent.WithPreset` sets the provider and the preset's tool choice, output mode and LLM timeout unless they were already set. Options applied after it win.
+`agent.WithPreset` sets the provider and the preset's tool choice, output mode, LLM timeout and compaction unless they were already set. Options applied after it win.
 
 `ConfigContent.Model` (or an outcome policy's switch) can name another built preset or a single profile ID. The router selects that complete configuration; no options are copied onto another model. A signed-reasoning lock still keeps the previous profile. A name that is neither fails with `router.ErrUnknownProfile`. `fallback.Provider` and `split.Split` copy one model string across members, so do not wrap a bundle in them; use `bundle.Session()` as a split arm instead.
 
