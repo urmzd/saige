@@ -67,7 +67,8 @@ The server negotiates MCP protocol `2025-11-25` or older. Protocol `2026-07-28` 
 | `--read-only` | | Omit every mutating tool (`store_knowledge`, `kg_ingest`) |
 | `--approval` | | How marked tools run: `elicit` (default), `host`, or `deny` |
 | `--mcp-config` | | MCP configuration file (`mcpServers`) for the `mcp` pack |
-| `--agent` | | Catalog preset or `provider/model` to expose as the agent tool |
+| `--agent` | | Agent definition in `--agents-dir` (`NAME` or `NAME@RANGE`), or a catalog preset or `provider/model`, to expose as the agent tool |
+| `--agents-dir` | | Directory of agent definitions `--agent` may name |
 | `--agent-catalog` | | Catalog file for `--agent` (default: the embedded catalog) |
 | `--agent-tool` | | Name of the agent tool (default: `saige_agent`) |
 | `--agent-description` | | Description of the agent tool |
@@ -132,6 +133,12 @@ saige-mcp --transport http --tools research --root ~/notes \
   --agent anthropic/claude-haiku-5-5 \
   --agent-system "Answer from the notes. Cite file paths." \
   --agent-schema answer.schema.json
+```
+
+With `--agents-dir`, `--agent` may name an [agent definition](../../docs/agent-definitions.md). The tool is then named after the definition (unless `--agent-tool` is set) and described by it, the definition's harness tools work under `--root`, and its `registry` tools are the packs this server exposes. `--agent-system` cannot be combined with a definition, which carries its own prompt. Each call binds the definition afresh, so calls share no scratch workspace or budget.
+
+```bash
+saige-mcp --tools kg --db "$SAIGE_DB" --agents-dir ./agents --agent researcher@^1
 ```
 
 With `--agent-schema`, the agent answers with a JSON object matching the schema, and the tool returns it as structured content (and publishes the schema as its output schema):

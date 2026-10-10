@@ -35,6 +35,10 @@ type serveOptions struct {
 	// newAgent builds the agent for a new session. Each session owns its
 	// agent and conversation tree.
 	newAgent func() (*agentsdk.Agent, error)
+	// newSessionAgent, when set, replaces newAgent: it also returns what
+	// the session releases when it ends, its grant limit, and a description
+	// of the agent for the session's creation response.
+	newSessionAgent func() (sessionAgent, error)
 	// token, when set, must arrive as "Authorization: Bearer <token>".
 	token string
 	// approvalTimeout denies a pending approval nobody answered in time.
@@ -63,12 +67,27 @@ type server struct {
 	reserved int
 }
 
+// sessionAgent is an agent built for one session, with what goes with it.
+type sessionAgent struct {
+	agent *agentsdk.Agent
+	// release frees what the agent holds, such as MCP connections.
+	release func()
+	// checkGrant rejects a grant the agent's definition does not allow.
+	checkGrant func(*types.GrantRequest) error
+	// info is reported as "agent" when the session is created, such as the
+	// pinned definition the session runs.
+	info any
+}
+
 type session struct {
 	id    string
 	agent *agentsdk.Agent
-	mu    sync.Mutex
-	turns map[string]*turn
-	last  *turn
+	// release and checkGrant come from sessionAgent; either may be nil.
+	release    func()
+	checkGrant func(*types.GrantRequest) error
+	mu         sync.Mutex
+	turns      map[string]*turn
+	last       *turn
 	// idleSince is when the session was created or its last turn
 	// finished. It is guarded by mu.
 	idleSince time.Time
@@ -140,11 +159,23 @@ func (s *server) sweepIdle() {
 // long it takes.
 func (s *server) evictIdle(now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var dropped []*session
 	for id, sess := range s.sessions {
 		if sess.idleFor(now) >= s.opts.idleTTL {
 			delete(s.sessions, id)
+			dropped = append(dropped, sess)
 		}
+	}
+	s.mu.Unlock()
+	for _, sess := range dropped {
+		sess.end()
+	}
+}
+
+// end releases what the session's agent holds.
+func (sess *session) end() {
+	if sess.release != nil {
+		sess.release()
 	}
 }
 
@@ -238,7 +269,13 @@ func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
 	s.reserved++
 	s.mu.Unlock()
 
-	ag, err := s.opts.newAgent()
+	var sa sessionAgent
+	var err error
+	if s.opts.newSessionAgent != nil {
+		sa, err = s.opts.newSessionAgent()
+	} else {
+		sa.agent, err = s.opts.newAgent()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reserved--
@@ -246,9 +283,14 @@ func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sess := &session{id: "s_" + randomID(), agent: ag, turns: map[string]*turn{}, idleSince: time.Now()}
+	sess := &session{id: "s_" + randomID(), agent: sa.agent, release: sa.release, checkGrant: sa.checkGrant,
+		turns: map[string]*turn{}, idleSince: time.Now()}
 	s.sessions[sess.id] = sess
-	writeJSON(w, http.StatusCreated, map[string]string{"session_id": sess.id})
+	resp := map[string]any{"session_id": sess.id}
+	if sa.info != nil {
+		resp["agent"] = sa.info
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // deleteSession drops a session and cancels its running turn. Open event
@@ -269,13 +311,18 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if last != nil {
 		last.stream.Cancel()
 	}
+	sess.end()
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": id})
 }
 
-func (s *server) session(w http.ResponseWriter, r *http.Request) *session {
+func (s *server) lookup(r *http.Request) *session {
 	s.mu.Lock()
-	sess := s.sessions[r.PathValue("sid")]
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	return s.sessions[r.PathValue("sid")]
+}
+
+func (s *server) session(w http.ResponseWriter, r *http.Request) *session {
+	sess := s.lookup(r)
 	if sess == nil {
 		writeError(w, http.StatusNotFound, "session not found")
 	}
@@ -636,6 +683,12 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 	if err := checkGrant(body.Grant, *body.Approved, time.Now()); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if sess := s.lookup(r); sess != nil && sess.checkGrant != nil {
+		if err := sess.checkGrant(body.Grant); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	id := r.PathValue("toolCallID")
 	err := t.stream.ResolveMarkerErr(id, agentsdk.Resolution{

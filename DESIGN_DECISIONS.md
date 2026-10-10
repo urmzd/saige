@@ -400,10 +400,19 @@ A submit interrupted before its batch ID was saved is looked up by tag or reques
 Batch requests are validated as interactive requests are, and a control the batch endpoint cannot take is rejected at submit (D-12). Budget is reserved per request at submit at the batch rate card and released for requests the vendor does not bill (D-09).
 Only single-turn work is batched. Each turn of an agent loop depends on the last, so a batched loop would wait a batch per turn.
 
-## D-43: Messages are ordered typed parts
+## D-43: Define an agent as a versioned file and pin what a run resolves
+
+An agent definition is data: a Markdown file whose frontmatter declares the model, tools, skills, memory, sub-agents, approvals, compaction, guardrails and limits, and whose body is the system prompt. What a definition is, where it comes from, how a reference resolves and how it binds to runtime objects are separate packages, so every host (the CLI, `saige serve`, `saige-mcp`, a library caller) loads one the same way and differs only in what it binds it with.
+Decoding is strict, with a path and a line for every problem, as for the catalog (D-37). A file with an unknown `apiVersion` is rejected rather than read as an older format. The JSON Schema is generated from the Go types and a test keeps the checked-in copy current.
+A definition names everything outside itself (presets, MCP servers, registry tools, skills, memory stores) by reference, and only the host's environment supplies them. Loading never connects to a server or reads a credential; binding fails with the missing reference rather than reaching further.
+A registry checks the whole set before it replaces what it holds: every reference resolves, there is no cycle, and a failed reload keeps the previous set. A resolution is pinned by a digest over the definition and every sub-agent it resolved to, and a reload never changes one already handed out, so a running agent keeps the definition it started with and its digest can be recorded with the run.
+A definition that arrived with a repository is checked against an allowlist, as a project catalog layer is: nothing that connects to a server, reads memory, loosens an approval or runs code without asking.
+Approval rules use the permission syntax of Claude Code, decided deny, then ask, then allow, then the tool's own marker, then its capability class. An allow rule matches a shell command only when it is one simple command, because a prefix rule must never approve what follows a `&&`. An approval block takes over its tools' markers, so the rules, not a marker, decide. Grants stay host-created (D-38); a definition can only cap their scope.
+A sub-agent's own definition governs its own calls, behind the host's gate; a handoff member shares its entry agent's run and so cannot declare run policy of its own.
+
+## D-44: Messages are ordered typed parts
 
 A message is an ordered list of parts, and every part has a kind: text, an image, a document, a tool call, a citation, a refusal, and so on. The role seals which kinds a message may hold, so a misplaced part is a compile error rather than a runtime surprise.
 Media is one part however it is reached. Its `Source` can carry bytes, a URI, a workspace reference and uploads to several vendors at once, and each adapter picks the locator it can use. One vendor's file ID is useless to another, so a request that fails over still has a way to reach the media. Bytes are never persisted; stores keep the other locators and the digest.
 Model output streams as parts too. Each part has an index, its position in the final message, so parts can interleave and an aggregator, a restorer or a UI keys its state by index instead of guessing which call a fragment belongs to. A part that breaks the protocol is counted and ignored, never guessed at.
 Every store, the wire and the durable journal encode a part the same way: its fields plus a `type` tag. Kinds are never renamed (D-35). A reader rejects a kind it does not know, ignores fields it does not know, and the earlier wire version stays readable through an upgrader. Output an older reader cannot represent becomes an error it can see, never a silent drop (D-12).
-

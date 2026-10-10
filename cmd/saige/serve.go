@@ -13,7 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 	agentsdk "github.com/urmzd/saige/agent"
+	"github.com/urmzd/saige/agent/definition"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/tools"
 	"github.com/urmzd/saige/tools/exec"
 	"github.com/urmzd/saige/tools/fetch"
 	"github.com/urmzd/saige/tools/fs"
@@ -29,6 +31,8 @@ func newServeCmd(ctx context.Context) *cobra.Command {
 		workspace       string
 		bashNetwork     string
 		denyAfter       int
+		agentRef        string
+		agentsReload    time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -67,6 +71,49 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			if err := checkServeAddr(addr, token); err != nil {
 				return err
 			}
+			srvCtx, stop := context.WithCancel(ctx)
+			defer stop()
+
+			opts := serveOptions{token: token, approvalTimeout: approvalTimeout, idleTTL: idleTTL}
+			if agentRef != "" {
+				h, err := newAgentHost(ctx, cmd, cf, tools.HarnessOptions{Root: workspace, Network: exec.NetworkPolicy(bashNetwork)}, false)
+				if err != nil {
+					return err
+				}
+				defer h.cleanup()
+				// Bind once now, so a definition this host cannot serve
+				// fails at start rather than on the first session.
+				first, err := h.bind(ctx, agentRef)
+				if err != nil {
+					return err
+				}
+				slog.Info("saige serve agent", "agent", first.Pin().String())
+				_ = first.Close()
+				if agentsReload > 0 {
+					stopWatch, err := h.reg.Watch(srvCtx, definition.WatchOptions{Interval: agentsReload, OnReload: func(changed bool, err error) {
+						switch {
+						case err != nil:
+							slog.Warn("saige serve: agent definitions reload failed; keeping the previous set", "error", err)
+						case changed:
+							slog.Info("saige serve: agent definitions reloaded; new sessions use them")
+						}
+					}})
+					if err != nil {
+						return err
+					}
+					defer stopWatch()
+				}
+				// Each session binds the definition the registry resolves
+				// when it starts and keeps it, pinned, until it ends.
+				opts.newSessionAgent = func() (sessionAgent, error) {
+					b, err := h.bind(srvCtx, agentRef)
+					if err != nil {
+						return sessionAgent{}, err
+					}
+					return sessionAgent{agent: b.NewAgent(), release: func() { _ = b.Close() }, checkGrant: b.CheckGrant, info: b.Pin()}, nil
+				}
+				return listenAndServe(ctx, srvCtx, cmd, addr, opts, -1)
+			}
 
 			provider, err := resolveProvider(ctx, cf, false)
 			if err != nil {
@@ -83,34 +130,14 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			}
 			tools = append(tools, packTools...)
 
-			newAgent := func() (*agentsdk.Agent, error) {
+			opts.newAgent = func() (*agentsdk.Agent, error) {
 				cfg := agentsdk.AgentConfig{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
 				if len(tools) > 0 {
 					cfg.Tools = types.NewToolRegistry(tools...)
 				}
 				return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter})), nil
 			}
-
-			srvCtx, stop := context.WithCancel(ctx)
-			defer stop()
-			s := newServer(srvCtx, serveOptions{newAgent: newAgent, token: token, approvalTimeout: approvalTimeout, idleTTL: idleTTL})
-			ln, err := net.Listen("tcp", addr)
-			if err != nil {
-				return err
-			}
-			httpSrv := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
-			go func() {
-				<-ctx.Done()
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = httpSrv.Shutdown(shutdownCtx)
-			}()
-			slog.Info("saige serve listening", "addr", ln.Addr().String(), "tools", len(tools))
-			fmt.Fprintf(cmd.ErrOrStderr(), "listening on http://%s\n", ln.Addr())
-			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			return nil
+			return listenAndServe(ctx, srvCtx, cmd, addr, opts, len(tools))
 		},
 	}
 	f := cmd.Flags()
@@ -122,7 +149,36 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 	f.StringVar(&workspace, "workspace", "", "Workspace root for the fs and bash packs")
 	f.IntVar(&denyAfter, "deny-after", 0, "Refuse a tool without asking after this many denials in a session (0 always asks)")
 	f.StringVar(&bashNetwork, "bash-network", string(exec.NetworkDeny), "Network policy for bash: deny (needs an isolating wrapper) or allow")
+	f.StringVar(&agentRef, "agent", "", "Serve an agent definition: NAME or NAME@RANGE; each session pins the version it starts with")
+	f.DurationVar(&agentsReload, "agents-reload", 0, "With --agent, reload the definitions this often so new sessions see changes (0 never reloads)")
 	return cmd
+}
+
+// listenAndServe runs the HTTP server until ctx ends. tools is logged; a
+// negative count is not.
+func listenAndServe(ctx, srvCtx context.Context, cmd *cobra.Command, addr string, opts serveOptions, tools int) error {
+	s := newServer(srvCtx, opts)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	httpSrv := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}()
+	if tools >= 0 {
+		slog.Info("saige serve listening", "addr", ln.Addr().String(), "tools", tools)
+	} else {
+		slog.Info("saige serve listening", "addr", ln.Addr().String())
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "listening on http://%s\n", ln.Addr())
+	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 // checkServeAddr refuses to expose the server beyond this machine without a

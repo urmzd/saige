@@ -139,6 +139,10 @@ func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (
 	if err := execScript(ctx, conn, batchSQL); err != nil {
 		return err
 	}
+	// Agent definitions live in their own script too.
+	if err := execScript(ctx, conn, agentsSQL); err != nil {
+		return err
+	}
 
 	if checkKG {
 		if err := checkVectorDim(ctx, conn, "kg_entity", "embedding", opts.KGEmbeddingDim); err != nil {
