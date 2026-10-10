@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -213,6 +214,14 @@ func (a *Adapter) requestOptions() types.RequestOptions {
 // choice, or "" when it can. A manual thinking budget accepts only auto and
 // none, and some models reject forcing outright (RejectsForcedToolChoice).
 // Adaptive thinking alone does not block forcing: the API accepts it.
+// nativeSchema reports whether schema output goes through
+// output_config.format instead of a forced hidden tool. Models that reject a
+// forced tool choice take the native path; every other model keeps the
+// hidden tool.
+func (a *Adapter) nativeSchema(caps types.ModelCapabilities) bool {
+	return caps.RejectsForcedToolChoice && a.thinking == nil
+}
+
 func (a *Adapter) forcedToolBlocked(caps types.ModelCapabilities) string {
 	switch {
 	case a.thinking != nil:
@@ -320,11 +329,11 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	if err != nil {
 		return nil, err
 	}
-	if schema != nil {
+	native := schema != nil && a.nativeSchema(catalog.MustLookup("anthropic", string(a.model)))
+	if schema != nil && !native {
 		// Schema output forces a hidden tool, which the API rejects with a
-		// manual thinking budget and on models that refuse forcing. This
-		// error is returned before any request, so fallback can try another
-		// member.
+		// manual thinking budget. This error is returned before any request,
+		// so fallback can try another member.
 		if why := a.forcedToolBlocked(catalog.MustLookup("anthropic", string(a.model))); why != "" {
 			return nil, schemacheck.Unsupported(a, "forced-tool schema output: "+why)
 		}
@@ -337,7 +346,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		return nil, err
 	}
 
-	if schema != nil {
+	if schema != nil && !native {
 		if err := a.Capabilities().Require(types.CapTools, types.CapToolChoice); err != nil {
 			return nil, err
 		}
@@ -360,7 +369,10 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	}
 	a.applyParams(&params)
 
-	if schema != nil {
+	switch {
+	case native:
+		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: outputFormatSchema(*schema)}
+	case schema != nil:
 		// Inject a hidden tool whose input schema is the desired response schema.
 		props := make(map[string]any, len(schema.Properties))
 		for k, v := range schema.Properties {
@@ -389,7 +401,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 	}
 
 	isStructured := func(name string) bool {
-		return schema != nil && name == "structured_output"
+		return schema != nil && !native && name == "structured_output"
 	}
 
 	stream := a.client.Messages.NewStreaming(ctx, params)
@@ -627,14 +639,15 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 //
 // Extended thinking rejects a request that ends with an assistant turn, so
 // an adapter that thinks does not report assistant prefill. Schema output
-// forces a tool call, so an adapter that cannot force one (a manual thinking
-// budget, or a model that rejects forcing) does not report structured output.
+// forces a tool call, except on models that reject forcing, where it uses
+// output_config.format; an adapter with a manual thinking budget cannot force
+// a tool and does not report structured output.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
 	caps := catalog.MustLookup("anthropic", string(a.model))
 	if a.thinking != nil || a.reasoningEffort != nil || caps.ReasoningDefaultEnabled {
 		caps = caps.Without(types.CapAssistantPrefill)
 	}
-	if a.forcedToolBlocked(caps) != "" {
+	if !a.nativeSchema(caps) && a.forcedToolBlocked(caps) != "" {
 		caps = caps.Without(types.CapStructuredOutput)
 	}
 	return caps
@@ -862,6 +875,44 @@ func toAnthropicTools(defs []types.ToolDef) []anthropic.ToolUnionParam {
 
 func propertyToSchema(p types.PropertyDef) map[string]any {
 	return p.JSONSchema()
+}
+
+// outputFormatSchema builds the output_config.format schema. Structured
+// outputs require every object to set additionalProperties to false, which a
+// ParameterSchema cannot express, so it is added to each object here.
+func outputFormatSchema(ps types.ParameterSchema) map[string]any {
+	schema := map[string]any{"type": ps.Type}
+	if len(ps.Required) > 0 {
+		schema["required"] = ps.Required
+	}
+	props := make(map[string]any, len(ps.Properties))
+	for k, v := range ps.Properties {
+		props[k] = propertyToSchema(v)
+	}
+	schema["properties"] = props
+	closeObjects(schema)
+	return schema
+}
+
+// closeObjects sets additionalProperties to false on every object in node.
+func closeObjects(node map[string]any) {
+	object := node["type"] == "object"
+	if union, ok := node["type"].([]string); ok {
+		object = slices.Contains(union, "object")
+	}
+	if object {
+		node["additionalProperties"] = false
+	}
+	if props, ok := node["properties"].(map[string]any); ok {
+		for _, child := range props {
+			if m, ok := child.(map[string]any); ok {
+				closeObjects(m)
+			}
+		}
+	}
+	if items, ok := node["items"].(map[string]any); ok {
+		closeObjects(items)
+	}
 }
 
 // streamErrorPrefix is how the SDK reports an error event received inside an

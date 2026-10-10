@@ -6,6 +6,7 @@ These behavior changes can affect existing code. Each entry says what changed an
 
 | Change | What to do |
 | --- | --- |
+| On claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1 and claude-mythos-5-1 the Anthropic adapter sends a response schema as `output_config.format` instead of failing with `ErrSchemaUnsupported`. `OutputAuto` therefore picks native output for them instead of the `final_answer` tool. | None. Set `WithOutputMode(OutputTool)` to keep the `final_answer` tool. |
 | An Anthropic response that stops with `model_context_window_exceeded` ends with an `ErrorKindContextLength` error instead of passing as a final answer. | Handle it like any context-length error, for example with compaction. |
 | The OpenAI Responses adapter sends the in-memory prompt cache retention as `in_memory`; the API now rejects `in-memory`. | None. `WithPromptCache` still accepts either spelling. |
 | saige-mcp negotiates MCP protocol `2025-11-25` or older, never `2026-07-28`, because that revision forbids the elicitation approval relies on. Clients on the new SDKs try `server/discover` first and then fall back to `initialize`, so a connection costs one more request against the HTTP rate limit. | None. Allow for the extra request when sizing `--rate-burst`. |

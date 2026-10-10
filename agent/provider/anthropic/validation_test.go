@@ -100,25 +100,26 @@ func TestAdaptivePromptCache(t *testing.T) {
 }
 
 // TestSchemaWithThinkingIsRejected checks that a schema request is refused
-// before any network call where the API rejects the forced hidden tool: with
-// a manual thinking budget, and on models that reject forcing outright.
-// Adaptive thinking accepts a forced tool, so it keeps schema output.
-// Capabilities must agree.
+// before any network call where the API rejects the forced hidden tool with
+// a manual thinking budget. Adaptive thinking accepts a forced tool, so it
+// keeps schema output, and models that reject forcing outright send the
+// schema as output_config.format instead. Capabilities must agree.
 func TestSchemaWithThinkingIsRejected(t *testing.T) {
 	for _, tc := range []struct {
 		name, model string
 		opts        []Option
 		reject      bool
+		native      bool
 	}{
-		{"manual thinking", "claude-sonnet-4-5", []Option{WithThinking(1024)}, true},
-		{"adaptive thinking", "claude-opus-4-6", []Option{WithReasoningEffort("high")}, false},
-		{"adaptive thinking by default", "claude-haiku-5-5", nil, false},
-		{"adaptive effort on haiku", "claude-haiku-5-5", []Option{WithReasoningEffort("low")}, false},
-		{"model rejects forcing: sonnet", "claude-sonnet-5-5", nil, true},
-		{"model rejects forcing: opus", "claude-opus-5-5", nil, true},
-		{"model rejects forcing: fable", "claude-fable-5-1", nil, true},
-		{"model rejects forcing: mythos", "claude-mythos-5-1", nil, true},
-		{"no thinking", "claude-sonnet-4-5", nil, false},
+		{"manual thinking", "claude-sonnet-4-5", []Option{WithThinking(1024)}, true, false},
+		{"adaptive thinking", "claude-opus-4-6", []Option{WithReasoningEffort("high")}, false, false},
+		{"adaptive thinking by default", "claude-haiku-5-5", nil, false, false},
+		{"adaptive effort on haiku", "claude-haiku-5-5", []Option{WithReasoningEffort("low")}, false, false},
+		{"model rejects forcing: sonnet", "claude-sonnet-5-5", nil, false, true},
+		{"model rejects forcing: opus", "claude-opus-5-5", []Option{WithReasoningEffort("low")}, false, true},
+		{"model rejects forcing: fable", "claude-fable-5-1", nil, false, true},
+		{"model rejects forcing: mythos", "claude-mythos-5-1", nil, false, true},
+		{"no thinking", "claude-sonnet-4-5", nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any
@@ -151,6 +152,17 @@ func TestSchemaWithThinkingIsRejected(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range stream {
+			}
+			if tc.native {
+				format, _ := body["output_config"].(map[string]any)["format"].(map[string]any)
+				schema, _ := format["schema"].(map[string]any)
+				if format["type"] != "json_schema" || schema["additionalProperties"] != false {
+					t.Fatal("native schema lost", body)
+				}
+				if body["tool_choice"] != nil || body["tools"] != nil {
+					t.Fatal("native schema output must not force a tool", body)
+				}
+				return
 			}
 			if body["tool_choice"].(map[string]any)["name"] != "structured_output" {
 				t.Fatal("schema tool lost", body)

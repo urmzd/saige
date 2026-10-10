@@ -193,7 +193,7 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | `Structured[T]` repair after `Validate` rejects | OpenAI, Ollama | pass | 2 attempts, second answer accepted |
 | `OutcomePolicy` escalation weak to strong | Router (Ollama, OpenAI) | pass | Switch on `schema_invalid` logged, `RouteDelta` emitted, OpenAI answer accepted |
 | Escalation ladder exhausted | Router (Ollama) | pass | `errors.Is(err, ErrSchemaInvalid)=true` after 2 attempts |
-| `OutputAuto` on a model that rejects forced tool choice | Anthropic claude-sonnet-5-5 | unit tested | Auto picks the `final_answer` tool with `tool_choice` auto, because the adapter reports no structured output for a model that declares `forced_tool_choice: false` |
+| `OutputAuto` on a model that rejects forced tool choice | Anthropic claude-sonnet-5-5 | unit tested | Auto picks native output: the adapter sends the schema as `output_config.format` for a model that declares `forced_tool_choice: false` |
 | Delegate with child approval via `ResolveMarkerErr` | OpenAI, Ollama | pass | Child marker on parent stream at depth 0, approved, 1 write, no hang |
 | Durable suspend, `Decide`, resume | OpenAI, Ollama | pass | First run `ErrSuspended` with 1 interrupt; resume completed with 1 write |
 | Spawn and `await_subagent` | OpenAI, Ollama | pass | Handle returned at once, awaited result "Canberra" |

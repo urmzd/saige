@@ -48,7 +48,7 @@ Two fields describe request shapes a vendor rejects for one model:
 
 | Field | Meaning |
 | --- | --- |
-| `reasoning.forced_tool_choice: false` | The API rejects a `required` or named tool choice for the model (`ModelCapabilities.RejectsForcedToolChoice`). Validation rejects such a choice locally, the Anthropic adapter reports no forced-tool structured output, and auto output mode uses the `final_answer` tool with tool choice auto. Declared on claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1 and claude-mythos-5-1. |
+| `reasoning.forced_tool_choice: false` | The API rejects a `required` or named tool choice for the model (`ModelCapabilities.RejectsForcedToolChoice`). Validation rejects such a choice locally, and the Anthropic adapter sends schema output as `output_config.format` instead of a forced tool. Declared on claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1 and claude-mythos-5-1. |
 | `chat_completions_tools` | How OpenAI's Chat Completions API takes tools for the model: `any` (the default), `no_reasoning` (only with reasoning effort `none`; the chat adapter sends `none` when tools are offered and no effort is set, and rejects another effort) or `responses_only` (tools need the Responses API; `provider.Build` serves the model through `openai.NewResponsesAdapter`). |
 
 ### The options object
