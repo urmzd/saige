@@ -135,28 +135,20 @@ var clientKinds = []types.PartKind{
 }
 
 // UserMessage checks the parts an untrusted client sent and returns the
-// user message to run. Only text and media parts are accepted. A media part
-// may carry inline bytes (up to MaxInline), an https URI, or a ref to an
-// artifact the session holds, whose bytes are attached. A vendor file ID is
-// always refused (ErrVendorFile): the client cannot know which provider
-// account serves the run. types.CheckClientParts runs first, so a URI on a
-// vendor file store is refused too (ErrURIScheme, matching
-// types.ErrUntrustedLocator). A client-set unresolved reason is dropped.
+// user message to run. Only text and media parts are accepted. Each media
+// source must pass types.CheckClientSource, the one client-locator rule:
+// inline bytes (up to MaxInline), an https URI, or a ref to an artifact the
+// session holds, whose bytes are attached. A refusal keeps its specific
+// error, so a host can name the case, and matches
+// types.ErrUntrustedLocator: ErrVendorFile for a vendor file ID (the client
+// cannot know which provider account serves the run), ErrURIScheme for any
+// other URI or one on a vendor file store, and ErrArtifactNotFound for a
+// ref that is not a session artifact. A client-set unresolved reason is
+// dropped.
 func (c ClientParts) UserMessage(parts []types.UserPart) (types.UserMessage, error) {
 	limit := c.MaxInline
 	if limit == 0 {
 		limit = types.DefaultMaxInlineBytes
-	}
-	// The shared untrusted-locator rules first (vendor files, foreign
-	// schemes, vendor file-store URLs); a vendor file keeps its own error,
-	// so a host can name the case.
-	if err := types.CheckClientParts(parts); err != nil {
-		for _, p := range parts {
-			if src, ok := types.SourceOf(p); ok && len(src.Files) > 0 {
-				return types.UserMessage{}, fmt.Errorf("%w: %w", ErrVendorFile, err)
-			}
-		}
-		return types.UserMessage{}, fmt.Errorf("%w: %w", ErrURIScheme, err)
 	}
 	out := make([]types.UserPart, 0, len(parts))
 	var content bool
@@ -176,6 +168,9 @@ func (c ClientParts) UserMessage(parts []types.UserPart) (types.UserMessage, err
 			continue
 		}
 		src, _ := types.SourceOf(p)
+		if err := types.CheckClientSource(src); err != nil {
+			return types.UserMessage{}, fmt.Errorf("part %d (%s): %w: %w", i, p.Kind(), locatorError(src), err)
+		}
 		src, err := c.source(src, limit)
 		if err != nil {
 			return types.UserMessage{}, fmt.Errorf("part %d (%s): %w", i, p.Kind(), err)
@@ -189,14 +184,22 @@ func (c ClientParts) UserMessage(parts []types.UserPart) (types.UserMessage, err
 	return types.UserMsg(out...), nil
 }
 
+// locatorError is the specific error for a source types.CheckClientSource
+// refused: the vendor file, else the URI, else the ref.
+func locatorError(src types.Source) error {
+	switch {
+	case len(src.Files) > 0:
+		return ErrVendorFile
+	case src.URI != "" && types.CheckClientSource(types.Source{URI: src.URI}) != nil:
+		return ErrURIScheme
+	}
+	return ErrArtifactNotFound
+}
+
+// source attaches the bytes of a session artifact ref, or checks and
+// stores inline bytes. src has passed types.CheckClientSource.
 func (c ClientParts) source(src types.Source, limit int) (types.Source, error) {
 	src.Unresolved = ""
-	if len(src.Files) > 0 {
-		return types.Source{}, ErrVendorFile
-	}
-	if src.URI != "" && !strings.HasPrefix(strings.ToLower(src.URI), "https://") {
-		return types.Source{}, fmt.Errorf("%w: %s", ErrURIScheme, schemeOf(src.URI))
-	}
 	if src.Ref != "" {
 		if c.Artifacts == nil {
 			return types.Source{}, ErrArtifactNotFound
@@ -240,13 +243,6 @@ func (c ClientParts) source(src types.Source, limit int) (types.Source, error) {
 		src.Ref = a.Ref()
 	}
 	return src, nil
-}
-
-func schemeOf(uri string) string {
-	if i := strings.Index(uri, ":"); i > 0 {
-		return uri[:i]
-	}
-	return "no scheme"
 }
 
 // WithSource returns the media part p with its source replaced. Any other
