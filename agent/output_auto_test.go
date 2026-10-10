@@ -15,7 +15,7 @@ import (
 // that fails at call time. An adaptive model that accepts forcing keeps the
 // native path.
 func TestOutputAutoConsultsAdapterForInferredModel(t *testing.T) {
-	p := anthropic.NewAdapter("key", "claude-sonnet-5-5-2099")
+	p := anthropic.NewAdapter("key", "claude-sonnet-4-5-2099", anthropic.WithThinking(1024))
 	if mc, _ := types.ProviderCapabilities(p); mc.Known {
 		t.Fatal("test needs a prefix-inferred model")
 	}
@@ -38,20 +38,23 @@ func TestOutputAutoConsultsAdapterForInferredModel(t *testing.T) {
 }
 
 // A schema set with WithResponseSchema in auto mode uses native output where
-// the adapter can apply it, and the final_answer tool, which never forces a
-// call, on a model that rejects a forced tool choice.
+// the adapter can apply it, including models that reject a forced tool
+// choice, which take output_config.format, and the final_answer tool, which
+// never forces a call, where the adapter cannot apply it.
 func TestResponseSchemaAutoAvoidsForcedTool(t *testing.T) {
 	for _, tc := range []struct {
 		model string
+		opts  []anthropic.Option
 		want  OutputMode
 	}{
-		{"claude-haiku-5-5", OutputNative},
-		{"claude-sonnet-5-5", OutputTool},
-		{"claude-opus-5-5", OutputTool},
-		{"claude-fable-5-1", OutputTool},
+		{"claude-haiku-5-5", nil, OutputNative},
+		{"claude-sonnet-5-5", nil, OutputNative},
+		{"claude-opus-5-5", nil, OutputNative},
+		{"claude-fable-5-1", nil, OutputNative},
+		{"claude-sonnet-4-5", []anthropic.Option{anthropic.WithThinking(1024)}, OutputTool},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: anthropic.NewAdapter("key", tc.model)}, WithResponseSchema(cityPopulationSchema))
+			a := NewAgent(AgentConfig{Provider: anthropic.NewAdapter("key", tc.model, tc.opts...)}, WithResponseSchema(cityPopulationSchema))
 			out := a.output(context.Background())
 			if out.mode != tc.want {
 				t.Fatalf("mode = %q, want %q", out.mode, tc.want)

@@ -54,6 +54,7 @@ The endpoint is `http://<addr>/mcp`; `--path` changes the path. Every request ne
 - **Sessions**: a session is bound to the token that opened it and closes after 30 minutes idle. A request body over 4 MiB is rejected, and the SDK's DNS rebinding and cross-origin protections stay on.
 
 Approval works over HTTP as over stdio: the elicitation request reaches the client within the session.
+The server negotiates MCP protocol `2025-11-25` or older. Protocol `2026-07-28` forbids the server from eliciting while a call runs, which approval needs.
 
 ## Flags
 

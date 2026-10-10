@@ -324,8 +324,9 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 }
 
 // TestStopReasonsThatAreNotAnswers checks that a refusal ends the stream with
-// a content-filter error and a paused server tool turn with a permanent
-// error, while a normal end of turn succeeds.
+// a content-filter error, a paused server tool turn with a permanent error,
+// and a response cut off at the context window with a context-length error,
+// while a normal end of turn succeeds.
 func TestStopReasonsThatAreNotAnswers(t *testing.T) {
 	for _, tc := range []struct {
 		stop     string
@@ -335,6 +336,7 @@ func TestStopReasonsThatAreNotAnswers(t *testing.T) {
 		{"end_turn", false, 0},
 		{"refusal", true, types.ErrorKindContentFilter},
 		{"pause_turn", true, types.ErrorKindPermanent},
+		{"model_context_window_exceeded", true, types.ErrorKindContextLength},
 	} {
 		t.Run(tc.stop, func(t *testing.T) {
 			events := []sseEvent{{"message_start", evStart}, {"content_block_start", evTextStart},

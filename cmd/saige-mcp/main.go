@@ -93,7 +93,7 @@ func main() {
 	defer cleanup()
 
 	b := bridge{approval: mode}
-	server := mcp.NewServer(&mcp.Implementation{Name: "saige-mcp", Version: version}, nil)
+	server := newServer(version)
 	defs := registry.Definitions()
 	for _, def := range defs {
 		tool, _ := registry.Get(def.Name)

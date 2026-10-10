@@ -9,9 +9,12 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"cloud.google.com/go/auth"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // vertexTransport records each request and answers with a permission
@@ -160,5 +163,38 @@ func TestVertexListModelsSendsQuotaProject(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) == 0 || got[0].Get("X-Goog-User-Project") != "quota-proj" || got[0].Get("Authorization") != "Bearer tok-3" {
 		t.Fatalf("headers = %v", got)
+	}
+}
+
+// unavailableTransport answers every request with 503 and counts them.
+type unavailableTransport struct{ n atomic.Int64 }
+
+func (u *unavailableTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u.n.Add(1)
+	return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"error":{"code":503,"message":"busy","status":"UNAVAILABLE"}}`)), Request: req}, nil
+}
+
+// TestSDKDoesNotRetry checks that a retryable status reaches saige after one
+// request, so saige's retry layer stays the only one.
+func TestSDKDoesNotRetry(t *testing.T) {
+	for _, vertex := range []bool{false, true} {
+		rt := &unavailableTransport{}
+		opts := []Option{WithHTTPClient(&http.Client{Transport: rt})}
+		if vertex {
+			opts = append(opts, WithVertex("proj-1", "us-central1"), WithCredentials(testCredentials("tok")))
+		}
+		a, err := NewAdapter(context.Background(), "key", "gemini-3.1-flash-lite", opts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+		if err == nil {
+			for range ch {
+			}
+		}
+		if n := rt.n.Load(); n != 1 {
+			t.Fatalf("vertex=%v: %d requests, want 1", vertex, n)
+		}
 	}
 }

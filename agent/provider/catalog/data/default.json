@@ -371,7 +371,7 @@
       "notes": [
         "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
         "non-default temperature, top_p and top_k are rejected by the API",
-        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses output_config.format"
       ]
     },
     {
@@ -415,7 +415,7 @@
       "notes": [
         "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
         "non-default temperature, top_p and top_k are rejected by the API",
-        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses output_config.format"
       ]
     },
     {
@@ -507,7 +507,7 @@
       "notes": [
         "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
         "non-default temperature, top_p and top_k are rejected by the API",
-        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses output_config.format"
       ]
     },
     {
@@ -554,7 +554,7 @@
       "notes": [
         "adaptive thinking: manual budgets and sampling controls are not supported by this adapter",
         "non-default temperature, top_p and top_k are rejected by the API",
-        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses the final_answer tool with tool_choice auto"
+        "thinking cannot be disabled; forced tool_choice (required or named) is rejected by the API, so schema output uses output_config.format"
       ]
     },
     {

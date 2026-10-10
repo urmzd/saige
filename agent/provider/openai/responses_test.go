@@ -328,8 +328,8 @@ func TestResponsesPromptCacheRetention(t *testing.T) {
 		want      string
 	}{
 		{"", ""},
-		{"in_memory", "in-memory"},
-		{"in-memory", "in-memory"},
+		{"in_memory", "in_memory"},
+		{"in-memory", "in_memory"},
 		{"24h", "24h"},
 	}
 	for _, tt := range tests {
