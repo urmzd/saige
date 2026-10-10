@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/urmzd/saige/internal/must"
 )
 
 func writeFixture(t *testing.T, path string, value string) {
@@ -253,10 +255,10 @@ func TestRunnerBaseAndStatelessEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{BaseFlow{}, StatelessFlow{}},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -338,10 +340,10 @@ func TestRunnerSkipAndForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{BaseFlow{}},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -681,7 +683,7 @@ func TestCustomFlowAndAssemble(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{countingFlow{}},
 		Assemble: func(exp Script, results map[string]FlowResult) (any, error) {
@@ -690,7 +692,7 @@ func TestCustomFlowAndAssemble(t *testing.T) {
 				"turns_seen":    results["counting"].Extra["turns_seen"],
 			}, nil
 		},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

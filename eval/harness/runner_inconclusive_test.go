@@ -12,6 +12,7 @@ import (
 
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store/memstore"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // outageServer answers chat requests, refusing those whose last message
@@ -92,7 +93,7 @@ func TestRunnerInconclusive(t *testing.T) {
 				t.Fatal(err)
 			}
 			results := memstore.New()
-			runner := &Runner{
+			runner := must.Get(New(Config{
 				Client:          NewClient(outageServer(t).URL, "k", "mock"),
 				Flows:           []Flow{BaseFlow{}},
 				ContinueOnError: true,
@@ -100,7 +101,7 @@ func TestRunnerInconclusive(t *testing.T) {
 				RunID:           "run",
 				Assert:          tt.assert,
 				MaxInconclusive: tt.maxInconclusive,
-			}
+			}))
 			err = runner.Run(context.Background(), scripts)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, want error %v", err, tt.wantErr)

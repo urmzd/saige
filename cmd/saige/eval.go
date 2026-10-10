@@ -177,7 +177,7 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 	if err := (eval.GatePolicy{MaxInconclusive: f.maxInconclusive}).Validate(); err != nil {
 		return invalidInput(fmt.Errorf("--max-inconclusive: %w", err))
 	}
-	runner := &harness.Runner{
+	cfg := harness.Config{
 		MaxInconclusive: f.maxInconclusive,
 		Client:          client,
 		Flows:           flows,
@@ -188,14 +188,18 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 		Assert:          plan.assert,
 		ReuseMetrics:    true,
 	}
+	if cfg.Client == nil {
+		// A dry run builds no client; the plan only needs the model name.
+		cfg.Client = &harness.Client{Model: transport.Model}
+	}
+	runner, err := harness.New(cfg)
+	if err != nil {
+		return invalidInput(err)
+	}
 	if f.batch && !f.dryRun {
 		if err := applyEvalBatch(runner.Client, runner, len(scripts), f.batchStore, plan.suite); err != nil {
 			return err
 		}
-	}
-	if runner.Client == nil {
-		// A dry run builds no client; the plan only needs the model name.
-		runner.Client = &harness.Client{Model: transport.Model}
 	}
 	if plan.store != "" {
 		// A dry run only reads the store (to plan a resume) and never
