@@ -424,7 +424,7 @@ func (n *Notifier) decodePayload(s string) ([]byte, error) {
 	case markStored:
 		id, err := strconv.ParseInt(s[1:], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", errBadPayload, err)
+			return nil, fmt.Errorf("%w: %w", errBadPayload, err)
 		}
 		ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
 		defer cancel()

@@ -161,7 +161,7 @@ var _ types.Preset = (*Bundle)(nil)
 // entry fails with ErrNoLocalModel, or is dropped when it is optional.
 func Build(ctx context.Context, cat *catalog.Catalog, primary types.PresetName, also []types.PresetName, o Options) (*Bundle, error) {
 	if cat == nil {
-		return nil, errors.New("preset: Build needs a catalog")
+		return nil, fmt.Errorf("%w: preset: Build needs a catalog", types.ErrInvalidConfig)
 	}
 	o = o.withDefaults()
 	names := []types.PresetName{primary}

@@ -59,7 +59,7 @@ func DecodeEntry(b []byte) (Entry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	decoder.UseNumber()
 	if err := decoder.Decode(&w); err != nil {
-		return Entry{}, fmt.Errorf("%w: %v", ErrEntryCodec, err)
+		return Entry{}, fmt.Errorf("%w: %w", ErrEntryCodec, err)
 	}
 	if w.V != EntryCodecVersion {
 		return Entry{}, fmt.Errorf("%w: version %d", ErrEntryCodec, w.V)
@@ -73,7 +73,7 @@ func DecodeEntry(b []byte) (Entry, error) {
 	for _, raw := range w.Parts {
 		p, err := types.UnmarshalRolePart[types.ToolOutputPart](raw)
 		if err != nil {
-			return Entry{}, fmt.Errorf("%w: %v", ErrEntryCodec, err)
+			return Entry{}, fmt.Errorf("%w: %w", ErrEntryCodec, err)
 		}
 		e.Result.Parts = append(e.Result.Parts, p)
 	}

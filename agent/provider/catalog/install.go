@@ -38,7 +38,7 @@ var (
 // are not installed: they live on the catalog value the host passes around.
 func Install(c *Catalog, opts ...registry.Option) (InstallReport, error) {
 	if c == nil {
-		return InstallReport{}, fmt.Errorf("catalog: Install needs a catalog")
+		return InstallReport{}, fmt.Errorf("%w: catalog: Install needs a catalog", types.ErrInvalidConfig)
 	}
 	if err := c.Validate(); err != nil {
 		return InstallReport{}, err

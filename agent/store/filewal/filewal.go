@@ -403,8 +403,8 @@ func (w *WAL) writeRecords(recs ...record) error {
 	}
 	if werr != nil {
 		if terr := w.f.Truncate(goodSize); terr != nil {
-			w.failed = fmt.Errorf("write: %v; rollback truncate to %d: %v", werr, goodSize, terr)
-			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %v; wal disabled)", werr, terr)
+			w.failed = fmt.Errorf("write: %w; rollback truncate to %d: %w", werr, goodSize, terr)
+			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %w; wal disabled)", werr, terr)
 		}
 		// The handle is O_APPEND, so the next write lands at the restored end
 		// of file: no seek needed.
@@ -537,7 +537,7 @@ func (w *WAL) rewrite(recs []record) error {
 	_ = w.f.Close()
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path is the caller-chosen WAL location
 	if err != nil {
-		w.failed = fmt.Errorf("reopen after compact: %v", err)
+		w.failed = fmt.Errorf("reopen after compact: %w", err)
 		return fmt.Errorf("filewal: reopen after compact: %w (wal disabled)", err)
 	}
 	w.f = f

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -83,7 +82,7 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 			bp = BatchProviderFor(p, cfg.Concurrency)
 		}
 		if bp == nil {
-			return nil, errors.New("agent: batch needs a provider")
+			return nil, fmt.Errorf("%w: agent: batch needs a provider", types.ErrInvalidConfig)
 		}
 		var ropts []batch.RunnerOption
 		if budget != nil {

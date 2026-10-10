@@ -56,7 +56,7 @@ func decodeJSONValue(raw json.RawMessage) (any, error) {
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOutputNotJSON, err)
+		return nil, fmt.Errorf("%w: %w", ErrOutputNotJSON, err)
 	}
 	s, ok := v.(string)
 	if !ok {
