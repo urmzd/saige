@@ -1,0 +1,22 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "inlineData": {
+            "data": "JVBERi0xLjQgZmFrZQ==",
+            "mimeType": "application/pdf"
+          }
+        },
+        {
+          "fileData": {
+            "fileUri": "https://example.com/notes.txt",
+            "mimeType": "text/plain"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

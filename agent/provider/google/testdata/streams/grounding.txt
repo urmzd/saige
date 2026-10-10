@@ -1,0 +1,16 @@
+start 0 text
+delta 0 text="Apple closed at $1. "
+delta 0 text="Go is fun."
+end 0
+start 1 server_tool_call id=gen-1 name=google_search
+end 1 {"type":"server_tool_call","id":"gen-1","tool_kind":"web_search","name":"google_search","input":{"queries":["apple close"]}}
+start 2 server_tool_result id=gen-1
+end 2 {"type":"server_tool_result","call_id":"gen-1","tool_kind":"web_search","text":"A https://a.example\nC https://c.example","result":[{"web":{"domain":"a.example","title":"A","uri":"https://a.example"}},{"retrievedContext":{"text":"Go is fun","title":"KB","uri":"gs://kb/doc.pdf","pageNumber":3}},{"web":{"title":"C","uri":"https://c.example"}}]}
+start 3 citation
+end 3 {"type":"citation","citation":{"kind":"web","uri":"https://a.example","title":"A","end":18,"producer":"google","meta":{"confidence":0.9,"domain":"a.example"}},"anchor":{"part_index":0,"start":0,"end":18}}
+start 4 citation
+end 4 {"type":"citation","citation":{"kind":"retrieval","uri":"gs://kb/doc.pdf","title":"KB","quote":"Go is fun","start":20,"end":29,"producer":"google","meta":{"page":3}},"anchor":{"part_index":0,"start":20,"end":29}}
+start 5 citation
+end 5 {"type":"citation","citation":{"kind":"web","uri":"https://a.example","title":"A","start":-1,"end":-1,"producer":"google","meta":{"domain":"a.example"}}}
+start 6 citation
+end 6 {"type":"citation","citation":{"kind":"web","uri":"https://c.example","title":"C","start":-1,"end":-1,"producer":"google"}}

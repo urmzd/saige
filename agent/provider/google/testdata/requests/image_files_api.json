@@ -1,0 +1,22 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "fileData": {
+            "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+            "mimeType": "image/jpeg"
+          }
+        },
+        {
+          "fileData": {
+            "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/def456",
+            "mimeType": "image/webp"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

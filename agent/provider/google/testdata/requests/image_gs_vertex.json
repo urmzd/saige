@@ -1,0 +1,22 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "fileData": {
+            "fileUri": "gs://bucket/a.png",
+            "mimeType": "image/png"
+          }
+        },
+        {
+          "fileData": {
+            "fileUri": "gs://bucket/b.jpg",
+            "mimeType": "image/jpeg"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

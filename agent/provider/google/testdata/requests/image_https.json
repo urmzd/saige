@@ -1,0 +1,16 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "fileData": {
+            "fileUri": "https://example.com/a.png",
+            "mimeType": "image/png"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

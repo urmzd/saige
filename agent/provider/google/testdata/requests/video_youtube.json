@@ -1,0 +1,20 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "fileData": {
+            "fileUri": "https://www.youtube.com/watch?v=abc",
+            "mimeType": "video/*"
+          },
+          "videoMetadata": {
+            "endOffset": "5s",
+            "startOffset": "0s"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

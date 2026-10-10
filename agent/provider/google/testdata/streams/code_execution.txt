@@ -1,0 +1,7 @@
+start 0 server_tool_call id=x1 name=code_execution
+end 0 {"type":"server_tool_call","id":"x1","tool_kind":"code_execution","name":"code_execution","input":{"code":"print(1+1)","language":"PYTHON"}}
+start 1 server_tool_result id=x1
+end 1 {"type":"server_tool_result","call_id":"x1","tool_kind":"code_execution","text":"2\n","result":{"outcome":"OUTCOME_OK","output":"2\n","id":"x1"}}
+start 2 text
+delta 2 text="It is 2."
+end 2
