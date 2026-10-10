@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // Generator is the minimal LLM interface for evaluation prompts.
@@ -30,13 +32,71 @@ type StructuredGenerator interface {
 // a score from 0 to 1.
 var JudgeSchema = json.RawMessage(`{"type":"object","properties":{"reasoning":{"type":"string"},"score":{"type":"number","minimum":0,"maximum":1}},"required":["reasoning","score"],"additionalProperties":false}`)
 
+// PartsGenerator is a [Generator] that can send media with a prompt. A
+// judge scorer whose observation input carries media (see [DecodeInput])
+// needs one: the prompt is sent as the first text part and the input's media
+// parts follow it. The generator decides how media the judge model cannot
+// take natively is handled, through its conversion policy; agent/eval's
+// Generator rejects such media unless its policy permits a conversion.
+type PartsGenerator interface {
+	Generator
+	// GenerateParts sends parts as one user message. A non-nil schema
+	// constrains the reply as [StructuredGenerator.GenerateStructured]
+	// does, when the generator supports it.
+	GenerateParts(ctx context.Context, parts []types.UserPart, schema json.RawMessage) (string, error)
+}
+
+// ErrJudgeMedia reports an observation whose input carries media for a
+// judge whose generator cannot send it. The judge declines to score the
+// text alone, which would grade an answer about a picture it never saw.
+var ErrJudgeMedia = errors.New("judge generator cannot send the input's media")
+
 // generateVerdict asks gen for a judge verdict, constrained to [JudgeSchema]
-// when gen supports structured output.
-func generateVerdict(ctx context.Context, gen Generator, prompt string) (string, error) {
+// when gen supports structured output. With media, the prompt goes first
+// and the media follow it in the same message.
+func generateVerdict(ctx context.Context, gen Generator, prompt string, media []types.UserPart) (string, error) {
+	if len(media) > 0 {
+		pg, ok := gen.(PartsGenerator)
+		if !ok {
+			return "", fmt.Errorf("%w: %T", ErrJudgeMedia, gen)
+		}
+		parts := append([]types.UserPart{types.Text(prompt)}, media...)
+		return pg.GenerateParts(ctx, parts, JudgeSchema)
+	}
 	if sg, ok := gen.(StructuredGenerator); ok {
 		return sg.GenerateStructured(ctx, prompt, JudgeSchema)
 	}
 	return gen.Generate(ctx, prompt)
+}
+
+// judgeInput is what a judge prompt shows of an observation's input, and
+// the media sent with it. A text or subject-defined input is shown as its
+// raw JSON, as it always was. A parts input is shown as its text, with one
+// line per media part naming it, and the media parts, resolved through
+// resolvers, follow the prompt.
+func judgeInput(ctx context.Context, raw json.RawMessage, resolvers map[string]types.Resolver) (string, []types.UserPart, error) {
+	in, err := DecodeInput(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	if in.Kind != InputParts {
+		return string(raw), nil, nil
+	}
+	media := in.Media()
+	text := in.Text()
+	if len(media) == 0 {
+		return text, nil, nil
+	}
+	var b strings.Builder
+	b.WriteString(text)
+	for i, m := range media {
+		src, _ := types.SourceOf(m)
+		fmt.Fprintf(&b, "\n[attachment %d: %s %s, sent after these instructions]", i+1, m.Kind(), src.MediaType)
+	}
+	if media, err = ResolveInput(ctx, media, resolvers); err != nil {
+		return "", nil, err
+	}
+	return b.String(), media, nil
 }
 
 // ErrNoJudgeScore is returned when a judge reply has no parseable SCORE line,
@@ -53,6 +113,9 @@ type JudgeConfig struct {
 	// in each order, and reports the mean. It is on by default for
 	// [NewPairwiseJudgeScorer] and ignored by [NewJudgeScorer].
 	PositionSwap bool
+	// Resolvers fetch the bytes of input media referenced by uri, keyed by
+	// scheme, before they are sent to the judge. See [WithJudgeResolvers].
+	Resolvers map[string]types.Resolver
 }
 
 // JudgeOption configures a judge scorer.
@@ -76,8 +139,19 @@ func WithPositionSwap(on bool) JudgeOption {
 	return func(c *JudgeConfig) { c.PositionSwap = on }
 }
 
+// WithJudgeResolvers sets the resolvers that fetch input media referenced
+// by uri, keyed by scheme, such as {"file": DirResolver(datasetDir)}. Media
+// with a scheme that has no resolver is sent with its uri, for the judge's
+// provider to fetch or its conversion policy to handle.
+func WithJudgeResolvers(resolvers map[string]types.Resolver) JudgeOption {
+	return func(c *JudgeConfig) { c.Resolvers = resolvers }
+}
+
 // NewJudgeScorer creates a [Scorer] that uses an LLM to evaluate output quality.
 // It reads Input, Output, and optionally a context annotation from the Observation.
+// When the input is in the parts form and carries media, the media are sent
+// to the judge with the prompt; that needs a [PartsGenerator], and any
+// other generator fails the score with [ErrJudgeMedia].
 //
 // A reply without a parseable SCORE line is an error wrapping
 // [ErrNoJudgeScore], so it is excluded from aggregates instead of scored 0.
@@ -96,8 +170,12 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			contextText = string(raw)
 		}
 
+		input, media, err := judgeInput(ctx, obs.Input, cfg.Resolvers)
+		if err != nil {
+			return Score{}, err
+		}
 		prompt, err := renderPrompt(judgeTmpl, map[string]string{
-			"Input":    string(obs.Input),
+			"Input":    input,
 			"Context":  contextText,
 			"Response": string(obs.Output),
 			"Rubric":   cfg.Rubric,
@@ -106,7 +184,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			return Score{}, err
 		}
 
-		result, err := generateVerdict(ctx, gen, prompt)
+		result, err := generateVerdict(ctx, gen, prompt, media)
 		if err != nil {
 			return Score{}, fmt.Errorf("judge generate: %w", err)
 		}
@@ -142,7 +220,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		o(cfg)
 	}
 
-	judge := func(ctx context.Context, input, a, b string) (float64, string, error) {
+	judge := func(ctx context.Context, input string, media []types.UserPart, a, b string) (float64, string, error) {
 		prompt, err := renderPrompt(judgePairwiseTmpl, map[string]string{
 			"Input":     input,
 			"ResponseA": a,
@@ -152,7 +230,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		if err != nil {
 			return 0, "", err
 		}
-		result, err := generateVerdict(ctx, gen, prompt)
+		result, err := generateVerdict(ctx, gen, prompt, media)
 		if err != nil {
 			return 0, "", fmt.Errorf("pairwise judge generate: %w", err)
 		}
@@ -160,11 +238,14 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 	}
 
 	return NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
-		input := string(obs.Input)
+		input, media, err := judgeInput(ctx, obs.Input, cfg.Resolvers)
+		if err != nil {
+			return Score{}, err
+		}
 		base := string(obs.GroundTruth)
 		exp := string(obs.Output)
 
-		forward, forwardReason, err := judge(ctx, input, base, exp)
+		forward, forwardReason, err := judge(ctx, input, media, base, exp)
 		if err != nil {
 			return Score{}, err
 		}
@@ -172,7 +253,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			return Score{Name: cfg.Name, Value: forward, Reason: forwardReason}, nil
 		}
 
-		swapped, swappedReason, err := judge(ctx, input, exp, base)
+		swapped, swappedReason, err := judge(ctx, input, media, exp, base)
 		if err != nil {
 			return Score{}, fmt.Errorf("swapped order: %w", err)
 		}

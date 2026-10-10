@@ -121,7 +121,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 //
 // withEmbedder is false for commands that never embed (lookup, delete), so
 // they work with any --provider, including one with no embedding API.
-func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, withEmbedder bool) (ragtypes.Pipeline, error) {
+func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, withEmbedder bool, extra ...rag.Option) (ragtypes.Pipeline, error) {
 	var variantEmb ragtypes.VariantEmbedder
 	if withEmbedder {
 		var err error
@@ -130,7 +130,7 @@ func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, wi
 			return nil, fmt.Errorf("rag embedder: %w", err)
 		}
 	}
-	pipeline, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), variantEmb)...)
+	pipeline, err := rag.NewPipeline(append(ragPipelineOptions(pgstore.NewStore(pool, nil), variantEmb), extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rag pipeline: %w", err)
 	}

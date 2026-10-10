@@ -1,0 +1,2 @@
+{"id":"n1","input":"Summarize the refund policy.","rubric":"Mentions the 30 day window.","labels":{"promoted_from":"run-online"},"reasons":["judge_score scored 0.2, below 0.5"]}
+{"id":"n2","input":{"question":"custom object input"},"expected":"ok","reasons":["flagged"]}

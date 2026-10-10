@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/urmzd/saige/agent/types"
 	topeval "github.com/urmzd/saige/eval"
 )
 
@@ -74,6 +75,40 @@ func RegisterScorers(r *topeval.Registry) error {
 					return nil, errors.New("params: max_ms is required")
 				}
 				return ToolRespondsWithinScorer(p.Tool, time.Duration(*p.MaxMs)*time.Millisecond), nil
+			}},
+		{"cites", `the final answer cites its sources, each listed one when given; params: {"sources": [...]} (optional)`,
+			func(params json.RawMessage) (topeval.Scorer, error) {
+				var p struct {
+					Sources []string `json:"sources"`
+				}
+				if err := topeval.DecodeParams(params, &p); err != nil {
+					return nil, err
+				}
+				return CitesScorer(p.Sources...), nil
+			}},
+		{"refused", "the final turn is a refusal (holds a refusal part)", topeval.NoParams(RefusedScorer)},
+		{"has_part", `the final turn holds a part of the kind; params: {"kind"}`,
+			func(params json.RawMessage) (topeval.Scorer, error) {
+				var p struct {
+					Kind string `json:"kind"`
+				}
+				if err := topeval.DecodeParams(params, &p); err != nil {
+					return nil, err
+				}
+				if p.Kind == "" {
+					return nil, errors.New("params: kind is required")
+				}
+				return HasPartScorer(types.PartKind(p.Kind)), nil
+			}},
+		{"no_conversion", `no media was handled by the action (any conversion when omitted); params: {"action"}`,
+			func(params json.RawMessage) (topeval.Scorer, error) {
+				var p struct {
+					Action string `json:"action"`
+				}
+				if err := topeval.DecodeParams(params, &p); err != nil {
+					return nil, err
+				}
+				return NoConversionScorer(p.Action), nil
 			}},
 	}
 	for _, k := range kinds {

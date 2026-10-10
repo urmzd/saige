@@ -37,6 +37,19 @@ type AgentRun struct {
 	// order: the last top-level route reported before the call's usage.
 	// Empty when the provider reports no routes.
 	Routes []RouteRecord
+	// Parts are the assistant parts of the final provider call, in order:
+	// its text, thinking, citations, refusal and media output. Text is
+	// their text projection over the whole run.
+	Parts []types.AssistantPart
+	// Media identifies the media parts of the final call, without bytes.
+	Media []MediaRecord
+	// Conversions lists every executed conversion decision of the run's
+	// provider calls, in order: how each media part reached the model.
+	Conversions []types.ConversionDecision
+	// Citations lists the sources the run's tools cited, numbered by the
+	// agent's citation registry. Citations the model made are
+	// CitationParts in Parts.
+	Citations []types.Citation
 	// Deltas holds every delta received, for further inspection.
 	Deltas []types.Delta
 }
@@ -51,13 +64,19 @@ type RouteRecord struct {
 	// Dials records how the call's dials compiled: the effective raw
 	// options and each decision. Nil when the call carried no dials.
 	Dials *types.DialReport `json:"dials,omitempty"`
+	// Conversions is the call's planned media conversions, as the route
+	// reported them. Nil when the call converted nothing.
+	Conversions *types.ConversionReport `json:"conversions,omitempty"`
 }
 
 // AddProvenance records the run's response models, serving catalog
-// configurations, what each dial was sent as, and the versions of the tools
-// it ran on p.
+// configurations, what each dial was sent as, the versions of the tools it
+// ran, and how its media reached the models on p.
 func (r AgentRun) AddProvenance(p *topeval.Provenance) {
 	p.AddModels(r.Models...)
+	for _, d := range r.Conversions {
+		p.AddConversion(string(d.Kind), d.Action, d.Via)
+	}
 	for _, c := range r.ToolCalls {
 		p.AddTool(c.Name, c.Version)
 	}
@@ -104,6 +123,7 @@ func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
 		run       AgentRun
 		sc        streamCollector
 		tc        toolCollector
+		pc        partCollector
 		lastDelta = start
 		route     *types.RouteDelta
 	)
@@ -113,8 +133,14 @@ func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
 		run.Deltas = append(run.Deltas, delta)
 		sc.observe(now, delta)
 		tc.observe(now, delta)
-		if rd, ok := delta.(types.RouteDelta); ok {
-			route = &rd
+		pc.observe(delta)
+		switch v := delta.(type) {
+		case types.RouteDelta:
+			route = &v
+		case types.ConversionDelta:
+			run.Conversions = append(run.Conversions, v.Report.Decisions...)
+		case types.CitationDelta:
+			run.Citations = append(run.Citations, v.Citation)
 		}
 		if u, ok := delta.(types.UsageDelta); ok {
 			if route != nil {
@@ -123,6 +149,10 @@ func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
 				if route.Dials != nil {
 					d := route.Dials.Clone()
 					rec.Dials = &d
+				}
+				if route.Conversions != nil {
+					c := route.Conversions.Clone()
+					rec.Conversions = &c
 				}
 				run.Routes = append(run.Routes, rec)
 				route = nil
@@ -137,6 +167,8 @@ func CollectAgentRunFrom(start time.Time, ch <-chan types.Delta) AgentRun {
 	run.Text = sc.text.String()
 	run.Timing = sc.timing(start)
 	run.ToolCalls = tc.records()
+	run.Parts = pc.parts()
+	run.Media = MediaRecords(run.Parts)
 	run.TotalMs = lastDelta.Sub(start).Milliseconds()
 	return run
 }
@@ -268,7 +300,10 @@ func (tc *toolCollector) records() []ToolCallRecord {
 
 // AnnotateObservation records an [AgentRun] on obs under the agent
 // annotation keys ([AnnotationToolCalls], [AnnotationTurnCount],
-// [AnnotationStreamTiming]) so the scorers in this package can read it. It
+// [AnnotationStreamTiming], [AnnotationParts], and, when the run has them,
+// [AnnotationMedia], [AnnotationConversions] and [AnnotationCitations]) so
+// the scorers in this package can read it. Parts are recorded without media
+// bytes. It
 // also fills obs.Timing, including the cost when the run was [AgentRun.Priced],
 // and, when obs.Output is empty, sets Output to the run's text as a JSON
 // string.
@@ -286,6 +321,23 @@ func AnnotateObservation(obs *topeval.Observation, run AgentRun) error {
 		obs.Annotations = make(map[string]json.RawMessage, len(values))
 	}
 	for key, value := range values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("annotate %s: %w", key, err)
+		}
+		obs.Annotations[key] = raw
+	}
+	if err := AnnotateParts(obs, run.Parts); err != nil {
+		return err
+	}
+	optional := map[string]any{}
+	if len(run.Conversions) > 0 {
+		optional[AnnotationConversions] = run.Conversions
+	}
+	if len(run.Citations) > 0 {
+		optional[AnnotationCitations] = run.Citations
+	}
+	for key, value := range optional {
 		raw, err := json.Marshal(value)
 		if err != nil {
 			return fmt.Errorf("annotate %s: %w", key, err)

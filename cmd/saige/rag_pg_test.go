@@ -9,9 +9,12 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
+	"github.com/urmzd/saige/rag/extractor"
 	"github.com/urmzd/saige/rag/pgstore"
+	ragtool "github.com/urmzd/saige/rag/tool"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
@@ -163,5 +166,46 @@ func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	}
 	if len(res.Hits) == 0 {
 		t.Fatal("search in a fresh pipeline found nothing")
+	}
+}
+
+// TestRAGImageIngestReturnsTheImage mirrors `saige rag ingest
+// --describe-images` on a PNG followed by an agent's rag_search: the image
+// is stored with its description, found by it, and returned as an image
+// part with a citation to its source.
+func TestRAGImageIngestReturnsTheImage(t *testing.T) {
+	pool := ragTestPool(t)
+	ctx := context.Background()
+
+	auto := extractor.NewAuto()
+	auto.RegisterImages(agenttypes.ExtractorFunc(func(context.Context, []byte, agenttypes.MediaType) ([]agenttypes.UserPart, error) {
+		return []agenttypes.UserPart{agenttypes.Text("A bar chart of okapi sightings per year.")}, nil
+	}))
+	p, err := rag.NewPipeline(append(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder()), rag.WithContentExtractor(auto))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close(ctx) }()
+	png := []byte("\x89PNG\r\n\x1a\n fake chart")
+	if _, err := p.Ingest(ctx, &ragtypes.RawDocument{SourceURI: "file://sightings.png", MIMEType: ingestMIME("sightings.png"), Data: png}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	search := ragtool.NewTools(p, ragtool.ReadOnly())[0].(agenttypes.RichTool)
+	res, err := search.ExecuteRich(ctx, map[string]any{"query": "okapi sightings chart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var img []byte
+	for _, part := range res.Parts {
+		if src, ok := agenttypes.SourceOf(part); ok && part.Kind() == agenttypes.KindImage {
+			img = src.Inline
+		}
+	}
+	if string(img) != string(png) {
+		t.Fatalf("parts = %#v", res.Parts)
+	}
+	if len(res.Citations) == 0 || res.Citations[0].URI != "file://sightings.png" {
+		t.Fatalf("citations = %+v", res.Citations)
 	}
 }

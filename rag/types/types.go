@@ -69,10 +69,12 @@ var (
 type ContentType string
 
 const (
-	ContentText  ContentType = "text"
-	ContentImage ContentType = "image"
-	ContentTable ContentType = "table"
-	ContentAudio ContentType = "audio"
+	ContentText     ContentType = "text"
+	ContentImage    ContentType = "image"
+	ContentTable    ContentType = "table"
+	ContentAudio    ContentType = "audio"
+	ContentVideo    ContentType = "video"
+	ContentDocument ContentType = "document"
 )
 
 // --- Core data model ---

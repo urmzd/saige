@@ -31,9 +31,11 @@ var ErrNotFinished = errors.New("online: node does not end a finished run")
 // FromPath builds the record of the run that path ends. path runs from the
 // root of the conversation to the node that ends the run, which must be an
 // active assistant node with no tool calls. The run starts after the last
-// user message on the path that carries text; that text is the input.
-// Tool calls, their results, the last route, and the first error (a tool
-// error or a truncated turn) are read from the nodes in between.
+// user message on the path that carries text or media; its text is the
+// input and its parts are the input parts. Tool calls, their results, the
+// last route with its conversions, and the first error (a tool error or a
+// truncated turn) are read from the nodes in between. The parts of the end
+// node are the record's final parts.
 func FromPath(conversation string, path []*types.Node) (Record, error) {
 	if len(path) == 0 {
 		return Record{}, fmt.Errorf("%w: empty path", ErrNotFinished)
@@ -43,10 +45,13 @@ func FromPath(conversation string, path []*types.Node) (Record, error) {
 		return Record{}, fmt.Errorf("%w: %s", ErrNotFinished, end.ID)
 	}
 	start := 0
-	var input string
+	var (
+		input      string
+		inputParts []types.UserPart
+	)
 	for i := len(path) - 2; i >= 0; i-- {
-		if text, ok := userText(path[i]); ok {
-			start, input = i+1, text
+		if text, parts, ok := userInput(path[i]); ok {
+			start, input, inputParts = i+1, text, parts
 			break
 		}
 	}
@@ -54,6 +59,7 @@ func FromPath(conversation string, path []*types.Node) (Record, error) {
 		Ref:        Ref{Conversation: conversation, Node: string(end.ID)},
 		FinishedAt: end.CreatedAt,
 		Input:      input,
+		InputParts: inputParts,
 	}
 	byID := map[string]int{}
 	for _, n := range path[start:] {
@@ -73,6 +79,9 @@ func FromPath(conversation string, path []*types.Node) (Record, error) {
 					})
 				case types.RoutePart:
 					rec.Model, rec.Preset = v.Model, v.Preset
+					if v.Conversions != nil {
+						rec.Conversions = append(rec.Conversions, v.Conversions.Decisions...)
+					}
 				case types.TruncationPart:
 					rec.setError("turn truncated: " + v.Reason)
 				}
@@ -91,7 +100,9 @@ func FromPath(conversation string, path []*types.Node) (Record, error) {
 			}
 		}
 	}
-	rec.Output = assistantText(end.Message.(types.AssistantMessage))
+	final := end.Message.(types.AssistantMessage)
+	rec.Output = assistantText(final)
+	rec.Parts = contentParts(final.Parts)
 	return rec, nil
 }
 
@@ -134,26 +145,48 @@ func endsRun(n *types.Node) bool {
 	return true
 }
 
-// userText returns the text of a user message node, ignoring nodes that
-// only carry tool results, feedback, or other metadata.
-func userText(n *types.Node) (string, bool) {
+// userInput returns the text and the text and media parts of a user
+// message node, ignoring nodes that only carry tool results, feedback, or
+// other metadata.
+func userInput(n *types.Node) (string, []types.UserPart, bool) {
 	if n.State == types.NodeArchived {
-		return "", false
+		return "", nil, false
 	}
 	m, ok := n.Message.(types.UserMessage)
 	if !ok {
-		return "", false
+		return "", nil, false
 	}
-	var parts []string
+	var (
+		texts []string
+		parts []types.UserPart
+	)
 	for _, c := range m.Parts {
-		if t, ok := c.(types.TextPart); ok {
-			parts = append(parts, t.Text)
+		switch {
+		case types.IsMedia(c):
+			parts = append(parts, c)
+		default:
+			if t, ok := c.(types.TextPart); ok {
+				texts = append(texts, t.Text)
+				parts = append(parts, c)
+			}
 		}
 	}
 	if len(parts) == 0 {
-		return "", false
+		return "", nil, false
 	}
-	return strings.Join(parts, "\n"), true
+	return strings.Join(texts, "\n"), parts, true
+}
+
+// contentParts drops the metadata parts (route, config, truncation and the
+// like) of a final assistant message, keeping what the model produced.
+func contentParts(parts []types.AssistantPart) []types.AssistantPart {
+	out := make([]types.AssistantPart, 0, len(parts))
+	for _, p := range parts {
+		if !types.IsMetadata(p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func assistantText(m types.AssistantMessage) string {
@@ -268,17 +301,21 @@ func (s RecordSource) Lookup(_ context.Context, ref Ref) (Record, error) {
 
 // FromAgentRun builds a record from a run collected with
 // agent/eval.CollectAgentRun: the route of its last provider call gives the
-// model and preset, its tool calls and usage carry over, and the first
+// model and preset, its tool calls, usage, final parts, conversions and
+// tool citations carry over, and the first
 // tool or stream error becomes the record's error.
 func FromAgentRun(ref Ref, input string, finished time.Time, run agenteval.AgentRun) Record {
 	rec := Record{
-		Ref:        ref,
-		FinishedAt: finished,
-		Input:      input,
-		Output:     run.Text,
-		ToolCalls:  slices.Clone(run.ToolCalls),
-		Turns:      run.TurnCount,
-		Timing:     agentTiming(run),
+		Ref:         ref,
+		FinishedAt:  finished,
+		Input:       input,
+		Output:      run.Text,
+		ToolCalls:   slices.Clone(run.ToolCalls),
+		Turns:       run.TurnCount,
+		Timing:      agentTiming(run),
+		Parts:       slices.Clone(run.Parts),
+		Conversions: slices.Clone(run.Conversions),
+		Citations:   slices.Clone(run.Citations),
 	}
 	if n := len(run.Routes); n > 0 {
 		rec.Model, rec.Preset = run.Routes[n-1].Model, run.Routes[n-1].Preset
