@@ -8,6 +8,7 @@ A model takes some media natively and not others: claude-haiku-5-5 reads images 
 - [Configuring](#configuring)
 - [Where it runs](#where-it-runs)
 - [Memoization, durability and budget](#memoization-durability-and-budget)
+- [Privacy](#privacy)
 - [Seeing what was converted](#seeing-what-was-converted)
 - [Reasoning across vendors](#reasoning-across-vendors)
 - [Known limits](#known-limits)
@@ -104,6 +105,17 @@ The adapter reports its offering where it depends on the endpoint: a Google adap
 
 History is sent again every turn, so a conversion is memoized by the policy's scope, the converter's name and version, and the part's digest (or its URI). The same clip is transcribed once, however many turns or members send it, and the description in the prompt does not change from turn to turn, which keeps provider prompt caches warm. The default cache is in memory, one per agent (shared with its sub-agents) or per decorator; set `ConversionPolicy.Cache` to share one, and `Scope` per tenant when you do.
 
+A digest is a content address, so a conversion keyed by it is reused with or without a scope: whoever sends the same bytes gets the same output. A URI is a name that another tenant may resolve to other content, or to content only the first tenant could read, so a part reached only by URI is memoized only under a named `Scope`.
+
+## Privacy
+
+Behind `privacy.Provider`, the request is tokenized first and converted after, so the decorator sets a boundary (`types.Egress`) on the context of its calls and every conversion decorator applies it:
+
+- The text a conversion puts into the view (a transcript, a description, an extracted text, the notice of an omitted part) is tokenized with the vault before it is sent. The cache and the durable journal keep the converter's own output, so a cache shared between sessions never holds one session's placeholders. Converters see the vault as `ConvertEnv.Vault`.
+- With `privacy.MediaRequireText`, media leaves only as text. A plan that would send an image, audio, video or a binary document natively, lowered or as other media rejects the request (`types.ErrModalityUnsupported`), so a router removes that member and keeps one that transcribes, describes, extracts or omits it. A converter that calls a model (`convert.Priced`) runs only when its endpoint has `data.pii_ok`; otherwise the next permitted action is tried. The view is checked again before dispatch, including media in assistant turns.
+
+A converter's own model call runs outside the boundary.
+
 Each conversion runs as a durable step named `convert:<digest>:<converter>@<version>` under the run's step runner (`types.StepKindConvert`). A replay returns the recorded parts and restores the recorded charge without calling the converter's model again.
 
 Converters that call a model (`convert.Priced`) are charged to the run's budget. The agent adds the plan's estimate to the turn's reservation (`types.Budget.ReserveWith`) when the budget sets a per-call bound (`PerCallCost`, `PerCallTokens`), and each conversion takes its share of that reservation (`types.Budget.Carve`) and settles on its own, under the converter model's rate card. An unpriced converter model is refused under a cost limit unless `AllowUnpriced` is set. `ConversionPolicy.MaxCost` rejects a request whose estimated conversions cost more.
@@ -125,7 +137,6 @@ A reasoning part carries a signature only its own vendor can verify, and the Ant
 
 ## Known limits
 
-- The response cache key does not include the report hash yet, and a converter's text output is not tokenized by the privacy decorator yet.
 - Batch requests are not converted; parts a batch endpoint cannot take are rejected.
 - Native media is not counted in the reservation estimate; only converters are.
 - No converter ships for video frames, uploads to a vendor file store, or fetching an `https` URI to bytes. Write a `types.Converter` for them.

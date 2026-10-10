@@ -14,22 +14,54 @@ import (
 // only needs to keep personal data away from the model vendor; the tree and
 // telemetry then hold real values. Use ToolRedactor when they must not.
 //
-// Outgoing text, tool results, and tool call arguments are tokenized.
-// Thinking blocks are left as they are in both directions: their signatures
-// cover the text the model produced, and a changed block is rejected. File
-// bytes are not inspected.
+// Outgoing text, tool results, tool call arguments, refusals, citation
+// quotes, audio transcripts and text-bearing media (a document or file of
+// text, CSV or JSON with its bytes inline) are tokenized. Other media is
+// governed by Media. Thinking blocks are left as they are in both
+// directions: their signatures cover the text the model produced, and a
+// changed block is rejected.
 //
-// Streamed text and tool argument fragments are restored with a hold-back,
-// so a placeholder split across fragments is restored whole. Held text is
-// released at the end of each block, on completion, and on error.
+// The text a conversion below the decorator puts into the view (a
+// transcript, a description, an extracted text) is tokenized too: the
+// decorator sets a types.Egress boundary on the context of its calls, and
+// every conversion decorator (convert.Provider) applies it.
+//
+// Streamed text, tool argument, refusal and transcript fragments are
+// restored with a hold-back per part index, so interleaved parts never
+// share one and a placeholder split across fragments is restored whole.
+// Held text is released at the end of each part, on completion, and on
+// error.
 type Provider struct {
 	Inner types.Provider
 	Vault Vault
+	// Media is what happens to media the vault cannot tokenize. The
+	// default is MediaRefuse with a Sensitive vault, else MediaPass.
+	Media MediaPolicy
+	// AllowAudioOut lets a model produce audio under a Sensitive vault.
+	// The audio speaks the placeholders; only its transcript is restored.
+	AllowAudioOut bool
 }
 
 // NewProvider wraps inner with v.
 func NewProvider(inner types.Provider, v Vault) *Provider {
 	return &Provider{Inner: inner, Vault: v}
+}
+
+// with returns a decorator with the same vault and policy around inner.
+func (p *Provider) with(inner types.Provider) *Provider {
+	return &Provider{Inner: inner, Vault: p.Vault, Media: p.Media, AllowAudioOut: p.AllowAudioOut}
+}
+
+// MediaPolicy returns the policy in effect: Media, or the default for the
+// vault.
+func (p *Provider) MediaPolicy() MediaPolicy {
+	if p.Media != MediaDefault {
+		return p.Media
+	}
+	if sensitive(p.Vault) {
+		return MediaRefuse
+	}
+	return MediaPass
 }
 
 // Name implements types.NamedProvider.
@@ -41,7 +73,7 @@ func (p *Provider) Model() string { return types.ProviderModel(p.Inner) }
 // WithModel implements types.ModelSwitcher. The vault is shared, so
 // placeholders keep their meaning after a model switch.
 func (p *Provider) WithModel(model string) types.Provider {
-	return &Provider{Inner: types.ProviderWithModel(p.Inner, model), Vault: p.Vault}
+	return p.with(types.ProviderWithModel(p.Inner, model))
 }
 
 // WithTarget implements types.TargetSwitcher. The vault is shared.
@@ -50,12 +82,12 @@ func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{Inner: inner, Vault: p.Vault}, nil
+	return p.with(inner), nil
 }
 
 // NewSession implements types.SessionProvider. The session shares the vault.
 func (p *Provider) NewSession() types.Provider {
-	return &Provider{Inner: types.NewProviderSession(p.Inner), Vault: p.Vault}
+	return p.with(types.NewProviderSession(p.Inner))
 }
 
 // Capabilities implements types.CapabilityReporter. Controls that need
@@ -83,7 +115,7 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 	if req.Options != nil && !types.AcceptsOptions(p.Inner) {
 		return nil, p.unsupported("request options")
 	}
-	return p.call(ctx, req.Messages, func(msgs []types.Message) (<-chan types.Delta, error) {
+	return p.call(ctx, req.Messages, func(ctx context.Context, msgs []types.Message) (<-chan types.Delta, error) {
 		r := req
 		r.Messages = msgs
 		return p.Inner.Stream(ctx, r)
@@ -105,21 +137,39 @@ func (p *Provider) unsupported(what string) error {
 	}
 }
 
-func (p *Provider) call(ctx context.Context, messages []types.Message, send func([]types.Message) (<-chan types.Delta, error)) (<-chan types.Delta, error) {
+func (p *Provider) call(ctx context.Context, messages []types.Message, send func(context.Context, []types.Message) (<-chan types.Delta, error)) (<-chan types.Delta, error) {
 	msgs, err := TokenizeMessages(ctx, p.Vault, messages)
 	if err != nil {
 		// Fail closed: a request that could not be redacted is not sent.
 		return nil, fmt.Errorf("privacy: tokenize request: %w", err)
 	}
-	in, err := send(msgs)
+	eg := types.Egress{Vault: p.Vault, Opaque: opaque}
+	switch p.MediaPolicy() {
+	case MediaRefuse:
+		if err := refuseMedia(msgs, "the media policy is refuse"); err != nil {
+			return nil, err
+		}
+	case MediaRequireText:
+		if !converts(p.Inner, 0) {
+			// No conversion decorator below can replace the media with
+			// text, so none may be sent.
+			if err := refuseMedia(msgs, "the media policy is require_text and no conversion decorator serves the request"); err != nil {
+				return nil, err
+			}
+		}
+		eg.RequireText = true
+	}
+	in, err := send(types.WithEgress(ctx, eg), msgs)
 	if err != nil {
 		return nil, err
 	}
-	return restoreStream(ctx, p.Vault, in), nil
+	return restoreStream(ctx, p.Vault, in, sensitive(p.Vault) && !p.AllowAudioOut), nil
 }
 
-// TokenizeMessages returns a copy of messages with text, tool results, and
-// tool call arguments tokenized. The input is not modified.
+// TokenizeMessages returns a copy of messages with text, tool results, tool
+// call arguments, refusals, citation quotes, audio transcripts and
+// text-bearing media tokenized. Other media and thinking are left as they
+// are. The input is not modified.
 func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([]types.Message, error) {
 	out := make([]types.Message, len(messages))
 	for i, m := range messages {
@@ -128,7 +178,7 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 		case types.SystemMessage:
 			c := make([]types.SystemPart, len(msg.Parts))
 			for j, part := range msg.Parts {
-				var t any
+				var t types.Part
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
@@ -138,7 +188,7 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 		case types.UserMessage:
 			c := make([]types.UserPart, len(msg.Parts))
 			for j, part := range msg.Parts {
-				var t any
+				var t types.Part
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
@@ -148,7 +198,7 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 		case types.AssistantMessage:
 			c := make([]types.AssistantPart, len(msg.Parts))
 			for j, part := range msg.Parts {
-				var t any
+				var t types.Part
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
@@ -162,11 +212,25 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 	return out, nil
 }
 
-func tokenizeContent(ctx context.Context, v Vault, part any) (any, error) {
+func tokenizeContent(ctx context.Context, v Vault, part types.Part) (types.Part, error) {
 	switch c := part.(type) {
 	case types.TextPart:
 		text, err := v.Tokenize(ctx, c.Text)
 		return types.TextPart{Text: text}, err
+	case types.DocumentPart, types.FilePart:
+		return tokenizeMedia(ctx, v, c)
+	case types.RefusalPart:
+		text, err := v.Tokenize(ctx, c.Text)
+		c.Text = text
+		return c, err
+	case types.CitationPart:
+		quote, err := v.Tokenize(ctx, c.Citation.Quote)
+		c.Citation.Quote = quote
+		return c, err
+	case types.AudioOutPart:
+		transcript, err := v.Tokenize(ctx, c.Transcript)
+		c.Transcript = transcript
+		return c, err
 	case types.ToolResultPart:
 		res, err := tokenizeResult(ctx, v, types.ToolResult{Parts: c.Parts})
 		if err != nil {
@@ -232,25 +296,103 @@ func jsonEscape(s string) string {
 	return string(b[1 : len(b)-1])
 }
 
-// restoreStream forwards in, restoring placeholders in text and tool call
-// arguments. Restorers are kept per part index, so interleaved parts never
-// share one. Held text is flushed before its part ends, before the final
-// delta, and when in closes. Thinking is never rewritten.
+// field names a streamed payload a restorer holds text for.
+type field uint8
+
+const (
+	fieldText field = iota
+	fieldArgs
+	fieldRefusal
+	fieldTranscript
+)
+
+// slot is one part's payload: restorers are kept per part index and field,
+// so interleaved parts never share held text.
+type slot struct {
+	index int
+	field field
+}
+
+// payload returns the field d carries and its text. ok is false for a
+// payload that is never rewritten: thinking, signatures and bytes.
+func payload(d types.PartDelta) (field, string, bool) {
+	switch {
+	case d.Text != "":
+		return fieldText, d.Text, true
+	case d.Args != "":
+		return fieldArgs, d.Args, true
+	case d.Refusal != "":
+		return fieldRefusal, d.Refusal, true
+	case d.Transcript != "":
+		return fieldTranscript, d.Transcript, true
+	}
+	return 0, "", false
+}
+
+// withPayload returns a delta for index carrying text in f.
+func withPayload(index int, f field, text string) types.PartDelta {
+	d := types.PartDelta{Index: index}
+	switch f {
+	case fieldText:
+		d.Text = text
+	case fieldArgs:
+		d.Args = text
+	case fieldRefusal:
+		d.Refusal = text
+	case fieldTranscript:
+		d.Transcript = text
+	}
+	return d
+}
+
+// restorePart restores the placeholders in a finished part.
+func restorePart(v Vault, part types.AssistantPart) types.AssistantPart {
+	switch p := part.(type) {
+	case types.TextPart:
+		p.Text = v.Restore(p.Text)
+		return p
+	case types.ToolCallPart:
+		if p.Arguments != nil {
+			p.Arguments = restoreValue(v, p.Arguments).(map[string]any)
+		}
+		return p
+	case types.RefusalPart:
+		p.Text = v.Restore(p.Text)
+		return p
+	case types.CitationPart:
+		p.Citation.Quote = v.Restore(p.Citation.Quote)
+		return p
+	case types.AudioOutPart:
+		p.Transcript = v.Restore(p.Transcript)
+		return p
+	}
+	return part
+}
+
+// restoreStream forwards in, restoring placeholders in text, tool call
+// arguments, refusals and audio transcripts. Restorers are kept per part
+// index and field, so interleaved parts never share one. Held text is
+// flushed before its part ends, before the final delta, and when in closes.
+// Thinking is never rewritten. With refuseAudio, a part of produced audio
+// ends the stream with ErrAudioOutRefused.
 //
 //nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
-func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta) <-chan types.Delta {
+func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta, refuseAudio bool) <-chan types.Delta {
 	out := make(chan types.Delta)
 	go func() {
 		defer close(out)
+		drain := func() {
+			go func() {
+				for range in {
+				}
+			}()
+		}
 		send := func(d types.Delta) bool {
 			select {
 			case out <- d:
 				return true
 			case <-ctx.Done():
-				go func() {
-					for range in {
-					}
-				}()
+				drain()
 				return false
 			}
 		}
@@ -258,80 +400,68 @@ func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta) <-chan t
 		if er, ok := v.(escapedRestorer); ok {
 			restoreArgs = func(s string) string { return er.RestoreEscaped(s, jsonEscape) }
 		}
-		texts := map[int]*StreamRestorer{}
-		args := map[int]*StreamRestorer{}
-		flush := func(i int) bool {
-			if r, ok := texts[i]; ok {
-				delete(texts, i)
-				if rest := r.Flush(); rest != "" && !send(types.PartDelta{Index: i, Text: rest}) {
-					return false
+		held := map[slot]*StreamRestorer{}
+		restorer := func(k slot) *StreamRestorer {
+			r := held[k]
+			if r == nil {
+				if k.field == fieldArgs {
+					r = NewStreamRestorer(restoreArgs)
+				} else {
+					r = NewStreamRestorer(v.Restore)
+				}
+				held[k] = r
+			}
+			return r
+		}
+		flushSlots := func(keep func(slot) bool) bool {
+			keys := make([]slot, 0, len(held))
+			for k := range held {
+				if keep(k) {
+					keys = append(keys, k)
 				}
 			}
-			if r, ok := args[i]; ok {
-				delete(args, i)
-				if rest := r.Flush(); rest != "" && !send(types.PartDelta{Index: i, Args: rest}) {
+			sort.Slice(keys, func(i, j int) bool {
+				if keys[i].index != keys[j].index {
+					return keys[i].index < keys[j].index
+				}
+				return keys[i].field < keys[j].field
+			})
+			for _, k := range keys {
+				r := held[k]
+				delete(held, k)
+				if rest := r.Flush(); rest != "" && !send(withPayload(k.index, k.field, rest)) {
 					return false
 				}
 			}
 			return true
 		}
-		flushAll := func() bool {
-			idx := make([]int, 0, len(texts)+len(args))
-			for i := range texts {
-				idx = append(idx, i)
-			}
-			for i := range args {
-				if _, dup := texts[i]; !dup {
-					idx = append(idx, i)
-				}
-			}
-			sort.Ints(idx)
-			for _, i := range idx {
-				if !flush(i) {
-					return false
-				}
-			}
-			return true
-		}
+		flush := func(i int) bool { return flushSlots(func(k slot) bool { return k.index == i }) }
+		flushAll := func() bool { return flushSlots(func(slot) bool { return true }) }
 		for d := range in {
 			ok := true
 			switch x := d.(type) {
+			case types.PartStart:
+				if refuseAudio && x.Kind == types.KindAudioOut {
+					if flushAll() {
+						send(types.ErrorDelta{Error: ErrAudioOutRefused})
+					}
+					drain()
+					return
+				}
+				ok = send(x)
 			case types.PartDelta:
-				switch {
-				case x.Text != "":
-					r := texts[x.Index]
-					if r == nil {
-						r = NewStreamRestorer(v.Restore)
-						texts[x.Index] = r
-					}
-					if s := r.Write(x.Text); s != "" {
-						x.Text = s
-						ok = send(x)
-					}
-				case x.Args != "":
-					r := args[x.Index]
-					if r == nil {
-						r = NewStreamRestorer(restoreArgs)
-						args[x.Index] = r
-					}
-					if s := r.Write(x.Args); s != "" {
-						x.Args = s
-						ok = send(x)
-					}
-				default:
+				f, text, rewrite := payload(x)
+				if !rewrite {
 					ok = send(x)
+					break
+				}
+				if s := restorer(slot{x.Index, f}).Write(text); s != "" {
+					ok = send(withPayload(x.Index, f, s))
 				}
 			case types.PartEnd:
 				ok = flush(x.Index)
-				switch p := x.Part.(type) {
-				case types.TextPart:
-					p.Text = v.Restore(p.Text)
-					x.Part = p
-				case types.ToolCallPart:
-					if p.Arguments != nil {
-						p.Arguments = restoreValue(v, p.Arguments).(map[string]any)
-						x.Part = p
-					}
+				if x.Part != nil {
+					x.Part = restorePart(v, x.Part)
 				}
 				ok = ok && send(x)
 			case types.ErrorDelta, types.DoneDelta:

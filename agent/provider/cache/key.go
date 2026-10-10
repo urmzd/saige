@@ -12,31 +12,53 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// Key returns a deterministic sha256 hex digest of the request inputs
-// (model, messages, tools, schema). It is stable across process runs: map keys
-// are sorted, byte payloads are hashed by content, and every field is
-// length-prefixed and type-tagged so distinct inputs cannot collide via
-// concatenation. ConfigPart and FeedbackPart are excluded because the
-// agent loop strips them before they reach the provider.
-func Key(model string, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) string {
-	h := sha256.New()
-	writeField(h, "model", []byte(model))
+// KeyVersion is the version of the key derivation. It is hashed into every
+// key, so a change to the derivation misses old entries instead of
+// matching them by accident. Version 2 hashes parts: media by its digest
+// rather than by the locators that reach it, and the conversion report.
+// Entries written under version 1 miss once and are written again.
+const KeyVersion = 2
 
+// Key returns a deterministic sha256 hex digest of the request inputs
+// (model, messages, tools, schema). It is KeyWithConversions with no
+// conversion report.
+func Key(model string, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) string {
+	return KeyWithConversions(model, msgs, tools, schema, "")
+}
+
+// KeyWithConversions returns a deterministic sha256 hex digest of the
+// request inputs and the hash of the conversion report planned for them
+// (types.ConversionReport.Hash), so a converted view and the original
+// never share an entry. It is stable across process runs: map keys are
+// sorted, every field is length-prefixed and type-tagged so distinct inputs
+// cannot collide via concatenation, and media is hashed by what it is, not
+// by how it is reached:
+//
+//   - its digest, else the digest of its inline bytes, else its URI, else
+//     its workspace reference, else its first vendor upload
+//     (provider:endpoint:id), so a re-upload or a resolved URI does not miss;
+//   - its kind, media type, file name and metadata (detail, pages, clip,
+//     frame rate), which change what the provider receives.
+//
+// Metadata parts are excluded because the agent loop strips them before
+// they reach the provider. Thinking is hashed with its signature.
+func KeyWithConversions(model string, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema, conversions string) string {
+	h := sha256.New()
+	writeField(h, "key", []byte{KeyVersion})
+	writeField(h, "model", []byte(model))
 	for _, m := range msgs {
 		writeField(h, "role", []byte(m.Role()))
-		switch v := m.(type) {
-		case types.SystemMessage:
-			hashSystemContent(h, v.Parts)
-		case types.UserMessage:
-			hashUserContent(h, v.Parts)
-		case types.AssistantMessage:
-			hashAssistantContent(h, v.Parts)
+		for _, p := range types.PartsOf(m) {
+			hashPart(h, p)
 		}
 	}
 	hashTools(h, tools)
 	if schema != nil {
 		writeField(h, "schema", nil)
 		hashParameterSchema(h, *schema)
+	}
+	if conversions != "" {
+		writeField(h, "conversions", []byte(conversions))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -50,109 +72,88 @@ func writeField(h io.Writer, tag string, data []byte) {
 	_, _ = h.Write(data)
 }
 
-func hashSystemContent(h hash.Hash, content []types.SystemPart) {
-	for _, c := range content {
-		switch v := c.(type) {
-		case types.TextPart:
-			writeField(h, "text", []byte(v.Text))
-		case types.ToolResultPart:
-			hashToolResult(h, v)
-			// ConfigPart / HandoffPart excluded: stripped before the provider.
-		}
+// hashPart hashes one part in the shared part codec, with media sources
+// reduced to their identity and a tool result's parts hashed one by one.
+func hashPart(h hash.Hash, p types.Part) {
+	if types.IsMetadata(p) {
+		return
 	}
+	writeField(h, "part", []byte(p.Kind()))
+	if src, ok := types.SourceOf(p); ok {
+		writeField(h, "media", []byte(mediaIdentity(src)))
+		writeField(h, "body", marshalPart(withSource(p, types.Source{MediaType: src.MediaType, Filename: src.Filename})))
+		return
+	}
+	if tr, ok := p.(types.ToolResultPart); ok {
+		nested := tr.Parts
+		tr.Parts = nil
+		writeField(h, "body", marshalPart(tr))
+		for _, n := range nested {
+			hashPart(h, n)
+		}
+		writeField(h, "end", nil)
+		return
+	}
+	writeField(h, "body", marshalPart(p))
 }
 
-func hashUserContent(h hash.Hash, content []types.UserPart) {
-	for _, c := range content {
-		switch v := c.(type) {
-		case types.TextPart:
-			writeField(h, "text", []byte(v.Text))
-		case types.ToolResultPart:
-			hashToolResult(h, v)
-		case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
-			src, _ := types.SourceOf(v)
-			writeField(h, "file", []byte(src.MediaType))
-			writeField(h, "filename", []byte(src.Filename))
-			writeField(h, "uri", []byte(src.URI))
-			// Hash the raw bytes (json:"-" would silently drop them).
-			sum := sha256.Sum256(src.Inline)
-			writeField(h, "data", sum[:])
-			// ConfigPart / FeedbackPart / HandoffPart excluded.
-		}
+func marshalPart(p types.Part) []byte {
+	b, err := types.MarshalPart(p)
+	if err != nil {
+		return []byte("!" + err.Error())
 	}
+	return b
 }
 
-func hashAssistantContent(h hash.Hash, content []types.AssistantPart) {
-	for _, c := range content {
-		switch v := c.(type) {
-		case types.TextPart:
-			writeField(h, "text", []byte(v.Text))
-		case types.ThinkingPart:
-			writeField(h, "thinking", []byte(v.Text))
-			writeField(h, "signature", []byte(v.Signature))
-		case types.ToolCallPart:
-			writeField(h, "tooluse", []byte(v.ID))
-			writeField(h, "toolname", []byte(v.Name))
-			hashArgs(h, v.Arguments)
-		}
+// mediaIdentity names the media a source reaches, independent of which
+// locators it carries.
+func mediaIdentity(src types.Source) string {
+	switch {
+	case src.Digest != "":
+		return "sha256:" + src.Digest
+	case len(src.Inline) > 0:
+		sum := sha256.Sum256(src.Inline)
+		return "sha256:" + hex.EncodeToString(sum[:])
+	case src.URI != "":
+		return "uri:" + src.URI
+	case src.Ref != "":
+		return "ref:" + src.Ref
+	case len(src.Files) > 0:
+		f := src.Files[0]
+		return "file:" + f.Provider + ":" + f.Endpoint + ":" + f.ID
 	}
+	return "elided"
 }
 
-func hashToolResult(h hash.Hash, v types.ToolResultPart) {
-	writeField(h, "toolresult", []byte(v.CallID))
-	if v.IsError {
-		writeField(h, "iserror", []byte{1})
-	} else {
-		writeField(h, "iserror", []byte{0})
+// withSource returns the media part p with its source replaced.
+func withSource(p types.Part, src types.Source) types.Part {
+	switch v := p.(type) {
+	case types.ImagePart:
+		v.Source = src
+		return v
+	case types.AudioPart:
+		v.Source = src
+		return v
+	case types.VideoPart:
+		v.Source = src
+		return v
+	case types.DocumentPart:
+		v.Source = src
+		return v
+	case types.FilePart:
+		v.Source = src
+		return v
+	case types.AudioOutPart:
+		v.Source = src
+		return v
+	case types.ImageOutPart:
+		v.Source = src
+		return v
+	case types.VideoOutPart:
+		v.Source = src
+		return v
 	}
-	writeField(h, "text", []byte(v.Text()))
-	if len(v.Parts) == 1 {
-		if _, plain := v.Parts[0].(types.TextPart); plain {
-			return // a plain text result is its text
-		}
-	}
-	for _, p := range v.Parts {
-		var kind, text, uri string
-		var media types.MediaType
-		var data []byte
-		var raw []byte
-		switch x := p.(type) {
-		case types.TextPart:
-			kind, text = "text", x.Text
-		case types.JSONPart:
-			kind, raw = "json", x.JSON
-		default:
-			src, _ := types.SourceOf(p)
-			kind, media, uri, data = "file", src.MediaType, src.URI, src.Inline
-			if _, img := p.(types.ImagePart); img {
-				kind = "image"
-			}
-		}
-		writeField(h, "block", []byte(kind))
-		writeField(h, "blocktext", []byte(text))
-		writeField(h, "blockmedia", []byte(media))
-		writeField(h, "blockuri", []byte(uri))
-		if len(data) > 0 {
-			sum := sha256.Sum256(data)
-			writeField(h, "blockdata", sum[:])
-		}
-		writeField(h, "blockjson", raw)
-	}
-}
-
-// hashArgs hashes a map[string]any with deterministically sorted keys. Each
-// value is canonicalized via json.Marshal; nested maps inside the value are
-// likewise key-sorted by re-marshaling through a sorted intermediate.
-func hashArgs(h hash.Hash, args map[string]any) {
-	keys := make([]string, 0, len(args))
-	for k := range args {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		writeField(h, "argkey", []byte(k))
-		writeField(h, "argval", canonicalJSON(args[k]))
-	}
+	return p
 }
 
 // canonicalJSON marshals v with map keys sorted recursively. Go's encoding/json

@@ -276,6 +276,10 @@ type ConvertEnv struct {
 	Path PartPath
 	// Scope is the tenant or privacy scope of the conversion cache.
 	Scope string
+	// Vault is the privacy boundary's tokenizer (Egress.Vault), nil outside
+	// one. The executor tokenizes a converter's text output with it before
+	// the output enters the view.
+	Vault PlaceholderVault
 }
 
 // ConversionEntry is a memoized conversion: the parts it produced and what

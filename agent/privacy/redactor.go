@@ -55,10 +55,10 @@ func restoreValue(v Vault, value any) any {
 	}
 }
 
-// TokenizeResult implements types.ToolRedactor. The text projection, text
-// blocks, and JSON blocks are tokenized. Image and file bytes are passed
-// through: detectors read text only. If any part cannot be tokenized the
-// whole result is withheld.
+// TokenizeResult implements types.ToolRedactor. Text parts, JSON parts and
+// text-bearing documents and files (text, CSV or JSON with inline bytes)
+// are tokenized. Other media is passed through: detectors read text only.
+// If any part cannot be tokenized the whole result is withheld.
 func (r *ToolRedactor) TokenizeResult(ctx context.Context, def types.ToolDef, res types.ToolResult) types.ToolResult {
 	if r.skip(def) {
 		return res
@@ -109,6 +109,12 @@ func tokenizePart(ctx context.Context, v Vault, p types.ToolOutputPart) (types.T
 		// A span crossed JSON syntax. Send the tokenized text instead of
 		// invalid JSON or the original values.
 		return types.Text(raw), nil
+	case types.DocumentPart, types.FilePart:
+		t, err := tokenizeMedia(ctx, v, x)
+		if err != nil {
+			return p, err
+		}
+		return t.(types.ToolOutputPart), nil
 	}
 	return p, nil
 }

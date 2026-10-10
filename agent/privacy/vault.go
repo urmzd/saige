@@ -41,9 +41,15 @@ type MemoryVault struct {
 	byToken  map[string]string // placeholder -> value
 	labels   map[string]string // placeholder -> label
 	counters map[string]int    // label -> last number issued
+	// sensitive makes Provider refuse opaque media and audio output by
+	// default. It is configuration, not data, so it is not snapshotted.
+	sensitive bool
 }
 
-var _ Vault = (*MemoryVault)(nil)
+var (
+	_ Vault       = (*MemoryVault)(nil)
+	_ Sensitivity = (*MemoryVault)(nil)
+)
 
 // NewVault returns an empty vault that finds values with d. A nil d uses
 // DefaultDetector.
@@ -144,6 +150,22 @@ func (v *MemoryVault) RestoreEscaped(text string, escape func(string) string) st
 		}
 		return value
 	})
+}
+
+// SetSensitive marks the vault as guarding data that must not leave as
+// media: Provider then refuses opaque media unless its MediaPolicy says
+// otherwise, and refuses audio output unless AllowAudioOut is set.
+func (v *MemoryVault) SetSensitive(on bool) {
+	v.mu.Lock()
+	v.sensitive = on
+	v.mu.Unlock()
+}
+
+// Sensitive implements Sensitivity.
+func (v *MemoryVault) Sensitive() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.sensitive
 }
 
 // Len returns how many distinct values the vault holds.

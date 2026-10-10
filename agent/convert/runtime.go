@@ -47,11 +47,13 @@ func RuntimeFrom(ctx context.Context) (Runtime, bool) {
 }
 
 // converterContext is the context a converter runs under: the caller's
-// runtime is removed, so a converter's own model call is not converted with
-// the policy of the request it serves, and a decorator around that model
-// passes its request through unplanned instead of recursing.
+// runtime and privacy boundary are removed, so a converter's own model call
+// is not converted with the policy of the request it serves, and a
+// decorator around that model passes its request through unplanned instead
+// of recursing. The executor applies the boundary to the converter itself.
 func converterContext(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, runtimeKey{}, nil)
+	ctx = types.WithEgress(ctx, types.Egress{})
 	return context.WithValue(ctx, nestedKey{}, true)
 }
 

@@ -94,6 +94,10 @@ func (c *modelConverter) Pricing() types.Pricing {
 	return caps.Pricing
 }
 
+// EgressOffering implements EgressReporter: the part goes to the
+// converter's own model.
+func (c *modelConverter) EgressOffering() (types.Offering, bool) { return Target(c.provider) }
+
 // Accepts reports whether the part has a modality the converter handles and
 // the converter's model takes it natively.
 func (c *modelConverter) Accepts(p types.Part) bool {
