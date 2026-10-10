@@ -133,6 +133,15 @@ func TestPGSourceIsScopedAndFindsFinishedRuns(t *testing.T) {
 	if _, err := src.Lookup(ctx, online.Ref{Conversation: "conv-1", Node: string(ids[1])}); err == nil {
 		t.Fatal("Lookup of a tool-calling node succeeded")
 	}
+	// A tool-calling turn stored by an earlier release, in the version 1
+	// message format, is not a finished run either.
+	if _, err := pool.Exec(ctx, `INSERT INTO agent_node (uuid, parent_uuid, role, message, branch_id, conversation_id)
+		VALUES ('v1-call', '', 'assistant', '{"content":[{"type":"tool_use","data":{"ID":"c","Name":"f"}}]}'::jsonb, 'main', 'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := (online.PGSource{Pool: pool}).Records(ctx, online.Window{}); len(all) != 2 {
+		t.Fatalf("Records with a version 1 tool call = %d, want 2", len(all))
+	}
 }
 
 // TestWatchWithPostgresNotifier runs the long-running mode across real

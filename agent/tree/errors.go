@@ -19,6 +19,9 @@ var (
 	// ErrTreeFormatVersion is returned when a serialized tree names a format
 	// version this package cannot read.
 	ErrTreeFormatVersion = errors.New("unsupported tree format version")
+	// ErrMessageFormatVersion is returned when a stored node message names a
+	// format version this package cannot read.
+	ErrMessageFormatVersion = errors.New("unsupported node message format version")
 	// ErrStoreWrite wraps a failed write-through to the store configured with
 	// WithStore. The tree is unchanged when it is returned.
 	ErrStoreWrite = errors.New("tree store write failed")

@@ -1,0 +1,504 @@
+{
+  "v": 1,
+  "nodes": [
+    {
+      "id": "f4ee117e-fa2f-4a4c-91a1-6daf454459be",
+      "role": "system",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "data": {
+              "Text": "You are terse."
+            }
+          },
+          {
+            "type": "config",
+            "data": {
+              "Model": "gpt-x",
+              "MaxIter": 3,
+              "Compact": {
+                "Strategy": "summarize",
+                "WindowSize": 0,
+                "Threshold": 10,
+                "KeepLast": 2,
+                "MaxInputTokens": 0,
+                "KeepToolResults": 0,
+                "ExcludeTools": null
+              },
+              "CompactNow": false,
+              "ToolChoice": {
+                "mode": "auto"
+              },
+              "Dials": {
+                "creativity": "focused",
+                "max_output": 512
+              },
+              "Reason": "fixture"
+            }
+          },
+          {
+            "type": "handoff",
+            "data": {
+              "to": "b",
+              "from": "a",
+              "reason": "r",
+              "message": "m",
+              "context": "c"
+            }
+          },
+          {
+            "type": "route",
+            "data": {
+              "profile": "fast",
+              "provider": "openai",
+              "model": "gpt-x",
+              "reason": "primary",
+              "preset": "p",
+              "config_hash": "h",
+              "catalog_revision": "rev",
+              "options": {
+                "temperature": 0.2,
+                "max_output_tokens": 100
+              }
+            }
+          },
+          {
+            "type": "approval",
+            "data": {
+              "event": "granted",
+              "tool": "write",
+              "tool_call_id": "call_w",
+              "grant": {
+                "id": "g1",
+                "scope": "session",
+                "tool_call_id": ""
+              },
+              "approver": "ops",
+              "reason": "ok"
+            }
+          },
+          {
+            "type": "guardrail",
+            "data": {
+              "guardrail": "pii",
+              "phase": "input",
+              "action": "block",
+              "reason": "ssn"
+            }
+          },
+          {
+            "type": "compaction",
+            "data": {
+              "strategy": "summary",
+              "steps": [
+                "summary"
+              ],
+              "trigger": "rule",
+              "tokens_before": 100,
+              "tokens_after": 10,
+              "from_branch": "main",
+              "kept": [
+                "k"
+              ],
+              "summary_node": "s"
+            }
+          }
+        ]
+      },
+      "state": 0,
+      "version": 1,
+      "depth": 0,
+      "branch_id": "main",
+      "created_at": "2026-10-10T04:37:59.061307-05:00",
+      "updated_at": "2026-10-10T04:37:59.061307-05:00"
+    },
+    {
+      "id": "87deb537-1117-41e2-8bd6-137aadb82a7c",
+      "parent_id": "f4ee117e-fa2f-4a4c-91a1-6daf454459be",
+      "role": "user",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "data": {
+              "Text": "Describe these."
+            }
+          },
+          {
+            "type": "file",
+            "data": {
+              "uri": "https://example.com/a.png",
+              "media_type": "image/png",
+              "filename": "a.png"
+            }
+          },
+          {
+            "type": "file",
+            "data": {
+              "uri": "",
+              "media_type": "application/pdf",
+              "filename": "inline.pdf"
+            }
+          },
+          {
+            "type": "file",
+            "data": {
+              "uri": "gs://bucket/clip.mp4",
+              "media_type": "video/mp4"
+            }
+          },
+          {
+            "type": "steer",
+            "data": {
+              "id": "sub-1"
+            }
+          },
+          {
+            "type": "guardrail",
+            "data": {
+              "guardrail": "pii",
+              "phase": "input",
+              "action": "rewrite"
+            }
+          },
+          {
+            "type": "config",
+            "data": {
+              "Model": "",
+              "MaxIter": 2,
+              "Compact": null,
+              "CompactNow": false
+            }
+          },
+          {
+            "type": "handoff",
+            "data": {
+              "to": "a"
+            }
+          }
+        ]
+      },
+      "state": 0,
+      "version": 1,
+      "depth": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T04:37:59.061345-05:00",
+      "updated_at": "2026-10-10T04:37:59.061345-05:00"
+    },
+    {
+      "id": "13043181-3bad-4fe9-838d-c559fa56345b",
+      "parent_id": "87deb537-1117-41e2-8bd6-137aadb82a7c",
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "thinking",
+            "data": {
+              "thinking": "plan",
+              "signature": "sig-1"
+            }
+          },
+          {
+            "type": "text",
+            "data": {
+              "Text": "Looking."
+            }
+          },
+          {
+            "type": "server_tool",
+            "data": {
+              "id": "srv_1",
+              "kind": "web_search",
+              "name": "web_search",
+              "input": {
+                "max": 3,
+                "query": "go"
+              },
+              "text": "results",
+              "result": {
+                "hits": [
+                  {
+                    "url": "https://go.dev"
+                  }
+                ]
+              },
+              "files": [
+                {
+                  "uri": "https://example.com/chart.png",
+                  "media_type": "image/png"
+                }
+              ]
+            }
+          },
+          {
+            "type": "server_tool",
+            "data": {
+              "id": "srv_2",
+              "kind": "code_execution",
+              "name": "code_execution",
+              "input": {
+                "code": "1+1"
+              }
+            }
+          },
+          {
+            "type": "tool_use",
+            "data": {
+              "ID": "call_rich",
+              "Name": "snapshot",
+              "Arguments": {
+                "big": 12345678901234,
+                "f": 1.5,
+                "list": [
+                  1,
+                  {
+                    "k": "v"
+                  }
+                ],
+                "n": 3
+              },
+              "ArgumentsError": ""
+            }
+          },
+          {
+            "type": "tool_use",
+            "data": {
+              "ID": "call_bad",
+              "Name": "snapshot",
+              "Arguments": null,
+              "ArgumentsError": "unexpected end of JSON input"
+            }
+          },
+          {
+            "type": "route",
+            "data": {
+              "provider": "anthropic",
+              "model": "claude-x"
+            }
+          },
+          {
+            "type": "guardrail",
+            "data": {
+              "guardrail": "tone",
+              "phase": "output",
+              "action": "pass"
+            }
+          },
+          {
+            "type": "truncation",
+            "data": {
+              "reason": "max_tokens"
+            }
+          }
+        ]
+      },
+      "state": 0,
+      "version": 1,
+      "depth": 2,
+      "branch_id": "main",
+      "created_at": "2026-10-10T04:37:59.06135-05:00",
+      "updated_at": "2026-10-10T04:37:59.06135-05:00"
+    },
+    {
+      "id": "00f5f775-719f-4312-8846-43f30011693e",
+      "parent_id": "13043181-3bad-4fe9-838d-c559fa56345b",
+      "role": "system",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_plain",
+              "Text": "plain result",
+              "IsError": false
+            }
+          },
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_err",
+              "Text": "boom",
+              "IsError": true
+            }
+          },
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_rich",
+              "Text": "chart attached",
+              "IsError": false,
+              "blocks": [
+                {
+                  "kind": "text",
+                  "text": "chart attached"
+                },
+                {
+                  "kind": "image",
+                  "media_type": "image/png"
+                },
+                {
+                  "kind": "image",
+                  "media_type": "image/png",
+                  "uri": "https://example.com/chart.png",
+                  "filename": "chart.png"
+                },
+                {
+                  "kind": "file",
+                  "media_type": "application/pdf",
+                  "uri": "s3://bucket/report.pdf",
+                  "filename": "report.pdf"
+                },
+                {
+                  "kind": "json",
+                  "json": {
+                    "rows": 2
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_media_only",
+              "Text": "see image",
+              "IsError": false,
+              "blocks": [
+                {
+                  "kind": "image",
+                  "media_type": "image/png"
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_cited",
+              "Text": "sourced",
+              "IsError": false,
+              "citations": [
+                {
+                  "kind": "web",
+                  "uri": "https://example.com",
+                  "title": "Example",
+                  "start": -1,
+                  "end": -1
+                }
+              ],
+              "tool_version": "2"
+            }
+          }
+        ]
+      },
+      "state": 0,
+      "version": 1,
+      "depth": 3,
+      "branch_id": "main",
+      "created_at": "2026-10-10T04:37:59.061352-05:00",
+      "updated_at": "2026-10-10T04:37:59.061352-05:00"
+    },
+    {
+      "id": "fc6759d5-8964-4c6a-9a5f-64422b8929c7",
+      "parent_id": "00f5f775-719f-4312-8846-43f30011693e",
+      "role": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "data": {
+              "ToolCallID": "call_human",
+              "Text": "human answer",
+              "IsError": false
+            }
+          }
+        ]
+      },
+      "state": 0,
+      "version": 1,
+      "depth": 4,
+      "branch_id": "main",
+      "created_at": "2026-10-10T04:37:59.061353-05:00",
+      "updated_at": "2026-10-10T04:37:59.061353-05:00"
+    },
+    {
+      "id": "7faaf2dc-d0d8-4312-9682-80937f3a7cdc",
+      "parent_id": "13043181-3bad-4fe9-838d-c559fa56345b",
+      "role": "user",
+      "message": {
+        "content": [
+          {
+            "type": "feedback",
+            "data": {
+              "target_node_id": "13043181-3bad-4fe9-838d-c559fa56345b",
+              "rating": 1,
+              "comment": "good"
+            }
+          }
+        ]
+      },
+      "state": 3,
+      "version": 1,
+      "depth": 3,
+      "branch_id": "feedback-2dee48bb",
+      "created_at": "2026-10-10T04:37:59.061355-05:00",
+      "updated_at": "2026-10-10T04:37:59.061355-05:00"
+    },
+    {
+      "id": "f2a049b8-ffb1-47ff-b1bd-0aa43ba22771",
+      "parent_id": "87deb537-1117-41e2-8bd6-137aadb82a7c",
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "data": {
+              "Text": "alternative"
+            }
+          }
+        ]
+      },
+      "state": 1,
+      "version": 2,
+      "depth": 2,
+      "branch_id": "alt",
+      "created_at": "2026-10-10T04:37:59.061358-05:00",
+      "updated_at": "2026-10-10T04:37:59.061359-05:00",
+      "archived_at": "2026-10-10T04:37:59.061359-05:00",
+      "archived_by": "fixture"
+    }
+  ],
+  "children": {
+    "00f5f775-719f-4312-8846-43f30011693e": [
+      "fc6759d5-8964-4c6a-9a5f-64422b8929c7"
+    ],
+    "13043181-3bad-4fe9-838d-c559fa56345b": [
+      "00f5f775-719f-4312-8846-43f30011693e",
+      "7faaf2dc-d0d8-4312-9682-80937f3a7cdc"
+    ],
+    "87deb537-1117-41e2-8bd6-137aadb82a7c": [
+      "13043181-3bad-4fe9-838d-c559fa56345b",
+      "f2a049b8-ffb1-47ff-b1bd-0aa43ba22771"
+    ],
+    "f4ee117e-fa2f-4a4c-91a1-6daf454459be": [
+      "87deb537-1117-41e2-8bd6-137aadb82a7c"
+    ]
+  },
+  "root_id": "f4ee117e-fa2f-4a4c-91a1-6daf454459be",
+  "branches": {
+    "alt": "f2a049b8-ffb1-47ff-b1bd-0aa43ba22771",
+    "feedback-2dee48bb": "7faaf2dc-d0d8-4312-9682-80937f3a7cdc",
+    "main": "fc6759d5-8964-4c6a-9a5f-64422b8929c7"
+  },
+  "active": "main",
+  "checkpoints": {
+    "daf98d30-38c9-4f68-9ac7-e6a426958124": {
+      "id": "daf98d30-38c9-4f68-9ac7-e6a426958124",
+      "branch": "main",
+      "node_id": "fc6759d5-8964-4c6a-9a5f-64422b8929c7",
+      "name": "after-tools",
+      "created_at": "2026-10-10T04:37:59.061357-05:00"
+    }
+  }
+}

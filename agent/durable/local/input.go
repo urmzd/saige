@@ -19,7 +19,7 @@ type InputSegment struct {
 	Sequence int       `json:"sequence"`      // 1-based; the first input is segment 0
 	Key      string    `json:"key,omitempty"` // idempotency key supplied to Append
 	At       time.Time `json:"at"`
-	Messages []byte    `json:"messages"` // gob
+	Messages []byte    `json:"messages"` // durablecodec record
 }
 
 // segmentPrefix namespaces step names and interrupt IDs of segment i. The
@@ -50,8 +50,8 @@ func inputLog(s *State) ([][]types.Message, error) {
 	return log, nil
 }
 
-// normalize round-trips messages through gob, so values compare the way the
-// log stores them (gob drops empty slices and normalizes interface values).
+// normalize round-trips messages through their record, so values compare the
+// way the log stores them.
 func normalize(msgs []types.Message) ([]byte, []types.Message, error) {
 	raw, err := encode(msgs)
 	if err != nil {

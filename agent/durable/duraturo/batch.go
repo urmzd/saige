@@ -9,6 +9,7 @@ import (
 	dt "github.com/urmzd/duraturo"
 
 	"github.com/urmzd/saige/agent/batch"
+	"github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -63,7 +64,11 @@ func (e *Engine) AwaitBatch(ctx context.Context, jobs *batch.Runner, jobID strin
 		}
 		recorded := make([]recordedResult, len(results))
 		for i, r := range results {
-			recorded[i] = recordedResult{CustomID: r.CustomID, Outcome: r.Outcome, Message: r.Message,
+			msg, err := durablecodec.NewAssistant(r.Message)
+			if err != nil {
+				return nil, err
+			}
+			recorded[i] = recordedResult{CustomID: r.CustomID, Outcome: r.Outcome, Message: msg,
 				FinishReason: r.FinishReason, Usage: r.Usage}
 			if r.Err != nil {
 				recorded[i].Err = r.Err.Error()
@@ -80,7 +85,11 @@ func (e *Engine) AwaitBatch(ctx context.Context, jobs *batch.Runner, jobID strin
 	}
 	out := make([]types.BatchResult, len(recorded))
 	for i, r := range recorded {
-		out[i] = types.BatchResult{CustomID: r.CustomID, Outcome: r.Outcome, Message: r.Message,
+		msg, err := r.Message.Message()
+		if err != nil {
+			return nil, dt.NonRetryable(fmt.Errorf("decode batch results: %w", err))
+		}
+		out[i] = types.BatchResult{CustomID: r.CustomID, Outcome: r.Outcome, Message: msg,
 			FinishReason: r.FinishReason, Usage: r.Usage}
 		if r.Err != "" {
 			out[i].Err = &types.BatchRequestError{Outcome: r.Outcome, Message: r.Err}
@@ -89,11 +98,12 @@ func (e *Engine) AwaitBatch(ctx context.Context, jobs *batch.Runner, jobID strin
 	return out, nil
 }
 
-// recordedResult is the gob form of a result in the ledger.
+// recordedResult is the gob form of a result in the ledger. Message reads
+// the form earlier releases wrote too.
 type recordedResult struct {
 	CustomID     string
 	Outcome      types.BatchOutcome
-	Message      types.AssistantMessage
+	Message      durablecodec.Assistant
 	FinishReason string
 	Usage        types.UsageDelta
 	Err          string

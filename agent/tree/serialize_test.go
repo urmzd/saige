@@ -143,8 +143,8 @@ func TestTreeFormatVersion(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if string(doc["v"]) != "1" {
-		t.Fatalf("written version = %s, want 1", doc["v"])
+	if string(doc["v"]) != "2" {
+		t.Fatalf("written version = %s, want 2", doc["v"])
 	}
 
 	withVersion := func(v string) []byte {
@@ -169,9 +169,10 @@ func TestTreeFormatVersion(t *testing.T) {
 		data    []byte
 		wantErr error
 	}{
-		{name: "current version", data: withVersion("1")},
+		{name: "current version", data: withVersion("2")},
+		{name: "first version", data: withVersion("1")},
 		{name: "no version reads as the first format", data: withVersion("")},
-		{name: "future version", data: withVersion("2"), wantErr: ErrTreeFormatVersion},
+		{name: "future version", data: withVersion("3"), wantErr: ErrTreeFormatVersion},
 		{name: "negative version", data: withVersion("-1"), wantErr: ErrTreeFormatVersion},
 	}
 	for _, tt := range tests {

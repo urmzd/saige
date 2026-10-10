@@ -1922,7 +1922,7 @@ func (a *Agent) appendToBranch(ctx context.Context, tr *tree.Tree, branch types.
 // tree and the store; only the write-ahead log missed it. That is logged and
 // the run continues.
 func (a *Agent) appendNode(ctx context.Context, tr *tree.Tree, branch types.BranchID, msg types.Message) (*types.Node, error) {
-	node, err := tr.AddChildOnBranch(ctx, branch, msg)
+	node, err := tr.AddChildOnBranch(ctx, branch, a.externalize(ctx, msg))
 	if err != nil {
 		if node == nil || !errors.Is(err, tree.ErrWALCommit) {
 			return nil, err

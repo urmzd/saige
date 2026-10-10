@@ -1,0 +1,389 @@
+[
+  {
+    "name": "system",
+    "role": "system",
+    "message": {
+      "content": [
+        {
+          "type": "text",
+          "data": {
+            "Text": "You are terse."
+          }
+        },
+        {
+          "type": "config",
+          "data": {
+            "Model": "gpt-x",
+            "MaxIter": 3,
+            "Compact": {
+              "Strategy": "summarize",
+              "WindowSize": 0,
+              "Threshold": 10,
+              "KeepLast": 2,
+              "MaxInputTokens": 0,
+              "KeepToolResults": 0,
+              "ExcludeTools": null
+            },
+            "CompactNow": false,
+            "ToolChoice": {
+              "mode": "auto"
+            },
+            "Dials": {
+              "creativity": "focused",
+              "max_output": 512
+            },
+            "Reason": "fixture"
+          }
+        },
+        {
+          "type": "handoff",
+          "data": {
+            "to": "b",
+            "from": "a",
+            "reason": "r",
+            "message": "m",
+            "context": "c"
+          }
+        },
+        {
+          "type": "route",
+          "data": {
+            "profile": "fast",
+            "provider": "openai",
+            "model": "gpt-x",
+            "reason": "primary",
+            "preset": "p",
+            "config_hash": "h",
+            "catalog_revision": "rev",
+            "options": {
+              "temperature": 0.2,
+              "max_output_tokens": 100
+            }
+          }
+        },
+        {
+          "type": "approval",
+          "data": {
+            "event": "granted",
+            "tool": "write",
+            "tool_call_id": "call_w",
+            "grant": {
+              "id": "g1",
+              "scope": "session",
+              "tool_call_id": ""
+            },
+            "approver": "ops",
+            "reason": "ok"
+          }
+        },
+        {
+          "type": "guardrail",
+          "data": {
+            "guardrail": "pii",
+            "phase": "input",
+            "action": "block",
+            "reason": "ssn"
+          }
+        },
+        {
+          "type": "compaction",
+          "data": {
+            "strategy": "summary",
+            "steps": [
+              "summary"
+            ],
+            "trigger": "rule",
+            "tokens_before": 100,
+            "tokens_after": 10,
+            "from_branch": "main",
+            "kept": [
+              "k"
+            ],
+            "summary_node": "s"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "tool_results",
+    "role": "system",
+    "message": {
+      "content": [
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_plain",
+            "Text": "plain result",
+            "IsError": false
+          }
+        },
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_err",
+            "Text": "boom",
+            "IsError": true
+          }
+        },
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_rich",
+            "Text": "chart attached",
+            "IsError": false,
+            "blocks": [
+              {
+                "kind": "text",
+                "text": "chart attached"
+              },
+              {
+                "kind": "image",
+                "media_type": "image/png"
+              },
+              {
+                "kind": "image",
+                "media_type": "image/png",
+                "uri": "https://example.com/chart.png",
+                "filename": "chart.png"
+              },
+              {
+                "kind": "file",
+                "media_type": "application/pdf",
+                "uri": "s3://bucket/report.pdf",
+                "filename": "report.pdf"
+              },
+              {
+                "kind": "json",
+                "json": {
+                  "rows": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_media_only",
+            "Text": "see image",
+            "IsError": false,
+            "blocks": [
+              {
+                "kind": "image",
+                "media_type": "image/png"
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_cited",
+            "Text": "sourced",
+            "IsError": false,
+            "citations": [
+              {
+                "kind": "web",
+                "uri": "https://example.com",
+                "title": "Example",
+                "start": -1,
+                "end": -1
+              }
+            ],
+            "tool_version": "2"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "user",
+    "role": "user",
+    "message": {
+      "content": [
+        {
+          "type": "text",
+          "data": {
+            "Text": "Describe these."
+          }
+        },
+        {
+          "type": "file",
+          "data": {
+            "uri": "https://example.com/a.png",
+            "media_type": "image/png",
+            "filename": "a.png"
+          }
+        },
+        {
+          "type": "file",
+          "data": {
+            "uri": "",
+            "media_type": "application/pdf",
+            "filename": "inline.pdf"
+          }
+        },
+        {
+          "type": "file",
+          "data": {
+            "uri": "gs://bucket/clip.mp4",
+            "media_type": "video/mp4"
+          }
+        },
+        {
+          "type": "steer",
+          "data": {
+            "id": "sub-1"
+          }
+        },
+        {
+          "type": "guardrail",
+          "data": {
+            "guardrail": "pii",
+            "phase": "input",
+            "action": "rewrite"
+          }
+        },
+        {
+          "type": "config",
+          "data": {
+            "Model": "",
+            "MaxIter": 2,
+            "Compact": null,
+            "CompactNow": false
+          }
+        },
+        {
+          "type": "handoff",
+          "data": {
+            "to": "a"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "user_tool_results",
+    "role": "user",
+    "message": {
+      "content": [
+        {
+          "type": "tool_result",
+          "data": {
+            "ToolCallID": "call_human",
+            "Text": "human answer",
+            "IsError": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "assistant",
+    "role": "assistant",
+    "message": {
+      "content": [
+        {
+          "type": "thinking",
+          "data": {
+            "thinking": "plan",
+            "signature": "sig-1"
+          }
+        },
+        {
+          "type": "text",
+          "data": {
+            "Text": "Looking."
+          }
+        },
+        {
+          "type": "server_tool",
+          "data": {
+            "id": "srv_1",
+            "kind": "web_search",
+            "name": "web_search",
+            "input": {
+              "max": 3,
+              "query": "go"
+            },
+            "text": "results",
+            "result": {
+              "hits": [
+                {
+                  "url": "https://go.dev"
+                }
+              ]
+            },
+            "files": [
+              {
+                "uri": "https://example.com/chart.png",
+                "media_type": "image/png"
+              }
+            ]
+          }
+        },
+        {
+          "type": "server_tool",
+          "data": {
+            "id": "srv_2",
+            "kind": "code_execution",
+            "name": "code_execution",
+            "input": {
+              "code": "1+1"
+            }
+          }
+        },
+        {
+          "type": "tool_use",
+          "data": {
+            "ID": "call_rich",
+            "Name": "snapshot",
+            "Arguments": {
+              "big": 12345678901234,
+              "f": 1.5,
+              "list": [
+                1,
+                {
+                  "k": "v"
+                }
+              ],
+              "n": 3
+            },
+            "ArgumentsError": ""
+          }
+        },
+        {
+          "type": "tool_use",
+          "data": {
+            "ID": "call_bad",
+            "Name": "snapshot",
+            "Arguments": null,
+            "ArgumentsError": "unexpected end of JSON input"
+          }
+        },
+        {
+          "type": "route",
+          "data": {
+            "provider": "anthropic",
+            "model": "claude-x"
+          }
+        },
+        {
+          "type": "guardrail",
+          "data": {
+            "guardrail": "tone",
+            "phase": "output",
+            "action": "pass"
+          }
+        },
+        {
+          "type": "truncation",
+          "data": {
+            "reason": "max_tokens"
+          }
+        }
+      ]
+    }
+  }
+]
