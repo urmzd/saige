@@ -61,6 +61,8 @@ type ResolvedEntry struct {
 	// Vertex is set when a Google entry is served through Vertex AI.
 	Vertex   *VertexSpec
 	Optional bool
+	// LocalFallback is EntrySpec.LocalFallback.
+	LocalFallback bool
 	// ConfigHash is the first 16 hex digits of a SHA-256 over the entry's
 	// canonical configuration. Equal hashes mean identical requests.
 	ConfigHash string
@@ -273,8 +275,11 @@ type layered struct {
 // resolveEntry applies the precedence rules to one chain entry.
 func (c *Catalog) resolveEntry(preset, path string, spec PresetSpec, es EntrySpec, v view, found *issues) ResolvedEntry {
 	e := ResolvedEntry{ID: es.ID, Provider: es.Provider, Model: es.Model, BaseURL: es.BaseURL,
-		APIKeyEnv: es.APIKeyEnv, Optional: es.Optional, AttemptTimeout: time.Duration(es.AttemptTimeout),
-		Origin: map[string]Layer{}}
+		APIKeyEnv: es.APIKeyEnv, Optional: es.Optional, LocalFallback: es.LocalFallback,
+		AttemptTimeout: time.Duration(es.AttemptTimeout), Origin: map[string]Layer{}}
+	if es.LocalFallback && es.Provider != "ollama" {
+		found.errorf(path+".local_fallback", CodeBadValue, "local_fallback applies only to ollama entries")
+	}
 	if es.Vertex != nil {
 		vs := *es.Vertex
 		e.Vertex = &vs

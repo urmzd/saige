@@ -1806,6 +1806,16 @@
     },
     {
       "provider": "ollama",
+      "prefix": "qwen3.5",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
+      "prefix": "qwen3.5:4b",
+      "extends": "ollama.reasoning"
+    },
+    {
+      "provider": "ollama",
       "prefix": "qwen3",
       "extends": "ollama.reasoning"
     },
@@ -1992,11 +2002,12 @@
         {
           "id": "ollama",
           "provider": "ollama",
-          "model": "qwen3",
+          "model": "qwen3.5:4b",
           "optional": true,
           "retry": {
             "disable": true
-          }
+          },
+          "local_fallback": true
         }
       ]
     },
@@ -2077,10 +2088,11 @@
         {
           "id": "primary",
           "provider": "ollama",
-          "model": "qwen3",
+          "model": "qwen3.5:4b",
           "retry": {
             "disable": true
-          }
+          },
+          "local_fallback": true
         }
       ]
     }

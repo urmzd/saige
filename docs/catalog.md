@@ -163,7 +163,7 @@ _, err := catalog.Use(ctx, catalog.Layered(catalog.EmbeddedSource(), s3src))
                    "prompt_cache": { "mode": "markers", "ttl": "5m", "system": true, "tools": true } } },
     { "id": "openai", "provider": "openai", "model": "gpt-6-luna",
       "options": { "temperature": 0.3, "reasoning": { "effort": "none" } } },
-    { "id": "local", "provider": "ollama", "model": "qwen3", "optional": true,
+    { "id": "local", "provider": "ollama", "model": "qwen3.5:4b", "optional": true, "local_fallback": true,
       "options": { "temperature": 0.3, "reasoning": { "enabled": false } }, "retry": { "disable": true } }
   ]
 }
@@ -184,9 +184,11 @@ Routing keys:
 
 Setting `fail_threshold` or `reprobe_after` without a `policy` selects `affinity`; with `policy: sticky` it is an error. Other permanent errors never fail over.
 
-Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `dials`, `unset` (option names, and inherited dials as `dials.<name>`), `inherit` (`all` or `none`, which also skips the preset's dials), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex` and `optional` (drop the whole entry when it cannot serve).
+Chain entry keys: `id` (default `provider/model`), `provider`, `model`, `options`, `dials`, `unset` (option names, and inherited dials as `dials.<name>`), `inherit` (`all` or `none`, which also skips the preset's dials), `retry`, `attempt_timeout`, `base_url`, `api_key_env` (the name of the variable; a key itself is rejected), `vertex`, `optional` (drop the whole entry when it cannot serve) and `local_fallback` (Ollama entries only: serve another pulled model when this one is not pulled).
 
 `vertex` serves a Google entry through Vertex AI instead of the Gemini API: `{"project": "...", "location": "..."}`. Empty fields default from `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, and the location then defaults to `global`. Vertex authenticates with Application Default Credentials, so the entry needs a project, not an API key. Setting `GOOGLE_GENAI_USE_VERTEXAI=true` serves every Google entry through Vertex the same way. A `vertex` block on another provider's entry is rejected. An optional entry is dropped when its credentials are missing, and an optional entry that needs none (a local Ollama model) is dropped when its server does not answer a reachability check at build time (`preset.Options.Probe`, by default `preset.ProbeOllama`).
+
+`local_fallback` lets an Ollama entry run on whatever the local server has. At build time `preset.Build` lists the pulled models (`preset.Options.ListLocal`, by default `preset.ListOllama`, which reads `/api/tags`). It keeps the entry's model when it is pulled, otherwise serves the first pulled model the catalog says calls tools, otherwise the first pulled model that is not an embedding model, and records a `local_model_substituted` warning. The entry keeps its ID, and resolves against the row of the model that serves. With no chat model pulled, the entry fails with `preset.ErrNoLocalModel`, whose message says to run `ollama pull <model>`, or is dropped when it is optional. A server that cannot be listed leaves the entry as written. The shipped `default` and `ollama` presets set it.
 
 ## Precedence
 
@@ -298,17 +300,17 @@ saige catalog export                  # the merged catalog as canonical JSON
 saige catalog reconcile               # compare provider model lists with the catalog
 ```
 
-The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
+The CLI picks `--preset` first, then `--model` (a one-entry chain from the model row's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama; with Ollama running but no chat model pulled, it says to run `ollama pull qwen3.5:4b`. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
 
 The shipped presets:
 
 | Preset | Chain |
 | --- | --- |
-| `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, then a local qwen3 |
+| `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, then a local qwen3.5:4b (or another pulled model) |
 | `anthropic`, `openai`, `google` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite |
 | `anthropic-quality`, `openai-quality`, `google-quality` | claude-sonnet-5-5, gpt-6.1-sol, gemini-3.8-flash |
 | `vertex` | gemini-3.1-flash-lite through Vertex AI |
-| `ollama` | a local qwen3 |
+| `ollama` | a local qwen3.5:4b, or another pulled model |
 
 `--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
 

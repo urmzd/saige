@@ -343,7 +343,7 @@ default models. Without `--model` it runs the first usable entry of the
 catalog's `default_preset`, or the preset named by `--provider` (`anthropic`,
 `openai`, `google`, `vertex`, `ollama`).
 The shipped presets use the cheapest current model per vendor
-(`claude-haiku-5-5`, `gpt-6-luna`, `gemini-3.1-flash-lite`) and `qwen3`, and
+(`claude-haiku-5-5`, `gpt-6-luna`, `gemini-3.1-flash-lite`) and `qwen3.5:4b` (or any pulled model) on Ollama, and
 `<vendor>-quality` presets use `claude-sonnet-5-5`, `gpt-6.1-sol` and
 `gemini-3.8-flash`. See [model catalog and presets](catalog.md).
 
