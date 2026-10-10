@@ -112,7 +112,7 @@ func (a *Adapter) batchRequest(r types.BatchRequest) ([]*genai.Content, *genai.G
 		return nil, nil, err
 	}
 	if r.Schema != nil {
-		config.ResponseMIMEType = "application/json"
+		config.ResponseMIMEType = jsonMIMEType
 		config.ResponseSchema = parameterSchemaToGemini(*r.Schema)
 	}
 	return contents, config, nil

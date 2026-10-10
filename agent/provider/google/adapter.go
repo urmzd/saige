@@ -18,6 +18,9 @@ import (
 	"google.golang.org/genai"
 )
 
+// jsonMIMEType is the response MIME type that asks for structured output.
+const jsonMIMEType = "application/json"
+
 // providerName identifies this adapter in errors, the catalog and metrics.
 const providerName = "google"
 
@@ -317,7 +320,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		return nil, err
 	}
 	if schema != nil {
-		config.ResponseMIMEType = "application/json"
+		config.ResponseMIMEType = jsonMIMEType
 		config.ResponseSchema = parameterSchemaToGemini(*schema)
 	}
 	return a.chatStream(ctx, contents, config)
