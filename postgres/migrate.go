@@ -131,6 +131,10 @@ func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (
 	if err := execScript(ctx, conn, renderTemplate(memoryTmpl, opts)); err != nil {
 		return err
 	}
+	// Eval results tables live in their own script too.
+	if err := execScript(ctx, conn, evalSQL); err != nil {
+		return err
+	}
 
 	if checkKG {
 		if err := checkVectorDim(ctx, conn, "kg_entity", "embedding", opts.KGEmbeddingDim); err != nil {
