@@ -21,8 +21,9 @@ import (
 
 // TestLiveRAGQuestionWithCitations asks gpt-6-luna a question it can only
 // answer from the knowledge base. The run must call rag_search, record a
-// retrieval citation anchored to the handbook chunk, and answer from it. It
-// runs only with SAIGE_LIVE=1 and an OPENAI_API_KEY.
+// retrieval citation anchored to the handbook chunk, and answer from it,
+// citing it by marker. It runs only with SAIGE_LIVE=1 and an
+// OPENAI_API_KEY.
 func TestLiveRAGQuestionWithCitations(t *testing.T) {
 	if os.Getenv("SAIGE_LIVE") != "1" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("set SAIGE_LIVE=1 and OPENAI_API_KEY to call the provider")
