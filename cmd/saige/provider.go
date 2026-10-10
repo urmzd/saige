@@ -220,6 +220,12 @@ func (cf *commonFlags) presetOptions(verbose bool) preset.Options {
 			}
 			return preset.ProbeOllama(ctx, cfg)
 		},
+		ListLocal: func(ctx context.Context, cfg provider.Config) ([]catalog.RemoteModel, error) {
+			if cfg.Provider == providerOllama && cfg.BaseURL == "" {
+				cfg.BaseURL = *cf.ollamaHost
+			}
+			return preset.ListOllama(ctx, cfg)
+		},
 	}
 }
 
@@ -352,16 +358,23 @@ func (cf *commonFlags) narrowDefault(ctx context.Context, cat *catalog.Catalog, 
 	if len(chain) != len(rp.Chain) {
 		return nil, fmt.Errorf("preset %s: cannot match its chain to the resolved entries", name)
 	}
+	var noLocal error
 	for i, e := range rp.Chain {
-		if preset.Available(ctx, e, opts) == nil {
+		err := preset.Available(ctx, e, opts)
+		if err == nil {
 			return withChain(cat, name, chain[i:i+1]), nil
 		}
+		if errors.Is(err, preset.ErrNoLocalModel) {
+			noLocal = err
+		}
 	}
-	return nil, noProviderError(rp.Chain, *cf.ollamaHost)
+	return nil, noProviderError(rp.Chain, *cf.ollamaHost, noLocal)
 }
 
 // noProviderError says how to make one of the default entries usable.
-func noProviderError(chain []catalog.ResolvedEntry, ollamaHost string) error {
+// noLocal is the Ollama entry's ErrNoLocalModel when the server answered but
+// has no chat model, so the advice is to pull one rather than to start it.
+func noProviderError(chain []catalog.ResolvedEntry, ollamaHost string, noLocal error) error {
 	var keys []string
 	local := false
 	for _, e := range chain {
@@ -382,7 +395,10 @@ func noProviderError(chain []catalog.ResolvedEntry, ollamaHost string) error {
 	if len(keys) > 0 {
 		ways = append(ways, "set "+strings.Join(keys, " or "))
 	}
-	if local {
+	switch {
+	case noLocal != nil:
+		ways = append(ways, noLocal.Error())
+	case local:
 		ways = append(ways, fmt.Sprintf("start ollama (ollama serve) at %s", ollamaHost))
 	}
 	return fmt.Errorf("no model provider is available: %s", strings.Join(ways, ", or "))

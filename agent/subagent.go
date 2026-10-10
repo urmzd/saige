@@ -12,12 +12,14 @@ import (
 
 // SubAgentDef defines a sub-agent that can be delegated to.
 //
-// A sub-agent is a full agent, so it needs a full config. Everything not named
-// here is inherited from the parent at registration time (see inheritConfig):
-// logger, metrics, timeouts, tool parallelism, compaction, and the file
-// resolver/extractor pipeline. Leaving a field zero means "same as my parent",
-// never "off" -- a delegated child that silently ran without the parent's LLM
-// timeout or file resolvers is the failure this inheritance exists to prevent.
+// A sub-agent is a full agent, so it needs a full config. Its operational
+// config is inherited from the parent when the child is built (see
+// inheritConfig for the exact lists): logger, metrics, timeouts, tool
+// parallelism, gates and policies, compaction, dials, the file pipeline, and
+// step-limit behavior. Leaving MaxIter or Provider zero means "same as my
+// parent", never "off". Some parent settings are deliberately not inherited,
+// such as the tree, store, outcome policy, server tools, StopAtTools and tool
+// choice. Delegation is refused for an ancestor of the caller.
 //
 // Use Options for anything inheritance gets wrong for a particular child.
 type SubAgentDef struct {
@@ -107,11 +109,13 @@ type SubAgentDef struct {
 // parent's config. The split is deliberate:
 //
 //   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
-//     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolRedactor,
-//     Dials, DialPolicy, ApprovalPolicy and Deps. These
-//     describe how this deployment runs agents, not what one agent is for, so a
-//     child that did not inherit them would quietly run with different
-//     guarantees than the parent that delegated to it.
+//     MaxParallelTools, CompactCfg, Resolvers, Extractors, ToolGate,
+//     ToolPolicy, ApprovalPolicy, Deps, ToolContext, Tokenizer, ToolRedactor,
+//     OnMaxIter, ForceFinalPrompt, MaxConsecutiveErrors, MaxRepeatIterations,
+//     InterruptTTL, InterruptPolicy, Dials and DialPolicy. These describe how
+//     this deployment runs agents, not what one agent is for, so a child that
+//     did not inherit them would quietly run with different guarantees than
+//     the parent that delegated to it.
 //   - From the definition (identity): Name, SystemPrompt, Tools, SubAgents,
 //     MaxIter and WrapUpAt (see childIterBudget), ResponseSchema, and
 //     Provider when set. OnMaxIter is MaxIterForceFinal, so a child at its
@@ -128,7 +132,10 @@ type SubAgentDef struct {
 //     Handoffs and MaxHandoffs, because a handoff group belongs to the entry
 //     agent that owns the shared tree;
 //     ServerTools, because they are bound to the parent's provider instance and
-//     a child targeting a different model may not support them.
+//     a child targeting a different model may not support them;
+//     StopAtTools and ToolChoice, because they name the parent's tools;
+//     every other field not listed above (for example AutoContinue,
+//     HandoffContextPolicy and LinkPolicy) starts at its zero value.
 //
 // Budget is shared rather than inherited: see the comment at the assignment.
 // Workspace is narrowed: the child receives a read-only view of the parent's,

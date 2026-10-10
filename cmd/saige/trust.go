@@ -85,9 +85,11 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 		"policy": true, "fail_threshold": true, "reprobe_after": true, "required": true,
 		"failover_on_content_filter": false, "failover_on_auth": false,
 	},
+	// local_fallback only picks among models already pulled on the entry's
+	// own server, so it widens nothing an untrusted layer could not name.
 	reflect.TypeFor[catalog.EntrySpec](): {
 		"id": true, "provider": true, "model": true, "options": true, "unset": true, "inherit": true,
-		"retry": true, "attempt_timeout": true, "optional": true,
+		"retry": true, "attempt_timeout": true, "optional": true, "local_fallback": true,
 		"base_url": false, "api_key_env": false, "vertex": true, "dials": false,
 	},
 	// An untrusted layer may ask for Vertex on an entry, but not name the

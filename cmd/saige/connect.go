@@ -38,24 +38,18 @@ func connectPostgres(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// textEmbedder adapts an Embed(ctx, []string) embedder to ragtypes.VariantEmbedder.
-type textEmbedder struct {
-	embed func(ctx context.Context, texts []string) ([][]float32, error)
-}
+// embedFunc is an embed function as an embedderregistry.TextEmbedder.
+type embedFunc func(ctx context.Context, texts []string) ([][]float32, error)
 
-func (e *textEmbedder) Embed(ctx context.Context, variants []ragtypes.ContentVariant) ([][]float32, error) {
-	texts := make([]string, len(variants))
-	for i, v := range variants {
-		texts[i] = v.Text
-	}
-	return e.embed(ctx, texts)
+func (f embedFunc) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return f(ctx, texts)
 }
 
 // hostedEmbedder adapts a hosted provider's embed function: requests are
 // split into bounded batches, and each batch is retried on transient
 // failures such as a rate limit.
 func hostedEmbedder(embed func(ctx context.Context, texts []string) ([][]float32, error)) ragtypes.VariantEmbedder {
-	return embedderregistry.NewBatching(embedderregistry.NewRetrying(&textEmbedder{embed: embed}, retry.DefaultConfig()))
+	return embedderregistry.NewBatching(embedderregistry.NewRetrying(embedderregistry.Text(embedFunc(embed)), retry.DefaultConfig()))
 }
 
 // resolveEmbedder creates a VariantEmbedder from the resolved embed provider
@@ -69,7 +63,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 	case providerOllama:
 		client := ollamaProvider.NewClient(*cf.ollamaHost, "", embedModel)
 		emb := ollamaProvider.NewEmbedder(client)
-		return embedderregistry.NewBatching(&textEmbedder{embed: emb.Embed}), emb, nil
+		return embedderregistry.NewBatching(embedderregistry.Text(emb)), emb, nil
 
 	case providerOpenAI:
 		apiKey := os.Getenv("OPENAI_API_KEY")
