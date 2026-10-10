@@ -29,6 +29,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | [Orchestration policies](orchestration-policies.md) | Conversation ownership, subagent results, handoff return links, sticky routing, approval limits |
 | [Approval policy and grants](approval-policy.md) | Grants by scope and expiry, denial limits, capability defaults, replay |
 | [Run hooks](hooks.md) | Lifecycle events that observe, change or abort a run; ordering, timeouts, durable replay, inheritance |
+| [Guardrails](guardrails.md) | Input and output checks that pass, block or rewrite; parallel mode, tripwires, built-ins, budget, relation to gates and redaction |
 | [MCP client](mcp-client.md) | Pooled sessions, retries, drift detection, `.mcp.json` loading |
 
 ## Runs, caching and operations

@@ -66,6 +66,7 @@ const (
 	WirePartialJSON        = "partial_json"
 	WireInterrupt          = "interrupt"
 	WireInterruptReplyKind = "interrupt.reply"
+	WireGuardrail          = "guardrail"
 )
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -307,6 +308,7 @@ var wireSentinels = []struct {
 	{"interrupt_expired", ErrInterruptExpired},
 	{"no_interrupt_router", ErrNoInterruptRouter},
 	{"hook_aborted", ErrHookAborted},
+	{"guardrail_tripped", ErrGuardrailTripped},
 }
 
 var sentinelByCode = func() map[string]error {
@@ -609,6 +611,15 @@ type wireInterruptReply struct {
 	Answer         json.RawMessage `json:"answer,omitempty"`
 }
 
+type wireGuardrail struct {
+	Guardrail string `json:"guardrail"`
+	Phase     string `json:"phase"`
+	Action    string `json:"action"`
+	Reason    string `json:"reason,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Canceled  bool   `json:"canceled,omitempty"`
+}
+
 // ── Encoding ─────────────────────────────────────────────────────────
 
 //nolint:gocyclo // one case per wire kind
@@ -700,6 +711,8 @@ func encodeDelta(d Delta) (string, any, error) {
 		}, nil
 	case PartialJSONDelta:
 		return WirePartialJSON, wirePartialJSON(v), nil
+	case GuardrailDelta:
+		return WireGuardrail, wireGuardrail(v), nil
 	case nil:
 		return "", nil, fmt.Errorf("%w: nil delta", ErrUnknownWireKind)
 	default:
@@ -827,6 +840,9 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 	case WirePartialJSON:
 		w, err := decodeAs[wirePartialJSON](kind, data)
 		return PartialJSONDelta(w), err
+	case WireGuardrail:
+		w, err := decodeAs[wireGuardrail](kind, data)
+		return GuardrailDelta(w), err
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownWireKind, kind)
 	}

@@ -35,8 +35,8 @@ const (
 	HookRunStop           HookEvent = "run_stop"
 )
 
-// DefaultHookTimeout bounds each hook call when AgentConfig.HookTimeout is
-// zero.
+// DefaultHookTimeout bounds each hook and guardrail call when
+// AgentConfig.HookTimeout is zero.
 const DefaultHookTimeout = 30 * time.Second
 
 // Hooks is one set of run-lifecycle callbacks. Every field is optional.
@@ -101,7 +101,7 @@ func WithHooks(hooks ...Hooks) AgentOption {
 	return func(c *AgentConfig) { c.Hooks = append(c.Hooks, hooks...) }
 }
 
-// WithHookTimeout bounds each hook call. Zero uses
+// WithHookTimeout bounds each hook and guardrail call. Zero uses
 // DefaultHookTimeout; a negative value removes the bound.
 func WithHookTimeout(d time.Duration) AgentOption {
 	return func(c *AgentConfig) { c.HookTimeout = d }
@@ -272,6 +272,7 @@ const (
 	RunStopLimit     RunStopReason = "limit"
 	RunStopBudget    RunStopReason = "budget"
 	RunStopAborted   RunStopReason = "aborted"
+	RunStopGuardrail RunStopReason = "guardrail"
 	RunStopFailed    RunStopReason = "error"
 )
 
@@ -338,7 +339,7 @@ func (a *Agent) hookTimeout() time.Duration {
 	}
 }
 
-// callHook runs one hook call under the hook timeout and turns
+// callHook runs one hook or guardrail call under the hook timeout and turns
 // a panic or a late return into its error.
 func (a *Agent) callHook(ctx context.Context, what string, fn func(context.Context) error) (err error) {
 	timeout := a.hookTimeout()
@@ -437,7 +438,7 @@ func recordedAbort(event HookEvent, r types.HookRecord, live *HookAbortError) er
 	return &HookAbortError{Event: event, Hook: r.Name, Reason: r.Reason}
 }
 
-// recordHook runs decide, the hooks at one point that may
+// recordHook runs decide, the hooks or guardrails at one point that may
 // change the run. Under a durable runner it is a step named step, so a replay
 // returns the recorded outcome without calling them. ran reports whether
 // decide was called.
@@ -833,6 +834,8 @@ func stopReason(stream *EventStream, err error) RunStopReason {
 		return RunStopTool
 	case err == nil:
 		return RunStopCompleted
+	case errors.Is(err, types.ErrGuardrailTripped):
+		return RunStopGuardrail
 	case errors.Is(err, types.ErrHookAborted):
 		return RunStopAborted
 	case errors.Is(err, types.ErrSuspended):

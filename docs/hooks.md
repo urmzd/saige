@@ -46,7 +46,7 @@ Each event embeds `agent.HookRun`: the agent that owns the turn (the active hand
 
 With a message-count compactor the run tries to compact before every turn and the compactor decides whether anything changes, so `BeforeCompaction` fires each turn. `AfterCompaction` reports whether the history changed.
 
-`RunStop.Reason` is one of `completed`, `stop_tool`, `canceled`, `suspended`, `limit`, `budget`, `aborted` or `error`. `RunStop.Messages` holds the branch as the run left it.
+`RunStop.Reason` is one of `completed`, `stop_tool`, `canceled`, `suspended`, `limit`, `budget`, `aborted`, `guardrail` or `error`. `RunStop.Messages` holds the branch as the run left it.
 
 ## Contract
 
@@ -92,3 +92,7 @@ a := agent.NewAgent(cfg, agent.WithHooks(
 ```
 
 The scope always comes from the policy, never from the extractor. Idempotency keys derive from the run ID and call path, so the hook firing again for the same run stores nothing new. See [memory](memory.md).
+
+## Guardrails
+
+Input and output guardrails use the same runtime: the same order, timeout, panic handling and durable records. See [guardrails](guardrails.md).

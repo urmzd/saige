@@ -224,9 +224,14 @@ type AgentConfig struct {
 	// Hooks observe the run's lifecycle and, where safe, change or abort it
 	// (see Hooks). Sets run in order; sub-agents inherit them.
 	Hooks []Hooks
-	// HookTimeout bounds each hook call. 0 uses DefaultHookTimeout; a
-	// negative value removes the bound.
+	// HookTimeout bounds each hook and guardrail call. 0 uses
+	// DefaultHookTimeout; a negative value removes the bound.
 	HookTimeout time.Duration
+	// InputGuardrails validate each user message that enters a run, and
+	// OutputGuardrails the final answer. See InputGuardrail and
+	// OutputGuardrail. Sub-agents inherit both.
+	InputGuardrails  []InputGuardrail
+	OutputGuardrails []OutputGuardrail
 }
 
 // AgentOption configures an AgentConfig using the functional options pattern.
@@ -1366,9 +1371,22 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	if err := a.runStartHooks(ctx, stream, input); err != nil {
 		return err
 	}
-	if err := a.appendInput(ctx, stream, tr, branch, input); err != nil {
+	var history []types.Message
+	if len(a.cfg.InputGuardrails) > 0 {
+		h, err := tr.FlattenBranch(branch)
+		if err != nil {
+			return err
+		}
+		history = h
+	}
+	inputText, err := a.appendInput(ctx, stream, tr, branch, input)
+	if err != nil {
 		return err
 	}
+	// Parallel input guardrails run beside the first model call, which they
+	// cancel when they block.
+	guard := a.startParallelGuard(ctx, stream, history, inputText)
+	defer func() { guard.stop() }()
 	if err := a.reportStarted(stream, tr, branch); err != nil {
 		return err
 	}
@@ -1574,9 +1592,25 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// stop it without ending the run.
 		turnCtx, cancelTurn := context.WithCancelCause(ctx)
 		stream.inbox.beginTurn(cancelTurn)
-		msg, usage, llmErr := a.getAssistantMessage(turnCtx, stream, active.provider, active.messages, toolDefs, opts, stepName)
+		var (
+			msg    *types.AssistantMessage
+			usage  *types.UsageDelta
+			llmErr error
+		)
+		// A parallel guardrail that already blocked saves the call.
+		if guard == nil || !guard.attach(cancelTurn) {
+			msg, usage, llmErr = a.getAssistantMessage(turnCtx, stream, active.provider, active.messages, toolDefs, opts, stepName)
+		}
 		interruptedBy := stream.inbox.endTurn()
 		cancelTurn(nil)
+		if guard != nil {
+			// The first call's turn is kept only if the guardrails pass.
+			err := a.finishParallelGuard(ctx, stream, tr, branch, guard, active.provider, usage)
+			guard = nil
+			if err != nil {
+				return err
+			}
+		}
 		if errors.Is(llmErr, errInterruptRequested) && ctx.Err() == nil {
 			// The interrupted call counts as a turn, so its step name is
 			// not reused and a durable runner replays its partial result.
@@ -1632,6 +1666,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		if err := a.reportUsage(ctx, stream, active.provider, usage); err != nil {
 			return err
 		}
+		if err := a.guardTruncated(ctx, stream, tr, branch, msg, usage, autoContinues, stepName); err != nil {
+			return err
+		}
 		if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
 			if resume, err := truncated(active.provider, err); resume || err != nil {
 				if err != nil {
@@ -1658,6 +1695,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				return llmErr
 			}
 			if err := a.reportUsage(ctx, stream, active.provider, usage); err != nil {
+				return err
+			}
+			if err := a.guardTruncated(ctx, stream, tr, branch, msg, usage, autoContinues, stepName); err != nil {
 				return err
 			}
 			if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
@@ -1693,12 +1733,19 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			break
 		}
 
+		// A final answer passes the output guardrails before it is recorded.
+		toolCalls := assistantToolCalls(msg)
+		if len(toolCalls) == 0 && out.textAnswerError(msg) == nil {
+			if err := a.guardOutput(ctx, stream, tr, branch, msg, stepName); err != nil {
+				return err
+			}
+		}
+
 		// Persist assistant message to tree.
 		if err := a.appendToBranch(ctx, tr, branch, *msg); err != nil {
 			return err
 		}
 
-		toolCalls := assistantToolCalls(msg)
 		if len(toolCalls) == 0 {
 			// In tool and prompt mode the schema only asks for a shape, so
 			// a text answer is checked here. A mismatch goes back to the
@@ -1790,22 +1837,29 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 }
 
 // appendInput appends input messages as child nodes on the branch. Each user
-// message passes the UserInput hooks first. Returns the first error, which
-// terminates the run.
-func (a *Agent) appendInput(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, input []types.Message) error {
+// message passes the UserInput hooks and the sequential input guardrails
+// first. Returns the first error, which terminates the run.
+//
+// It returns the text of the admitted user messages, which the parallel
+// input guardrails check.
+func (a *Agent) appendInput(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, input []types.Message) (string, error) {
+	var texts []string
 	for _, msg := range input {
 		if um, ok := msg.(types.UserMessage); ok && hasUserText(um) {
-			admitted, err := a.userInputHooks(ctx, stream, um, "input")
+			admitted, err := a.admitUserMessage(ctx, stream, tr, branch, um, "input")
 			if err != nil {
-				return err
+				return "", err
 			}
 			msg = admitted
+			if t := userText(admitted); t != "" {
+				texts = append(texts, t)
+			}
 		}
 		if err := a.appendToBranch(ctx, tr, branch, msg); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return nil
+	return strings.Join(texts, "\n\n"), nil
 }
 
 // appendToBranch adds msg at the tip of branch and persists the new node.

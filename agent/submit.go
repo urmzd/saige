@@ -304,7 +304,7 @@ func (in *inbox) close() {
 func (a *Agent) injectSubmissions(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, subs []Submission) error {
 	stream.flushAcks()
 	for _, sub := range subs {
-		msg, err := a.userInputHooks(ctx, stream, sub.Message, sub.Mode.String())
+		msg, err := a.admitUserMessage(ctx, stream, tr, branch, sub.Message, sub.Mode.String())
 		if err != nil {
 			return err
 		}

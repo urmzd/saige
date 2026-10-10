@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// Hook outcomes are saved with the run, so a resumed run
+// Hook and guardrail outcomes are saved with the run, so a resumed run
 // applies them as recorded even when the hooks would now decide otherwise.
 func TestHookOutcomesSurviveResume(t *testing.T) {
 	ctx := context.Background()
@@ -41,6 +42,10 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 					return nil
 				},
 			}),
+			agent.WithOutputGuardrails(agent.OutputGuardrail{Guardrail: agent.NewGuardrail("upper", func(_ context.Context, in agent.GuardrailInput) (agent.GuardrailVerdict, error) {
+				hookCalls.Add(1)
+				return agent.Rewrite(strings.ToUpper(in.Text), "shout"), nil
+			})}),
 		)
 	}
 	input := []types.Message{types.NewUserMessage("go")}
@@ -65,8 +70,8 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 			text += tc.Text
 		}
 	}
-	if text != "done" {
-		t.Errorf("final answer %q", text)
+	if text != "DONE" {
+		t.Errorf("final answer %q, want the recorded rewrite", text)
 	}
 	before := hookCalls.Load()
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); err != nil {

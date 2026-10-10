@@ -477,19 +477,21 @@ func stripRoutes(msgs []types.Message) []types.Message {
 	return out
 }
 
-func TestHooksAreInherited(t *testing.T) {
+func TestHooksAndGuardrailsAreInherited(t *testing.T) {
 	parent := AgentConfig{
 		Name: "parent", Provider: &namedProvider{id: "p"},
-		Hooks:       []Hooks{{Name: "audit"}},
-		HookTimeout: time.Second,
+		Hooks:            []Hooks{{Name: "audit"}},
+		HookTimeout:      time.Second,
+		InputGuardrails:  []InputGuardrail{{Guardrail: NewGuardrail("in", nil)}},
+		OutputGuardrails: []OutputGuardrail{{Guardrail: NewGuardrail("out", nil)}},
 	}
 	child := childConfig(t, parent, SubAgentDef{Name: "worker", Description: "w",
 		Options: []AgentOption{WithHooks(Hooks{Name: "own"})}})
 	if len(child.Hooks) != 2 || child.Hooks[0].Name != "audit" || child.Hooks[1].Name != "own" {
 		t.Errorf("child hooks = %v, want the parent's then its own", child.Hooks)
 	}
-	if child.HookTimeout != time.Second {
-		t.Errorf("child hook timeout = %v, want the parent's", child.HookTimeout)
+	if child.HookTimeout != time.Second || len(child.InputGuardrails) != 1 || len(child.OutputGuardrails) != 1 {
+		t.Errorf("child guardrails or hook timeout not inherited: %+v", child)
 	}
 }
 
@@ -539,6 +541,7 @@ func TestSubagentHooksAndChildRunHooks(t *testing.T) {
 func TestHookAbortErrorCrossesTheWire(t *testing.T) {
 	for _, err := range []error{
 		&HookAbortError{Event: HookTurnEnd, Hook: "h", Reason: "r"},
+		&GuardrailTrippedError{Guardrail: "g", Phase: types.GuardrailPhaseInput, Reason: "r"},
 	} {
 		b, mErr := types.MarshalDelta(types.ErrorDelta{Error: err})
 		if mErr != nil {
@@ -549,7 +552,7 @@ func TestHookAbortErrorCrossesTheWire(t *testing.T) {
 			t.Fatal(uErr)
 		}
 		got := d.(types.ErrorDelta).Error
-		if !errors.Is(got, ErrHookAborted) {
+		if !errors.Is(got, ErrHookAborted) && !errors.Is(got, ErrGuardrailTripped) {
 			t.Errorf("%T lost its code on the wire: %v", err, got)
 		}
 	}

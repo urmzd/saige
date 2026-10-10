@@ -51,7 +51,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
 - **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
 - **MCP client** with pooled sessions, safe retries, catalog drift detection, and `.mcp.json` loading. See [MCP client](docs/mcp-client.md).
-- **Run hooks**: one typed seam for lifecycle events that observe, change, or abort a run, recorded for durable replay. See [run hooks](docs/hooks.md).
+- **Run hooks and guardrails**: one typed seam for lifecycle events that observe, change, or abort a run, recorded for durable replay, and input and output guardrails that pass, block, or rewrite. See [run hooks](docs/hooks.md) and [guardrails](docs/guardrails.md).
 
 ### Context and memory
 

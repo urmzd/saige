@@ -21,6 +21,7 @@ const (
 	contentTypeTruncation = "truncation"
 	contentTypeRoute      = "route"
 	contentTypeApproval   = "approval"
+	contentTypeGuardrail  = "guardrail"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -182,6 +183,8 @@ func systemContentType(c types.SystemContent) string {
 		return contentTypeRoute
 	case types.ApprovalContent:
 		return contentTypeApproval
+	case types.GuardrailContent:
+		return contentTypeGuardrail
 	default:
 		return contentTypeUnknown
 	}
@@ -203,6 +206,8 @@ func userContentType(c types.UserContent) string {
 		return "feedback"
 	case types.SteerContent:
 		return contentTypeSteer
+	case types.GuardrailContent:
+		return contentTypeGuardrail
 	default:
 		return contentTypeUnknown
 	}
@@ -222,6 +227,8 @@ func assistantContentType(c types.AssistantContent) string {
 		return contentTypeTruncation
 	case types.RouteContent:
 		return contentTypeRoute
+	case types.GuardrailContent:
+		return contentTypeGuardrail
 	default:
 		return contentTypeUnknown
 	}
@@ -246,6 +253,9 @@ func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeApproval:
 		var c types.ApprovalContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeGuardrail:
+		var c types.GuardrailContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)
@@ -274,6 +284,9 @@ func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeSteer:
 		var c types.SteerContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeGuardrail:
+		var c types.GuardrailContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown user content type: %s", ce.Type)
@@ -309,6 +322,9 @@ func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, erro
 		return c, json.Unmarshal(ce.Data, &c)
 	case contentTypeRoute:
 		var c types.RouteContent
+		return c, json.Unmarshal(ce.Data, &c)
+	case contentTypeGuardrail:
+		var c types.GuardrailContent
 		return c, json.Unmarshal(ce.Data, &c)
 	default:
 		return nil, fmt.Errorf("unknown assistant content type: %s", ce.Type)
