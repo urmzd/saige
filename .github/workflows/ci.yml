@@ -120,6 +120,8 @@ jobs:
           go test -run='^$' -bench=. -benchmem -benchtime=200ms
           ./agent/
           ./agent/provider/cache/
+          ./agent/provider/retry/
+          ./agent/provider/router/
           ./agent/store/filewal/
           ./agent/tree/
           ./rag/bm25retriever/

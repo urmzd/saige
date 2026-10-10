@@ -22,6 +22,17 @@ gofmt -w .          # format
 go build ./...      # build
 ```
 
+### Load and concurrency testing
+
+The stress suite and the `-cpu` benchmarks are opt-in:
+
+```bash
+go test -tags stress -race -count=1 -v ./integration/stress/
+go test -run '^$' -bench . -cpu 1,4,8 ./...
+```
+
+See [docs/load-testing.md](docs/load-testing.md) for the Postgres and live provider options.
+
 ## Commit Convention
 
 Angular conventional commits enforced by [gitit](https://github.com/urmzd/gitit):

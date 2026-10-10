@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,4 +102,61 @@ func TestCacheRequiresChannel(t *testing.T) {
 		t.Fatal("invalid channel accepted")
 	}
 	var _ types.Cache[int] = (*Cache[int])(nil)
+}
+
+// hookedCache runs afterSet once, after the first Set reaches it.
+type hookedCache struct {
+	types.Cache[string]
+	once     sync.Once
+	afterSet func()
+}
+
+func (h *hookedCache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+	if err := h.Cache.Set(ctx, key, value, ttl); err != nil {
+		return err
+	}
+	h.once.Do(h.afterSet)
+	return nil
+}
+
+// A write from another process that lands between Set's shared write and
+// its local write must not leave the older value in Local. Set once wrote
+// Local unconditionally, so the process kept serving its own, overwritten
+// value.
+func TestCacheSetRacingRemoteWrite(t *testing.T) {
+	ctx := context.Background()
+	n := NewMemory(0)
+	defer n.Close()
+	store := memcache.New[string]()
+	localA, localB := memcache.New[string](), memcache.New[string]()
+	var a *Cache[string]
+	b, err := NewCache(ctx, CacheConfig[string]{Local: localB, Shared: store, Notifier: n, Channel: "inv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	hooked := &hookedCache{Cache: store}
+	hooked.afterSet = func() {
+		// B overwrites the key after A's shared write, and its
+		// invalidation reaches A before A writes Local.
+		if err := b.Set(ctx, "k", "from-b", 0); err != nil {
+			t.Error(err)
+		}
+		eventually(t, func() bool { return a.generation.Load() > 0 })
+	}
+	a, err = NewCache(ctx, CacheConfig[string]{Local: localA, Shared: hooked, Notifier: n, Channel: "inv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	if err := a.Set(ctx, "k", "from-a", 0); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := store.Get(ctx, "k"); v != "from-b" {
+		t.Fatalf("store holds %q, want from-b", v)
+	}
+	if v, ok, _ := a.Get(ctx, "k"); !ok || v != "from-b" {
+		t.Fatalf("a.Get = %q %v, want the store's from-b", v, ok)
+	}
 }
