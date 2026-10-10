@@ -341,3 +341,36 @@ type fakePreset struct{ d types.PresetDefaults }
 
 func (fakePreset) Provider() types.Provider         { return &namedProvider{id: "preset"} }
 func (f fakePreset) Defaults() types.PresetDefaults { return f.d }
+
+func TestBeforeCompactionHookSkipsStrategies(t *testing.T) {
+	for _, s := range []types.CompactStrategy{types.CompactKeepRecent, types.CompactSummary, types.CompactChain} {
+		t.Run(string(s), func(t *testing.T) {
+			script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}
+			var before, after int
+			cfg := &types.CompactConfig{Strategy: s, KeepTurns: 1, MaxInputTokens: 1,
+				Chain: []types.CompactConfig{{Strategy: types.CompactKeepRecent, KeepTurns: 1}}}
+			if s != types.CompactChain {
+				cfg.Chain = nil
+			}
+			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: cfg},
+				WithHooks(Hooks{
+					BeforeCompaction: func(_ context.Context, ev *CompactionEvent) error { before++; ev.Skip = true; return nil },
+					AfterCompaction:  func(context.Context, *CompactionEvent) error { after++; return nil },
+				}))
+			stream := a.Invoke(context.Background(), twoToolTurns())
+			deltas := agenttest.CollectDeltas(stream.Deltas())
+			if err := stream.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if before == 0 {
+				t.Fatal("BeforeCompaction was not called")
+			}
+			if got := compactionDeltas(deltas); len(got) != 0 || a.Tree().Active() != "main" || script.CallCount() != 1 {
+				t.Fatalf("compactions = %d, active = %s, calls = %d: the skip was not honored", len(got), a.Tree().Active(), script.CallCount())
+			}
+			if after != 0 {
+				t.Fatalf("AfterCompaction ran %d times for a skipped compaction", after)
+			}
+		})
+	}
+}
