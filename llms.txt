@@ -33,6 +33,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [docs/tree-traces.md](docs/tree-traces.md): Printing a conversation tree as JSON
 - [docs/upgrade-notes.md](docs/upgrade-notes.md): Behavior changes that can affect existing code
 - [docs/system-hardening.md](docs/system-hardening.md): What the hardening release changed and how each fix was verified
+- [docs/load-testing.md](docs/load-testing.md): Load and concurrency testing: the stress build tag, Postgres and live burst tests, -cpu benchmarks, nightly workflow
 - [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
 - [tools/fs/README.md](tools/fs/README.md): Workspace file tools: read with paging, glob, grep, write, edit; read-only by default
 - [tools/exec/README.md](tools/exec/README.md): Sandboxed bash tool: Sandbox interface, subprocess backend, command/env/network policy
