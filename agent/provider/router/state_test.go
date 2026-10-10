@@ -608,3 +608,42 @@ func TestAffinityKeepsStickyProfileForIneligibleRequest(t *testing.T) {
 		}
 	}
 }
+
+// withImageRule gives p an offering that takes PNG images at perImage
+// tokens each.
+func withImageRule(p scripted, perImage int) scripted {
+	o := types.OfferingFromCapabilities(p.caps)
+	o.Modalities.In = map[types.Modality]types.ModalityLimit{
+		types.ModalityImage: {Media: []types.MediaType{types.MediaPNG}, Tokens: types.TokenRule{PerImage: perImage}},
+	}
+	p.caps.Offering = &o
+	return p
+}
+
+// TestRouteEstimatesPriceMediaByEachOffering checks that each candidate's
+// estimate prices media by its own offering's token rules, that the route
+// context carries the largest, and that Affinity fits each candidate by
+// its own estimate.
+func TestRouteEstimatesPriceMediaByEachOffering(t *testing.T) {
+	dear := withImageRule(newScripted("dear", "x", 4_000, nil), 5_000)
+	cheap := withImageRule(newScripted("cheap", "y", 4_000, nil), 100)
+	var seen RouteContext
+	r, _ := New(Config{Profiles: profiles(dear, cheap), SessionPolicy: SessionPolicyFunc(func(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
+		seen = rc
+		return Affinity{}.Select(ctx, rc, st)
+	})})
+	msgs := []types.Message{types.UserMsg(types.Text("what is this?"), types.Image(types.Bytes(types.MediaPNG, []byte("png"))))}
+	got := run(t, r.Session(), msgs...)
+	if len(seen.Candidates) != 2 {
+		t.Fatalf("candidates = %+v", seen.Candidates)
+	}
+	if d, c := seen.Candidates[0].EstimatedTokens, seen.Candidates[1].EstimatedTokens; d-c != 4_900 || c <= 100 {
+		t.Fatalf("estimates = dear %d, cheap %d, want the image at 5000 and 100 tokens", d, c)
+	}
+	if seen.EstimatedTokens != seen.Candidates[0].EstimatedTokens {
+		t.Fatalf("route estimate = %d, want the largest (%d)", seen.EstimatedTokens, seen.Candidates[0].EstimatedTokens)
+	}
+	if got.text != "cheap" {
+		t.Fatalf("turn = %+v, want the profile the image fits", got)
+	}
+}
