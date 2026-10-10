@@ -16,6 +16,7 @@ saige chat
 saige chat --provider anthropic --model claude-haiku-5-5
 saige chat --provider ollama --model qwen3.5:4b   # fully local, after `ollama pull qwen3.5:4b`
 saige chat --verbose  # plain-text mode for pipes/CI
+saige chat --tools harness --workspace ./repo  # add write_file, edit_file, execute_code, fetch_url
 
 # Single-shot question (pipe-friendly)
 saige ask "What is retrieval-augmented generation?"
@@ -50,9 +51,22 @@ With `--format json`, `ask` and `chat` write one JSON object per line: a version
 saige ask --format json "Summarize RFC 9110" | jq -j 'select(.kind=="text.delta") | .data.content'
 ```
 
+### Built-in tools
+
+`--tools` picks the [harness toolset](../../docs/harness-tools.md), confined to `--workspace` (default `.`):
+
+| Value | Tools |
+|---|---|
+| `none` | None. The default for `ask`. |
+| `readonly` | `read_file`, `list_dir`, `glob`, `grep`, scratch tools. The default for `chat`. |
+| `harness` | Adds `write_file`, `edit_file`, `execute_code`, and `fetch_url` |
+| a group list | Any of `read`, `write`, `exec`, `web`, such as `read,exec` |
+
+`execute_code` runs in a `--sandbox subprocess` (default) or `docker` sandbox with `--exec-network deny` (default) or `allow`.
+
 ### Tool approval
 
-Tools that change data (`rag_update`, `rag_delete`, `kg_ingest`) require approval before they run.
+Tools that change data (`write_file`, `edit_file`, `execute_code`, `rag_update`, `rag_delete`, `kg_ingest`) require approval before they run.
 
 | Command | How approval works |
 |---|---|
@@ -101,7 +115,7 @@ Safety rules:
 
 | Pack | Tools | Notes |
 |---|---|---|
-| `fs` | `read`, `glob`, `grep` | Needs `--workspace` |
+| `fs` | `read`, `list`, `glob`, `grep` | Needs `--workspace` |
 | `fs-write` | `fs` plus `write`, `edit` | Both require approval |
 | `fetch` | `fetch` | Private and metadata addresses refused |
 | `bash` | `bash` | Requires approval. `--bash-network deny` (default) needs `sandbox-exec` or `unshare`; `--bash-network allow` runs without network isolation |

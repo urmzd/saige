@@ -46,6 +46,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **Typed function tools**: `agent.Func` derives the schema from a struct, decodes arguments strictly, and passes typed dependencies; `agent.AIFunc` is a typed function a model computes. Both are versioned by content. See [typed function tools](docs/func-tools.md).
 - **Durable runs** that resume after a crash, on a local engine or on Postgres through [duraturo](https://github.com/urmzd/duraturo), plus response caching
 - **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client, with approval enforced for mutating tools
+- **Harness toolset**: `agent.WithHarnessTools` adds `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `execute_code` (shell, Python, Go behind a subprocess or Docker sandbox), `fetch_url`, and scratch tools, read-only unless you enable more, with approvals and automatic spilling of large results. See [harness tools](docs/harness-tools.md).
 - **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
 - **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
 - **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
@@ -386,8 +387,9 @@ Every guide is listed in the [docs index](docs/README.md). Each package also has
 | `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, serve, rag, kg, eval |
 | `cmd/saige-mcp` | [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md) | MCP server setup for Claude Code, Codex, Gemini CLI |
 | `tools/research` | [tools/research/README.md](tools/research/README.md) | Web search, file, and knowledge graph tools |
-| `tools/fs` | [tools/fs/README.md](tools/fs/README.md) | Workspace read, glob, grep, write, edit with root confinement |
-| `tools/exec` | [tools/exec/README.md](tools/exec/README.md) | Sandboxed bash with command, environment, and network policy |
+| `tools` | [docs/harness-tools.md](docs/harness-tools.md) | Harness toolset: groups, sandboxes, approvals, spill, CLI `--tools` |
+| `tools/fs` | [tools/fs/README.md](tools/fs/README.md) | Workspace read, list, glob, grep, write, edit with root confinement |
+| `tools/exec` | [tools/exec/README.md](tools/exec/README.md) | Sandboxed bash and execute_code with command, environment, and network policy; subprocess and Docker sandboxes |
 | `tools/fetch` | [tools/fetch/README.md](tools/fetch/README.md) | URL fetch through a client that blocks private and metadata addresses |
 | `examples` | [examples/README.md](examples/README.md) | Runnable example index |
 

@@ -378,8 +378,8 @@ func TestBuildPackTools(t *testing.T) {
 		wantErr   bool
 	}{
 		{name: "none", want: nil},
-		{name: "fs read only", packs: []string{"fs"}, workspace: ws, want: []string{"read", "glob", "grep"}},
-		{name: "fs with writes", packs: []string{"fs-write"}, workspace: ws, want: []string{"read", "glob", "grep", "write", "edit"}},
+		{name: "fs read only", packs: []string{"fs"}, workspace: ws, want: []string{"read", "list", "glob", "grep"}},
+		{name: "fs with writes", packs: []string{"fs-write"}, workspace: ws, want: []string{"read", "list", "glob", "grep", "write", "edit"}},
 		{name: "fetch", packs: []string{"fetch"}, want: []string{"fetch"}},
 		{name: "bash with network allowed", packs: []string{"bash"}, workspace: ws, network: "allow", want: []string{"bash"}},
 		{name: "fs needs a workspace", packs: []string{"fs"}, wantErr: true},

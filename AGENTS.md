@@ -60,9 +60,10 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `rag/source/` | Source URI resolution |
 | `rag/source/searxng/` | SearXNG metasearch HTTP client |
 | `rag/tokenizer/` | Token counting utilities |
+| `tools/` | `Harness`: curated toolset over the packs below plus scratch tools, with groups, sandbox choice, approvals and spill |
 | `tools/research/` | Research tools: web search, file search/read, knowledge graph CRUD |
-| `tools/fs/` | Workspace file tools: read (paging), glob, grep, write, edit; root-confined, read-only by default |
-| `tools/exec/` | Sandboxed bash tool: Sandbox interface, subprocess backend, command/env/network policy, always approval-marked |
+| `tools/fs/` | Workspace file tools: read (paging), list, glob, grep, write, edit; root-confined, read-only by default |
+| `tools/exec/` | Sandboxed bash and execute_code tools: Sandbox interface, subprocess and Docker backends, command/env/network policy, always approval-marked |
 | `tools/fetch/` | URL fetch tool and SafeHTTPClient, which blocks private and metadata IPs |
 | `eval/` | Evaluation suites: gates, comparisons and experiments, results store |
 
@@ -71,6 +72,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 ```bash
 saige chat                          # interactive multi-turn TUI
 saige chat --provider anthropic     # use Anthropic (needs ANTHROPIC_API_KEY)
+saige chat --tools harness          # built-in tools (default readonly); write and exec ask first
 saige chat --verbose                # plain-text mode
 saige ask "question"                # single-shot query
 echo "question" | saige ask --template minimal   # pipe-friendly output
