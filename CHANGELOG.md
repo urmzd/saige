@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.0 (2026-10-10)
+
+### Features
+
+- **batch**: vendor batch APIs behind types.BatchProvider with durable jobs (#82) ([1d6c7f3](https://github.com/urmzd/saige/commit/1d6c7f3abf314e746ff097d4335b9f25dfcaebd7))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.30.0...v0.31.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
