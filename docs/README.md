@@ -37,6 +37,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 
 | Guide | Covers |
 | --- | --- |
+| [Batch processing](batch.md) | Vendor batch APIs at half price, the local fallback, durable jobs, budget, evals, `agent.RunBatch` |
 | [Durable execution](durable-execution.md) | Local engine and duraturo on Postgres, saved approvals, uncertain steps, reconciliation, budget receipts |
 | [Cache contracts](cache-contracts.md) | Cache identity, provider cache modes, known limits |
 | [Observability](observability.md) | OpenTelemetry spans and metrics, error attributes, redaction |

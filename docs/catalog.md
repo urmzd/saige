@@ -38,11 +38,12 @@ A model row matches model IDs by longest prefix. Only an exact match is a declar
   "reasoning": { "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "medium",
     "required": false, "sampling_requires_no_reasoning": ["temperature", "top_p"] },
   "pricing": { "currency": "USD", "input_per_mtok": 0.1, "output_per_mtok": 0.5, "cached_input_per_mtok": 0.01,
-    "cache_write_per_mtok": 0.125, "as_of": "2026-10-09", "source": "vendor list price" }
+    "cache_write_per_mtok": 0.125, "batch_discount": 0.5, "batch_cached_input_per_mtok": 0.005,
+    "as_of": "2026-10-09", "source": "vendor list price" }
 }
 ```
 
-Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set), `defaults`, `dials` and `notes`.
+Row fields: `extends` (a template; chains up to four deep, cycles rejected), `tier`, `superseded_by`, `chat_completions_tools`, `capabilities` (replaces the inherited list), `add_capabilities`, `remove_capabilities`, `limits`, `reasoning` (`efforts`, `default_effort`, `required`, `default_enabled`, `min_budget`, `max_budget`, `dynamic_budget`, `zero_budget`, `sampling_requires_no_reasoning`, `forced_tool_choice`), `structured_output` (`""`, `native` or `tool_call`), `media`, `server_tools`, `server_tool_fees`, `pricing` (`as_of` is required when a rate is set; `batch_discount` and `batch_cached_input_per_mtok` price the vendor batch API, see [batch processing](batch.md#cost-and-budget)), `defaults`, `dials` and `notes`.
 
 Two fields describe request shapes a vendor rejects for one model:
 

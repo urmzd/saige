@@ -365,6 +365,8 @@
         "output_per_mtok": 20,
         "cached_input_per_mtok": 0.2,
         "cache_write_per_mtok": 5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.1,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -409,6 +411,8 @@
         "output_per_mtok": 10,
         "cached_input_per_mtok": 0.2,
         "cache_write_per_mtok": 2.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.1,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -452,6 +456,8 @@
         "output_per_mtok": 0.5,
         "cached_input_per_mtok": 0.01,
         "cache_write_per_mtok": 0.125,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.005,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -501,6 +507,8 @@
         "output_per_mtok": 50,
         "cached_input_per_mtok": 0.25,
         "cache_write_per_mtok": 12.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.125,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -548,6 +556,8 @@
         "output_per_mtok": 50,
         "cached_input_per_mtok": 0.25,
         "cache_write_per_mtok": 12.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.125,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -656,6 +666,8 @@
         "input_per_mtok": 15,
         "output_per_mtok": 75,
         "cached_input_per_mtok": 1.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.75,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -671,6 +683,8 @@
         "input_per_mtok": 3,
         "output_per_mtok": 15,
         "cached_input_per_mtok": 0.3,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.15,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -686,6 +700,8 @@
         "input_per_mtok": 1,
         "output_per_mtok": 5,
         "cached_input_per_mtok": 0.1,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.05,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -701,6 +717,8 @@
         "input_per_mtok": 3,
         "output_per_mtok": 15,
         "cached_input_per_mtok": 0.3,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.15,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -719,6 +737,8 @@
         "input_per_mtok": 3,
         "output_per_mtok": 15,
         "cached_input_per_mtok": 0.3,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.15,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -737,6 +757,8 @@
         "input_per_mtok": 0.8,
         "output_per_mtok": 4,
         "cached_input_per_mtok": 0.08,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.04,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -755,6 +777,8 @@
         "input_per_mtok": 15,
         "output_per_mtok": 75,
         "cached_input_per_mtok": 1.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.75,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -773,6 +797,8 @@
         "input_per_mtok": 0.25,
         "output_per_mtok": 1.25,
         "cached_input_per_mtok": 0.03,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.015,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -819,6 +845,8 @@
         "output_per_mtok": 0.5,
         "cached_input_per_mtok": 0.01,
         "cache_write_per_mtok": 0.125,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.005,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -872,6 +900,8 @@
         "output_per_mtok": 10,
         "cached_input_per_mtok": 0.2,
         "cache_write_per_mtok": 2.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.1,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -915,6 +945,8 @@
         "output_per_mtok": 10,
         "cached_input_per_mtok": 0.1,
         "cache_write_per_mtok": 2.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.05,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -957,6 +989,8 @@
         "output_per_mtok": 50,
         "cached_input_per_mtok": 1,
         "cache_write_per_mtok": 12.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1009,6 +1043,8 @@
         "input_per_mtok": 0.2,
         "output_per_mtok": 1.2,
         "cached_input_per_mtok": 0.02,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.01,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1060,6 +1096,8 @@
         "output_per_mtok": 12,
         "cached_input_per_mtok": 0.2,
         "cache_write_per_mtok": 2.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.1,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1110,6 +1148,8 @@
         "input_per_mtok": 4,
         "output_per_mtok": 20,
         "cached_input_per_mtok": 0.4,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.2,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1142,6 +1182,8 @@
         "input_per_mtok": 1.25,
         "output_per_mtok": 10,
         "cached_input_per_mtok": 0.125,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.0625,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1272,6 +1314,8 @@
         "input_per_mtok": 15,
         "output_per_mtok": 60,
         "cached_input_per_mtok": 7.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 3.75,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1291,6 +1335,8 @@
         "input_per_mtok": 2,
         "output_per_mtok": 8,
         "cached_input_per_mtok": 0.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.25,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1310,6 +1356,8 @@
         "input_per_mtok": 1.1,
         "output_per_mtok": 4.4,
         "cached_input_per_mtok": 0.275,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.1375,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1329,6 +1377,8 @@
         "input_per_mtok": 2,
         "output_per_mtok": 8,
         "cached_input_per_mtok": 0.5,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.25,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1348,6 +1398,8 @@
         "input_per_mtok": 0.4,
         "output_per_mtok": 1.6,
         "cached_input_per_mtok": 0.1,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.05,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1381,6 +1433,8 @@
         "input_per_mtok": 2.5,
         "output_per_mtok": 10,
         "cached_input_per_mtok": 1.25,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.625,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1400,6 +1454,8 @@
         "input_per_mtok": 0.15,
         "output_per_mtok": 0.6,
         "cached_input_per_mtok": 0.075,
+        "batch_discount": 0.5,
+        "batch_cached_input_per_mtok": 0.0375,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1418,6 +1474,7 @@
         "currency": "USD",
         "input_per_mtok": 10,
         "output_per_mtok": 30,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       },
@@ -1433,6 +1490,7 @@
       "pricing": {
         "currency": "USD",
         "input_per_mtok": 0.02,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1444,6 +1502,7 @@
       "pricing": {
         "currency": "USD",
         "input_per_mtok": 0.02,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       }
@@ -1469,6 +1528,7 @@
         "currency": "USD",
         "input_per_mtok": 0.75,
         "output_per_mtok": 3.75,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1502,6 +1562,7 @@
         "input_per_mtok": 0.75,
         "output_per_mtok": 3.75,
         "cached_input_per_mtok": 0.075,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1559,6 +1620,7 @@
         "currency": "USD",
         "input_per_mtok": 0.75,
         "output_per_mtok": 3.75,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1590,6 +1652,7 @@
         "currency": "USD",
         "input_per_mtok": 0.3,
         "output_per_mtok": 2.5,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1620,6 +1683,7 @@
         "currency": "USD",
         "input_per_mtok": 0.25,
         "output_per_mtok": 1.5,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1645,6 +1709,7 @@
         "currency": "USD",
         "input_per_mtok": 2,
         "output_per_mtok": 12,
+        "batch_discount": 0.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
@@ -1712,6 +1777,7 @@
         "input_per_mtok": 1.25,
         "output_per_mtok": 10,
         "cached_input_per_mtok": 0.31,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       },
@@ -1738,6 +1804,7 @@
         "input_per_mtok": 0.3,
         "output_per_mtok": 2.5,
         "cached_input_per_mtok": 0.075,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       },
@@ -1781,6 +1848,7 @@
         "input_per_mtok": 0.1,
         "output_per_mtok": 0.4,
         "cached_input_per_mtok": 0.025,
+        "batch_discount": 0.5,
         "as_of": "2026-07-24",
         "source": "vendor list price"
       },

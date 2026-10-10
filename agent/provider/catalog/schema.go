@@ -124,15 +124,21 @@ type PricingSpec struct {
 	CachedInputPerMTok float64 `json:"cached_input_per_mtok,omitempty"`
 	CacheWritePerMTok  float64 `json:"cache_write_per_mtok,omitempty"`
 	PerRequest         float64 `json:"per_request,omitempty"`
-	Free               bool    `json:"free,omitempty"`
-	AsOf               string  `json:"as_of,omitempty"`
-	Source             string  `json:"source,omitempty"`
+	// BatchDiscount is the fraction off token rates through the vendor's
+	// batch API, such as 0.5.
+	BatchDiscount float64 `json:"batch_discount,omitempty"`
+	// BatchCachedInputPerMTok is the cache-read rate through the batch API,
+	// for vendors whose batch discount stacks with the cache discount.
+	BatchCachedInputPerMTok float64 `json:"batch_cached_input_per_mtok,omitempty"`
+	Free                    bool    `json:"free,omitempty"`
+	AsOf                    string  `json:"as_of,omitempty"`
+	Source                  string  `json:"source,omitempty"`
 }
 
 func (p PricingSpec) pricing() types.Pricing {
 	return types.Pricing{Currency: p.Currency, InputPerMTok: p.InputPerMTok, OutputPerMTok: p.OutputPerMTok,
 		CachedInputPerMTok: p.CachedInputPerMTok, CacheWritePerMTok: p.CacheWritePerMTok,
-		PerRequest: p.PerRequest, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
+		PerRequest: p.PerRequest, BatchDiscount: p.BatchDiscount, BatchCachedInputPerMTok: p.BatchCachedInputPerMTok, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
 }
 
 func pricingSpec(p types.Pricing) *PricingSpec {
@@ -141,7 +147,7 @@ func pricingSpec(p types.Pricing) *PricingSpec {
 	}
 	return &PricingSpec{Currency: p.Currency, InputPerMTok: p.InputPerMTok, OutputPerMTok: p.OutputPerMTok,
 		CachedInputPerMTok: p.CachedInputPerMTok, CacheWritePerMTok: p.CacheWritePerMTok,
-		PerRequest: p.PerRequest, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
+		PerRequest: p.PerRequest, BatchDiscount: p.BatchDiscount, BatchCachedInputPerMTok: p.BatchCachedInputPerMTok, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
 }
 
 // OptionsSpec is the options object used everywhere options are declared:
