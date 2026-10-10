@@ -292,3 +292,16 @@ func TestLiveBatchPDFViaExtract(t *testing.T) {
 	t.Logf("answer %q, usage %+v", res[0].Text(), res[0].Usage)
 	spend(t, "batch pdf", b)
 }
+
+// An agent with no system prompt sends an image natively to Gemini on
+// Vertex, which rejects a system instruction that holds no text.
+func TestLiveImageWithoutSystemPromptOnVertex(t *testing.T) {
+	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01), AllowUnpriced: true})
+	a := agent.NewAgent(agent.AgentConfig{Provider: gemini(t), Budget: b})
+	img := types.Image(types.Bytes(types.MediaPNG, redSquare(t)))
+	answer, _, _, _ := run(t, a, types.UserMsg(types.Text("What color is the image? Reply with one word."), img))
+	if !strings.Contains(strings.ToLower(answer), "red") {
+		t.Fatalf("answer = %q", answer)
+	}
+	spend(t, "vertex image", b)
+}
