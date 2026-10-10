@@ -75,8 +75,8 @@ func TestNewTools(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		{name: "read only by default", root: root, want: []string{"glob", "grep", "read"}},
-		{name: "writes opt in", root: root, opts: []Option{AllowWrites()}, want: []string{"edit", "glob", "grep", "read", "write"}},
+		{name: "read only by default", root: root, want: []string{"glob", "grep", "list", "read"}},
+		{name: "writes opt in", root: root, opts: []Option{AllowWrites()}, want: []string{"edit", "glob", "grep", "list", "read", "write"}},
 		{name: "root required", root: "", wantErr: true},
 		{name: "root must exist", root: filepath.Join(root, "missing"), wantErr: true},
 		{name: "root must be a directory", root: file, wantErr: true},
@@ -373,5 +373,43 @@ func checkResult(t *testing.T, got string, err error, want, wantNot []string, wa
 		if strings.Contains(got, w) {
 			t.Errorf("output unexpectedly contains %q:\n%s", w, got)
 		}
+	}
+}
+
+func TestList(t *testing.T) {
+	root := workspace(t)
+	if err := os.Symlink("/etc", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	list := toolsByName(t, root)["list"]
+	ctx := context.Background()
+
+	out, err := list.Execute(ctx, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cmd/\n", "docs/\n", "main.go\t29 bytes", "link -> /etc"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "nested/") > strings.Index(out, "main.go") {
+		t.Errorf("directories must come before files:\n%s", out)
+	}
+
+	out, err = list.Execute(ctx, map[string]any{"path": "cmd/app"})
+	if err != nil || !strings.Contains(out, "app.txt") {
+		t.Fatalf("list cmd/app = %q, %v", out, err)
+	}
+	for _, p := range []string{"../", "/etc", "link", "main.go"} {
+		if _, err := list.Execute(ctx, map[string]any{"path": p}); err == nil {
+			t.Errorf("list %q must fail", p)
+		}
+	}
+
+	capped := toolsByName(t, root, WithMaxResults(2))["list"]
+	out, err = capped.Execute(ctx, map[string]any{})
+	if err != nil || !strings.Contains(out, "more entries") {
+		t.Fatalf("capped list = %q, %v", out, err)
 	}
 }

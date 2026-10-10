@@ -1,5 +1,5 @@
-// Package fs provides workspace file tools for agents: read, glob, grep,
-// write, and edit.
+// Package fs provides workspace file tools for agents: read, list, glob,
+// grep, write, and edit.
 //
 // Every tool is confined to one workspace root: paths that escape it through
 // "../", an absolute path, or a symlink are rejected. The pack is read-only by
@@ -32,7 +32,8 @@ const (
 	// DefaultReadLimit is the number of lines read returns when the call
 	// gives no limit.
 	DefaultReadLimit = 500
-	// DefaultMaxResults caps glob paths and grep matches per call.
+	// DefaultMaxResults caps list entries, glob paths, and grep matches per
+	// call.
 	DefaultMaxResults = 200
 )
 
@@ -105,8 +106,8 @@ func WithMaxResults(n int) Option {
 var ErrNoRoot = errors.New("fs: a workspace root is required")
 
 // NewTools returns the file tools confined to root, which must be an
-// existing directory. Without AllowWrites only read, glob, and grep are
-// returned.
+// existing directory. Without AllowWrites only read, list, glob, and grep
+// are returned.
 func NewTools(root string, opts ...Option) ([]types.Tool, error) {
 	if root == "" {
 		return nil, ErrNoRoot
@@ -133,7 +134,7 @@ func NewTools(root string, opts ...Option) ([]types.Tool, error) {
 		o(cfg)
 	}
 
-	tools := []types.Tool{&readTool{cfg}, &globTool{cfg}, &grepTool{cfg}}
+	tools := []types.Tool{&readTool{cfg}, &listTool{cfg}, &globTool{cfg}, &grepTool{cfg}}
 	if cfg.allowWrites {
 		tools = append(tools, approval(&writeTool{cfg}), approval(&editTool{cfg}))
 	}

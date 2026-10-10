@@ -2,7 +2,6 @@ package exec
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -112,25 +111,7 @@ func (t *bashTool) Execute(ctx context.Context, args map[string]any) (string, er
 
 // timeout picks the per-call limit: the requested value capped by
 // MaxTimeout, or the policy default.
-func (t *bashTool) timeout(v any) time.Duration {
-	d := t.policy.Timeout
-	var secs float64
-	switch n := v.(type) {
-	case float64:
-		secs = n
-	case int:
-		secs = float64(n)
-	case json.Number:
-		secs, _ = n.Float64()
-	}
-	if secs > 0 {
-		d = time.Duration(secs * float64(time.Second))
-	}
-	if t.policy.MaxTimeout > 0 && (d <= 0 || d > t.policy.MaxTimeout) {
-		d = t.policy.MaxTimeout
-	}
-	return d
-}
+func (t *bashTool) timeout(v any) time.Duration { return t.policy.callTimeout(v) }
 
 func formatResult(r Result) string {
 	var b strings.Builder
