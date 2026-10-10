@@ -75,7 +75,7 @@ func TestRunMigrationsConcurrentStartup(t *testing.T) {
 func TestRunMigrationsEmbeddingDimension(t *testing.T) {
 	pool := freshDatabase(t)
 	ctx := context.Background()
-	if err := RunMigrations(ctx, pool, MigrationOptions{RAGEmbeddingDim: 768, KGEmbeddingDim: 768}); err != nil {
+	if err := RunMigrations(ctx, pool, MigrationOptions{RAGEmbeddingDim: 768, KGEmbeddingDim: 768, MemoryEmbeddingDim: 768}); err != nil {
 		t.Fatalf("initial migration: %v", err)
 	}
 	for _, tc := range []struct {
@@ -87,6 +87,7 @@ func TestRunMigrationsEmbeddingDimension(t *testing.T) {
 		{"unset dimensions skip the check", MigrationOptions{}, nil},
 		{"rag dimension changed", MigrationOptions{RAGEmbeddingDim: 1024}, ErrEmbeddingDimMismatch},
 		{"kg dimension changed", MigrationOptions{KGEmbeddingDim: 1536}, ErrEmbeddingDimMismatch},
+		{"memory dimension changed", MigrationOptions{MemoryEmbeddingDim: 1024}, ErrEmbeddingDimMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := RunMigrations(ctx, pool, tc.opts)
@@ -153,7 +154,8 @@ func TestCheckServerVersion(t *testing.T) {
 }
 
 // TestRunMigrationsCreatesSearchExtensions checks that a fresh database gets
-// both required extensions and the BM25 index over variant text.
+// both required extensions and the BM25 indexes over variant and memory
+// text.
 func TestRunMigrationsCreatesSearchExtensions(t *testing.T) {
 	pool := freshDatabase(t)
 	ctx := context.Background()
@@ -176,12 +178,14 @@ func TestRunMigrationsCreatesSearchExtensions(t *testing.T) {
 			t.Errorf("extension %s not created", ext)
 		}
 	}
-	var hasIndex bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('idx_rag_variant_bm25') IS NOT NULL`).Scan(&hasIndex); err != nil {
-		t.Fatal(err)
-	}
-	if !hasIndex {
-		t.Error("idx_rag_variant_bm25 not created")
+	for _, idx := range []string{"idx_rag_variant_bm25", "idx_memory_record_bm25", "idx_memory_record_embedding"} {
+		var hasIndex bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, idx).Scan(&hasIndex); err != nil {
+			t.Fatal(err)
+		}
+		if !hasIndex {
+			t.Errorf("%s not created", idx)
+		}
 	}
 }
 

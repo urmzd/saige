@@ -8,8 +8,9 @@
 // cannot pose as an instruction, and is never added as system content.
 //
 // Stores: MemStore for tests and fixtures, FileStore for markdown files on
-// disk (with the six file commands under /memories), and KGStore over a
-// knowledge graph.
+// disk (with the six file commands under /memories), KGStore over a
+// knowledge graph, and agent/memory/pgstore for hybrid recall on Postgres.
+// Package memorytest holds the contract every Store must meet.
 package memory
 
 import (
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/privacy"
+	"github.com/urmzd/saige/agent/selector/rank"
 )
 
 var (
@@ -165,8 +167,11 @@ const DefaultRecallBudget = 1000
 // EstimateTokens approximates the tokens in text at four bytes per token.
 func EstimateTokens(text string) int { return (len(text) + 3) / 4 }
 
-// recordID derives a stable ID from the scope and the idempotency key, or
-// from the content when there is no key.
+// RecordID derives a stable ID from the scope and the idempotency key, or
+// from the content when there is no key. Stores use it for records that
+// arrive without an ID, so a replayed write lands on the same ID.
+func RecordID(r Record) string { return recordID(r) }
+
 func recordID(r Record) string {
 	basis := r.IdempotencyKey
 	if basis == "" {
@@ -177,10 +182,7 @@ func recordID(r Record) string {
 }
 
 // rank orders candidates for query and keeps those that fit budget.
-func rank(records []Record, query string, budget int, now time.Time) []Record {
-	if budget <= 0 {
-		budget = DefaultRecallBudget
-	}
+func rankRecords(records []Record, query string, budget int, now time.Time) []Record {
 	terms := strings.Fields(strings.ToLower(query))
 	type scored struct {
 		Record
@@ -215,20 +217,11 @@ func rank(records []Record, query string, budget int, now time.Time) []Record {
 		}
 		return a.ID < b.ID
 	})
-	var out []Record
-	used := 0
-	for _, c := range cands {
-		cost := EstimateTokens(c.Content)
-		if used+cost > budget {
-			if len(out) == 0 {
-				continue // a record larger than the whole budget is skipped
-			}
-			break
-		}
-		used += cost
-		out = append(out, c.Record)
+	out := make([]Record, len(cands))
+	for i, c := range cands {
+		out[i] = c.Record
 	}
-	return out
+	return FitBudget(out, budget)
 }
 
 // RecallMode chooses how memories reach the model.
@@ -242,6 +235,10 @@ const (
 	RecallByInjection
 	// RecallDisabled disables recall.
 	RecallDisabled
+	// RecallBySelector offers recent memories to Policy.Selector at the start
+	// of a run and injects the ones it picks, through Policy.StartMessage.
+	// The host chooses the ranking; the default is BM25 over content and tags.
+	RecallBySelector
 )
 
 // AllowList admits memory kinds. Empty admits every kind.
@@ -269,6 +266,15 @@ type Policy struct {
 	AutoApprove bool
 	// Recall chooses how memories reach the model.
 	Recall RecallMode
+	// InjectBudget is the token budget of the message StartMessage builds.
+	// 0 uses DefaultRecallBudget.
+	InjectBudget int
+	// Selector ranks candidate memories for RecallBySelector. nil uses BM25
+	// over content and tags.
+	Selector rank.Selector[Record]
+	// SelectorCandidates bounds how many recent memories are offered to
+	// Selector. 0 uses DefaultSelectorCandidates.
+	SelectorCandidates int
 	// Scope maps the calling agent to its scope. Required: without it every
 	// memory tool fails with ErrNoScope.
 	Scope func(ctx context.Context, owner string) (Scope, error)

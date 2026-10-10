@@ -1,0 +1,28 @@
+CREATE TABLE IF NOT EXISTS memory_record (
+    row_id          BIGSERIAL UNIQUE,
+    tenant          TEXT NOT NULL,
+    subject         TEXT NOT NULL DEFAULT '',
+    namespace       TEXT NOT NULL DEFAULT '',
+    id              TEXT NOT NULL,
+    origin          TEXT NOT NULL DEFAULT 'memory',
+    kind            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    tags            TEXT[] NOT NULL DEFAULT '{}',
+    search_text     TEXT NOT NULL DEFAULT '',
+    source          JSONB,
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    embedding       vector({{.MemoryEmbeddingDim}}),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at      TIMESTAMPTZ,
+    PRIMARY KEY (tenant, subject, namespace, id)
+)
+---
+CREATE INDEX IF NOT EXISTS idx_memory_record_scope_recent ON memory_record(tenant, subject, origin, created_at DESC)
+---
+CREATE INDEX IF NOT EXISTS idx_memory_record_expires ON memory_record(expires_at) WHERE expires_at IS NOT NULL
+---
+CREATE INDEX IF NOT EXISTS idx_memory_record_conversation ON memory_record(tenant, subject, (source ->> 'conversation')) WHERE origin = 'conversation'
+---
+CREATE INDEX IF NOT EXISTS idx_memory_record_embedding ON memory_record USING hnsw (embedding vector_cosine_ops)
+---
+CREATE INDEX IF NOT EXISTS idx_memory_record_bm25 ON memory_record USING bm25 (row_id, search_text) WITH (key_field = 'row_id')

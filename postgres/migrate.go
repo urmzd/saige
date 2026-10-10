@@ -18,6 +18,10 @@ type MigrationOptions struct {
 	// RAGEmbeddingDim is the rag_variant.embedding dimension. Zero creates new
 	// tables with 768 and skips the dimension check for existing ones.
 	RAGEmbeddingDim int
+	// MemoryEmbeddingDim is the memory_record.embedding dimension. Zero
+	// creates new tables with 768 and skips the dimension check for existing
+	// ones.
+	MemoryEmbeddingDim int
 }
 
 // ErrEmbeddingDimMismatch reports that an existing vector column has a
@@ -80,7 +84,10 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, opts MigrationOption
 }
 
 func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (err error) {
-	checkKG, checkRAG := opts.KGEmbeddingDim > 0, opts.RAGEmbeddingDim > 0
+	checkKG, checkRAG, checkMemory := opts.KGEmbeddingDim > 0, opts.RAGEmbeddingDim > 0, opts.MemoryEmbeddingDim > 0
+	if !checkMemory {
+		opts.MemoryEmbeddingDim = defaultEmbeddingDim
+	}
 	if !checkKG {
 		opts.KGEmbeddingDim = defaultEmbeddingDim
 	}
@@ -120,6 +127,10 @@ func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (
 	if err := execScript(ctx, conn, notifySQL); err != nil {
 		return err
 	}
+	// Memory tables live in their own script too.
+	if err := execScript(ctx, conn, renderTemplate(memoryTmpl, opts)); err != nil {
+		return err
+	}
 
 	if checkKG {
 		if err := checkVectorDim(ctx, conn, "kg_entity", "embedding", opts.KGEmbeddingDim); err != nil {
@@ -128,6 +139,11 @@ func runMigrations(ctx context.Context, conn *pgx.Conn, opts MigrationOptions) (
 	}
 	if checkRAG {
 		if err := checkVectorDim(ctx, conn, "rag_variant", "embedding", opts.RAGEmbeddingDim); err != nil {
+			return err
+		}
+	}
+	if checkMemory {
+		if err := checkVectorDim(ctx, conn, "memory_record", "embedding", opts.MemoryEmbeddingDim); err != nil {
 			return err
 		}
 	}
