@@ -493,7 +493,49 @@ func (lr logRenderer) renderLog() string {
 	return b.String()
 }
 
+// shows reports whether renderEntry draws anything for e under the
+// template, so counts of the transcript match what is on screen.
+func (lr logRenderer) shows(e activityEntry) bool {
+	t := lr.template
+	switch e.kind {
+	case activityText:
+		return e.content != nil && e.content.Len() > 0 && (e.final || t.ShowStreamText)
+	case activityThinking:
+		return e.content != nil && e.content.Len() > 0
+	case activityMedia:
+		return e.media != nil
+	case activityRefusal:
+		return e.content != nil
+	case activityTool:
+		if e.agent {
+			return t.ShowAgents
+		}
+		return t.ShowToolCalls
+	case activityMarker:
+		return t.ShowMarkers
+	case activityUsage:
+		return t.ShowUsage && e.usage != nil
+	case activityNotice:
+		return t.ShowRouting
+	}
+	return true
+}
+
+// visible counts the entries renderEntry draws.
+func (lr logRenderer) visible(entries []activityEntry) int {
+	n := 0
+	for _, e := range entries {
+		if lr.shows(e) {
+			n++
+		}
+	}
+	return n
+}
+
 func (lr logRenderer) renderEntry(b *strings.Builder, e activityEntry) {
+	if !lr.shows(e) {
+		return
+	}
 	switch e.kind {
 	case activityUser:
 		label := "you"

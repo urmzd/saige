@@ -928,7 +928,10 @@ func (m runnerModel) render(entries []activityEntry) string {
 }
 
 func (m runnerModel) headerView() string {
-	badge := m.filter.badge(len(m.filter.apply(m.act.entries)), len(m.act.entries), m.filtering)
+	// Count what is drawn: an entry the template hides is neither shown
+	// nor part of the total.
+	lr := logRenderer{template: m.template}
+	badge := m.filter.badge(lr.visible(m.filter.apply(m.act.entries)), lr.visible(m.act.entries), m.filtering)
 	return topView(m.template.ShowHeader, m.header, m.width, badge)
 }
 
