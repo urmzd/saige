@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 2,
-  "revision": "2026-10-09.5",
+  "revision": "2026-10-10.1",
   "model_templates": {
     "anthropic.base": {
       "limits": {
@@ -2896,6 +2896,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3007,7 +3015,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3015,6 +3024,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3126,7 +3143,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3134,6 +3152,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3246,7 +3272,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3284,6 +3311,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": true
         },
@@ -3356,7 +3391,8 @@
         "tool calling requires the Responses API: provider.Build serves this model through it",
         "the vendor page states no default effort; medium is assumed",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3512,6 +3548,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3643,7 +3687,8 @@
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "Chat Completions accepts tools only with reasoning effort none: the chat adapter sends none when tools are offered and no effort is set, and rejects another effort",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
