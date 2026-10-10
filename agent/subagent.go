@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
@@ -197,6 +198,10 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		// child keeps them unless its Options set WithDials.
 		Dials:      parent.Dials.Clone(),
 		DialPolicy: parent.DialPolicy,
+		// Hooks are run policy, like the gate: a child runs its parent's,
+		// then any its Options add.
+		Hooks:       slices.Clone(parent.Hooks),
+		HookTimeout: parent.HookTimeout,
 	}
 }
 

@@ -364,3 +364,11 @@ Grants never cover a destructive tool, and neither does the opt-in approval ramp
 Each decision is recorded as metadata in the tree next to the call's result, and the policy's state is rebuilt from those records at the start of each run, so a restored conversation decides alike. Compaction writes the whole state onto its new branch as one snapshot record. A turn that ends before its results are written loses that turn's records, which at worst asks again.
 Under a durable runner the verdict on each call is a recorded step, so a replay decides the same way after a grant expired. The decision that created a grant is saved with the approval.
 State is per conversation. A sub-agent starts with none, so a grant never crosses a delegation.
+
+## D-39: Give hooks one seam and record what they change
+
+`agent.Hooks` is the single place host code observes a run: run start and stop, user input, model calls, tools, compaction, turns, sub-agents, and interrupts. Sets run in the order they were added and sub-agents inherit them, like the gate (D-08).
+Most points only observe. A point may change its event or abort the run only where the loop can absorb it: a changed message, arguments, result, or task, a skipped compaction, or an abort at a safe point. An aborted tool call still gets a result, so pairing holds (D-18), and hooks never add or remove messages.
+Each call is bounded by a timeout, and a panic or a late return is a failure. A failure aborts at an abortable point and is logged at an observing one. The agent waits for a hook rather than abandon it, because a hook still running would race with the run.
+Under a durable runner the outcome of every changing or aborting point is a recorded step, so a replay applies it without calling the hook (D-14). Observing hooks run again on replay.
+Post-run work, such as the memory extraction D-33 calls for, runs in `RunStop`, after the branch is released and on a context the run's cancellation does not reach.

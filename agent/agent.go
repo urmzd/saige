@@ -220,6 +220,13 @@ type AgentConfig struct {
 	// WithInterruptExpiry.
 	InterruptTTL    time.Duration
 	InterruptPolicy types.InterruptPolicy
+
+	// Hooks observe the run's lifecycle and, where safe, change or abort it
+	// (see Hooks). Sets run in order; sub-agents inherit them.
+	Hooks []Hooks
+	// HookTimeout bounds each hook call. 0 uses DefaultHookTimeout; a
+	// negative value removes the bound.
+	HookTimeout time.Duration
 }
 
 // AgentOption configures an AgentConfig using the functional options pattern.
@@ -1237,9 +1244,17 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 		// than lost; accepted ones remain in Undelivered.
 		stream.inbox.close()
 		stream.flushAcks()
+		// RunStop hooks read the branch before another run may extend it,
+		// and run after the claim is released, so post-run work such as
+		// memory extraction does not hold the branch.
+		var final []types.Message
+		if hasHooks(a, pickRunStop) {
+			final, _ = a.cfg.Tree.FlattenBranch(stream.branch)
+		}
 		if release != nil {
 			release()
 		}
+		a.safely("run stop hooks", func() { a.runStopHooks(ctx, stream, final, start, loopErr) })
 		// A terminal error is delivered on both channels on purpose: as an
 		// ErrorDelta so channel consumers see it in-band, and as the stream's
 		// close error so Wait() reports the same failure.
@@ -1348,7 +1363,10 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	log := a.cfg.Logger
 	tr := a.cfg.Tree
 
-	if err := a.appendInput(ctx, tr, branch, input); err != nil {
+	if err := a.runStartHooks(ctx, stream, input); err != nil {
+		return err
+	}
+	if err := a.appendInput(ctx, stream, tr, branch, input); err != nil {
 		return err
 	}
 	if err := a.reportStarted(stream, tr, branch); err != nil {
@@ -1600,7 +1618,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				}
 				continue
 			}
-			log.Error("provider call failed", "error", err, "iteration", iterCount)
+			if !errors.Is(err, ErrHookAborted) {
+				log.Error("provider call failed", "error", err, "iteration", iterCount)
+			}
 			return err
 		}
 		overflow.turnSucceeded(usage)
@@ -1694,6 +1714,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				}
 				continue
 			}
+			if err := a.turnEndHooks(ctx, stream, stepName, *msg, nil); err != nil {
+				return err
+			}
 			// Text-only turn: the assistant finished naturally. Queued
 			// messages are appended here and the same stream continues.
 			if resumed, err := finish(); resumed || err != nil {
@@ -1737,6 +1760,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		if err := a.persistToolResults(ctx, tr, branch, results); err != nil {
 			return err
 		}
+		if err := a.turnEndHooks(ctx, stream, stepName, *msg, results); err != nil {
+			return err
+		}
 
 		// A successful call to a stop tool, or to final_answer, ends the run
 		// with its result.
@@ -1763,10 +1789,18 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	return nil
 }
 
-// appendInput appends input messages as child nodes on the branch. Returns the
-// first tree-write error, which terminates the run.
-func (a *Agent) appendInput(ctx context.Context, tr *tree.Tree, branch types.BranchID, input []types.Message) error {
+// appendInput appends input messages as child nodes on the branch. Each user
+// message passes the UserInput hooks first. Returns the first error, which
+// terminates the run.
+func (a *Agent) appendInput(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, input []types.Message) error {
 	for _, msg := range input {
+		if um, ok := msg.(types.UserMessage); ok && hasUserText(um) {
+			admitted, err := a.userInputHooks(ctx, stream, um, "input")
+			if err != nil {
+				return err
+			}
+			msg = admitted
+		}
 		if err := a.appendToBranch(ctx, tr, branch, msg); err != nil {
 			return err
 		}
@@ -1969,10 +2003,29 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 // AssistantMessage is returned WITHOUT a provider call, and its blocks are
 // re-emitted to the stream so consumers see a consistent event sequence.
 //
-//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
+// BeforeModelCall hooks run first and may abort the call; AfterModelCall
+// hooks observe its outcome, also a failed or replayed one.
 func (a *Agent) getAssistantMessage(
 	ctx context.Context, stream *EventStream,
 	provider types.Provider, llmMessages []types.Message, toolDefs []types.ToolDef, opts *types.RequestOptions, stepName string,
+) (*types.AssistantMessage, *types.UsageDelta, error) {
+	if err := a.beforeModelCallHooks(ctx, stream, provider, llmMessages, toolDefs, opts, stepName); err != nil {
+		return nil, nil, err
+	}
+	var ran bool
+	msg, usage, err := a.modelStep(ctx, stream, provider, llmMessages, toolDefs, opts, stepName, &ran)
+	a.afterModelCallHooks(ctx, stream, provider, opts, stepName, msg, usage, !ran, err)
+	return msg, usage, err
+}
+
+// modelStep is the provider call of getAssistantMessage. It sets *ran when
+// the call ran rather than replayed.
+//
+//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
+func (a *Agent) modelStep(
+	ctx context.Context, stream *EventStream,
+	provider types.Provider, llmMessages []types.Message, toolDefs []types.ToolDef, opts *types.RequestOptions, stepName string,
+	ranOut *bool,
 ) (*types.AssistantMessage, *types.UsageDelta, error) {
 	var (
 		liveUsage *types.UsageDelta // captured if the provider emitted usage
@@ -1981,6 +2034,7 @@ func (a *Agent) getAssistantMessage(
 		// SubmitInterruptReplace, kept in case the runner drops the result.
 		partial *types.AssistantMessage
 	)
+	defer func() { *ranOut = ran }()
 
 	// Resolve the response schema from the run context before the step: a
 	// durable runner may call fn with a context derived from its own, which
@@ -2477,6 +2531,9 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	if done {
 		return res
 	}
+	if res, done := a.beforeToolHooks(ctx, stream, &tc, def); done {
+		return res
+	}
 	ctx = types.WithCallApproval(ctx, ca.approval)
 
 	// A per-tool quota is charged at dispatch, once the call is cleared to
@@ -2671,7 +2728,12 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 		clock = newPausableDeadline(st.timeout, func() { cancel(timeoutErr) })
 		defer clock.stop()
 	}
-	task, _ := tc.Arguments[argTask].(string)
+	name := subAgentName(tc, tool)
+	task, err := a.subagentStartHooks(ctx, stream, tc.ID, name, "delegate", stringArg(tc.Arguments, argTask))
+	if err != nil {
+		stream.stopRun(err)
+		return failedTool(stream, tc.ID, tc.Name, err.Error())
+	}
 	var childStream *EventStream
 	frame := a.childFrame(ctx, stream, tc.ID)
 	if st, ok := tool.(*subAgentTool); ok {
@@ -2773,12 +2835,19 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 	if childErr != nil {
 		res.err = childErr.Error()
 	}
-	res.subAgent = tc.Name
-	if st, ok := tool.(*subAgentTool); ok {
-		res.subAgent = st.name
-	}
+	res.subAgent = name
+	a.subagentEndHooks(ctx, stream, tc.ID, name, "delegate", res.result, childErr)
 	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Error: res.err})
 	return res
+}
+
+// subAgentName names the child of a delegation: the sub-agent's own name
+// for a native delegate tool, the tool's name otherwise.
+func subAgentName(tc types.ToolUseContent, tool types.Tool) string {
+	if st, ok := tool.(*subAgentTool); ok {
+		return st.name
+	}
+	return tc.Name
 }
 
 // runToolStep executes a regular tool, wrapped in a durable step. A RichTool
@@ -2874,6 +2943,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		res = toolResult{toolCallID: tc.ID, err: stepErr.Error()}
 	} else {
 		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, blocks: sr.ToolBlocks, err: sr.ToolError}
+		a.afterToolHooks(ctx, stream, tc, tool.Definition(), &res)
 	}
 	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Blocks: res.blocks, Error: res.err, Version: types.ToolVersion(tool)})
 	return res

@@ -412,6 +412,11 @@ func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types
 		return failedTool(stream, tc.ID, tc.Name, err.Error())
 	}
 	task, _ := tc.Arguments[argTask].(string)
+	task, err = a.subagentStartHooks(ctx, stream, tc.ID, t.name, "spawn", task)
+	if err != nil {
+		stream.stopRun(err)
+		return failedTool(stream, tc.ID, tc.Name, err.Error())
+	}
 
 	childCtx, cancel := context.WithCancelCause(stream.ctx)
 	var clock *pausableDeadline
@@ -452,6 +457,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types
 		}
 		stream.attachScratch(result.Scratch)
 		reg.finish(h, result, err)
+		a.subagentEndHooks(context.WithoutCancel(stream.ctx), stream, tc.ID, t.name, "spawn", result.Output, err)
 	}()
 
 	raw, _ := json.Marshal(spawnReceipt{

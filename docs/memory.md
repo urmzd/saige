@@ -159,6 +159,8 @@ ids, err := policy.ExtractAfterRun(ctx, store, extractor, "assistant", runID, ms
 
 Each proposed record goes through `Policy.Remember`, so it passes the kind, content, and redaction checks. The scope comes from `Policy.Scope` and replaces any scope the extractor set. Idempotency keys come from the run ID, so calling it again for the same run stores nothing new.
 
+To run it from the agent itself, add `memory.ExtractionHook(store, policy, extractor)` with `agent.WithHooks`. It calls `ExtractAfterRun` from a `RunStop` hook after each run that finished normally. See [run hooks](hooks.md).
+
 ## Testing a store
 
 `agent/memory/memorytest.RunConformance` is the contract every store meets: scoped recall, sub-namespace visibility, tenant isolation, idempotent and concurrent replays, budgets, retention, read-only scopes, and `Forget`. `MemStore`, `FileStore`, and the Postgres store run it.

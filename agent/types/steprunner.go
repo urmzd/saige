@@ -26,6 +26,8 @@ const (
 	StepKindTool StepKind = "tool"
 	// StepKindApproval records an approval policy's verdict on one call.
 	StepKindApproval StepKind = "approval"
+	// StepKindHook records the outcome of hooks or guardrails at one point.
+	StepKindHook StepKind = "hook"
 )
 
 // StepResult is the serializable payload a durable step records. It is a
@@ -43,6 +45,7 @@ type StepResult struct {
 	ToolBlocks []ToolResultBlock // rich tool output; survives durable replay
 	ToolError  string            // non-empty => tool errored (recorded, not retried)
 	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
+	Hook       *HookRecord       // populated when Kind == StepKindHook
 }
 
 // NoopStepRunner runs steps inline with no memoization. It is the default,

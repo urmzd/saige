@@ -306,6 +306,7 @@ var wireSentinels = []struct {
 	{"interrupt_not_found", ErrInterruptNotFound},
 	{"interrupt_expired", ErrInterruptExpired},
 	{"no_interrupt_router", ErrNoInterruptRouter},
+	{"hook_aborted", ErrHookAborted},
 }
 
 var sentinelByCode = func() map[string]error {

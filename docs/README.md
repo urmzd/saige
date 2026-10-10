@@ -28,6 +28,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | [Handoffs and subagents](delegation.md) | Handoff vs delegate vs spawn: context in, data out, transcripts, size and iteration limits, sub-agent budgets, scratch, and references |
 | [Orchestration policies](orchestration-policies.md) | Conversation ownership, subagent results, handoff return links, sticky routing, approval limits |
 | [Approval policy and grants](approval-policy.md) | Grants by scope and expiry, denial limits, capability defaults, replay |
+| [Run hooks](hooks.md) | Lifecycle events that observe, change or abort a run; ordering, timeouts, durable replay, inheritance |
 | [MCP client](mcp-client.md) | Pooled sessions, retries, drift detection, `.mcp.json` loading |
 
 ## Runs, caching and operations
