@@ -14,7 +14,7 @@ import (
 // DefaultFallbackOn. Set FallbackOn to control which errors trigger fallback
 // (e.g. types.IsTransient for transient-only).
 //
-// Fallback covers both an immediate ChatStream error and a mid-stream error
+// Fallback covers both an immediate Stream error and a mid-stream error
 // (an ErrorDelta) that arrives before any content-bearing delta has been
 // delivered downstream (see isContentDelta). Once content has been forwarded,
 // falling back would duplicate partial output, so the error delta is
@@ -114,7 +114,7 @@ func (f *Provider) ContentSupport() types.ContentSupport {
 
 // WithModel implements types.ModelSwitcher. It returns a new fallback provider
 // whose children each target the given model (children that do not implement
-// types.ModelSwitcher are kept as-is). This lets ConfigContent.Model switching
+// types.ModelSwitcher are kept as-is). This lets ConfigPart.Model switching
 // propagate through fallback-wrapped deployments.
 func (f *Provider) WithModel(model string) types.Provider {
 	providers := make([]types.Provider, len(f.Providers))
@@ -124,76 +124,53 @@ func (f *Provider) WithModel(model string) types.Provider {
 	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}
 }
 
-func (f *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return f.stream(ctx, func(p types.Provider) (<-chan types.Delta, error) {
-		return p.ChatStream(ctx, messages, tools)
-	})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. With a
-// non-nil schema, members that cannot enforce a schema are skipped, so an
-// outage never downgrades schema-checked output to free-form text. A member is
-// skipped when it does not implement types.StructuredOutputProvider, or when it
-// does (as every decorator does) but rejects the schema because the provider
-// it wraps cannot enforce one. When no member can enforce it, the call fails
-// with a FallbackError whose errors match types.ErrInvalidModelConfig.
-func (f *Provider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	members := f.Providers
-	if schema != nil {
-		members = nil
-		var skipped []error
-		for _, p := range f.Providers {
-			if _, ok := p.(types.StructuredOutputProvider); ok {
-				members = append(members, p)
-			} else {
-				skipped = append(skipped, schemacheck.Unsupported(p, "provider cannot enforce a response schema"))
-			}
-		}
-		if len(members) == 0 {
-			return nil, &types.FallbackError{Errors: skipped}
-		}
+// Stream implements types.Provider. A request with a schema skips members
+// that cannot enforce one, and a request with options skips members that
+// cannot receive them, so an outage never downgrades schema-checked output to
+// free-form text or drops a forced tool choice. A member is skipped when it
+// does not accept the field, or when it does (as every decorator does) but
+// rejects it because the provider it wraps cannot. When no member can serve
+// the request, the call fails with a FallbackError whose errors match
+// types.ErrInvalidModelConfig.
+func (f *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema == nil && req.Options == nil {
+		return f.stream(ctx, func(p types.Provider) (<-chan types.Delta, error) {
+			return p.Stream(ctx, req)
+		})
 	}
-	shouldFallback := f.fallbackOn()
-	if schema != nil {
-		// A schema rejection never reached the network, so the next member
-		// can still serve the request even though the error is permanent.
-		shouldFallback = func(err error) bool {
-			return schemacheck.IsUnsupported(err) || f.fallbackOn()(err)
-		}
-	}
-	return f.streamOver(ctx, members, shouldFallback, func(p types.Provider) (<-chan types.Delta, error) {
-		if sp, ok := p.(types.StructuredOutputProvider); ok {
-			return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
-		}
-		return p.ChatStream(ctx, messages, tools)
-	})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. Members that cannot
-// receive request options are skipped, for the same reason a member that
-// cannot enforce a schema is: dropping a forced tool choice changes what the
-// model may do. When no member accepts options the call fails with a
-// FallbackError whose errors match types.ErrInvalidModelConfig.
-func (f *Provider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
 	var members []types.Provider
 	var skipped []error
 	for _, p := range f.Providers {
-		if _, ok := p.(types.OptionsProvider); ok {
-			members = append(members, p)
-		} else {
+		switch {
+		case req.Options != nil && !types.AcceptsOptions(p):
 			skipped = append(skipped, optionscheck.Unsupported(p))
+		case req.Schema != nil && !types.AcceptsSchema(p):
+			skipped = append(skipped, schemacheck.Unsupported(p, "provider cannot enforce a response schema"))
+		default:
+			members = append(members, p)
 		}
 	}
 	if len(members) == 0 {
 		return nil, &types.FallbackError{Errors: skipped}
 	}
+	// A rejected schema or options never reached the network, so the next
+	// member can still serve the request even though the error is permanent.
 	shouldFallback := func(err error) bool {
-		return optionscheck.IsUnsupported(err) || f.fallbackOn()(err)
+		return req.Schema != nil && schemacheck.IsUnsupported(err) ||
+			req.Options != nil && optionscheck.IsUnsupported(err) || f.fallbackOn()(err)
 	}
 	return f.streamOver(ctx, members, shouldFallback, func(p types.Provider) (<-chan types.Delta, error) {
-		return p.(types.OptionsProvider).ChatStreamWithOptions(ctx, messages, tools, opts)
+		return p.Stream(ctx, req)
 	})
 }
+
+// SupportsSchema implements types.StructuredOutputProvider: a schema is
+// served by the members that can enforce it.
+func (f *Provider) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider: options are served by
+// the members that can receive them.
+func (f *Provider) SupportsOptions() bool { return true }
 
 // Unwrap returns the members in order. See package wrapper.
 func (f *Provider) Unwrap() []types.Provider {
@@ -267,7 +244,9 @@ func (f *Provider) streamOver(ctx context.Context, providers []types.Provider, s
 //     failed member's route followed by the next member's route keeps the
 //     last one.
 //   - DoneDelta and ErrorDelta do NOT latch: terminal markers, not content.
-//   - Everything else latches: Text*/Thinking*/ToolCall* start/content/end,
+//   - ConversionDelta does NOT latch: it reports what an attempt converted,
+//     ahead of its output, and its cost is real even if the attempt fails.
+//   - Everything else latches: PartStart/PartDelta/PartEnd,
 //     ToolExec*, MarkerDelta, HandoffDelta, and any future delta type
 //     (defaulting to latching is the safe direction: worst case we propagate
 //     an error instead of silently duplicating output).
@@ -275,7 +254,7 @@ func (f *Provider) streamOver(ctx context.Context, providers []types.Provider, s
 // This mirrors the retry package's isContentDelta.
 func isContentDelta(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.RouteDelta, types.DoneDelta, types.ErrorDelta:
+	case types.UsageDelta, types.RouteDelta, types.ConversionDelta, types.DoneDelta, types.ErrorDelta:
 		return false
 	default:
 		return true

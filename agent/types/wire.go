@@ -10,14 +10,24 @@ import (
 	"time"
 )
 
-// WireVersion is the envelope version this package writes. Readers reject
-// envelopes with a higher version instead of guessing at their meaning.
-const WireVersion = 1
+// WireVersion is the envelope version this package writes. Readers accept
+// every version up to it and reject a higher one instead of guessing at its
+// meaning. Version 2 streams model output as part deltas; version 1 kinds
+// stay decodable (see NewV1Upgrader) and writable (see EncodeOptions).
+const WireVersion = 2
+
+// DefaultMaxInlineBytes is the default limit on inline media bytes in one
+// envelope field.
+const DefaultMaxInlineBytes = 256 << 10
 
 // Wire codec errors.
 var (
 	ErrWireVersion     = errors.New("unsupported wire version")
 	ErrUnknownWireKind = errors.New("unknown wire kind")
+	// ErrWireInlineTooLarge reports inline media bytes over the encoder's
+	// limit. The producer must store the bytes and send a reference first;
+	// the encoder never truncates them.
+	ErrWireInlineTooLarge = errors.New("inline media too large for the wire")
 )
 
 // Envelope is the versioned JSON frame for one streamed event: a Delta, an
@@ -25,7 +35,7 @@ var (
 // Seq (monotonic per stream, so a client can resume after a gap), RunID, and
 // Path (tool call IDs from the root run to the run that emitted the event).
 //
-//	{"v":1,"seq":42,"run_id":"r1","path":["call_9"],"kind":"text.delta","data":{"content":"hi"}}
+//	{"v":2,"seq":42,"run_id":"r1","path":["call_9"],"kind":"part.delta","data":{"index":0,"text":"hi"}}
 type Envelope struct {
 	V     int             `json:"v"`
 	Seq   uint64          `json:"seq,omitempty"`
@@ -37,6 +47,13 @@ type Envelope struct {
 
 // Wire kinds. They are part of the wire contract: never rename one.
 const (
+	// Version 2 model output.
+	WirePartStart  = "part.start"
+	WirePartDelta  = "part.delta"
+	WirePartEnd    = "part.end"
+	WireConversion = "conversion"
+
+	// Version 1 model output, decodable through NewV1Upgrader.
 	WireTextStart          = "text.start"
 	WireTextDelta          = "text.delta"
 	WireTextEnd            = "text.end"
@@ -144,10 +161,15 @@ func (e Envelope) IsDelta() bool {
 	return e.Kind != WireInterrupt && e.Kind != WireInterruptReplyKind
 }
 
-// NewDeltaEnvelope builds the envelope for d. Seq, RunID, and Path are left
-// for the producer to fill.
+// NewDeltaEnvelope builds the current-version envelope for d, with inline
+// media bytes up to DefaultMaxInlineBytes. A v1 content delta gets a v1
+// envelope. Seq, RunID, and Path are left for the producer to fill.
 func NewDeltaEnvelope(d Delta) (Envelope, error) {
-	kind, data, err := encodeDelta(d)
+	return newDeltaEnvelope(d, encodeOpts{version: WireVersion, codec: codecOptions{inline: true, maxInline: DefaultMaxInlineBytes}})
+}
+
+func newDeltaEnvelope(d Delta, o encodeOpts) (Envelope, error) {
+	kind, v, data, err := encodeDelta(d, o)
 	if err != nil {
 		return Envelope{}, err
 	}
@@ -155,7 +177,70 @@ func NewDeltaEnvelope(d Delta) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, fmt.Errorf("encode %s: %w", kind, err)
 	}
-	return Envelope{V: WireVersion, Kind: kind, Data: raw}, nil
+	return Envelope{V: v, Kind: kind, Data: raw}, nil
+}
+
+// EncodeOptions configures an Encoder.
+type EncodeOptions struct {
+	// Version is the wire version to write: 2 (the default) or 1. Version
+	// 1 downgrades part deltas to v1 kinds (see NewV1Downgrader).
+	Version int
+	// MaxInlineBytes caps the inline media bytes one field may carry. Zero
+	// means DefaultMaxInlineBytes; a negative value means no limit.
+	MaxInlineBytes int
+}
+
+type encodeOpts struct {
+	version int
+	codec   codecOptions
+}
+
+// Encoder writes the envelopes for one stream. It keeps state, because a
+// v1 downgrade must pair each part's deltas, so use one per stream.
+type Encoder struct {
+	o    encodeOpts
+	down func(Delta) []Delta
+}
+
+// NewEncoder returns an encoder for one stream.
+func NewEncoder(opts EncodeOptions) (*Encoder, error) {
+	v := opts.Version
+	if v == 0 {
+		v = WireVersion
+	}
+	if v < 1 || v > WireVersion {
+		return nil, fmt.Errorf("%w: %d", ErrWireVersion, v)
+	}
+	limit := opts.MaxInlineBytes
+	if limit == 0 {
+		limit = DefaultMaxInlineBytes
+	}
+	e := &Encoder{o: encodeOpts{version: v, codec: codecOptions{inline: true, maxInline: limit}}}
+	if v == 1 {
+		e.down = NewV1Downgrader()
+	}
+	return e, nil
+}
+
+// Version is the wire version the encoder writes.
+func (e *Encoder) Version() int { return e.o.version }
+
+// Encode returns the envelopes for d: usually one, none for a v2 delta with
+// no v1 form, or several when a downgrade splits it.
+func (e *Encoder) Encode(d Delta) ([]Envelope, error) {
+	ds := []Delta{d}
+	if e.down != nil {
+		ds = e.down(d)
+	}
+	out := make([]Envelope, 0, len(ds))
+	for _, x := range ds {
+		env, err := newDeltaEnvelope(x, e.o)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, env)
+	}
+	return out, nil
 }
 
 // Delta decodes the envelope's payload.
@@ -310,6 +395,10 @@ var wireSentinels = []struct {
 	{"no_interrupt_router", ErrNoInterruptRouter},
 	{"hook_aborted", ErrHookAborted},
 	{"guardrail_tripped", ErrGuardrailTripped},
+	{"media_unavailable", ErrMediaUnavailable},
+	{"modality_unsupported", ErrModalityUnsupported},
+	{"wire_unrepresentable", ErrWireUnrepresentable},
+	{"wire_inline_too_large", ErrWireInlineTooLarge},
 }
 
 var sentinelByCode = func() map[string]error {
@@ -420,13 +509,45 @@ type wireToolCall struct {
 }
 
 type wireToolExec struct {
-	ToolCallID string      `json:"tool_call_id"`
-	Name       string      `json:"name,omitempty"`
-	Result     string      `json:"result,omitempty"`
-	Error      string      `json:"error,omitempty"`
-	Blocks     []wireBlock `json:"blocks,omitempty"`
-	Inner      *Envelope   `json:"inner,omitempty"`
-	Version    string      `json:"version,omitempty"`
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name,omitempty"`
+	Result     string `json:"result,omitempty"`
+	Error      string `json:"error,omitempty"`
+	// Parts is the v2 form of the output; Blocks the v1 form.
+	Parts     []json.RawMessage `json:"parts,omitempty"`
+	Blocks    []wireBlock       `json:"blocks,omitempty"`
+	Citations []Citation        `json:"citations,omitempty"`
+	Inner     *Envelope         `json:"inner,omitempty"`
+	Version   string            `json:"version,omitempty"`
+}
+
+type wirePartStart struct {
+	Index     int       `json:"index"`
+	Kind      PartKind  `json:"kind"`
+	MediaType MediaType `json:"media_type,omitempty"`
+	ID        string    `json:"id,omitempty"`
+	Name      string    `json:"name,omitempty"`
+}
+
+type wirePartDelta struct {
+	Index      int    `json:"index"`
+	Text       string `json:"text,omitempty"`
+	Thinking   string `json:"thinking,omitempty"`
+	Signature  string `json:"signature,omitempty"`
+	Args       string `json:"args,omitempty"`
+	Refusal    string `json:"refusal,omitempty"`
+	Data       []byte `json:"data,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
+}
+
+type wirePartEnd struct {
+	Index int             `json:"index"`
+	Part  json.RawMessage `json:"part,omitempty"`
+}
+
+type wireConversion struct {
+	Profile string           `json:"profile,omitempty"`
+	Report  ConversionReport `json:"report"`
 }
 
 // wireBlock carries raw bytes too: a live consumer needs the image a tool
@@ -497,29 +618,32 @@ type wireUsage struct {
 }
 
 type wireRoute struct {
-	Profile         string       `json:"profile,omitempty"`
-	Provider        string       `json:"provider,omitempty"`
-	Model           string       `json:"model,omitempty"`
-	Experiment      string       `json:"experiment,omitempty"`
-	Variant         string       `json:"variant,omitempty"`
-	Reason          string       `json:"reason,omitempty"`
-	Preset          string       `json:"preset,omitempty"`
-	ConfigHash      string       `json:"config_hash,omitempty"`
-	CatalogRevision string       `json:"catalog_revision,omitempty"`
-	Options         *wireOptions `json:"options,omitempty"`
-	Dials           *DialReport  `json:"dials,omitempty"`
+	Profile         string            `json:"profile,omitempty"`
+	Provider        string            `json:"provider,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	Experiment      string            `json:"experiment,omitempty"`
+	Variant         string            `json:"variant,omitempty"`
+	Reason          string            `json:"reason,omitempty"`
+	Preset          string            `json:"preset,omitempty"`
+	ConfigHash      string            `json:"config_hash,omitempty"`
+	CatalogRevision string            `json:"catalog_revision,omitempty"`
+	Options         *wireOptions      `json:"options,omitempty"`
+	Dials           *DialReport       `json:"dials,omitempty"`
+	Conversions     *ConversionReport `json:"conversions,omitempty"`
 }
 
 func toWireRoute(r RouteDelta) wireRoute {
 	return wireRoute{Profile: r.Profile, Provider: r.Provider, Model: r.Model, Experiment: r.Experiment,
 		Variant: r.Variant, Reason: r.Reason, Preset: r.Preset, ConfigHash: r.ConfigHash,
-		CatalogRevision: r.CatalogRevision, Options: toWireOptions(r.Options), Dials: r.Dials}
+		CatalogRevision: r.CatalogRevision, Options: toWireOptions(r.Options), Dials: r.Dials,
+		Conversions: r.Conversions}
 }
 
 func (w wireRoute) delta() RouteDelta {
 	return RouteDelta{Profile: w.Profile, Provider: w.Provider, Model: w.Model, Experiment: w.Experiment,
 		Variant: w.Variant, Reason: w.Reason, Preset: w.Preset, ConfigHash: w.ConfigHash,
-		CatalogRevision: w.CatalogRevision, Options: w.Options.requestOptions(), Dials: w.Dials}
+		CatalogRevision: w.CatalogRevision, Options: w.Options.requestOptions(), Dials: w.Dials,
+		Conversions: w.Conversions}
 }
 
 // wireOptions is the snake_case wire form of RequestOptions.
@@ -565,7 +689,7 @@ func (w *wireOptions) requestOptions() *RequestOptions {
 type wireCompaction struct {
 	Branch string `json:"branch"`
 	NodeID string `json:"node_id,omitempty"`
-	CompactionContent
+	CompactionPart
 }
 
 type wireRunControl struct {
@@ -630,102 +754,133 @@ type wireGuardrail struct {
 // ── Encoding ─────────────────────────────────────────────────────────
 
 //nolint:gocyclo // one case per wire kind
-func encodeDelta(d Delta) (string, any, error) {
-	switch v := d.(type) {
+func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
+	// Kinds that exist in both versions are written at the encoder's.
+	v := o.version
+	switch x := d.(type) {
+	case PartStart:
+		return WirePartStart, 2, wirePartStart(x), nil
+	case PartDelta:
+		if o.codec.maxInline >= 0 && len(x.Data) > o.codec.maxInline {
+			return "", 0, nil, fmt.Errorf("%w: part %d delta holds %d bytes, limit %d", ErrWireInlineTooLarge, x.Index, len(x.Data), o.codec.maxInline)
+		}
+		return WirePartDelta, 2, wirePartDelta(x), nil
+	case PartEnd:
+		w := wirePartEnd{Index: x.Index}
+		if x.Part != nil {
+			raw, err := marshalPart(x.Part, o.codec)
+			if err != nil {
+				return "", 0, nil, err
+			}
+			w.Part = raw
+		}
+		return WirePartEnd, 2, w, nil
+	case ConversionDelta:
+		return WireConversion, 2, wireConversion(x), nil
 	case TextStartDelta:
-		return WireTextStart, wireEmpty{}, nil
+		return WireTextStart, 1, wireEmpty{}, nil
 	case TextContentDelta:
-		return WireTextDelta, wireContent(v), nil
+		return WireTextDelta, 1, wireContent(x), nil
 	case TextEndDelta:
-		return WireTextEnd, wireEmpty{}, nil
+		return WireTextEnd, 1, wireEmpty{}, nil
 	case ThinkingStartDelta:
-		return WireReasoningStart, wireEmpty{}, nil
+		return WireReasoningStart, 1, wireEmpty{}, nil
 	case ThinkingContentDelta:
-		return WireReasoningDelta, wireContent(v), nil
+		return WireReasoningDelta, 1, wireContent(x), nil
 	case ThinkingEndDelta:
-		return WireReasoningEnd, wireSignature(v), nil
+		return WireReasoningEnd, 1, wireSignature(x), nil
 	case ToolCallStartDelta:
-		return WireToolCallStart, wireToolCall{ID: v.ID, Name: v.Name}, nil
+		return WireToolCallStart, 1, wireToolCall{ID: x.ID, Name: x.Name}, nil
 	case ToolCallArgumentDelta:
-		return WireToolCallArgs, wireToolCall{ID: v.ID, Content: v.Content}, nil
+		return WireToolCallArgs, 1, wireToolCall{ID: x.ID, Content: x.Content}, nil
 	case ToolCallEndDelta:
-		return WireToolCallEnd, wireToolCall{ID: v.ID, Arguments: v.Arguments, ArgumentsError: v.ArgumentsError}, nil
-	case ToolExecStartDelta:
-		return WireToolExecStart, wireToolExec{ToolCallID: v.ToolCallID, Name: v.Name}, nil
-	case ToolExecDelta:
-		if v.Inner == nil {
-			return "", nil, fmt.Errorf("encode %s: nil inner delta", WireToolExecDelta)
-		}
-		inner, err := NewDeltaEnvelope(v.Inner)
-		if err != nil {
-			return "", nil, err
-		}
-		return WireToolExecDelta, wireToolExec{ToolCallID: v.ToolCallID, Inner: &inner}, nil
-	case ToolExecEndDelta:
-		return WireToolExecEnd, wireToolExec{
-			ToolCallID: v.ToolCallID, Name: v.Name, Result: v.Result, Error: v.Error, Blocks: toWireBlocks(v.Blocks),
-			Version: v.Version,
+		return WireToolCallEnd, 1, wireToolCall{ID: x.ID, Arguments: x.Arguments, ArgumentsError: x.ArgumentsError}, nil
+	case ServerToolCallDelta:
+		return WireServerToolCall, 1, wireServerTool{ID: x.ID, Kind: x.Kind, Name: x.Name, Input: x.Input}, nil
+	case ServerToolResultDelta:
+		return WireServerToolResult, 1, wireServerTool{
+			ID: x.ID, Kind: x.Kind, Text: x.Text, Result: x.Result, IsError: x.IsError, Files: toWireFiles(x.Files),
 		}, nil
+	case ToolExecStartDelta:
+		return WireToolExecStart, v, wireToolExec{ToolCallID: x.ToolCallID, Name: x.Name}, nil
+	case ToolExecDelta:
+		if x.Inner == nil {
+			return "", 0, nil, fmt.Errorf("encode %s: nil inner delta", WireToolExecDelta)
+		}
+		inner, err := newDeltaEnvelope(x.Inner, o)
+		if err != nil {
+			return "", 0, nil, err
+		}
+		return WireToolExecDelta, max(v, inner.V), wireToolExec{ToolCallID: x.ToolCallID, Inner: &inner}, nil
+	case ToolExecEndDelta:
+		w := wireToolExec{ToolCallID: x.ToolCallID, Name: x.Name, Result: x.Result, Error: x.Error, Version: x.Version,
+			Citations: x.Citations}
+		if v == 1 {
+			w.Blocks = toWireBlocks(partsToBlocks(x.Parts))
+		} else {
+			for _, p := range x.Parts {
+				raw, err := marshalPart(p, o.codec)
+				if err != nil {
+					return "", 0, nil, err
+				}
+				w.Parts = append(w.Parts, raw)
+			}
+		}
+		return WireToolExecEnd, v, w, nil
 	case MarkerDelta:
 		w := wireMarkerDelta{
-			ToolCallID: v.ToolCallID, ToolName: v.ToolName, Arguments: v.Arguments, Markers: toWireMarkers(v.Markers),
+			ToolCallID: x.ToolCallID, ToolName: x.ToolName, Arguments: x.Arguments, Markers: toWireMarkers(x.Markers),
 		}
-		if v.Interrupt != nil {
-			in := toWireInterrupt(*v.Interrupt)
+		if x.Interrupt != nil {
+			in := toWireInterrupt(*x.Interrupt)
 			w.Interrupt = &in
 		}
-		return WireMarker, w, nil
+		return WireMarker, v, w, nil
 	case HandoffDelta:
-		return WireHandoff, wireHandoff(v), nil
+		return WireHandoff, v, wireHandoff(x), nil
 	case CitationDelta:
-		return WireCitation, wireCitation(v), nil
+		return WireCitation, v, wireCitation(x), nil
 	case ErrorDelta:
-		w := encodeError(v.Error)
+		w := encodeError(x.Error)
 		if w == nil {
-			return WireError, wireEmpty{}, nil
+			return WireError, v, wireEmpty{}, nil
 		}
-		return WireError, w, nil
+		return WireError, v, w, nil
 	case DoneDelta:
-		return WireDone, wireEmpty{}, nil
+		return WireDone, v, wireEmpty{}, nil
 	case FeedbackDelta:
-		return WireFeedback, wireFeedback(v), nil
+		return WireFeedback, v, wireFeedback(x), nil
 	case UsageDelta:
 		w := wireUsage{
-			AccountingID: v.AccountingID, Cumulative: v.Cumulative,
-			PromptTokens: v.PromptTokens, CachedPromptTokens: v.CachedPromptTokens,
-			CacheWriteTokens: v.CacheWriteTokens, CompletionTokens: v.CompletionTokens, TotalTokens: v.TotalTokens,
-			ResponseModel: v.ResponseModel, ResponseID: v.ResponseID, FinishReasons: v.FinishReasons, CacheHit: v.CacheHit,
+			AccountingID: x.AccountingID, Cumulative: x.Cumulative,
+			PromptTokens: x.PromptTokens, CachedPromptTokens: x.CachedPromptTokens,
+			CacheWriteTokens: x.CacheWriteTokens, CompletionTokens: x.CompletionTokens, TotalTokens: x.TotalTokens,
+			ResponseModel: x.ResponseModel, ResponseID: x.ResponseID, FinishReasons: x.FinishReasons, CacheHit: x.CacheHit,
 		}
-		if v.Latency != 0 {
-			w.LatencyMS = durationMS(v.Latency)
+		if x.Latency != 0 {
+			w.LatencyMS = durationMS(x.Latency)
 		}
-		return WireUsage, w, nil
+		return WireUsage, v, w, nil
 	case RouteDelta:
-		return WireRoute, toWireRoute(v), nil
+		return WireRoute, v, toWireRoute(x), nil
 	case TruncatedDelta:
-		return WireTruncated, wireRunControl{NodeID: v.NodeID, Reason: v.Reason}, nil
+		return WireTruncated, v, wireRunControl{NodeID: x.NodeID, Reason: x.Reason}, nil
 	case QueuedDelta:
-		return WireQueued, wireRunControl{SubmissionID: v.SubmissionID, Mode: v.Mode, Position: v.Position}, nil
+		return WireQueued, v, wireRunControl{SubmissionID: x.SubmissionID, Mode: x.Mode, Position: x.Position}, nil
 	case InjectedDelta:
-		return WireInjected, wireRunControl{SubmissionID: v.SubmissionID, Mode: v.Mode, NodeID: v.NodeID}, nil
+		return WireInjected, v, wireRunControl{SubmissionID: x.SubmissionID, Mode: x.Mode, NodeID: x.NodeID}, nil
 	case InterruptedDelta:
-		return WireInterrupted, wireRunControl{Reason: v.Reason, SubmissionID: v.SubmissionID}, nil
-	case ServerToolCallDelta:
-		return WireServerToolCall, wireServerTool{ID: v.ID, Kind: v.Kind, Name: v.Name, Input: v.Input}, nil
-	case ServerToolResultDelta:
-		return WireServerToolResult, wireServerTool{
-			ID: v.ID, Kind: v.Kind, Text: v.Text, Result: v.Result, IsError: v.IsError, Files: toWireFiles(v.Files),
-		}, nil
+		return WireInterrupted, v, wireRunControl{Reason: x.Reason, SubmissionID: x.SubmissionID}, nil
 	case PartialJSONDelta:
-		return WirePartialJSON, wirePartialJSON(v), nil
+		return WirePartialJSON, v, wirePartialJSON(x), nil
 	case GuardrailDelta:
-		return WireGuardrail, wireGuardrail(v), nil
+		return WireGuardrail, v, wireGuardrail(x), nil
 	case CompactionDelta:
-		return WireCompaction, wireCompaction{Branch: string(v.Branch), NodeID: v.NodeID, CompactionContent: v.Record}, nil
+		return WireCompaction, v, wireCompaction{Branch: string(x.Branch), NodeID: x.NodeID, CompactionPart: x.Record}, nil
 	case nil:
-		return "", nil, fmt.Errorf("%w: nil delta", ErrUnknownWireKind)
+		return "", 0, nil, fmt.Errorf("%w: nil delta", ErrUnknownWireKind)
 	default:
-		return "", nil, fmt.Errorf("%w: %T", ErrUnknownWireKind, d)
+		return "", 0, nil, fmt.Errorf("%w: %T", ErrUnknownWireKind, d)
 	}
 }
 
@@ -734,6 +889,29 @@ func encodeDelta(d Delta) (string, any, error) {
 //nolint:gocyclo // one case per wire kind
 func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 	switch kind {
+	case WirePartStart:
+		w, err := decodeAs[wirePartStart](kind, data)
+		return PartStart(w), err
+	case WirePartDelta:
+		w, err := decodeAs[wirePartDelta](kind, data)
+		return PartDelta(w), err
+	case WirePartEnd:
+		w, err := decodeAs[wirePartEnd](kind, data)
+		if err != nil {
+			return nil, err
+		}
+		end := PartEnd{Index: w.Index}
+		if len(w.Part) > 0 && !isEmptyObject(w.Part) {
+			p, err := UnmarshalRolePart[AssistantPart](w.Part)
+			if err != nil {
+				return nil, fmt.Errorf("decode %s: %w", kind, err)
+			}
+			end.Part = p
+		}
+		return end, nil
+	case WireConversion:
+		w, err := decodeAs[wireConversion](kind, data)
+		return ConversionDelta(w), err
 	case WireTextStart:
 		return TextStartDelta{}, nil
 	case WireTextDelta:
@@ -776,10 +954,19 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		return ToolExecDelta{ToolCallID: w.ToolCallID, Inner: inner}, nil
 	case WireToolExecEnd:
 		w, err := decodeAs[wireToolExec](kind, data)
-		return ToolExecEndDelta{
-			ToolCallID: w.ToolCallID, Name: w.Name, Result: w.Result, Error: w.Error, Blocks: fromWireBlocks(w.Blocks),
-			Version: w.Version,
-		}, err
+		if err != nil {
+			return nil, err
+		}
+		end := ToolExecEndDelta{ToolCallID: w.ToolCallID, Name: w.Name, Result: w.Result, Error: w.Error,
+			Version: w.Version, Citations: w.Citations, Parts: blocksToParts(fromWireBlocks(w.Blocks))}
+		for _, raw := range w.Parts {
+			p, err := UnmarshalRolePart[ToolOutputPart](raw)
+			if err != nil {
+				return nil, fmt.Errorf("decode %s: %w", kind, err)
+			}
+			end.Parts = append(end.Parts, p)
+		}
+		return end, nil
 	case WireMarker:
 		w, err := decodeAs[wireMarkerDelta](kind, data)
 		if err != nil {
@@ -854,7 +1041,7 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		return GuardrailDelta(w), err
 	case WireCompaction:
 		w, err := decodeAs[wireCompaction](kind, data)
-		return CompactionDelta{Branch: BranchID(w.Branch), NodeID: w.NodeID, Record: w.CompactionContent}, err
+		return CompactionDelta{Branch: BranchID(w.Branch), NodeID: w.NodeID, Record: w.CompactionPart}, err
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownWireKind, kind)
 	}

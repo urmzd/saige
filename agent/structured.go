@@ -199,8 +199,8 @@ func answerText(msgs []types.Message, stopCallID string) (string, error) {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if stopCallID != "" {
 			for _, r := range toolResultsOf(msgs[i]) {
-				if r.ToolCallID == stopCallID {
-					return r.Text, nil
+				if r.CallID == stopCallID {
+					return r.Text(), nil
 				}
 			}
 			continue
@@ -211,14 +211,14 @@ func answerText(msgs []types.Message, stopCallID string) (string, error) {
 				return "", errors.New("the run ended without a final answer")
 			}
 			var text strings.Builder
-			for _, block := range m.Content {
-				if tc, ok := block.(types.TextContent); ok {
+			for _, block := range m.Parts {
+				if tc, ok := block.(types.TextPart); ok {
 					text.WriteString(tc.Text)
 				}
 			}
 			return text.String(), nil
 		case types.SystemMessage:
-			// ConfigContent and similar metadata can follow the answer.
+			// ConfigPart and similar metadata can follow the answer.
 			continue
 		default:
 			return "", errors.New("the run ended without a final answer")
@@ -233,7 +233,7 @@ func repairMessage(mode OutputMode, cause error) types.Message {
 	if mode == OutputTool {
 		how = fmt.Sprintf("Call the %s tool again with arguments that match its schema.", FinalAnswerToolName)
 	}
-	return types.NewUserMessage(fmt.Sprintf("Your previous answer was not accepted: %v\n%s", cause, how))
+	return types.UserMsg(types.Text(fmt.Sprintf("Your previous answer was not accepted: %v\n%s", cause, how)))
 }
 
 // branchModel returns the model the active branch is configured to use.

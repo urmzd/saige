@@ -17,7 +17,7 @@ type Transcript struct {
 	// AllText joins the text of every turn in order.
 	AllText string
 	// ToolCalls lists every tool call the model requested, in order.
-	ToolCalls []types.ToolUseContent
+	ToolCalls []types.ToolCallPart
 	// ToolErrors counts tool executions that ended with an error.
 	ToolErrors int
 	// Turns counts model turns. The loop reports usage once per turn.
@@ -50,11 +50,11 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 			return
 		}
 		var text strings.Builder
-		for _, block := range am.Content {
+		for _, block := range am.Parts {
 			switch b := block.(type) {
-			case types.TextContent:
+			case types.TextPart:
 				text.WriteString(b.Text)
-			case types.ToolUseContent:
+			case types.ToolCallPart:
 				t.ToolCalls = append(t.ToolCalls, b)
 			}
 		}
@@ -66,8 +66,13 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 			onDelta(d)
 		}
 		switch v := d.(type) {
-		case types.TextContentDelta, types.ThinkingContentDelta, types.ToolCallStartDelta:
+		case types.PartDelta:
 			if t.TTFT == 0 {
+				t.TTFT = time.Since(start)
+			}
+			agg.Push(d)
+		case types.PartStart:
+			if t.TTFT == 0 && v.Kind == types.KindToolCall {
 				t.TTFT = time.Since(start)
 			}
 			agg.Push(d)

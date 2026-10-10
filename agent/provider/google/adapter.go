@@ -13,6 +13,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
@@ -271,8 +272,36 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 	return generate.Text(ctx, a, prompt)
 }
 
-// ChatStream implements types.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream implements types.Provider. A request may carry a schema or
+// options, not both.
+func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	var (
+		ch  <-chan types.Delta
+		err error
+	)
+	switch {
+	case req.Options != nil && req.Schema != nil:
+		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
+	case req.Options != nil:
+		ch, err = a.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
+	case req.Schema != nil:
+		ch, err = a.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
+	default:
+		ch, err = a.streamPlain(ctx, req.Messages, req.Tools)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return types.UpgradeV1Stream(ch), nil
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (a *Adapter) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (a *Adapter) SupportsOptions() bool { return true }
+
+func (a *Adapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, false)
 	if err != nil {
 		return nil, err
@@ -295,8 +324,7 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	return a.chatStream(ctx, contents, config)
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (a *Adapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
 	if err != nil {
 		return nil, err
@@ -317,7 +345,7 @@ func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Mes
 		return nil, err
 	}
 	if schema != nil {
-		config.ResponseMIMEType = "application/json"
+		config.ResponseMIMEType = string(types.MediaJSON)
 		config.ResponseSchema = parameterSchemaToGemini(*schema)
 	}
 	return a.chatStream(ctx, contents, config)
@@ -659,23 +687,23 @@ func (a *Adapter) ContentSupport() types.ContentSupport {
 // appendGeminiToolResult emits a function-response content for a tool result
 // (merging any JSON block payload into the structured response) plus an inline
 // data part for each image/file block carrying bytes.
-func appendGeminiToolResult(contents []*genai.Content, bc types.ToolResultContent) []*genai.Content {
-	resp := map[string]any{"result": bc.Text}
+func appendGeminiToolResult(contents []*genai.Content, bc types.ToolResultPart) []*genai.Content {
+	resp := map[string]any{"result": bc.Text()}
 	if bc.IsError {
-		resp = map[string]any{"error": bc.Text}
+		resp = map[string]any{"error": bc.Text()}
 	}
-	for _, b := range bc.Blocks {
-		if b.Kind == types.ToolResultBlockJSON && len(b.JSON) > 0 {
+	for _, b := range legacyparts.Blocks(bc.Parts) {
+		if b.Kind == legacyparts.BlockJSON && len(b.JSON) > 0 {
 			var v any
 			if err := json.Unmarshal(b.JSON, &v); err == nil {
 				resp["data"] = v
 			}
 		}
 	}
-	contents = append(contents, genai.NewContentFromFunctionResponse(bc.ToolCallID, resp, "user"))
+	contents = append(contents, genai.NewContentFromFunctionResponse(bc.CallID, resp, "user"))
 
-	for _, b := range bc.Blocks {
-		if (b.Kind == types.ToolResultBlockImage || b.Kind == types.ToolResultBlockFile) && b.Data != nil {
+	for _, b := range legacyparts.Blocks(bc.Parts) {
+		if (b.Kind == legacyparts.BlockImage || b.Kind == legacyparts.BlockFile) && b.Data != nil {
 			contents = append(contents, genai.NewContentFromParts(
 				[]*genai.Part{genai.NewPartFromBytes(b.Data, string(b.MediaType))}, "user"))
 		}
@@ -690,11 +718,11 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					systemParts = append(systemParts, &genai.Part{Text: bc.Text})
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					// Auto-executed tool results are SystemMessages; route them
 					// through the same helper as the user path so JSON blocks merge
 					// and image/file parts are emitted (not silently dropped).
@@ -704,18 +732,19 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 
 		case types.UserMessage:
 			var parts []*genai.Part
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					parts = append(parts, &genai.Part{Text: bc.Text})
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					contents = appendGeminiToolResult(contents, bc)
-				case types.FileContent:
-					if bc.Data != nil {
+				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+					fc, _ := legacyparts.MediaOf(bc)
+					if fc.Data != nil {
 						parts = append(parts, &genai.Part{
 							InlineData: &genai.Blob{
-								Data:     bc.Data,
-								MIMEType: string(bc.MediaType),
+								Data:     fc.Data,
+								MIMEType: string(fc.MediaType),
 							},
 						})
 					}
@@ -736,10 +765,10 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 				}
 				parts = append(parts, part)
 			}
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.ThinkingContent:
-					if bc.Thinking == "" {
+				case types.ThinkingPart:
+					if bc.Text == "" {
 						if sig, err := base64.StdEncoding.DecodeString(bc.Signature); err == nil && len(sig) > 0 {
 							carried = sig
 						}
@@ -750,14 +779,14 @@ func toGeminiContents(msgs []types.Message) (*genai.Content, []*genai.Content) {
 					// turns, and dropping it degrades multi-turn function
 					// calling. An unparseable signature is sent without one
 					// rather than dropping the thought entirely.
-					part := &genai.Part{Text: bc.Thinking, Thought: true}
+					part := &genai.Part{Text: bc.Text, Thought: true}
 					if sig, err := base64.StdEncoding.DecodeString(bc.Signature); err == nil && len(sig) > 0 {
 						part.ThoughtSignature = sig
 					}
 					add(part)
-				case types.TextContent:
+				case types.TextPart:
 					add(&genai.Part{Text: bc.Text})
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					add(&genai.Part{
 						FunctionCall: &genai.FunctionCall{
 							Name: bc.Name,

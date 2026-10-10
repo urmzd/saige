@@ -49,7 +49,7 @@ type richCountingTool struct{ *countingTool }
 
 func (t richCountingTool) ExecuteRich(ctx context.Context, args map[string]any) (types.ToolResult, error) {
 	text, err := t.Execute(ctx, args)
-	return types.ToolResult{Text: text, Citations: []types.Citation{{URI: "https://example.com/doc", Title: "doc"}}}, err
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}, Citations: []types.Citation{{URI: "https://example.com/doc", Title: "doc"}}}, err
 }
 
 // TestWithTracingKeepsToolBehavior runs a real agent loop with tracing on and
@@ -96,7 +96,7 @@ func TestWithTracingKeepsToolBehavior(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			var markers, citations int
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
@@ -259,7 +259,7 @@ func TestAgentTracerParentsRunSpans(t *testing.T) {
 	tracer := cfg.tracer()
 
 	ctx, end := at.StartAgent(context.Background(), "parent")
-	ch, err := NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer).ChatStream(ctx, nil, nil)
+	ch, err := NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer).Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,8 +311,9 @@ type capsOnlyProvider struct {
 	caps  types.ModelCapabilities
 }
 
-func (p capsOnlyProvider) ChatStream(ctx context.Context, m []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.inner.ChatStream(ctx, m, tools)
+func (p capsOnlyProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tools := req.Messages, req.Tools
+	return p.inner.Stream(ctx, types.Request{Messages: m, Tools: tools})
 }
 
 func (p capsOnlyProvider) Capabilities() types.ModelCapabilities { return p.caps }
@@ -377,7 +378,7 @@ func TestWithTracingToolChoiceNoneWithoutOptions(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); err != nil {

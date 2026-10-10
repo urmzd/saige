@@ -93,13 +93,15 @@ func (t *TracedTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		if rt, ok := t.Inner.(types.RichTool); ok {
 			result, err = rt.ExecuteRich(ctx, args)
 		} else {
-			result.Text, err = t.Inner.Execute(ctx, args)
+			var text string
+			text, err = t.Inner.Execute(ctx, args)
+			result = types.TextResult(text)
 		}
 		if err == nil && result.IsError {
 			// The agent loop treats a result flagged IsError as a failed
 			// call, so the span reports it as one too. Only the span sees
 			// this error; the caller gets the result unchanged.
-			return toolResultError{msg: result.Text}
+			return toolResultError{msg: result.Text()}
 		}
 		return err
 	})

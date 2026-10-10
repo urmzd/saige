@@ -21,14 +21,15 @@ type capturingProvider struct {
 	response string
 }
 
-func (p *capturingProvider) ChatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *capturingProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs := req.Messages
 	p.mu.Lock()
 	p.last = msgs
 	p.mu.Unlock()
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: p.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: p.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -46,14 +47,14 @@ type constHandoffProvider struct {
 	mu     sync.Mutex
 }
 
-func (p *constHandoffProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *constHandoffProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	p.n++
 	id := p.target
 	p.mu.Unlock()
 	ch := make(chan types.Delta, 3)
-	ch <- types.ToolCallStartDelta{ID: "h-" + id, Name: "handoff_to_" + p.target}
-	ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+	ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "h-" + id, Name: "handoff_to_" + p.target}
+	ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "h-" + id, Name: "handoff_to_" + p.target, Arguments: map[string]any{}}}
 	close(ch)
 	return ch, nil
 }
@@ -71,7 +72,7 @@ func TestSingleHandoff(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"}))
 
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("do it")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do it"))})
 	deltas := collectDeltas(stream)
 
 	hds := handoffDeltas(deltas)
@@ -82,7 +83,7 @@ func TestSingleHandoff(t *testing.T) {
 		t.Errorf("final text = %q, want it to contain worker output", txt)
 	}
 
-	// The shared branch carries a HandoffContent overlay node.
+	// The shared branch carries a HandoffPart overlay node.
 	msgs, _ := a.Tree().FlattenBranch("main")
 	if !hasHandoffContent(msgs, "worker") {
 		t.Error("expected a HandoffContent{To:worker} overlay node on the branch")
@@ -98,7 +99,7 @@ func TestHandoffPreservesContext(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root constitution"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"}))
 
-	collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("remember XYZ")}))
+	collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("remember XYZ"))}))
 
 	got := provWorker.snapshot()
 	if !messagesContainText(got, "remember XYZ") {
@@ -129,7 +130,7 @@ func TestHandBack(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "worker"}))
 
-	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}))
+	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
 	hds := handoffDeltas(deltas)
 	if len(hds) != 2 {
@@ -151,7 +152,7 @@ func TestPingPongBounded(t *testing.T) {
 		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "worker"}),
 		WithMaxHandoffs(2))
 
-	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}))
+	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
 	errs := collectDeltasByType[types.ErrorDelta](deltas)
 	if len(errs) == 0 || !errors.Is(errs[0].Error, ErrHandoffLimitExceeded) {
@@ -169,9 +170,9 @@ func TestHumanForcedHandoff(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "planner", Provider: panicProvider{}, SystemPrompt: "root"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "worker reply"}, SystemPrompt: "worker"}))
 
-	input := []types.Message{types.UserMessage{Content: []types.UserContent{
-		types.HandoffContent{To: "worker"},
-		types.TextContent{Text: "hello"},
+	input := []types.Message{types.UserMessage{Parts: []types.UserPart{
+		types.HandoffPart{To: "worker"},
+		types.TextPart{Text: "hello"},
 	}}}
 	deltas := collectDeltas(a.Invoke(context.Background(), input))
 
@@ -197,13 +198,13 @@ func TestHandoffSerializeRoundTrip(t *testing.T) {
 	}}
 	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "ok"}, SystemPrompt: "worker"}))
-	collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}))
+	collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
 	raw, err := json.Marshal(a.Tree())
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, _ := tree.New(types.NewSystemMessage("placeholder"))
+	restored, _ := tree.New(types.SystemMsg(types.Text("placeholder")))
 	if err := json.Unmarshal(raw, restored); err != nil {
 		t.Fatalf("unmarshal tree: %v", err)
 	}
@@ -221,8 +222,8 @@ func TestHandoffSerializeRoundTrip(t *testing.T) {
 func hasHandoffContent(msgs []types.Message, to string) bool {
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if hc, ok := c.(types.HandoffContent); ok && hc.To == to {
+			for _, c := range sm.Parts {
+				if hc, ok := c.(types.HandoffPart); ok && hc.To == to {
 					return true
 				}
 			}
@@ -235,8 +236,8 @@ func messagesContainText(msgs []types.Message, substr string) bool {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(types.TextContent); ok && strings.Contains(tc.Text, substr) {
+			for _, c := range v.Parts {
+				if tc, ok := c.(types.TextPart); ok && strings.Contains(tc.Text, substr) {
 					return true
 				}
 			}
@@ -250,8 +251,8 @@ func messagesContainText(msgs []types.Message, substr string) bool {
 }
 
 func systemContains(sm types.SystemMessage, substr string) bool {
-	for _, c := range sm.Content {
-		if tc, ok := c.(types.TextContent); ok && strings.Contains(tc.Text, substr) {
+	for _, c := range sm.Parts {
+		if tc, ok := c.(types.TextPart); ok && strings.Contains(tc.Text, substr) {
 			return true
 		}
 	}
@@ -261,8 +262,8 @@ func systemContains(sm types.SystemMessage, substr string) bool {
 func collectText(deltas []types.Delta) string {
 	var s strings.Builder
 	for _, d := range deltas {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			s.WriteString(tc.Content)
+		if tc, ok := d.(types.PartDelta); ok {
+			s.WriteString(tc.Text)
 		}
 	}
 	return s.String()

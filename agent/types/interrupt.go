@@ -17,7 +17,7 @@ var ErrSuspended = errors.New("run suspended for a durable decision")
 // distinct IDs even when they concern the same tool call.
 type ApprovalRequest struct {
 	ID       string
-	ToolCall ToolUseContent
+	ToolCall ToolCallPart
 	Markers  []Marker
 }
 

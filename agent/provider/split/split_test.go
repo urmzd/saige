@@ -28,10 +28,10 @@ func newArm(name string, script func(int) []types.Delta) arm {
 }
 
 func says(text string) func(int) []types.Delta {
-	return func(int) []types.Delta { return []types.Delta{types.TextContentDelta{Content: text}} }
+	return func(int) []types.Delta { return []types.Delta{types.PartDelta{Index: 0, Text: text}} }
 }
 
-func (a arm) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (a arm) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ds := a.script(int(a.calls.Add(1)))
 	ch := make(chan types.Delta, len(ds))
 	go func() {
@@ -58,15 +58,15 @@ type result struct {
 
 func collect(t *testing.T, ctx context.Context, p types.Provider) result {
 	t.Helper()
-	ch, err := p.ChatStream(ctx, []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := p.Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		return result{err: err}
 	}
 	var r result
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			r.text += v.Content
+		case types.PartDelta:
+			r.text += v.Text
 		case types.RouteDelta:
 			r.routes = append(r.routes, v)
 		case types.UsageDelta:
@@ -204,7 +204,7 @@ func TestRouteDeltaNamesExperimentAndVariant(t *testing.T) {
 func TestCanaryGuard(t *testing.T) {
 	failEarly := func(int) []types.Delta { return []types.Delta{types.ErrorDelta{Error: transient()}} }
 	failLate := func(int) []types.Delta {
-		return []types.Delta{types.TextContentDelta{Content: "par"}, types.ErrorDelta{Error: transient()}}
+		return []types.Delta{types.PartDelta{Index: 0, Text: "par"}, types.ErrorDelta{Error: transient()}}
 	}
 	usageThenFail := func(int) []types.Delta {
 		return []types.Delta{types.UsageDelta{PromptTokens: 10}, types.ErrorDelta{Error: transient()}}
@@ -317,9 +317,9 @@ func TestForce(t *testing.T) {
 func TestShadowTraffic(t *testing.T) {
 	shadowScript := func(int) []types.Delta {
 		return []types.Delta{
-			types.TextContentDelta{Content: "shadow says"},
-			types.ToolCallStartDelta{ID: "1", Name: "delete_everything"},
-			types.ToolCallEndDelta{ID: "1"},
+			types.PartDelta{Index: 0, Text: "shadow says"},
+			types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "1", Name: "delete_everything"},
+			types.PartEnd{Index: 1},
 			types.UsageDelta{PromptTokens: 1_000_000, CompletionTokens: 0},
 		}
 	}
@@ -400,7 +400,7 @@ func TestCapabilitiesIntersectArms(t *testing.T) {
 	if !caps.Supports(types.CapTools) || caps.Supports(types.CapStructuredOutput) {
 		t.Fatalf("caps = %v", caps.List())
 	}
-	ch, err := s.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+	ch, err := s.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ type singleFlight struct {
 
 var errBusy = errors.New("session busy")
 
-func (p singleFlight) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p singleFlight) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	if !p.busy.CompareAndSwap(false, true) {
 		return nil, errBusy
 	}
@@ -434,7 +434,7 @@ func (p singleFlight) ChatStream(context.Context, []types.Message, []types.ToolD
 		defer close(ch)
 		defer p.busy.Store(false)
 		<-p.gate
-		ch <- types.TextContentDelta{Content: "shadow"}
+		ch <- types.PartDelta{Index: 0, Text: "shadow"}
 	}()
 	return ch, nil
 }
@@ -497,14 +497,14 @@ func TestUsageBeforeOutputIsHeld(t *testing.T) {
 		wantErr    bool
 		wantPrompt int
 	}{
-		{"canary answers", usage(10, types.TextContentDelta{Content: "canary"}), "canary", false, 10},
+		{"canary answers", usage(10, types.PartDelta{Index: 0, Text: "canary"}), "canary", false, 10},
 		{"canary fails over", usage(10, types.ErrorDelta{Error: transient()}), "control", false, 3},
 		{"canary error is returned with its usage", usage(10, refused), "", true, 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, err := New(Config{Experiment: "exp", Arms: []Arm{
-				{Label: "control", Weight: 0, Provider: newArm("control", usage(3, types.TextContentDelta{Content: "control"}))},
+				{Label: "control", Weight: 0, Provider: newArm("control", usage(3, types.PartDelta{Index: 0, Text: "control"}))},
 				{Label: "canary", Weight: 1, Provider: newArm("canary", tt.canary), Canary: &Guard{MaxErrorRate: 0.5, MinSamples: 5}},
 			}})
 			if err != nil {

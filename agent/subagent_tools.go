@@ -177,7 +177,7 @@ func sendSubAgent(_ context.Context, r *spawnRegistry, args map[string]any) (str
 	if strings.TrimSpace(message) == "" {
 		return "", errors.New("message is empty")
 	}
-	if _, err := h.Send(types.NewUserMessage(message)); err != nil {
+	if _, err := h.Send(types.UserMsg(types.Text(message))); err != nil {
 		return "", fmt.Errorf("sub-agent %s: %w", h.id, err)
 	}
 	return "Message delivered to " + h.id + ".", nil
@@ -260,26 +260,26 @@ func transcriptText(m types.Message) string {
 	var parts []string
 	add := func(c any) {
 		switch v := c.(type) {
-		case types.TextContent:
+		case types.TextPart:
 			parts = append(parts, v.Text)
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			args, _ := json.Marshal(v.Arguments)
 			parts = append(parts, fmt.Sprintf("[call %s %s]", v.Name, args))
-		case types.ToolResultContent:
-			parts = append(parts, "[result] "+v.Text)
+		case types.ToolResultPart:
+			parts = append(parts, "[result] "+v.Text())
 		}
 	}
 	switch v := m.(type) {
 	case types.SystemMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	case types.UserMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	case types.AssistantMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	}

@@ -26,7 +26,7 @@ func TestChatStreamWithOptions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server, got := captureChat(t, ChatChunk{Done: true})
 			a := NewAdapter(NewClient(server.URL, "qwen3:4b", ""))
-			ch, err := a.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("go")}, testTools, tc.opts)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: testTools, Options: new(tc.opts)})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want a local configuration error", err)

@@ -117,7 +117,7 @@ func TestRetryPolicyRespectsIdempotency(t *testing.T) {
 				t.Fatal(err)
 			}
 			if res.IsError == tt.wantOK {
-				t.Errorf("IsError=%v (%s), want ok=%v", res.IsError, res.Text, tt.wantOK)
+				t.Errorf("IsError=%v (%s), want ok=%v", res.IsError, res.Text(), tt.wantOK)
 			}
 			if got := front.seen.Load(); got != tt.wantSeen {
 				t.Errorf("tools/call requests = %d, want %d", got, tt.wantSeen)
@@ -165,7 +165,7 @@ func TestTokenFuncSetsBearerPerRequest(t *testing.T) {
 	}
 	c := connect(t, spec)
 	if res, _ := toolNamed(t, c, "t_echo").ExecuteRich(context.Background(), map[string]any{"text": "x"}); res.IsError {
-		t.Fatal(res.Text)
+		t.Fatal(res.Text())
 	}
 	mu.Lock()
 	got := append([]string(nil), seen...)

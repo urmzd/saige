@@ -78,7 +78,7 @@ func TestPostgresSuspendDecideResume(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "pg-run", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}

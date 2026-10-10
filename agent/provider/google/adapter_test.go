@@ -8,8 +8,9 @@ import (
 
 func TestToGeminiContentsPDFIsNativeInlineData(t *testing.T) {
 	pdf := []byte("%PDF-1.4 fake")
-	msgs := []types.Message{types.NewUserMessageWithFiles("summarize this",
-		types.FileContent{MediaType: types.MediaPDF, Data: pdf, Filename: "paper.pdf"})}
+	doc := types.Bytes(types.MediaPDF, pdf)
+	doc.Filename = "paper.pdf"
+	msgs := []types.Message{types.UserMsg(types.Text("summarize this"), types.Document(doc))}
 
 	_, contents := toGeminiContents(msgs)
 	if len(contents) != 1 || len(contents[0].Parts) != 2 {
@@ -17,7 +18,7 @@ func TestToGeminiContentsPDFIsNativeInlineData(t *testing.T) {
 	}
 	blob := contents[0].Parts[1].InlineData
 	if blob == nil {
-		t.Fatal("PDF FileContent must map to a native inline-data part")
+		t.Fatal("a PDF document part must map to a native inline-data part")
 	}
 	if blob.MIMEType != string(types.MediaPDF) || string(blob.Data) != string(pdf) {
 		t.Errorf("inline data = %q %d bytes, want application/pdf with raw PDF bytes", blob.MIMEType, len(blob.Data))

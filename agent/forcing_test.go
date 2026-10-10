@@ -13,14 +13,15 @@ import (
 // provider that cannot receive request options.
 type plainProvider struct{ p *agenttest.ScriptedProvider }
 
-func (p plainProvider) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
-	return p.p.ChatStream(ctx, m, t)
+func (p plainProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, t := req.Messages, req.Tools
+	return p.p.Stream(ctx, types.Request{Messages: m, Tools: t})
 }
 
 func runAgent(t *testing.T, a *Agent, input ...types.Message) ([]types.Delta, error) {
 	t.Helper()
 	if len(input) == 0 {
-		input = []types.Message{types.NewUserMessage("go")}
+		input = []types.Message{types.UserMsg(types.Text("go"))}
 	}
 	stream := a.Invoke(context.Background(), input)
 	deltas := agenttest.CollectDeltas(stream.Deltas())
@@ -124,7 +125,7 @@ func TestStopAtTools(t *testing.T) {
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "finish"}, Result: "final output", Err: tt.toolErr}
 			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)},
 				WithStopAtTools("finish"))
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)
@@ -250,7 +251,7 @@ func TestRefusedCallsAreNotToolFaults(t *testing.T) {
 			a := NewAgent(AgentConfig{
 				Provider: script, SystemPrompt: "sys", Tools: tools, MaxIter: 10, ToolGate: gate,
 			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for d := range stream.Deltas() {
 				if m, ok := d.(types.MarkerDelta); ok {
 					stream.ResolveMarkerWithMessage(m.ToolCallID, false, nil, "no")
@@ -320,7 +321,7 @@ func TestToolChoice(t *testing.T) {
 	tests := []struct {
 		name        string
 		configured  *types.ToolChoice
-		inline      *types.ToolChoice // sent as ConfigContent with the input
+		inline      *types.ToolChoice // sent as ConfigPart with the input
 		plain       bool              // provider without request options
 		wantErr     error
 		wantOptions []*types.ToolChoice // per call; nil means no options sent
@@ -361,9 +362,9 @@ func TestToolChoice(t *testing.T) {
 				Provider: provider, SystemPrompt: "sys", ToolChoice: tt.configured,
 				Tools: types.NewToolRegistry(&agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "r"}),
 			})
-			input := types.UserMessage{Content: []types.UserContent{types.TextContent{Text: "go"}}}
+			input := types.UserMessage{Parts: []types.UserPart{types.TextPart{Text: "go"}}}
 			if tt.inline != nil {
-				input.Content = append(input.Content, types.ConfigContent{ToolChoice: tt.inline})
+				input.Parts = append(input.Parts, types.ConfigPart{ToolChoice: tt.inline})
 			}
 			_, err := runAgent(t, a, input)
 			if tt.wantErr != nil {

@@ -52,9 +52,8 @@ func TestHarnessToolsLive(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage(
-		"First look at orders.csv with read_file. Then compute the sum of the amount column by running a python " +
-			"script with execute_code that reads the file. Reply with only the total.")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("First look at orders.csv with read_file. Then compute the sum of the amount column by running a python " +
+		"script with execute_code that reads the file. Reply with only the total."))})
 	used := map[string]int{}
 	asked := 0
 	var answer strings.Builder
@@ -69,8 +68,8 @@ func TestHarnessToolsLive(t *testing.T) {
 		case types.ToolExecEndDelta:
 			used[d.Name]++
 			t.Logf("%s -> %.200q", d.Name, d.Result+d.Error)
-		case types.TextContentDelta:
-			answer.WriteString(d.Content)
+		case types.PartDelta:
+			answer.WriteString(d.Text)
 		}
 	}
 	if err := stream.Wait(); err != nil {

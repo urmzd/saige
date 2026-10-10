@@ -40,11 +40,11 @@ type signedLoop struct {
 // reasoning, and closes it on a turn without tool calls.
 func (l *signedLoop) observeAssistant(m types.AssistantMessage, turn types.Dials) {
 	calls, signed := false, false
-	for _, c := range m.Content {
+	for _, c := range m.Parts {
 		switch v := c.(type) {
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			calls = true
-		case types.ThinkingContent:
+		case types.ThinkingPart:
 			signed = signed || v.Signature != ""
 		}
 	}
@@ -62,9 +62,9 @@ func (l *signedLoop) observeAssistant(m types.AssistantMessage, turn types.Dials
 
 // observeUser closes the loop on a user turn that is more than tool
 // results.
-func (l *signedLoop) observeUser(content []types.UserContent) {
-	if slices.ContainsFunc(content, func(c types.UserContent) bool {
-		_, result := c.(types.ToolResultContent)
+func (l *signedLoop) observeUser(content []types.UserPart) {
+	if slices.ContainsFunc(content, func(c types.UserPart) bool {
+		_, result := c.(types.ToolResultPart)
 		return !result
 	}) {
 		*l = signedLoop{}
@@ -125,7 +125,7 @@ func (a *Agent) attachDials(ctx context.Context, ac activeContext, opts *types.R
 		}
 		return opts, nil
 	}
-	if _, ok := ac.provider.(types.OptionsProvider); !ok {
+	if !types.AcceptsOptions(ac.provider) {
 		merged := mergeLayers(ac.dialLayers)
 		for _, n := range merged.Names() {
 			if n.Class(merged) == types.DialContractual {

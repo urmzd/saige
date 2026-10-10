@@ -110,8 +110,36 @@ func (a *Adapter) clientOptions() (types.RequestOptions, error) {
 	return o.Clone(), nil
 }
 
-// ChatStream implements types.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream implements types.Provider. A request may carry a schema or
+// options, not both.
+func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	var (
+		ch  <-chan types.Delta
+		err error
+	)
+	switch {
+	case req.Options != nil && req.Schema != nil:
+		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
+	case req.Options != nil:
+		ch, err = a.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
+	case req.Schema != nil:
+		ch, err = a.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	default:
+		ch, err = a.chatStream(ctx, req.Messages, req.Tools)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return types.UpgradeV1Stream(ch), nil
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (a *Adapter) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (a *Adapter) SupportsOptions() bool { return true }
+
+func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, false)
 	if err != nil {
 		return nil, err
@@ -141,8 +169,7 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	return a.translateDeltas(ctx, rx, false), nil
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (a *Adapter) chatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
 	if err != nil {
 		return nil, err
@@ -375,12 +402,12 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 		case types.SystemMessage:
 			// Split: text goes to system role, tool results go to tool role.
 			var textParts []string
-			var toolResults []types.ToolResultContent
-			for _, c := range v.Content {
+			var toolResults []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					textParts = append(textParts, bc.Text)
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					toolResults = append(toolResults, bc)
 				}
 			}
@@ -388,7 +415,7 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 				out = append(out, ChatMessage{Role: "system", Content: strings.Join(textParts, "")})
 			}
 			for _, tr := range toolResults {
-				text := tr.Text
+				text := tr.Text()
 				if tr.IsError {
 					text = "[TOOL ERROR] " + text
 				}
@@ -398,16 +425,16 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 			// Split: text goes to user role, tool results go to tool role.
 			var textParts []string
 			var images []string
-			var toolResults []types.ToolResultContent
-			for _, c := range v.Content {
+			var toolResults []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					textParts = append(textParts, bc.Text)
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					toolResults = append(toolResults, bc)
-				case types.FileContent:
-					if bc.Data != nil {
-						images = append(images, base64.StdEncoding.EncodeToString(bc.Data))
+				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+					if src, _ := types.SourceOf(bc); src.Inline != nil {
+						images = append(images, base64.StdEncoding.EncodeToString(src.Inline))
 					}
 				}
 			}
@@ -419,7 +446,7 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 				})
 			}
 			for _, tr := range toolResults {
-				text := tr.Text
+				text := tr.Text()
 				if tr.IsError {
 					text = "[TOOL ERROR] " + text
 				}
@@ -427,11 +454,11 @@ func toOllamaMessages(msgs []types.Message) []ChatMessage {
 			}
 		case types.AssistantMessage:
 			msg := ChatMessage{Role: "assistant"}
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					msg.Content += bc.Text
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					msg.ToolCalls = append(msg.ToolCalls, ToolCall{
 						Function: ToolCallFunction{
 							Name:      bc.Name,

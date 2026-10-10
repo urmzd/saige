@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -66,14 +68,14 @@ func sseServer(t *testing.T, hangUp bool, body ...string) *httptest.Server {
 
 type streamResult struct {
 	deltas []types.Delta
-	ends   []types.ToolCallEndDelta
+	ends   []types.ToolCallPart
 	errs   []error
 	usage  bool
 }
 
 func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	t.Helper()
-	ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("go")}, nil, schema)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +83,10 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	for d := range ch {
 		r.deltas = append(r.deltas, d)
 		switch v := d.(type) {
-		case types.ToolCallEndDelta:
-			r.ends = append(r.ends, v)
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok {
+				r.ends = append(r.ends, tc)
+			}
 		case types.UsageDelta:
 			if len(r.errs) == 0 {
 				r.usage = true
@@ -91,6 +95,7 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 			r.errs = append(r.errs, v.Error)
 		}
 	}
+	streamcheck.RunPartConformance(t, r.deltas)
 	return r
 }
 
@@ -146,7 +151,7 @@ func TestToolArgumentIntegrity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := run(t, NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, tc.body...).URL)), nil)
 			var argsErrs []string
-			var ends []types.ToolCallEndDelta
+			var ends []types.ToolCallPart
 			for _, end := range r.ends {
 				if end.ArgumentsError != "" {
 					if end.Arguments != nil {
@@ -164,19 +169,26 @@ func TestToolArgumentIntegrity(t *testing.T) {
 				t.Fatalf("ends = %+v, want %d", ends, len(tc.wantEnds))
 			}
 			// Every call closes before the next one starts.
-			open := ""
+			open, openIndex := "", -1
 			for _, d := range r.deltas {
 				switch v := d.(type) {
-				case types.ToolCallStartDelta:
+				case types.PartStart:
+					if v.Kind != types.KindToolCall {
+						continue
+					}
 					if open != "" {
 						t.Fatalf("call %s started while %s was open", v.ID, open)
 					}
-					open = v.ID
-				case types.ToolCallEndDelta:
-					if v.ID != open {
-						t.Fatalf("end for %s while %q was open", v.ID, open)
+					open, openIndex = v.ID, v.Index
+				case types.PartEnd:
+					tc, ok := v.Part.(types.ToolCallPart)
+					if !ok {
+						continue
 					}
-					open = ""
+					if tc.ID != open || v.Index != openIndex {
+						t.Fatalf("end for %s while %q was open", tc.ID, open)
+					}
+					open, openIndex = "", -1
 				}
 			}
 			for _, end := range ends {
@@ -188,14 +200,14 @@ func TestToolArgumentIntegrity(t *testing.T) {
 					t.Fatalf("call %s path = %q, want %q", end.ID, got, want)
 				}
 			}
-			starts := map[string]bool{}
+			starts := map[int]bool{}
 			for _, d := range r.deltas {
 				switch v := d.(type) {
-				case types.ToolCallStartDelta:
-					starts[v.ID] = true
-				case types.ToolCallArgumentDelta:
-					if !starts[v.ID] {
-						t.Fatalf("argument delta for unknown call %q", v.ID)
+				case types.PartStart:
+					starts[v.Index] = v.Kind == types.KindToolCall
+				case types.PartDelta:
+					if v.Args != "" && !starts[v.Index] {
+						t.Fatalf("argument delta for unknown call at %d", v.Index)
 					}
 				}
 			}
@@ -318,7 +330,7 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 			if tc.outer > 0 {
 				p = retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if err == nil {
 				for d := range ch {
 					if e, ok := d.(types.ErrorDelta); ok {
@@ -387,7 +399,7 @@ func TestFileContentToPartAudioAndBinary(t *testing.T) {
 		{"mp3", types.MediaMP3, "mp3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			part := fileContentToPart(types.FileContent{MediaType: tc.mt, Data: []byte{0x52, 0x49, 0x46, 0x46}})
+			part := fileContentToPart(legacyparts.Media{MediaType: tc.mt, Data: []byte{0x52, 0x49, 0x46, 0x46}})
 			if part.OfInputAudio == nil {
 				t.Fatalf("audio must map to an input_audio part, got %+v", part)
 			}
@@ -396,7 +408,7 @@ func TestFileContentToPartAudioAndBinary(t *testing.T) {
 			}
 		})
 	}
-	video := fileContentToPart(types.FileContent{MediaType: types.MediaMP4, Filename: "clip.mp4", Data: []byte{0, 0, 0, 0x18, 0xff}})
+	video := fileContentToPart(legacyparts.Media{MediaType: types.MediaMP4, Filename: "clip.mp4", Data: []byte{0, 0, 0, 0x18, 0xff}})
 	if video.OfText == nil || strings.ContainsRune(video.OfText.Text, 0xff) || strings.ContainsRune(video.OfText.Text, 0) {
 		t.Fatalf("binary bytes must not be sent as text: %+v", video)
 	}

@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/types"
 )
 
 func TestFileContentToPartPDFIsNativeFilePart(t *testing.T) {
 	pdf := []byte("%PDF-1.4 fake")
-	part := fileContentToPart(types.FileContent{
+	part := fileContentToPart(legacyparts.Media{
 		MediaType: types.MediaPDF,
 		Data:      pdf,
 		Filename:  "paper.pdf",
@@ -32,7 +33,7 @@ func TestFileContentToPartPDFIsNativeFilePart(t *testing.T) {
 }
 
 func TestFileContentToPartPDFDefaultsFilename(t *testing.T) {
-	part := fileContentToPart(types.FileContent{MediaType: types.MediaPDF, Data: []byte("%PDF-")})
+	part := fileContentToPart(legacyparts.Media{MediaType: types.MediaPDF, Data: []byte("%PDF-")})
 	if part.OfFile == nil {
 		t.Fatal("expected a file part")
 	}
@@ -42,12 +43,12 @@ func TestFileContentToPartPDFDefaultsFilename(t *testing.T) {
 }
 
 func TestFileContentToPartImageAndFallback(t *testing.T) {
-	img := fileContentToPart(types.FileContent{MediaType: types.MediaPNG, Data: []byte{0x89}})
+	img := fileContentToPart(legacyparts.Media{MediaType: types.MediaPNG, Data: []byte{0x89}})
 	if img.OfImageURL == nil {
 		t.Fatal("PNG must map to an image part")
 	}
 	// Non-native media without a native mapping degrades to text.
-	txt := fileContentToPart(types.FileContent{MediaType: types.MediaCSV, Data: []byte("a,b"), Filename: "d.csv"})
+	txt := fileContentToPart(legacyparts.Media{MediaType: types.MediaCSV, Data: []byte("a,b"), Filename: "d.csv"})
 	if txt.OfText == nil {
 		t.Fatalf("CSV should degrade to text, got %+v", txt)
 	}

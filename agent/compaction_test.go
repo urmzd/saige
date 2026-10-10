@@ -30,11 +30,11 @@ func (cheapScripted) Capabilities() types.ModelCapabilities {
 // turn is the older span.
 func twoToolTurns() []types.Message {
 	return []types.Message{
-		types.NewUserMessage("go"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "a", Name: "t"}}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "a", Text: "first lookup"}),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "b", Name: "t"}}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "b", Text: "second lookup"}),
+		types.UserMsg(types.Text("go")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "a", Name: "t"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "a", Parts: []types.ToolOutputPart{types.Text("first lookup")}}),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "b", Name: "t"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "b", Parts: []types.ToolOutputPart{types.Text("second lookup")}}),
 	}
 }
 
@@ -111,11 +111,11 @@ func TestCompactionRecordsWhatItKeptAndDropped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var recorded []types.CompactionContent
+	var recorded []types.CompactionPart
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if cc, ok := c.(types.CompactionContent); ok {
+			for _, c := range sm.Parts {
+				if cc, ok := c.(types.CompactionPart); ok {
 					recorded = append(recorded, cc)
 				}
 			}
@@ -252,7 +252,7 @@ func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {
 	a := NewAgent(cfg, WithoutCompaction())
 	// The orchestrator's own history is long enough that any strategy
 	// would compact it.
-	input := append(twoToolTurns(), types.NewUserMessage("now delegate"))
+	input := append(twoToolTurns(), types.UserMsg(types.Text("now delegate")))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream := a.Invoke(ctx, input)
@@ -291,7 +291,7 @@ func TestHandoffGroupAcceptsDisabledCompaction(t *testing.T) {
 			Name: "entry", Provider: script, SystemPrompt: "sys",
 			Handoffs: []HandoffDef{{Name: "specialist", Description: "handles the hard part"}},
 		}, opts...)
-		stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello")})
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 		agenttest.CollectDeltas(stream.Deltas())
 		return stream.Wait()
 	}

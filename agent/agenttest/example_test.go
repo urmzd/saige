@@ -20,7 +20,7 @@ func ExampleFunctionModel() {
 		},
 	}
 	a := agent.NewAgent(agent.AgentConfig{Provider: model})
-	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")}))
+	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 	fmt.Println(text)
 	// Output: call 0, 0 tools offered
 }
@@ -33,7 +33,7 @@ func ExampleNewToolCallEmulator() {
 	})
 	model := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{})
 	a := agent.NewAgent(agent.AgentConfig{Provider: model, Tools: types.NewToolRegistry(weather)})
-	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("weather?")}))
+	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}))
 	fmt.Println(text)
 	// Output: weather: sunny in sample city
 }

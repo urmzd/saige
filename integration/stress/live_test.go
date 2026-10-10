@@ -42,7 +42,8 @@ type countingProvider struct {
 	retryAfter time.Duration
 }
 
-func (p *countingProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *countingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	now := time.Now()
 	p.stats.mu.Lock()
 	p.stats.attempts++
@@ -55,7 +56,7 @@ func (p *countingProvider) ChatStream(ctx context.Context, msgs []types.Message,
 	p.stats.mu.Unlock()
 	p.retryAfter = 0
 
-	ch, err := p.inner.ChatStream(ctx, msgs, tools)
+	ch, err := p.inner.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 	if err != nil {
 		p.record(err)
 		return nil, err

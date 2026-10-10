@@ -23,17 +23,17 @@ func EstimateTokens(messages []Message) int {
 		fixed += estimateMessageOverhead
 		switch v := m.(type) {
 		case SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				c, f := estimateContent(c)
 				chars, fixed = chars+c, fixed+f
 			}
 		case UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				c, f := estimateContent(c)
 				chars, fixed = chars+c, fixed+f
 			}
 		case AssistantMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				c, f := estimateContent(c)
 				chars, fixed = chars+c, fixed+f
 			}
@@ -44,17 +44,25 @@ func EstimateTokens(messages []Message) int {
 
 func estimateContent(c any) (chars, fixed int) {
 	switch v := c.(type) {
-	case TextContent:
+	case TextPart:
 		return len(v.Text), 0
-	case ThinkingContent:
-		return len(v.Thinking), 0
-	case ToolUseContent:
+	case ThinkingPart:
+		return len(v.Text), 0
+	case ToolCallPart:
 		args, _ := json.Marshal(v.Arguments)
 		return len(v.Name) + len(args), 0
-	case ToolResultContent:
-		return len(v.Text), len(v.Blocks) * estimateFileTokens
-	case FileContent:
-		return 0, estimateFileTokens
+	case ToolResultPart:
+		media := 0
+		for _, p := range v.Parts {
+			if IsMedia(p) {
+				media++
+			}
+		}
+		return len(v.Text()), media * estimateFileTokens
+	case Part:
+		if IsMedia(v) {
+			return 0, estimateFileTokens
+		}
 	}
 	return 0, 0
 }

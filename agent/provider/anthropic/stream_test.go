@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -61,14 +62,14 @@ func sseServer(t *testing.T, hangUp bool, events ...sseEvent) *httptest.Server {
 
 type streamResult struct {
 	deltas []types.Delta
-	ends   []types.ToolCallEndDelta
+	ends   []types.ToolCallPart
 	errs   []error
 	usage  bool // a usage delta arrived before the first error
 }
 
 func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	t.Helper()
-	ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("go")}, nil, schema)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +77,10 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	for d := range ch {
 		r.deltas = append(r.deltas, d)
 		switch v := d.(type) {
-		case types.ToolCallEndDelta:
-			r.ends = append(r.ends, v)
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok {
+				r.ends = append(r.ends, tc)
+			}
 		case types.UsageDelta:
 			if len(r.errs) == 0 {
 				r.usage = true
@@ -86,6 +89,7 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 			r.errs = append(r.errs, v.Error)
 		}
 	}
+	streamcheck.RunPartConformance(t, r.deltas)
 	return r
 }
 
@@ -138,7 +142,7 @@ func TestToolArgumentIntegrity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, tc.events...).URL))
 			r := run(t, a, nil)
-			var ends []types.ToolCallEndDelta
+			var ends []types.ToolCallPart
 			argsErrs := 0
 			for _, end := range r.ends {
 				if end.ArgumentsError != "" {
@@ -154,16 +158,21 @@ func TestToolArgumentIntegrity(t *testing.T) {
 				t.Fatalf("argument errors = %d, want %d", argsErrs, tc.wantArgsErr)
 			}
 			// A held call closes before the next block starts.
-			open := ""
+			open, openIndex := "", -1
 			for _, d := range r.deltas {
 				switch v := d.(type) {
-				case types.ToolCallStartDelta:
-					open = v.ID
-				case types.ToolCallEndDelta:
-					open = ""
-				case types.TextStartDelta:
-					if open != "" {
-						t.Fatalf("text started while call %s was open", open)
+				case types.PartStart:
+					switch v.Kind {
+					case types.KindToolCall:
+						open, openIndex = v.ID, v.Index
+					case types.KindText:
+						if open != "" {
+							t.Fatalf("text started while call %s was open", open)
+						}
+					}
+				case types.PartEnd:
+					if v.Index == openIndex {
+						open, openIndex = "", -1
 					}
 				}
 			}
@@ -192,9 +201,15 @@ func TestToolArgumentIntegrity(t *testing.T) {
 					t.Fatal("usage must arrive before the error so tokens are accounted")
 				}
 			}
+			callIndex := map[int]string{}
 			for _, d := range r.deltas {
-				if arg, ok := d.(types.ToolCallArgumentDelta); ok && arg.ID != "toolu_1" {
-					t.Fatalf("argument delta without call ID: %+v", arg)
+				switch v := d.(type) {
+				case types.PartStart:
+					callIndex[v.Index] = v.ID
+				case types.PartDelta:
+					if v.Args != "" && callIndex[v.Index] != "toolu_1" {
+						t.Fatalf("argument delta outside the call: %+v", v)
+					}
 				}
 			}
 		})
@@ -305,7 +320,7 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 			if tc.outer > 0 {
 				p = retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if err == nil {
 				for d := range ch {
 					if e, ok := d.(types.ErrorDelta); ok {

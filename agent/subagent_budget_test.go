@@ -40,8 +40,8 @@ func toolResultIn(t *testing.T, c agenttest.ScriptedCall, id string) string {
 	t.Helper()
 	for _, m := range c.Messages {
 		for _, r := range toolResultsOf(m) {
-			if r.ToolCallID == id {
-				return r.Text
+			if r.CallID == id {
+				return r.Text()
 			}
 		}
 	}
@@ -139,7 +139,7 @@ func TestChildWrapUpThenForcedReturn(t *testing.T) {
 		Name: "worker", Description: "w", Provider: child, MaxIter: 4, ResultSink: sink,
 		Tools: types.NewToolRegistry(lookupTool()),
 	}))
-	stream := parent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := parent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("parent failed: %v", err)
@@ -248,7 +248,7 @@ func TestUnboundedOrchestratorBoundedChild(t *testing.T) {
 	if parent.cfg.MaxIter != NoIterLimit {
 		t.Fatalf("parent MaxIter = %d", parent.cfg.MaxIter)
 	}
-	stream := parent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := parent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	text := agenttest.CollectText(stream.Deltas())
 	if err := stream.Wait(); err != nil || text != "parent done" {
 		t.Fatalf("parent = %q, %v", text, err)
@@ -283,18 +283,18 @@ func TestSiblingScratchIsolation(t *testing.T) {
 	}
 	parentProvider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		{
-			types.ToolCallStartDelta{ID: "da", Name: "delegate_to_a"},
-			types.ToolCallArgumentDelta{Content: `{"task":"take notes"}`},
-			types.ToolCallEndDelta{Arguments: map[string]any{"task": "take notes"}},
-			types.ToolCallStartDelta{ID: "db", Name: "delegate_to_b"},
-			types.ToolCallArgumentDelta{Content: `{"task":"take notes"}`},
-			types.ToolCallEndDelta{Arguments: map[string]any{"task": "take notes"}},
+			types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "da", Name: "delegate_to_a"},
+			types.PartDelta{Index: 0, Args: `{"task":"take notes"}`},
+			types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "da", Name: "delegate_to_a", Arguments: map[string]any{"task": "take notes"}}},
+			types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "db", Name: "delegate_to_b"},
+			types.PartDelta{Index: 1, Args: `{"task":"take notes"}`},
+			types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "db", Name: "delegate_to_b", Arguments: map[string]any{"task": "take notes"}}},
 		},
 		agenttest.ToolCallResponse("s1", workspace.SearchArtifactToolName, map[string]any{"query": "notes"}),
 		agenttest.TextResponse("parent done"),
 	}}
 	parent := NewAgent(AgentConfig{Name: "lead", Provider: parentProvider, Workspace: parentWS, SubAgents: defs})
-	stream := parent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := parent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(stream.Deltas()))
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -384,7 +384,7 @@ func TestLargeForkedMessagePassedByReference(t *testing.T) {
 	parent := NewAgent(AgentConfig{Name: "lead", Provider: parentProvider}, WithSubAgents(SubAgentDef{
 		Name: "w", Description: "w", Provider: child, Context: ContextFork,
 	}))
-	stream := parent.Invoke(context.Background(), []types.Message{types.NewUserMessage(big)})
+	stream := parent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(big))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -441,7 +441,7 @@ func TestLargeResultReturnedAsReference(t *testing.T) {
 			parent := NewAgent(AgentConfig{Name: "lead", Provider: parentProvider, Workspace: tt.parentWS}, WithSubAgents(SubAgentDef{
 				Name: "w", Description: "w", Provider: child, ResultSink: sink,
 			}))
-			stream := parent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := parent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			agenttest.AssertNoErrors(t, agenttest.CollectDeltas(stream.Deltas()))
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)
@@ -524,7 +524,7 @@ func TestRefFromTool(t *testing.T) {
 		agenttest.TextResponse("done"),
 	}}
 	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool), Workspace: ws})
-	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}).Deltas()))
+	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas()))
 	if len(out) > 1500 || !strings.Contains(out, workspace.URIScheme+"://") {
 		t.Fatalf("Ref returned %d bytes", len(out))
 	}

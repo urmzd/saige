@@ -36,9 +36,10 @@ func (richTool) Definition() agenttypes.ToolDef {
 }
 func (richTool) Execute(context.Context, map[string]any) (string, error) { return "text", nil }
 func (richTool) ExecuteRich(context.Context, map[string]any) (agenttypes.ToolResult, error) {
-	return agenttypes.ToolResult{Text: "chart", Blocks: []agenttypes.ToolResultBlock{
-		{Kind: agenttypes.ToolResultBlockImage, MediaType: "image/png", Data: []byte{1}},
-		{Kind: agenttypes.ToolResultBlockJSON, JSON: json.RawMessage(`{"points":3}`)},
+	return agenttypes.ToolResult{Parts: []agenttypes.ToolOutputPart{
+		agenttypes.Text("chart"),
+		agenttypes.Image(agenttypes.Bytes("image/png", []byte{1})),
+		agenttypes.JSONPart{JSON: json.RawMessage(`{"points":3}`)},
 	}}, nil
 }
 

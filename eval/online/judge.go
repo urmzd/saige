@@ -39,7 +39,7 @@ func (g *BudgetedGenerator) Generate(ctx context.Context, prompt string) (string
 // sent when the provider supports structured output and dropped otherwise;
 // the judge parses either reply.
 func (g *BudgetedGenerator) GenerateStructured(ctx context.Context, prompt string, schema json.RawMessage) (string, error) {
-	if _, ok := g.Provider.(types.StructuredOutputProvider); !ok {
+	if !types.AcceptsSchema(g.Provider) {
 		return g.call(ctx, prompt, nil)
 	}
 	var ps types.ParameterSchema
@@ -59,19 +59,11 @@ func (g *BudgetedGenerator) call(ctx context.Context, prompt string, schema *typ
 	}
 	msgs := make([]types.Message, 0, 2)
 	if g.System != "" {
-		msgs = append(msgs, types.NewSystemMessage(g.System))
+		msgs = append(msgs, types.SystemMsg(types.Text(g.System)))
 	}
-	msgs = append(msgs, types.NewUserMessage(prompt))
+	msgs = append(msgs, types.UserMsg(types.Text(prompt)))
 
-	var (
-		ch  <-chan types.Delta
-		err error
-	)
-	if schema != nil {
-		ch, err = g.Provider.(types.StructuredOutputProvider).ChatStreamWithSchema(ctx, msgs, nil, schema)
-	} else {
-		ch, err = g.Provider.ChatStream(ctx, msgs, nil)
-	}
+	ch, err := g.Provider.Stream(ctx, types.Request{Messages: msgs, Schema: schema})
 	if err != nil {
 		_ = g.settle(id, caps.Pricing, types.UsageDelta{}, false)
 		return "", err
@@ -84,8 +76,8 @@ func (g *BudgetedGenerator) call(ctx context.Context, prompt string, schema *typ
 	)
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.UsageDelta:
 			usage, gotUsage = usage.Merge(v), true
 		case types.ErrorDelta:

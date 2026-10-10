@@ -120,40 +120,40 @@ func (r SubAgentResult) FinalAssistant() (types.AssistantMessage, error) {
 
 // StopToolResult returns the result of the tool call that ended the run
 // through StopAtTools.
-func (r SubAgentResult) StopToolResult() (types.ToolResultContent, error) {
+func (r SubAgentResult) StopToolResult() (types.ToolResultPart, error) {
 	if r.Error != "" {
-		return types.ToolResultContent{}, errors.New(r.Error)
+		return types.ToolResultPart{}, errors.New(r.Error)
 	}
 	if r.StopToolCallID == "" {
-		return types.ToolResultContent{}, errors.New("subagent did not stop at a tool")
+		return types.ToolResultPart{}, errors.New("subagent did not stop at a tool")
 	}
 	msgs, err := r.Messages()
 	if err != nil {
-		return types.ToolResultContent{}, err
+		return types.ToolResultPart{}, err
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		for _, res := range toolResultsOf(msgs[i]) {
-			if res.ToolCallID == r.StopToolCallID {
+			if res.CallID == r.StopToolCallID {
 				return res, nil
 			}
 		}
 	}
-	return types.ToolResultContent{}, fmt.Errorf("subagent stop tool result %q not found", r.StopToolCallID)
+	return types.ToolResultPart{}, fmt.Errorf("subagent stop tool result %q not found", r.StopToolCallID)
 }
 
 // toolResultsOf returns the tool results a message carries.
-func toolResultsOf(m types.Message) []types.ToolResultContent {
-	var out []types.ToolResultContent
+func toolResultsOf(m types.Message) []types.ToolResultPart {
+	var out []types.ToolResultPart
 	switch v := m.(type) {
 	case types.SystemMessage:
-		for _, c := range v.Content {
-			if res, ok := c.(types.ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if res, ok := c.(types.ToolResultPart); ok {
 				out = append(out, res)
 			}
 		}
 	case types.UserMessage:
-		for _, c := range v.Content {
-			if res, ok := c.(types.ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if res, ok := c.(types.ToolResultPart); ok {
 				out = append(out, res)
 			}
 		}
@@ -181,15 +181,15 @@ type FinalAssistantText struct{}
 func (FinalAssistantText) Select(r SubAgentResult) (string, error) {
 	if r.StopToolCallID != "" {
 		res, err := r.StopToolResult()
-		return res.Text, err
+		return res.Text(), err
 	}
 	msg, err := r.FinalAssistant()
 	if err != nil {
 		return "", err
 	}
 	var text strings.Builder
-	for _, block := range msg.Content {
-		if content, ok := block.(types.TextContent); ok {
+	for _, block := range msg.Parts {
+		if content, ok := block.(types.TextPart); ok {
 			text.WriteString(content.Text)
 		}
 	}

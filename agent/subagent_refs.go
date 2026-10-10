@@ -128,35 +128,35 @@ func referenceMessage(m types.Message, index int, ref func(name, text string) (s
 	name := func(j int) string { return fmt.Sprintf("inputs/message-%d-%d", index, j) }
 	switch v := m.(type) {
 	case types.UserMessage:
-		content := make([]types.UserContent, len(v.Content))
-		for j, c := range v.Content {
+		content := make([]types.UserPart, len(v.Parts))
+		for j, c := range v.Parts {
 			out, err := referenceBlock(c, name(j), ref)
 			if err != nil {
 				return nil, err
 			}
-			content[j] = out.(types.UserContent)
+			content[j] = out.(types.UserPart)
 		}
-		return types.UserMessage{Content: content}, nil
+		return types.UserMessage{Parts: content}, nil
 	case types.SystemMessage:
-		content := make([]types.SystemContent, len(v.Content))
-		for j, c := range v.Content {
+		content := make([]types.SystemPart, len(v.Parts))
+		for j, c := range v.Parts {
 			out, err := referenceBlock(c, name(j), ref)
 			if err != nil {
 				return nil, err
 			}
-			content[j] = out.(types.SystemContent)
+			content[j] = out.(types.SystemPart)
 		}
-		return types.SystemMessage{Content: content}, nil
+		return types.SystemMessage{Parts: content}, nil
 	case types.AssistantMessage:
-		content := make([]types.AssistantContent, len(v.Content))
-		for j, c := range v.Content {
+		content := make([]types.AssistantPart, len(v.Parts))
+		for j, c := range v.Parts {
 			out, err := referenceBlock(c, name(j), ref)
 			if err != nil {
 				return nil, err
 			}
-			content[j] = out.(types.AssistantContent)
+			content[j] = out.(types.AssistantPart)
 		}
-		return types.AssistantMessage{Content: content}, nil
+		return types.AssistantMessage{Parts: content}, nil
 	}
 	return m, nil
 }
@@ -165,16 +165,16 @@ func referenceMessage(m types.Message, index int, ref func(name, text string) (s
 // result. Other blocks are returned unchanged.
 func referenceBlock(c any, name string, ref func(name, text string) (string, error)) (any, error) {
 	switch v := c.(type) {
-	case types.TextContent:
+	case types.TextPart:
 		text, err := ref(name, v.Text)
 		v.Text = text
 		return v, err
-	case types.ToolResultContent:
-		if len(v.Blocks) > 0 {
+	case types.ToolResultPart:
+		if len(v.Parts) > 1 || v.HasMedia() || hasJSON(v.Parts) {
 			return v, nil
 		}
-		text, err := ref(name, v.Text)
-		v.Text = text
+		text, err := ref(name, v.Text())
+		v.Parts = []types.ToolOutputPart{types.Text(text)}
 		return v, err
 	}
 	return c, nil

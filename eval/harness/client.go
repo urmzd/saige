@@ -274,29 +274,27 @@ func (c *Client) chatProvider(ctx context.Context, messages []Message, options c
 	case options.schema != nil && reqOpts != nil:
 		return ChatResult{}, fmt.Errorf("%w: a JSON schema cannot be combined with temperature or seed on the provider transport; configure sampling on the provider", types.ErrInvalidModelConfig)
 	case options.schema != nil:
-		sp, ok := c.Provider.(types.StructuredOutputProvider)
-		if !ok {
+		if !types.AcceptsSchema(c.Provider) {
 			return ChatResult{}, fmt.Errorf("%w: provider %s does not support JSON schema output", types.ErrInvalidModelConfig, c.ProviderName())
 		}
 		schema, err := toParameterSchema(options.schema)
 		if err != nil {
 			return ChatResult{}, err
 		}
-		stream, err = sp.ChatStreamWithSchema(ctx, msgs, nil, schema)
+		stream, err = c.Provider.Stream(ctx, types.Request{Messages: msgs, Schema: schema})
 		if err != nil {
 			return ChatResult{}, err
 		}
 	case reqOpts != nil:
-		op, ok := c.Provider.(types.OptionsProvider)
-		if !ok {
+		if !types.AcceptsOptions(c.Provider) {
 			return ChatResult{}, fmt.Errorf("%w: provider %s does not accept per-request temperature or seed", types.ErrInvalidModelConfig, c.ProviderName())
 		}
-		stream, err = op.ChatStreamWithOptions(ctx, msgs, nil, *reqOpts)
+		stream, err = c.Provider.Stream(ctx, types.Request{Messages: msgs, Options: reqOpts})
 		if err != nil {
 			return ChatResult{}, err
 		}
 	default:
-		stream, err = c.Provider.ChatStream(ctx, msgs, nil)
+		stream, err = c.Provider.Stream(ctx, types.Request{Messages: msgs})
 		if err != nil {
 			return ChatResult{}, err
 		}
@@ -312,8 +310,8 @@ func collectStream(stream <-chan types.Delta) (ChatResult, error) {
 	var streamErr error
 	for d := range stream {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.UsageDelta:
 			usage = usage.Merge(v)
 		case types.ErrorDelta:
@@ -339,11 +337,11 @@ func toProviderMessages(messages []Message) ([]types.Message, error) {
 	for i, m := range messages {
 		switch m.Role {
 		case roleSystem:
-			out = append(out, types.NewSystemMessage(m.Content))
+			out = append(out, types.SystemMsg(types.Text(m.Content)))
 		case roleUser:
-			out = append(out, types.NewUserMessage(m.Content))
+			out = append(out, types.UserMsg(types.Text(m.Content)))
 		case roleAssistant:
-			out = append(out, types.NewAssistantMessage(m.Content))
+			out = append(out, types.AssistantMsg(types.Text(m.Content)))
 		default:
 			return nil, fmt.Errorf("message %d: unsupported role %q", i, m.Role)
 		}

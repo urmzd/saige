@@ -43,13 +43,13 @@ func main() {
 	))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("I was double-charged on my last invoice. Can you help?"),
+		types.UserMsg(types.Text("I was double-charged on my last invoice. Can you help?")),
 	})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.HandoffDelta:
 			fmt.Printf("\n[handoff %s → %s]\n", d.From, d.To)
 		case types.ErrorDelta:

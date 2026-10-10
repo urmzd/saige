@@ -47,7 +47,7 @@ func TestToolQuotaAtDispatch(t *testing.T) {
 				}},
 				Tools: types.NewToolRegistry(tool),
 			}, opts...)
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatalf("run failed: %v", err)
@@ -77,7 +77,7 @@ func TestToolQuotaSharedWithParallelCalls(t *testing.T) {
 		Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{deltas, agenttest.TextResponse("done")}},
 		Tools:    types.NewToolRegistry(tool),
 	}, WithBudget(budget))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestRunScopeReachesPolicyAndTools(t *testing.T) {
 		}},
 		Tools: types.NewToolRegistry(tool),
 	}, WithToolPolicy(policy))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestRunScopeDiffersPerConversation(t *testing.T) {
 			Name:     "worker",
 			Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}},
 		}, WithToolPolicy(policy))
-		stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 		agenttest.CollectDeltas(stream.Deltas())
 		if err := stream.Wait(); err != nil {
 			t.Fatal(err)

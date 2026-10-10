@@ -60,7 +60,7 @@ func runSpawn(t *testing.T, parent, child *agenttest.ScriptedProvider, def SubAg
 	a := NewAgent(AgentConfig{Name: "lead", Provider: parent, SubAgents: []SubAgentDef{def}}, opts...)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	run := spawnRun{stream: stream}
 	for d := range stream.Deltas() {
 		run.deltas = append(run.deltas, d)
@@ -101,7 +101,7 @@ func TestSpawnResultInjectedAtFinish(t *testing.T) {
 	def := SubAgentDef{Tools: types.NewToolRegistry(holdTool("hold", release))}
 	var once sync.Once
 	run := runSpawn(t, parent, child, def, func(_ *EventStream, d types.Delta) {
-		if _, ok := d.(types.TextContentDelta); ok {
+		if pd, ok := d.(types.PartDelta); ok && pd.Text != "" {
 			once.Do(func() { close(release) })
 		}
 	})
@@ -380,7 +380,7 @@ func TestSearchDelegationTranscript(t *testing.T) {
 	}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	run := spawnRun{stream: stream}
 	for d := range stream.Deltas() {
 		run.deltas = append(run.deltas, d)
@@ -406,14 +406,14 @@ func TestSpawnRefusedUnderDurableRunner(t *testing.T) {
 		agenttest.TextResponse("done"),
 	}}
 	a := NewAgent(AgentConfig{Provider: parent, SubAgents: []SubAgentDef{{Name: "worker", Provider: &agenttest.ScriptedProvider{}, Mode: SubAgentSpawn}}})
-	if _, err := a.RunDurable(context.Background(), inlineRunner{}, []types.Message{types.NewUserMessage("go")}, ""); err != nil {
+	if _, err := a.RunDurable(context.Background(), inlineRunner{}, []types.Message{types.UserMsg(types.Text("go"))}, ""); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := a.Tree().FlattenBranch(a.Tree().Active())
 	found := false
 	for _, r := range msgs {
 		for _, res := range toolResultsOf(r) {
-			if res.ToolCallID == "s1" && strings.Contains(res.Text, ErrSpawnUnsupported.Error()) {
+			if res.CallID == "s1" && strings.Contains(res.Text(), ErrSpawnUnsupported.Error()) {
 				found = true
 			}
 		}

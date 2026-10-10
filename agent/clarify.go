@@ -58,7 +58,7 @@ var errNoClarifier = errors.New("ask_user needs an agent run with a consumer to 
 
 // askClarification posts a clarification interrupt for tc and returns the
 // answer as the call's result.
-func (a *Agent) askClarification(ctx context.Context, stream *EventStream, tc types.ToolUseContent) toolResult {
+func (a *Agent) askClarification(ctx context.Context, stream *EventStream, tc types.ToolCallPart) toolResult {
 	question := strings.TrimSpace(stringArg(tc.Arguments, argQuestion))
 	if question == "" {
 		return failedTool(stream, tc.ID, tc.Name, "question is empty")

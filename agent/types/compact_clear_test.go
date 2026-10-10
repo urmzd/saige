@@ -7,13 +7,13 @@ import (
 
 func TestClearToolResultsCompactor(t *testing.T) {
 	call := func(id, name string) Message {
-		return AssistantMessage{Content: []AssistantContent{ToolUseContent{ID: id, Name: name}}}
+		return AssistantMessage{Parts: []AssistantPart{ToolCallPart{ID: id, Name: name}}}
 	}
 	result := func(id, text string) Message {
-		return NewToolResultMessage(ToolResultContent{ToolCallID: id, Text: text})
+		return ToolResults(ToolResultPart{CallID: id, Parts: []ToolOutputPart{Text(text)}})
 	}
 	history := []Message{
-		NewSystemMessage("sys"), NewUserMessage("go"),
+		SystemMsg(Text("sys")), UserMsg(Text("go")),
 		call("1", "search"), result("1", "first"),
 		call("2", "memory"), result("2", "second"),
 		call("3", "search"), result("3", "third"),
@@ -47,12 +47,12 @@ func TestClearToolResultsCompactor(t *testing.T) {
 			}
 			for i, m := range out {
 				for _, r := range toolResults(m) {
-					stub := r.Text == ClearedToolResultText(names[r.ToolCallID], r.ToolCallID)
-					if stub != want[r.ToolCallID] {
-						t.Fatalf("result %s cleared = %v, want %v", r.ToolCallID, stub, want[r.ToolCallID])
+					stub := r.Text() == ClearedToolResultText(names[r.CallID], r.CallID)
+					if stub != want[r.CallID] {
+						t.Fatalf("result %s cleared = %v, want %v", r.CallID, stub, want[r.CallID])
 					}
-					if !stub && r.Text != toolResults(history[i])[0].Text {
-						t.Fatalf("kept result %s changed", r.ToolCallID)
+					if !stub && r.Text() != toolResults(history[i])[0].Text() {
+						t.Fatalf("kept result %s changed", r.CallID)
 					}
 				}
 			}
@@ -77,13 +77,13 @@ func TestEstimateTokens(t *testing.T) {
 		want int
 	}{
 		{name: "empty", want: 0},
-		{name: "text", msgs: []Message{NewUserMessage("abcdefgh")}, want: estimateMessageOverhead + 2},
-		{name: "file", msgs: []Message{UserMessage{Content: []UserContent{FileContent{URI: "file:///a.png"}}}}, want: estimateMessageOverhead + estimateFileTokens},
+		{name: "text", msgs: []Message{UserMsg(Text("abcdefgh"))}, want: estimateMessageOverhead + 2},
+		{name: "file", msgs: []Message{UserMsg(Image(URL("file:///a.png")))}, want: estimateMessageOverhead + estimateFileTokens},
 		{
 			name: "tool call and result",
 			msgs: []Message{
-				AssistantMessage{Content: []AssistantContent{ToolUseContent{ID: "1", Name: "ab", Arguments: map[string]any{"k": "v"}}}},
-				NewToolResultMessage(ToolResultContent{ToolCallID: "1", Text: "abcd"}),
+				AssistantMessage{Parts: []AssistantPart{ToolCallPart{ID: "1", Name: "ab", Arguments: map[string]any{"k": "v"}}}},
+				ToolResults(ToolResultPart{CallID: "1", Parts: []ToolOutputPart{Text("abcd")}}),
 			},
 			// "ab" + `{"k":"v"}` + "abcd" = 15 chars, rounded up to 4 tokens.
 			want: 2*estimateMessageOverhead + 4,

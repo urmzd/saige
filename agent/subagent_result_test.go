@@ -110,7 +110,7 @@ func TestSubAgentApprovalCanResolveImmediately(t *testing.T) {
 		return types.Allow()
 	})
 	a := NewAgent(AgentConfig{Provider: parent, ToolGate: gate, SubAgents: []SubAgentDef{{Name: "child", Provider: child, Tools: types.NewToolRegistry(&agenttest.MockTool{Def: types.ToolDef{Name: "read"}, Result: "ok"})}}})
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	approved := false
 	for delta := range stream.Deltas() {
 		if marker, ok := delta.(types.MarkerDelta); ok {
@@ -131,10 +131,10 @@ func TestSubAgentApprovalCanResolveImmediately(t *testing.T) {
 
 func TestHandoffOwnerContextResumesWithoutOtherTranscript(t *testing.T) {
 	ctx := HandoffContext{Entry: "triage", Target: "triage", Messages: []types.Message{
-		types.NewSystemMessage("root"), types.NewUserMessage("task"), types.NewAssistantMessage("triage work"),
-		types.SystemMessage{Content: []types.SystemContent{types.HandoffContent{From: "triage", To: "specialist", Reason: "inspect data"}}},
-		types.NewAssistantMessage("private specialist work"),
-		types.SystemMessage{Content: []types.SystemContent{types.HandoffContent{From: "specialist", To: "triage", Reason: "cannot answer: missing account"}}},
+		types.SystemMsg(types.Text("root")), types.UserMsg(types.Text("task")), types.AssistantMsg(types.Text("triage work")),
+		types.SystemMessage{Parts: []types.SystemPart{types.HandoffPart{From: "triage", To: "specialist", Reason: "inspect data"}}},
+		types.AssistantMsg(types.Text("private specialist work")),
+		types.SystemMessage{Parts: []types.SystemPart{types.HandoffPart{From: "specialist", To: "triage", Reason: "cannot answer: missing account"}}},
 	}}
 	messages, err := (OwnerContext{}).Select(context.Background(), ctx)
 	if err != nil {
@@ -197,7 +197,7 @@ func TestToolPolicyRejectsHiddenCalls(t *testing.T) {
 	tool := &types.ToolFunc{Def: types.ToolDef{Name: "hidden"}, Fn: func(context.Context, map[string]any) (string, error) { called = true; return "unexpected", nil }}
 	model := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("call", "hidden", nil), agenttest.TextResponse("done")}}
 	a := NewAgent(AgentConfig{Provider: model, Tools: types.NewToolRegistry(tool)}, WithToolPolicy(ToolPolicyFunc(func(context.Context, string, []types.ToolDef) ([]string, error) { return nil, nil })))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("task")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("task"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

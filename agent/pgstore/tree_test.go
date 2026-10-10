@@ -56,13 +56,13 @@ func TestTreeWriteThroughSurvivesCancelledContext(t *testing.T) {
 
 	conv := "conv-" + types.NewID()
 	store := NewStore(pool, conv, nil)
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithStore(store))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := tr.Root()
-	call, err := tr.AddChild(ctx, root.ID, types.AssistantMessage{Content: []types.AssistantContent{
-		types.ToolUseContent{ID: "call-1", Name: "lookup"},
+	call, err := tr.AddChild(ctx, root.ID, types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ToolCallPart{ID: "call-1", Name: "lookup"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -70,11 +70,11 @@ func TestTreeWriteThroughSurvivesCancelledContext(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	result, err := tr.AddChild(cancelled, call.ID, types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "call-1", Text: "done"}))
+	result, err := tr.AddChild(cancelled, call.ID, types.ToolResults(types.ToolResultPart{CallID: "call-1", Parts: []types.ToolOutputPart{types.Text("done")}}))
 	if err != nil {
 		t.Fatalf("AddChild with cancelled context: %v", err)
 	}
-	side, _, err := tr.Branch(ctx, root.ID, "side", types.NewUserMessage("other"))
+	side, _, err := tr.Branch(ctx, root.ID, "side", types.UserMsg(types.Text("other")))
 	if err != nil {
 		t.Fatal(err)
 	}

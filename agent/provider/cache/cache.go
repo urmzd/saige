@@ -1,5 +1,5 @@
 // Package cache provides a response-caching decorator for types.Provider. It
-// memoizes ChatStream responses keyed by a deterministic hash of
+// memoizes Stream responses keyed by a deterministic hash of
 // (model, messages, tools, schema), mirroring the decorator pattern of
 // agent/provider/retry and agent/provider/fallback. Only fully-completed,
 // error-free streams are cached; cache hits replay recorded deltas and report a
@@ -50,7 +50,7 @@ type Config struct {
 	Metrics types.Metrics
 }
 
-// Provider memoizes ChatStream responses. Only fully-completed, error-free
+// Provider memoizes Stream responses. Only fully-completed, error-free
 // streams are cached.
 type Provider struct {
 	inner    types.Provider
@@ -110,7 +110,7 @@ func (p *Provider) Name() string {
 func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
 
 // WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// and keeps the same cache config. Without it a ConfigContent model switch was
+// and keeps the same cache config. Without it a ConfigPart model switch was
 // silently dropped under a cache decorator, and every switched request was
 // answered from the original model's cache entries.
 func (p *Provider) WithModel(model string) types.Provider {
@@ -132,43 +132,35 @@ func (p *Provider) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(caps, p.inner)
 }
 
-// ChatStream implements types.Provider.
-func (p *Provider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.stream(ctx, msgs, tools, nil, nil, func() (<-chan types.Delta, error) {
-		return p.inner.ChatStream(ctx, msgs, tools)
-	})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. The options are part
-// of the cache key, so a forced tool choice never replays a response recorded
-// without one. When the inner provider cannot receive options the call fails
-// with types.ErrInvalidModelConfig instead of dropping them.
-func (p *Provider) ChatStreamWithOptions(ctx context.Context, msgs []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := p.inner.(types.OptionsProvider)
-	if !ok {
+// Stream implements types.Provider. The options and schema are part of the
+// cache key, so a forced tool choice never replays a response recorded
+// without one. Options the inner provider cannot receive fail the call with
+// types.ErrInvalidModelConfig instead of being dropped; a schema it cannot
+// enforce fails the call on a miss.
+func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil && !types.AcceptsOptions(p.inner) {
 		return nil, optionscheck.Unsupported(p.inner)
 	}
-	return p.stream(ctx, msgs, tools, nil, &opts, func() (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, msgs, tools, opts)
-	})
+	call := func() (<-chan types.Delta, error) {
+		if req.Schema != nil && !types.AcceptsSchema(p.inner) {
+			return nil, schemacheck.Unsupported(p.inner, "provider cannot enforce a response schema")
+		}
+		return p.inner.Stream(ctx, req)
+	}
+	return p.stream(ctx, req.Messages, req.Tools, req.Schema, req.Options, call)
 }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (p *Provider) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (p *Provider) SupportsOptions() bool { return true }
 
 // Unwrap returns the inner provider. See package wrapper.
 func (p *Provider) Unwrap() types.Provider { return p.inner }
 
 // Close implements types.Closer by closing the inner provider.
 func (p *Provider) Close() error { return types.CloseProvider(p.inner) }
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (p *Provider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	call := func() (<-chan types.Delta, error) {
-		if sp, ok := p.inner.(types.StructuredOutputProvider); ok {
-			return sp.ChatStreamWithSchema(ctx, msgs, tools, schema)
-		}
-		return nil, schemacheck.Unsupported(p.inner, "provider cannot enforce a response schema")
-	}
-	return p.stream(ctx, msgs, tools, schema, nil, call)
-}
 
 func (p *Provider) stream(
 	ctx context.Context,

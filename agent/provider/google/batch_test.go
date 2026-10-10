@@ -29,10 +29,10 @@ func redirectTo(t *testing.T, srv *httptest.Server) *http.Client {
 
 func batchReqs() []types.BatchRequest {
 	return []types.BatchRequest{
-		{CustomID: "capital", Messages: []types.Message{types.NewSystemMessage("Be brief."), types.NewUserMessage("Capital of France?")}},
-		{CustomID: "label", Messages: []types.Message{types.NewUserMessage("Win a prize")},
+		{CustomID: "capital", Messages: []types.Message{types.SystemMsg(types.Text("Be brief.")), types.UserMsg(types.Text("Capital of France?"))}},
+		{CustomID: "label", Messages: []types.Message{types.UserMsg(types.Text("Win a prize"))},
 			Schema: &types.ParameterSchema{Type: "object", Properties: map[string]types.PropertyDef{"label": {Type: "string"}}}},
-		{CustomID: "bad", Messages: []types.Message{types.NewUserMessage("x")}},
+		{CustomID: "bad", Messages: []types.Message{types.UserMsg(types.Text("x"))}},
 	}
 }
 

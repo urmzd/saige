@@ -84,6 +84,14 @@ type Mapper struct {
 	thinking        bool
 	thinkingText    bool
 	finished        bool
+	// parts maps the index of each open part to its kind and, for a tool
+	// call, its ID.
+	parts map[int]openPart
+}
+
+type openPart struct {
+	kind types.PartKind
+	id   string
 }
 
 // NewMapper returns a Mapper for one run of a thread. Message IDs are
@@ -114,41 +122,60 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 	}
 	var out []Event
 	switch v := d.(type) {
-	case types.TextStartDelta:
-		out = m.closeThinking(out)
-		out = m.openText(out)
-	case types.TextContentDelta:
-		if v.Content == "" {
-			return nil, nil
+	case types.PartStart:
+		if m.parts == nil {
+			m.parts = map[int]openPart{}
 		}
-		out = m.closeThinking(out)
-		out = m.openText(out)
-		out = append(out, Event{Type: TextMessageContent, MessageID: m.message, Delta: v.Content})
-	case types.TextEndDelta:
-		out = m.closeText(out)
-	case types.ThinkingStartDelta:
-		out = m.closeText(out)
-		out = m.openThinking(out)
-	case types.ThinkingContentDelta:
-		if v.Content == "" {
-			return nil, nil
+		m.parts[v.Index] = openPart{kind: v.Kind, id: v.ID}
+		switch v.Kind {
+		case types.KindText:
+			out = m.closeThinking(out)
+			out = m.openText(out)
+		case types.KindThinking:
+			out = m.closeText(out)
+			out = m.openThinking(out)
+		case types.KindToolCall:
+			out = m.closeText(out)
+			out = m.closeThinking(out)
+			out = append(out, Event{Type: ToolCallStart, ToolCallID: v.ID, ToolCallName: v.Name, ParentMessageID: m.lastMessage})
+		default:
+			return m.custom(d)
 		}
-		out = m.closeText(out)
-		out = m.openThinking(out)
-		out = append(out, Event{Type: ThinkingTextMessageContent, Delta: v.Content})
-	case types.ThinkingEndDelta:
-		out = m.closeThinking(out)
-	case types.ToolCallStartDelta:
-		out = m.closeText(out)
-		out = m.closeThinking(out)
-		out = append(out, Event{Type: ToolCallStart, ToolCallID: v.ID, ToolCallName: v.Name, ParentMessageID: m.lastMessage})
-	case types.ToolCallArgumentDelta:
-		if v.Content == "" {
+	case types.PartDelta:
+		p := m.parts[v.Index]
+		switch {
+		case v.Text != "":
+			out = m.closeThinking(out)
+			out = m.openText(out)
+			out = append(out, Event{Type: TextMessageContent, MessageID: m.message, Delta: v.Text})
+		case v.Thinking != "":
+			out = m.closeText(out)
+			out = m.openThinking(out)
+			out = append(out, Event{Type: ThinkingTextMessageContent, Delta: v.Thinking})
+		case v.Args != "" && p.kind == types.KindToolCall:
+			out = append(out, Event{Type: ToolCallArgs, ToolCallID: p.id, Delta: v.Args})
+		case v.Signature != "", v.Text == "" && v.Thinking == "" && v.Args == "" && v.Refusal == "" &&
+			len(v.Data) == 0 && v.Transcript == "":
 			return nil, nil
+		default:
+			return m.custom(d)
 		}
-		out = append(out, Event{Type: ToolCallArgs, ToolCallID: v.ID, Delta: v.Content})
-	case types.ToolCallEndDelta:
-		out = append(out, Event{Type: ToolCallEnd, ToolCallID: v.ID})
+	case types.PartEnd:
+		p, ok := m.parts[v.Index]
+		delete(m.parts, v.Index)
+		if !ok && v.Part != nil {
+			p.kind = v.Part.Kind()
+		}
+		switch p.kind {
+		case types.KindText:
+			out = m.closeText(out)
+		case types.KindThinking:
+			out = m.closeThinking(out)
+		case types.KindToolCall:
+			out = append(out, Event{Type: ToolCallEnd, ToolCallID: p.id})
+		default:
+			return m.custom(d)
+		}
 	case types.ToolExecEndDelta:
 		content := v.Result
 		if v.Error != "" {
@@ -164,13 +191,18 @@ func (m *Mapper) Map(d types.Delta) ([]Event, error) {
 		out = append(out, errorEvent(v.Error))
 		m.finished = true
 	default:
-		ev, err := customEvent(d)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ev)
+		return m.custom(d)
 	}
 	return out, nil
+}
+
+// custom maps a delta with no AG-UI event of its own to a CUSTOM event.
+func (m *Mapper) custom(d types.Delta) ([]Event, error) {
+	ev, err := customEvent(d)
+	if err != nil {
+		return nil, err
+	}
+	return []Event{ev}, nil
 }
 
 // Close ends a run whose stream closed without a done or error delta. It

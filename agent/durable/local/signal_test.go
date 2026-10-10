@@ -76,7 +76,7 @@ func TestAwaitWakesOnAppendAndCancel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := e.Await(ctx, "run", Resumable); done <- err }()
 	time.Sleep(20 * time.Millisecond)
-	if err := e.Append("run", "v1", "msg-1", []types.Message{types.NewUserMessage("more")}); err != nil {
+	if err := e.Append("run", "v1", "msg-1", []types.Message{types.UserMsg(types.Text("more"))}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -126,7 +126,7 @@ func (failingNotifier) Publish(context.Context, string, []byte) error {
 func TestSignalFailureKeepsChange(t *testing.T) {
 	e := &Engine{Directory: t.TempDir(), ApprovalTTL: time.Hour, Notifier: failingNotifier{}}
 	suspendedRun(t, e, "run")
-	err := e.Append("run", "v1", "k", []types.Message{types.NewUserMessage("x")})
+	err := e.Append("run", "v1", "k", []types.Message{types.UserMsg(types.Text("x"))})
 	if !errors.Is(err, ErrSignal) {
 		t.Fatalf("Append = %v, want ErrSignal", err)
 	}

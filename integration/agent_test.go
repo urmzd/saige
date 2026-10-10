@@ -26,7 +26,7 @@ func TestAgentToolCalling(t *testing.T) {
 	})
 
 	stream := agent.Invoke(ctx, []types.Message{
-		types.NewUserMessage("What is 2 + 3? Use the add tool."),
+		types.UserMsg(types.Text("What is 2 + 3? Use the add tool.")),
 	})
 	text, toolCalls, err := drainStream(stream)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestAgentHandoff(t *testing.T) {
 	}))
 
 	stream := agent.Invoke(ctx, []types.Message{
-		types.NewUserMessage("What is 2 + 3?"),
+		types.UserMsg(types.Text("What is 2 + 3?")),
 	})
 	text, toolCalls, err := drainStream(stream)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestAgentStructuredResponse(t *testing.T) {
 	}))
 
 	stream := agent.Invoke(ctx, []types.Message{
-		types.NewUserMessage("Tokyo has a metropolitan population of roughly 37 million people."),
+		types.UserMsg(types.Text("Tokyo has a metropolitan population of roughly 37 million people.")),
 	})
 	text, _, err := drainStream(stream)
 	if err != nil {

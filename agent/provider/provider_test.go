@@ -165,7 +165,7 @@ func TestBuildAppliesOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, tools)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: tools})
 			if err != nil {
 				t.Fatal(err)
 			}

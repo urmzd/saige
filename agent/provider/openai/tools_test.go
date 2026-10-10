@@ -57,8 +57,7 @@ func TestToolChoiceWire(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			ch, err := NewAdapter("k", testModel, opts...).ChatStream(context.Background(),
-				[]types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := NewAdapter("k", testModel, opts...).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 					t.Fatalf("err = %v, requests = %d; want a local configuration error", err, len(*bodies))

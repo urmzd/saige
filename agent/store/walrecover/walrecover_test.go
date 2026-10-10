@@ -20,17 +20,17 @@ func buildTree(t *testing.T, wal types.WAL) (*tree.Tree, types.CheckpointID) {
 	t.Helper()
 	ctx := context.Background()
 
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithWAL(wal))
 	if err != nil {
 		t.Fatalf("tree.New: %v", err)
 	}
 	root := tr.Root()
-	user, err := tr.AddChild(ctx, root.ID, types.NewUserMessage("hello"))
+	user, err := tr.AddChild(ctx, root.ID, types.UserMsg(types.Text("hello")))
 	if err != nil {
 		t.Fatalf("AddChild: %v", err)
 	}
 	asst, err := tr.AddChild(ctx, user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("AddChild: %v", err)
@@ -267,11 +267,11 @@ func TestRecoverWALRestoresActiveBranch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wal := tc.wal(t)
-			tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+			tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithWAL(wal))
 			if err != nil {
 				t.Fatal(err)
 			}
-			side, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.NewUserMessage("alt"))
+			side, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.UserMsg(types.Text("alt")))
 			if err != nil {
 				t.Fatal(err)
 			}

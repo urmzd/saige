@@ -66,9 +66,10 @@ type ctxProvider struct {
 	traced bool
 }
 
-func (p *ctxProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *ctxProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	_, p.traced = ctx.Value(tracedKey{}).(string)
-	return p.ScriptedProvider.ChatStream(ctx, msgs, tools)
+	return p.ScriptedProvider.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }
 
 func TestRunObservability(t *testing.T) {
@@ -91,7 +92,7 @@ func TestRunObservability(t *testing.T) {
 			tracer := &recordingTracer{}
 			provider := &ctxProvider{ScriptedProvider: &agenttest.ScriptedProvider{Responses: tt.responses, Errors: tt.errs}}
 			a := NewAgent(AgentConfig{Name: "planner", Provider: provider, SystemPrompt: "sys", Metrics: metrics, RunTracer: tracer})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			runErr := stream.Wait()
 			if (runErr != nil) != tt.wantErr {

@@ -159,12 +159,12 @@ func checkResponseCaching(p types.Provider) (string, error) {
 	counter := &countingProvider{inner: p}
 	cached := cache.New(counter, cache.Config{Cache: memcache.New[cache.CachedResponse]()})
 	req := []types.Message{
-		types.NewSystemMessage("Answer in exactly one word."),
-		types.NewUserMessage("What color is a clear daytime sky?"),
+		types.SystemMsg(types.Text("Answer in exactly one word.")),
+		types.UserMsg(types.Text("What color is a clear daytime sky?")),
 	}
 	// Miss, then hit.
-	_ = drainText(mustStream(cached.ChatStream(context.Background(), req, nil)))
-	hitDeltas := drainAll(mustStream(cached.ChatStream(context.Background(), req, nil)))
+	_ = drainText(mustStream(cached.Stream(context.Background(), types.Request{Messages: req})))
+	hitDeltas := drainAll(mustStream(cached.Stream(context.Background(), types.Request{Messages: req})))
 
 	if counter.calls != 1 {
 		return "", fmt.Errorf("upstream called %d times, want 1 (second served from cache)", counter.calls)
@@ -223,7 +223,7 @@ func checkDurable(p types.Provider) (string, error) {
 	counter := &countingProvider{inner: p}
 	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: counter, SystemPrompt: "Be brief."})
 	runner := newMemoRunner()
-	input := []types.Message{types.NewUserMessage("Name one planet.")}
+	input := []types.Message{types.UserMsg(types.Text("Name one planet."))}
 
 	first, err := a.RunDurable(context.Background(), runner, input, "")
 	if err != nil {
@@ -288,7 +288,7 @@ func (t *imageTool) Definition() types.ToolDef {
 }
 func (t *imageTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	r, err := t.ExecuteRich(ctx, args)
-	return r.Text, err
+	return r.Text(), err
 }
 func (t *imageTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
 	return types.ImageResult("Here is the generated image.", types.MediaPNG, t.data), nil
@@ -313,9 +313,10 @@ type countingProvider struct {
 	calls int
 }
 
-func (c *countingProvider) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
+func (c *countingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, t := req.Messages, req.Tools
 	c.calls++
-	return c.inner.ChatStream(ctx, m, t)
+	return c.inner.Stream(ctx, types.Request{Messages: m, Tools: t})
 }
 
 type recordingMetrics struct {
@@ -354,13 +355,13 @@ func (r *memoRunner) RunStep(ctx context.Context, name string, fn func(context.C
 // ── Stream helpers ──────────────────────────────────────────────────
 
 func run(a *agentsdk.Agent, prompt string) (text string, deltas []types.Delta, err error) {
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage(prompt)})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(prompt))})
 	var sb strings.Builder
 	for d := range stream.Deltas() {
 		deltas = append(deltas, d)
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			sb.WriteString(v.Content)
+		case types.PartDelta:
+			sb.WriteString(v.Text)
 		case types.ErrorDelta:
 			if v.Error != nil {
 				err = v.Error
@@ -375,8 +376,8 @@ func mustStream(ch <-chan types.Delta, _ error) <-chan types.Delta { return ch }
 func drainText(ch <-chan types.Delta) string {
 	var sb strings.Builder
 	for d := range ch {
-		if t, ok := d.(types.TextContentDelta); ok {
-			sb.WriteString(t.Content)
+		if t, ok := d.(types.PartDelta); ok {
+			sb.WriteString(t.Text)
 		}
 	}
 	return sb.String()

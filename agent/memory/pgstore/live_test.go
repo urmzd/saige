@@ -79,7 +79,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 
 	// Session 1: remember a fact.
 	run("session 1", "session-1", memory.Tools(store, policy),
-		types.NewUserMessage("Please remember for future sessions: our deploy window is Thursdays at 14:00 UTC."))
+		types.UserMsg(types.Text("Please remember for future sessions: our deploy window is Thursdays at 14:00 UTC.")))
 	recs, err := store.Recall(ctx, scope, "", 0)
 	if err != nil || len(recs) == 0 || !strings.Contains(strings.ToLower(recs[0].Content), "thursday") {
 		t.Fatalf("session 1 stored %q, %v", contents(recs), err)
@@ -91,7 +91,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 
 	// Session 2: a fresh agent recalls it through the recall tool.
 	answer := run("session 2", "", memory.Tools(store, policy),
-		types.NewUserMessage("When is our deploy window?"))
+		types.UserMsg(types.Text("When is our deploy window?")))
 	if !strings.Contains(strings.ToLower(answer), "thursday") {
 		t.Fatalf("session 2 answer %q does not mention Thursday", answer)
 	}
@@ -104,7 +104,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
 	answer = run("session 3", "", nil, msg,
-		types.NewUserMessage("Based on our earlier conversation, what did we say about deployments?"))
+		types.UserMsg(types.Text("Based on our earlier conversation, what did we say about deployments?")))
 	if !strings.Contains(strings.ToLower(answer), "thursday") {
 		t.Fatalf("session 3 answer %q does not mention Thursday", answer)
 	}

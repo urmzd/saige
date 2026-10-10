@@ -35,7 +35,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open wal: %v", err)
 	}
-	tr, err := tree.New(types.NewSystemMessage("You are a durable test agent."), tree.WithWAL(wal1))
+	tr, err := tree.New(types.SystemMsg(types.Text("You are a durable test agent.")), tree.WithWAL(wal1))
 	if err != nil {
 		t.Fatalf("new tree: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 		Store:    store1,
 	})
 
-	text, _, err := drainStream(ag.Invoke(ctx, []types.Message{types.NewUserMessage("What is 2 + 3?")}))
+	text, _, err := drainStream(ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is 2 + 3?"))}))
 	if err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 		Tree:     recovered,
 		Store:    store2,
 	})
-	text2, _, err := drainStream(ag2.Invoke(ctx, []types.Message{types.NewUserMessage("And what did you just compute?")}))
+	text2, _, err := drainStream(ag2.Invoke(ctx, []types.Message{types.UserMsg(types.Text("And what did you just compute?"))}))
 	if err != nil {
 		t.Fatalf("second invoke on recovered tree: %v", err)
 	}

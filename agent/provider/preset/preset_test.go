@@ -42,10 +42,21 @@ func (f *fake) Capabilities() types.ModelCapabilities { return f.caps }
 func (f *fake) EffectiveOptions() types.RequestOptions {
 	return f.cfg.Options.Clone()
 }
-func (f *fake) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
-	return f.ChatStreamWithOptions(ctx, m, t, types.RequestOptions{})
+func (f *fake) chatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
+	return f.Stream(ctx, types.Request{Messages: m, Tools: t, Options: &types.RequestOptions{}})
 }
-func (f *fake) ChatStreamWithOptions(_ context.Context, _ []types.Message, _ []types.ToolDef, o types.RequestOptions) (<-chan types.Delta, error) {
+
+// Stream implements types.Provider.
+func (f *fake) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		return f.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
+	}
+	return f.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsOptions implements types.OptionsProvider.
+func (f *fake) SupportsOptions() bool { return true }
+func (f *fake) chatStreamWithOptions(_ context.Context, _ []types.Message, _ []types.ToolDef, o types.RequestOptions) (<-chan types.Delta, error) {
 	f.mu.Lock()
 	*f.calls = append(*f.calls, call{model: f.cfg.Model, opts: f.cfg.Options.Merge(o)})
 	n := *f.n
@@ -133,8 +144,8 @@ func read(t *testing.T, ch <-chan types.Delta, err error) ([]types.RouteDelta, s
 		switch v := d.(type) {
 		case types.RouteDelta:
 			routes = append(routes, v)
-		case types.TextContentDelta:
-			out += v.Content
+		case types.PartDelta:
+			out += v.Text
 		case types.ErrorDelta:
 			t.Fatal(v.Error)
 		}
@@ -159,7 +170,7 @@ func TestFallbackConsistencyRecording(t *testing.T) {
 		}
 	}
 	none := types.RequestOptions{ToolChoice: &types.ToolChoice{Mode: types.ToolChoiceNone}}
-	routes, out := drain(t)(b.Session().(types.OptionsProvider).ChatStreamWithOptions(context.Background(), nil, nil, none))
+	routes, out := drain(t)(b.Session().(types.OptionsProvider).Stream(context.Background(), types.Request{Options: &none}))
 	if out != "ok gemini-2.5-flash" {
 		t.Fatalf("served %q", out)
 	}
@@ -238,7 +249,7 @@ func TestModelReferenceBuildsOneEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, out := drain(t)(b.Session().ChatStream(context.Background(), nil, nil))
+	routes, out := drain(t)(b.Session().Stream(context.Background(), types.Request{}))
 	if out != "ok gpt-4o" || routes[0].Profile != "openai/gpt-4o" {
 		t.Fatalf("%q %+v", out, routes)
 	}
@@ -265,10 +276,10 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 		}
 		return routes
 	}
-	if r := run(types.NewUserMessage("hi")); r[len(r)-1].Preset != "p" {
+	if r := run(types.UserMsg(types.Text("hi"))); r[len(r)-1].Preset != "p" {
 		t.Fatalf("first turn %+v", r)
 	}
-	r := run(types.UserMessage{Content: []types.UserContent{types.TextContent{Text: "extract"}, types.ConfigContent{Model: "q"}}})
+	r := run(types.UserMessage{Parts: []types.UserPart{types.TextPart{Text: "extract"}, types.ConfigPart{Model: "q"}}})
 	last := r[len(r)-1]
 	if last.Preset != "q" || last.Profile != "q/x" || last.Reason != "pinned" {
 		t.Fatalf("group pin %+v", last)
@@ -278,11 +289,11 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rc *types.RouteContent
+	var rc *types.RoutePart
 	for _, m := range msgs {
 		if am, ok := m.(types.AssistantMessage); ok {
-			for _, c := range am.Content {
-				if v, ok := c.(types.RouteContent); ok {
+			for _, c := range am.Parts {
+				if v, ok := c.(types.RoutePart); ok {
 					rc = &v
 				}
 			}
@@ -291,12 +302,12 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if rc == nil || rc.Preset != "q" || rc.ConfigHash != last.ConfigHash || rc.Options == nil {
 		t.Fatalf("route content %+v", rc)
 	}
-	raw, err := tree.MarshalMessage(types.AssistantMessage{Content: []types.AssistantContent{*rc}})
+	raw, err := tree.MarshalMessage(types.AssistantMessage{Parts: []types.AssistantPart{*rc}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	back, err := tree.UnmarshalMessage(types.RoleAssistant, raw)
-	if err != nil || !reflect.DeepEqual(back.(types.AssistantMessage).Content[0], *rc) {
+	if err != nil || !reflect.DeepEqual(back.(types.AssistantMessage).Parts[0], *rc) {
 		t.Fatalf("tree round trip: %v %#v", err, back)
 	}
 }
@@ -308,14 +319,14 @@ func TestHardLockOutranksGroupPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := b.Session()
-	routes, _ := drain(t)(s.ChatStream(context.Background(), nil, nil))
+	routes, _ := drain(t)(s.Stream(context.Background(), types.Request{}))
 	first := routes[0].Profile
 	loop := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ThinkingContent{Thinking: "t", Signature: "sig"}, types.ToolUseContent{ID: "c1", Name: "f"}}},
-		types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "c1", Text: "r"}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ThinkingPart{Text: "t", Signature: "sig"}, types.ToolCallPart{ID: "c1", Name: "f"}}},
+		types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("r")}}}},
 	}
-	routes, _ = drain(t)(s.(types.ModelSwitcher).WithModel("q").ChatStream(context.Background(), loop, nil))
+	routes, _ = drain(t)(s.(types.ModelSwitcher).WithModel("q").Stream(context.Background(), types.Request{Messages: loop}))
 	if routes[0].Profile != first || routes[0].Reason != "locked" {
 		t.Fatalf("hard lock lost: %+v", routes)
 	}
@@ -339,7 +350,7 @@ func TestSplitArmsArePresets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, _ := drain(t)(sp.ChatStream(context.Background(), nil, nil))
+	routes, _ := drain(t)(sp.Stream(context.Background(), types.Request{}))
 	rp, _ := arm.Resolved("q")
 	last := routes[len(routes)-1]
 	if last.Variant != "q" || last.Preset != "q" || last.ConfigHash != rp.Chain[0].ConfigHash {

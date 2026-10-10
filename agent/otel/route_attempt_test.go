@@ -15,10 +15,10 @@ func TestRouteAttemptsAreSpanEvents(t *testing.T) {
 			Options: &types.RequestOptions{Temperature: &t1}},
 		types.RouteDelta{Profile: "p/b", Provider: "google", Preset: "p", ConfigHash: "hb", CatalogRevision: "rev", Reason: "failover",
 			Options: &types.RequestOptions{Temperature: &t2}},
-		types.TextContentDelta{Content: "ok"},
+		types.PartDelta{Index: 0, Text: "ok"},
 	}}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).ChatStream(context.Background(), nil, nil)
+	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +42,9 @@ func TestRouteAttemptsAreSpanEvents(t *testing.T) {
 }
 
 func TestProviderNameSkipsDecorators(t *testing.T) {
-	inner := retry.New(&fakeProvider{deltas: []types.Delta{types.TextContentDelta{Content: "ok"}}}, retry.DefaultConfig())
+	inner := retry.New(&fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}, retry.DefaultConfig())
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).ChatStream(context.Background(), nil, nil)
+	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}

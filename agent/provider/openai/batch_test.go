@@ -114,10 +114,10 @@ func batchRequests() []types.BatchRequest {
 	tool := types.ToolDef{Name: "lookup", Description: "look up", Parameters: types.ParameterSchema{Type: "object",
 		Properties: map[string]types.PropertyDef{"q": {Type: "string"}}, Required: []string{"q"}}}
 	return []types.BatchRequest{
-		{CustomID: "capital", Messages: []types.Message{types.NewUserMessage("Capital of France?")}},
-		{CustomID: "tool", Messages: []types.Message{types.NewUserMessage("look up x")}, Tools: []types.ToolDef{tool}},
-		{CustomID: "bad", Messages: []types.Message{types.NewUserMessage("y")}},
-		{CustomID: "late", Messages: []types.Message{types.NewUserMessage("z")}},
+		{CustomID: "capital", Messages: []types.Message{types.UserMsg(types.Text("Capital of France?"))}},
+		{CustomID: "tool", Messages: []types.Message{types.UserMsg(types.Text("look up x"))}, Tools: []types.ToolDef{tool}},
+		{CustomID: "bad", Messages: []types.Message{types.UserMsg(types.Text("y"))}},
+		{CustomID: "late", Messages: []types.Message{types.UserMsg(types.Text("z"))}},
 	}
 }
 
@@ -127,8 +127,8 @@ func checkBatchResults(t *testing.T, got []types.BatchResult) {
 		t.Fatalf("result 0 = %+v", got[0])
 	}
 	calls := 0
-	for _, c := range got[1].Message.Content {
-		if tu, ok := c.(types.ToolUseContent); ok && tu.Name == "lookup" && tu.Arguments["q"] == "x" {
+	for _, c := range got[1].Message.Parts {
+		if tu, ok := c.(types.ToolCallPart); ok && tu.Name == "lookup" && tu.Arguments["q"] == "x" {
 			calls++
 		}
 	}
@@ -201,11 +201,11 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 	}))
 	defer server.Close()
 	topK := 5.0
-	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Options: types.RequestOptions{TopK: &topK}}}
+	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{TopK: &topK}}}
 	if _, err := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("chat err = %v", err)
 	}
-	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
+	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
 	if _, err := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("responses err = %v", err)
 	}

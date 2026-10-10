@@ -9,7 +9,7 @@
 // reasoning or cache settings onto another model.
 //
 // The bundle's router has one group per preset, in chain order, and the
-// primary preset is the default group. ConfigContent.Model, or an outcome
+// primary preset is the default group. ConfigPart.Model, or an outcome
 // policy's model switch, can name another built preset or a single profile
 // ID to select it.
 package preset

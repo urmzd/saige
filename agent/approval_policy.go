@@ -32,7 +32,7 @@ import (
 // is asked about. Only the host creates grants, from the decisions it
 // delivers. Nothing the model writes, and no skill or tool output, can.
 //
-// Every decision is recorded in the tree as types.ApprovalContent next to
+// Every decision is recorded in the tree as types.ApprovalPart next to
 // the call's result, and the policy's state is rebuilt from those records at
 // the start of each run. Under a durable runner, the verdict on each call is
 // a recorded step, so a replay decides the same way even after a grant
@@ -93,8 +93,8 @@ func newApprovalState(msgs []types.Message) *approvalState {
 		if !ok {
 			continue
 		}
-		for _, c := range sm.Content {
-			if rec, ok := c.(types.ApprovalContent); ok {
+		for _, c := range sm.Parts {
+			if rec, ok := c.(types.ApprovalPart); ok {
 				s.applyLocked(rec)
 			}
 		}
@@ -102,13 +102,13 @@ func newApprovalState(msgs []types.Message) *approvalState {
 	return s
 }
 
-func (s *approvalState) apply(rec types.ApprovalContent) {
+func (s *approvalState) apply(rec types.ApprovalPart) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyLocked(rec)
 }
 
-func (s *approvalState) applyLocked(rec types.ApprovalContent) {
+func (s *approvalState) applyLocked(rec types.ApprovalPart) {
 	switch rec.Event {
 	case types.ApprovalEventGranted:
 		if rec.Grant != nil {
@@ -134,13 +134,13 @@ func (s *approvalState) applyLocked(rec types.ApprovalContent) {
 
 // snapshot returns the whole state as one record, or false when there is
 // nothing to carry.
-func (s *approvalState) snapshot() (types.ApprovalContent, bool) {
+func (s *approvalState) snapshot() (types.ApprovalPart, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.grants) == 0 && len(s.approvals) == 0 && len(s.denials) == 0 {
-		return types.ApprovalContent{}, false
+		return types.ApprovalPart{}, false
 	}
-	return types.ApprovalContent{
+	return types.ApprovalPart{
 		Event:     types.ApprovalEventSnapshot,
 		Grants:    slices.Clone(s.grants),
 		Approvals: maps.Clone(s.approvals),
@@ -160,7 +160,7 @@ func (a *Agent) carryApprovals(ctx context.Context, stream *EventStream, tr *tre
 	if !ok {
 		return nil
 	}
-	return a.appendToBranch(ctx, tr, branch, types.SystemMessage{Content: []types.SystemContent{rec}})
+	return a.appendToBranch(ctx, tr, branch, types.SystemMessage{Parts: []types.SystemPart{rec}})
 }
 
 // grantsSnapshot returns the recorded grants, oldest first.
@@ -204,12 +204,12 @@ func (s *approvalState) verdict(p *ApprovalPolicy, def types.ToolDef, args map[s
 // callApproval collects what the approval steps learn about one call.
 type callApproval struct {
 	approval types.CallApproval
-	records  []types.ApprovalContent
+	records  []types.ApprovalPart
 }
 
 // policyVerdict decides a call under the policy. Under a durable runner the
 // verdict is a recorded step, so a replay returns it unchanged.
-func (a *Agent) policyVerdict(ctx context.Context, st *approvalState, tc types.ToolUseContent, def types.ToolDef, phase string) (types.ApprovalVerdict, error) {
+func (a *Agent) policyVerdict(ctx context.Context, st *approvalState, tc types.ToolCallPart, def types.ToolDef, phase string) (types.ApprovalVerdict, error) {
 	decide := func() types.ApprovalVerdict {
 		return st.verdict(a.cfg.ApprovalPolicy, def, tc.Arguments, a.cfg.ApprovalPolicy.now())
 	}
@@ -233,7 +233,7 @@ func (a *Agent) policyVerdict(ctx context.Context, st *approvalState, tc types.T
 // held. Without a policy it asks, as before. With one, a grant or the ramp
 // may approve it and the denial limit may refuse it without asking, and
 // each decision is recorded on ca.
-func (a *Agent) requestApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, def types.ToolDef, markers []types.Marker, phase string, ca *callApproval) (decision, bool) {
+func (a *Agent) requestApproval(ctx context.Context, stream *EventStream, tc types.ToolCallPart, def types.ToolDef, markers []types.Marker, phase string, ca *callApproval) (decision, bool) {
 	st := stream.approvals
 	if a.cfg.ApprovalPolicy == nil || st == nil {
 		d, ok := a.awaitApprovalPhase(ctx, stream, tc, markers, phase)
@@ -247,17 +247,17 @@ func (a *Agent) requestApproval(ctx context.Context, stream *EventStream, tc typ
 		stream.stopRun(err)
 		return decision{message: err.Error()}, false
 	}
-	record := func(rec types.ApprovalContent) {
+	record := func(rec types.ApprovalPart) {
 		rec.Tool, rec.ToolCallID = def.Name, tc.ID
 		st.apply(rec)
 		ca.records = append(ca.records, rec)
 	}
 	switch v.Outcome {
 	case types.VerdictDeny:
-		record(types.ApprovalContent{Event: types.ApprovalEventAutoDenied, Reason: v.Reason})
+		record(types.ApprovalPart{Event: types.ApprovalEventAutoDenied, Reason: v.Reason})
 		return decision{message: "refused: " + v.Reason}, false
 	case types.VerdictApprove:
-		record(types.ApprovalContent{Event: types.ApprovalEventAutoApproved, GrantID: v.Grant, Reason: v.Reason})
+		record(types.ApprovalPart{Event: types.ApprovalEventAutoApproved, GrantID: v.Grant, Reason: v.Reason})
 		ca.approval = types.CallApproval{Required: true, Grant: v.Grant}
 		return decision{approved: true}, true
 	}
@@ -266,13 +266,13 @@ func (a *Agent) requestApproval(ctx context.Context, stream *EventStream, tc typ
 	switch {
 	case ok:
 		ca.approval = types.CallApproval{Required: true, Approver: d.approver}
-		rec := types.ApprovalContent{Event: types.ApprovalEventApproved, Approver: d.approver}
+		rec := types.ApprovalPart{Event: types.ApprovalEventApproved, Approver: d.approver}
 		if g, granted := a.grantFrom(d, def, tc.ID); granted {
 			rec.Event, rec.Grant = types.ApprovalEventGranted, &g
 		}
 		record(rec)
 	case d.denied:
-		record(types.ApprovalContent{Event: types.ApprovalEventDenied, Approver: d.approver, Reason: d.message})
+		record(types.ApprovalPart{Event: types.ApprovalEventDenied, Approver: d.approver, Reason: d.message})
 	}
 	return d, ok
 }

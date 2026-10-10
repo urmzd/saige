@@ -188,7 +188,7 @@ type AgentConfig struct {
 
 	// Dials are the agent's model-neutral generation intents, sent with every
 	// call and compiled for the model that serves it (see types.ResolveDials).
-	// A ConfigContent.Dials in the conversation applies on top of them.
+	// A ConfigPart.Dials in the conversation applies on top of them.
 	Dials types.Dials
 	// DialPolicy sets how dials the serving model cannot honor are handled.
 	// Nil uses each dial's class.
@@ -499,12 +499,12 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 		if cfg.Store != nil {
 			opts = append(opts, tree.WithStore(cfg.Store))
 		}
-		t, err := tree.New(types.NewSystemMessage(cfg.SystemPrompt), opts...)
+		t, err := tree.New(types.SystemMsg(types.Text(cfg.SystemPrompt)), opts...)
 		if err != nil {
 			// The root could not be stored. Keep the agent usable in memory;
 			// the root is written again below and on each run.
 			cfg.Logger.Warn("store persist failed for the root node; the tree starts in memory", "agent", cfg.Name, "error", err)
-			t, _ = tree.New(types.NewSystemMessage(cfg.SystemPrompt))
+			t, _ = tree.New(types.SystemMsg(types.Text(cfg.SystemPrompt)))
 		}
 		cfg.Tree = t
 	}
@@ -660,8 +660,8 @@ func (a *Agent) Tree() *tree.Tree {
 // node: it lives on its own dead-end branch, is never flattened into LLM
 // messages, and cannot have children.
 func (a *Agent) Feedback(ctx context.Context, targetNodeID types.NodeID, rating types.Rating, comment string) (*types.Node, error) {
-	msg := types.UserMessage{Content: []types.UserContent{
-		types.FeedbackContent{
+	msg := types.UserMessage{Parts: []types.UserPart{
+		types.FeedbackPart{
 			TargetNodeID: string(targetNodeID),
 			Rating:       rating,
 			Comment:      comment,
@@ -689,8 +689,8 @@ func (a *Agent) FeedbackSummary() []FeedbackEntry {
 		if !ok {
 			continue
 		}
-		for _, c := range um.Content {
-			if fb, ok := c.(types.FeedbackContent); ok {
+		for _, c := range um.Parts {
+			if fb, ok := c.(types.FeedbackPart); ok {
 				entries = append(entries, FeedbackEntry{
 					NodeID:       n.ID,
 					TargetNodeID: types.NodeID(fb.TargetNodeID),
@@ -838,19 +838,19 @@ func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input [
 // ── Config resolution ────────────────────────────────────────────────
 
 // resolvedConfig holds the effective configuration for a single iteration,
-// derived by walking all ConfigContent blocks in the tree.
+// derived by walking all ConfigPart blocks in the tree.
 type resolvedConfig struct {
 	model       string
 	maxIter     int
-	maxIterSet  bool // true once a ConfigContent block explicitly set MaxIter
+	maxIterSet  bool // true once a ConfigPart block explicitly set MaxIter
 	compactor   types.Compactor
 	compactCfg  *types.CompactConfig
-	compactNow  bool   // set by ConfigContent and cleared by the next assistant turn
-	activeAgent string // last HandoffContent.To seen on the branch ("" = entry)
-	// toolChoice is the latest ConfigContent.ToolChoice. A forced choice is
+	compactNow  bool   // set by ConfigPart and cleared by the next assistant turn
+	activeAgent string // last HandoffPart.To seen on the branch ("" = entry)
+	// toolChoice is the latest ConfigPart.ToolChoice. A forced choice is
 	// cleared by the next assistant turn, so it applies to one call.
 	toolChoice *types.ToolChoice
-	// dials merges every ConfigContent.Dials on the branch, in order.
+	// dials merges every ConfigPart.Dials on the branch, in order.
 	dials types.Dials
 	// loop is the open tool loop with signed reasoning, if any.
 	loop signedLoop
@@ -869,39 +869,39 @@ func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []typ
 	for _, msg := range messages {
 		switch v := msg.(type) {
 		case types.SystemMessage:
-			filtered := make([]types.SystemContent, 0, len(v.Content))
-			for _, c := range v.Content {
+			filtered := make([]types.SystemPart, 0, len(v.Parts))
+			for _, c := range v.Parts {
 				switch cv := c.(type) {
-				case types.ConfigContent:
+				case types.ConfigPart:
 					mergeConfig(&rc, cv)
-				case types.HandoffContent:
-					rc.activeAgent = cv.To // resolve active agent; strip like ConfigContent
+				case types.HandoffPart:
+					rc.activeAgent = cv.To // resolve active agent; strip like ConfigPart
 				default:
-					if !types.IsMetadataContent(c) {
+					if !types.IsMetadata(c) {
 						filtered = append(filtered, c)
 					}
 				}
 			}
 			if len(filtered) > 0 {
-				out = append(out, types.SystemMessage{Content: filtered})
+				out = append(out, types.SystemMessage{Parts: filtered})
 			}
 		case types.UserMessage:
-			filtered := make([]types.UserContent, 0, len(v.Content))
-			for _, c := range v.Content {
+			filtered := make([]types.UserPart, 0, len(v.Parts))
+			for _, c := range v.Parts {
 				switch cv := c.(type) {
-				case types.ConfigContent:
+				case types.ConfigPart:
 					mergeConfig(&rc, cv)
-				case types.HandoffContent:
+				case types.HandoffPart:
 					rc.activeAgent = cv.To // human-forced handoff; strip from LLM stream
 				default:
-					if !types.IsMetadataContent(c) {
+					if !types.IsMetadata(c) {
 						filtered = append(filtered, c)
 					}
 				}
 			}
 			if len(filtered) > 0 {
 				rc.loop.observeUser(filtered)
-				out = append(out, types.UserMessage{Content: filtered})
+				out = append(out, types.UserMessage{Parts: filtered})
 			}
 		case types.AssistantMessage:
 			rc.loop.observeAssistant(v, rc.dials)
@@ -910,14 +910,14 @@ func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []typ
 			if rc.toolChoice != nil && rc.toolChoice.Forced() {
 				rc.toolChoice = nil
 			}
-			filtered := make([]types.AssistantContent, 0, len(v.Content))
-			for _, c := range v.Content {
-				if !types.IsMetadataContent(c) {
+			filtered := make([]types.AssistantPart, 0, len(v.Parts))
+			for _, c := range v.Parts {
+				if !types.IsMetadata(c) {
 					filtered = append(filtered, c)
 				}
 			}
 			if len(filtered) > 0 {
-				out = append(out, types.AssistantMessage{Content: filtered})
+				out = append(out, types.AssistantMessage{Parts: filtered})
 			}
 		default:
 			out = append(out, msg)
@@ -926,7 +926,7 @@ func (a *Agent) prepareMessages(messages []types.Message) (resolvedConfig, []typ
 	return rc, out
 }
 
-func mergeConfig(rc *resolvedConfig, cc types.ConfigContent) {
+func mergeConfig(rc *resolvedConfig, cc types.ConfigPart) {
 	if cc.Model != "" {
 		rc.model = cc.Model
 	}
@@ -993,29 +993,27 @@ func (a *Agent) persistCompacted(ctx context.Context, tr *tree.Tree, compacted [
 // descend from the run's, so the schema is not looked up again here.
 func (a *Agent) callProvider(ctx context.Context, provider types.Provider, out runOutput, messages []types.Message, tools []types.ToolDef, opts *types.RequestOptions) (<-chan types.Delta, error) {
 	if out.native() && len(tools) == 0 && opts != nil && opts.ToolChoice != nil && opts.ToolChoice.Mode == types.ToolChoiceNone {
-		// A "none" tool choice with no tools changes nothing, and the
-		// options path cannot carry the response schema.
+		// A "none" tool choice with no tools changes nothing, and a
+		// request carries options or a schema, not both.
 		opts = nil
 	}
-	if op, ok := provider.(types.OptionsProvider); ok && opts != nil {
-		return op.ChatStreamWithOptions(ctx, messages, tools, *opts)
+	if opts != nil && types.AcceptsOptions(provider) {
+		return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools, Options: opts})
 	}
 	if out.native() && len(tools) == 0 {
 		if err := checkStructuredOutput(provider); err != nil {
 			return nil, err
 		}
-		if sp, ok := provider.(types.StructuredOutputProvider); ok {
-			return sp.ChatStreamWithSchema(ctx, messages, tools, out.schema)
-		}
+		return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools, Schema: out.schema})
 	}
-	return provider.ChatStream(ctx, messages, tools)
+	return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools})
 }
 
 // checkStructuredOutput rejects a response schema the provider cannot apply.
 // A known model that declares no structured output, or whose adapter has
 // withdrawn it for the current configuration, is refused. In every case
-// the provider must implement types.StructuredOutputProvider, because that is
-// the only path that sends the schema; a schema that would be dropped
+// the provider must report that it applies Request.Schema
+// (types.StructuredOutputProvider); a schema that would be dropped
 // silently is a configuration error.
 func checkStructuredOutput(provider types.Provider) error {
 	if mc, ok := types.ProviderCapabilities(provider); ok && mc.Known &&
@@ -1023,7 +1021,7 @@ func checkStructuredOutput(provider types.Provider) error {
 		return fmt.Errorf("%w: response schema: model %q declares no structured output",
 			types.ErrInvalidModelConfig, types.ProviderModel(provider))
 	}
-	if _, ok := provider.(types.StructuredOutputProvider); !ok {
+	if !types.AcceptsSchema(provider) {
 		return fmt.Errorf("%w: response schema: provider %q does not support structured output",
 			types.ErrInvalidModelConfig, types.ProviderName(provider))
 	}
@@ -1035,8 +1033,8 @@ func checkStructuredOutput(provider types.Provider) error {
 // schema-constrained turn is needed.
 func satisfiesResponseSchema(schema *types.ParameterSchema, msg *types.AssistantMessage) bool {
 	var text strings.Builder
-	for _, block := range msg.Content {
-		if tc, ok := block.(types.TextContent); ok {
+	for _, block := range msg.Parts {
+		if tc, ok := block.(types.TextPart); ok {
 			text.WriteString(tc.Text)
 		}
 	}
@@ -1049,10 +1047,11 @@ func satisfiesResponseSchema(schema *types.ParameterSchema, msg *types.Assistant
 
 // ── File resolution ──────────────────────────────────────────────────
 
-// resolveFiles walks messages and resolves FileContent blocks with empty Data.
-// For each FileContent, it resolves the URI via scheme-matched Resolver, then
-// checks the provider's ContentNegotiator: if the media type is native, the
-// FileContent is kept; otherwise, it is converted via an Extractor.
+// resolveFiles walks messages and loads the bytes of media parts that have
+// none. For each such part, it resolves the source URI via the
+// scheme-matched Resolver, then checks the provider's ContentNegotiator: if
+// the media type is native, the part is kept; otherwise, it is converted via
+// an Extractor.
 //
 // A file that cannot be loaded is never passed on silently. A missing
 // resolver (for a scheme other than http or https, which providers can fetch
@@ -1074,71 +1073,94 @@ func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []ty
 			continue
 		}
 
-		var replaced []types.UserContent
-		for _, c := range um.Content {
-			fc, ok := c.(types.FileContent)
-			if !ok || len(fc.Data) > 0 {
+		var replaced []types.UserPart
+		for _, c := range um.Parts {
+			src, media := types.SourceOf(c)
+			if !media || len(src.Inline) > 0 {
 				replaced = append(replaced, c)
 				continue
 			}
 
 			// Extract URI scheme.
-			scheme := uriScheme(fc.URI)
+			scheme := uriScheme(src.URI)
 			resolver, found := a.cfg.Resolvers[scheme]
 			if !found {
 				if scheme == "http" || scheme == "https" {
 					replaced = append(replaced, c) // providers can fetch web URLs
 					continue
 				}
-				replaced = append(replaced, a.fileNotice(fc, fmt.Sprintf("no resolver for scheme %q", scheme)))
+				replaced = append(replaced, a.fileNotice(src, fmt.Sprintf("no resolver for scheme %q", scheme)))
 				continue
 			}
 
-			resolved, err := resolver.Resolve(ctx, fc.URI)
+			resolved, err := resolver.Resolve(ctx, src.URI)
 			if err != nil {
-				replaced = append(replaced, a.fileNotice(fc, err.Error()))
+				replaced = append(replaced, a.fileNotice(src, err.Error()))
 				continue
 			}
 
-			fc.Data = resolved.Data
-			if fc.MediaType == "" {
-				fc.MediaType = resolved.MediaType
+			if src.MediaType == "" {
+				src.MediaType = resolved.MediaType
 			}
+			src = types.Bytes(src.MediaType, resolved.Data).With(src)
+			part := withSource(c, src)
 
 			// Check if provider handles this type natively.
-			if support.Supports(fc.MediaType) {
-				replaced = append(replaced, fc)
+			if support.Supports(src.MediaType) {
+				replaced = append(replaced, part)
 				continue
 			}
 
 			// Try to extract to text content blocks.
-			if ext, ok := a.cfg.Extractors[fc.MediaType]; ok {
-				blocks, err := ext.Extract(ctx, fc.Data, fc.MediaType)
+			if ext, ok := a.cfg.Extractors[src.MediaType]; ok {
+				blocks, err := ext.Extract(ctx, src.Inline, src.MediaType)
 				if err == nil {
 					replaced = append(replaced, blocks...)
 					continue
 				}
-				replaced = append(replaced, a.fileNotice(fc, "extract "+string(fc.MediaType)+": "+err.Error()))
+				replaced = append(replaced, a.fileNotice(src, "extract "+string(src.MediaType)+": "+err.Error()))
 				continue
 			}
 
 			// Neither the provider nor an extractor can read this type. Raw
 			// bytes are never forwarded as text, so the file becomes a notice.
-			replaced = append(replaced, a.fileNotice(fc,
-				"media type "+string(fc.MediaType)+" is not supported by the provider and no extractor is registered"))
+			replaced = append(replaced, a.fileNotice(src,
+				"media type "+string(src.MediaType)+" is not supported by the provider and no extractor is registered"))
 		}
 
-		out = append(out, types.UserMessage{Content: replaced})
+		out = append(out, types.UserMessage{Parts: replaced})
 	}
 	return out
 }
 
+// withSource returns p with its source replaced. An opaque file part whose
+// media type became known is re-classified, so an image found to be an
+// image is sent as one.
+func withSource(p types.UserPart, src types.Source) types.UserPart {
+	switch v := p.(type) {
+	case types.ImagePart:
+		v.Source = src
+		return v
+	case types.AudioPart:
+		v.Source = src
+		return v
+	case types.VideoPart:
+		v.Source = src
+		return v
+	case types.DocumentPart:
+		v.Source = src
+		return v
+	default:
+		return types.Media(src)
+	}
+}
+
 // fileNotice logs a file that could not be loaded and returns the text block
 // that stands in for it.
-func (a *Agent) fileNotice(fc types.FileContent, reason string) types.UserContent {
+func (a *Agent) fileNotice(src types.Source, reason string) types.UserPart {
 	a.cfg.Logger.Warn("file could not be loaded",
-		"agent", a.cfg.Name, "uri", fc.URI, "media_type", fc.MediaType, "error", reason)
-	return types.TextContent{Text: fmt.Sprintf("[file %s could not be loaded: %s]", fc.URI, reason)}
+		"agent", a.cfg.Name, "uri", src.URI, "media_type", src.MediaType, "error", reason)
+	return types.TextPart{Text: fmt.Sprintf("[file %s could not be loaded: %s]", src.URI, reason)}
 }
 
 // uriScheme extracts the scheme from a URI (e.g. "file" from "file:///path").
@@ -1987,7 +2009,7 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 	return ac
 }
 
-// applyModel re-targets the active provider when a ConfigContent block set a
+// applyModel re-targets the active provider when a ConfigPart block set a
 // model. A provider that cannot switch (no types.ModelSwitcher) is used
 // unchanged, with a warning so a requested model is never dropped silently.
 func (a *Agent) applyModel(ac activeContext, model string) activeContext {
@@ -2011,11 +2033,42 @@ func (a *Agent) applyModel(ac activeContext, model string) activeContext {
 	return ac
 }
 
+// numberCitation gives a citation part the model produced its number in the
+// run's registry, so a UI receives numbered citations and the stored turn
+// keeps them.
+func (a *Agent) numberCitation(d types.Delta) types.Delta {
+	end, ok := d.(types.PartEnd)
+	if !ok {
+		return d
+	}
+	cp, ok := end.Part.(types.CitationPart)
+	if !ok || a.citations == nil {
+		return d
+	}
+	cp.Citation, _ = a.citations.Add(cp.Citation)
+	end.Part = cp
+	return end
+}
+
+// registerChildCitation registers a source a child agent cited. It is a
+// source the whole answer rests on, so it gets one number across parent and
+// child rather than one per agent.
+func (a *Agent) registerChildCitation(d types.Delta) {
+	switch v := d.(type) {
+	case types.CitationDelta:
+		a.citations.Add(v.Citation)
+	case types.PartEnd:
+		if cp, ok := v.Part.(types.CitationPart); ok {
+			a.citations.Add(cp.Citation)
+		}
+	}
+}
+
 // assistantToolCalls extracts the tool-use blocks from an assistant message.
-func assistantToolCalls(msg *types.AssistantMessage) []types.ToolUseContent {
-	var calls []types.ToolUseContent
-	for _, block := range msg.Content {
-		if tc, ok := block.(types.ToolUseContent); ok {
+func assistantToolCalls(msg *types.AssistantMessage) []types.ToolCallPart {
+	var calls []types.ToolCallPart
+	for _, block := range msg.Parts {
+		if tc, ok := block.(types.ToolCallPart); ok {
 			calls = append(calls, tc)
 		}
 	}
@@ -2024,28 +2077,21 @@ func assistantToolCalls(msg *types.AssistantMessage) []types.ToolUseContent {
 
 // persistToolResults builds and persists the combined tool-result message.
 func (a *Agent) persistToolResults(ctx context.Context, tr *tree.Tree, branch types.BranchID, results []toolResult) error {
-	contents := make([]types.ToolResultContent, len(results))
+	contents := make([]types.ToolResultPart, len(results))
 	for i, r := range results {
-		trc := types.ToolResultContent{ToolCallID: r.toolCallID, Text: r.result, Blocks: r.blocks, ToolVersion: r.version}
-		if r.err != "" {
-			trc.IsError = true
-			if trc.Text == "" {
-				trc.Text = r.err
-			}
-		}
-		contents[i] = trc
+		contents[i] = r.part()
 	}
-	msg := types.NewToolResultMessage(contents...)
+	msg := types.ToolResults(contents...)
 	for _, r := range results {
 		for _, rec := range r.approvals {
-			msg.Content = append(msg.Content, rec)
+			msg.Parts = append(msg.Parts, rec)
 		}
 	}
 	return a.appendToBranch(ctx, tr, branch, msg)
 }
 
 // applyHandoff applies the first handoff signal in results, if any, appending a
-// HandoffContent overlay on the same branch. It returns a non-nil error when the
+// HandoffPart overlay on the same branch. It returns a non-nil error when the
 // caller should terminate the run: the handoff limit was exceeded or a tree
 // write failed.
 func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventStream, branch types.BranchID, results []toolResult, activeName string, handoffCount *int) error {
@@ -2068,8 +2114,8 @@ func (a *Agent) applyHandoff(ctx context.Context, tr *tree.Tree, stream *EventSt
 	}
 	*handoffCount++
 	stream.send(types.HandoffDelta{From: activeName, To: handoffTo, Reason: reason})
-	overlay := types.SystemMessage{Content: []types.SystemContent{
-		types.HandoffContent{From: activeName, To: handoffTo, Reason: reason, Message: message, Context: handoffCtx},
+	overlay := types.SystemMessage{Parts: []types.SystemPart{
+		types.HandoffPart{From: activeName, To: handoffTo, Reason: reason, Message: message, Context: handoffCtx},
 	}}
 	return a.appendToBranch(ctx, tr, branch, overlay)
 }
@@ -2214,6 +2260,7 @@ func (a *Agent) modelStep(
 					// that produced the committed turn.
 					lastRoute = &rd
 				}
+				delta = a.numberCitation(delta)
 				stream.send(delta) // live streaming (no-op runner path)
 				agg.Push(delta)
 				if pj, ok := partialOut.push(delta); ok {
@@ -2279,12 +2326,12 @@ func (a *Agent) modelStep(
 		var msg *types.AssistantMessage
 		m, ok := agg.Message().(types.AssistantMessage)
 		for _, id := range cutOff {
-			m.Content = append(m.Content, types.ToolUseContent{ID: id, ArgumentsError: errTruncatedToolCall})
+			m.Parts = append(m.Parts, types.ToolCallPart{ID: id, ArgumentsError: errTruncatedToolCall})
 			ok = true
 		}
 		if ok && lastRoute != nil {
 			// Metadata: stripped before the next provider call.
-			m.Content = append(m.Content, types.RouteContentFrom(*lastRoute))
+			m.Parts = append(m.Parts, types.RoutePartFrom(*lastRoute))
 		}
 		if ok {
 			msg = &m
@@ -2365,10 +2412,67 @@ func interruptRequested(ctx context.Context) bool {
 }
 
 // toolResult collects the outcome of a single tool execution.
+// part returns the result as recorded in the conversation. An error with no
+// text records the error message as the text.
+func (r toolResult) part() types.ToolResultPart {
+	trc := types.ToolResultPart{CallID: r.toolCallID, Parts: r.output(), ToolVersion: r.version}
+	if r.err != "" {
+		trc.IsError = true
+		if trc.Text() == "" && !trc.HasMedia() {
+			trc.Parts = []types.ToolOutputPart{types.Text(r.err)}
+		}
+	}
+	return trc
+}
+
+// output returns the result's parts with its text projection in place of
+// their text, so a hook that rewrote the projection rewrites what is sent.
+// A plain tool's output is its text.
+func (r toolResult) output() []types.ToolOutputPart {
+	if r.parts == nil {
+		return []types.ToolOutputPart{types.Text(r.result)}
+	}
+	if outputText(r.parts) == r.result {
+		return r.parts
+	}
+	out := make([]types.ToolOutputPart, 0, len(r.parts)+1)
+	placed := false
+	for _, p := range r.parts {
+		switch p.(type) {
+		case types.TextPart, types.JSONPart:
+			if !placed {
+				out = append(out, types.Text(r.result))
+				placed = true
+			}
+		default:
+			out = append(out, p)
+		}
+	}
+	if !placed {
+		out = append([]types.ToolOutputPart{types.Text(r.result)}, out...)
+	}
+	return out
+}
+
+// outputText is ToolResultPart.Text for a bare list of parts.
+func outputText(parts []types.ToolOutputPart) string {
+	return types.ToolResultPart{Parts: parts}.Text()
+}
+
+// hasJSON reports whether parts carry structured output.
+func hasJSON(parts []types.ToolOutputPart) bool {
+	for _, p := range parts {
+		if _, ok := p.(types.JSONPart); ok {
+			return true
+		}
+	}
+	return false
+}
+
 type toolResult struct {
 	toolCallID     string
-	result         string                  // text projection
-	blocks         []types.ToolResultBlock // rich multi-modal output (nil for plain tools)
+	result         string                 // text projection
+	parts          []types.ToolOutputPart // rich multi-modal output (nil for plain tools)
 	err            string
 	handoffTo      string // non-empty when a HandoffSignaler tool fired
 	handoffReason  string
@@ -2383,7 +2487,7 @@ type toolResult struct {
 	// version is the version the tool reported, recorded with its result.
 	version string
 	// approvals records the approval policy's decisions about the call.
-	approvals []types.ApprovalContent
+	approvals []types.ApprovalPart
 }
 
 // executeToolsConcurrently runs all tool calls, streaming deltas as they arrive.
@@ -2394,7 +2498,7 @@ type toolResult struct {
 // Other durable engines keep steps on their workflow goroutine. A limit of one
 // preserves model order. Only regular tool execution holds a semaphore slot;
 // approval waits and delegated children do not. Children apply their own limit.
-func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStream, toolCalls []types.ToolUseContent, tools *types.ToolRegistry) []toolResult {
+func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStream, toolCalls []types.ToolCallPart, tools *types.ToolRegistry) []toolResult {
 	results := make([]toolResult, len(toolCalls))
 	transfers := 0
 	for _, call := range toolCalls {
@@ -2435,7 +2539,7 @@ func (a *Agent) executeToolsConcurrently(ctx context.Context, stream *EventStrea
 	var wg sync.WaitGroup
 	for i, tc := range toolCalls {
 		wg.Add(1)
-		go func(idx int, tc types.ToolUseContent) {
+		go func(idx int, tc types.ToolCallPart) {
 			defer wg.Done()
 
 			results[idx] = a.executeOneTool(ctx, stream, tc, tools)
@@ -2496,7 +2600,7 @@ func (a *Agent) chargeBudget(ctx context.Context, stream *EventStream, provider 
 	case types.BudgetStatusExceeded:
 		if a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
 			marker := a.cfg.Budget.ApprovalMarker()
-			pending := types.ToolUseContent{ID: "budget-" + usage.AccountingID, Name: budgetToolName}
+			pending := types.ToolCallPart{ID: "budget-" + usage.AccountingID, Name: budgetToolName}
 			msg, _, approved := a.awaitApproval(ctx, stream, pending, []types.Marker{marker})
 			if !approved {
 				if err := stream.runError(); err != nil {
@@ -2526,14 +2630,14 @@ func (a *Agent) Budget() *types.Budget { return a.cfg.Budget }
 //
 // It returns (message, modifiedArgs, approved). On refusal or cancellation the
 // message is the tool error to report.
-func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker) (string, map[string]any, bool) {
+func (a *Agent) awaitApproval(ctx context.Context, stream *EventStream, tc types.ToolCallPart, markers []types.Marker) (string, map[string]any, bool) {
 	d, ok := a.awaitApprovalPhase(ctx, stream, tc, markers, "gate")
 	return d.message, d.args, ok
 }
 
 // awaitApprovalPhase asks for one decision about tc. On refusal the
 // decision's message is the tool error to report.
-func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolUseContent, markers []types.Marker, phase string) (decision, bool) {
+func (a *Agent) awaitApprovalPhase(ctx context.Context, stream *EventStream, tc types.ToolCallPart, markers []types.Marker, phase string) (decision, bool) {
 	d, ok := a.awaitInterrupt(ctx, stream, interruptRequest{kind: interruptKind(tc, phase), phase: phase, call: tc, markers: markers})
 	if !ok {
 		return d, false
@@ -2554,7 +2658,7 @@ var errNonStreamingApproval = errors.New("non-streaming approvals require an App
 // A panic in the gate, a marker check, a handoff tool, or anything else on
 // this path becomes an error result for this call. One faulty tool must not
 // take down the process and every other run in it.
-func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tools *types.ToolRegistry) (res toolResult) {
+func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc types.ToolCallPart, tools *types.ToolRegistry) (res toolResult) {
 	stream.send(types.ToolExecStartDelta{ToolCallID: tc.ID, Name: tc.Name})
 	var ca callApproval
 	// Registered first so it runs last, after a recovered panic set res:
@@ -2699,7 +2803,7 @@ func (a *Agent) toolGate() types.ToolGate {
 // model's actual arguments, before anything runs. It may rewrite tc.Arguments
 // in place. A denial is reported to the model as a tool error so it can adapt,
 // rather than failing the turn; done reports whether the call is finished.
-func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef, ca *callApproval) (toolResult, bool) {
+func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.ToolCallPart, def types.ToolDef, ca *callApproval) (toolResult, bool) {
 	decision := a.toolGate().Check(ctx, def, tc.Arguments)
 	if decision.Outcome == types.GateAllow {
 		if decision.ModifiedArgs != nil {
@@ -2740,7 +2844,7 @@ func (a *Agent) gateTool(ctx context.Context, stream *EventStream, tc *types.Too
 // so the edited arguments are validated and gated again: a denial still
 // refuses the call and a gate rewrite still applies. A second approval
 // request is not raised, because a human already decided on these arguments.
-func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef, args map[string]any) (toolResult, bool) {
+func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *types.ToolCallPart, def types.ToolDef, args map[string]any) (toolResult, bool) {
 	tc.Arguments = args
 	if err := types.ValidateToolArgs(def.Parameters, args); err != nil {
 		return failedTool(stream, tc.ID, tc.Name, err.Error()), true
@@ -2767,7 +2871,7 @@ func (a *Agent) recheckEditedArgs(ctx context.Context, stream *EventStream, tc *
 // wraps a marked tool without re-marking it still prompts. The decorator is
 // then kept and run as is; its MarkedTool runs the inner tool without asking
 // again.
-func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, tool types.Tool, ca *callApproval) (types.Tool, toolResult, bool) {
+func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *types.ToolCallPart, tool types.Tool, ca *callApproval) (types.Tool, toolResult, bool) {
 	mt, ok := types.As[*types.MarkedTool](tool)
 	if !ok || len(mt.Markers) == 0 {
 		return tool, toolResult{}, false
@@ -2796,7 +2900,7 @@ func (a *Agent) resolveMarkers(ctx context.Context, stream *EventStream, tc *typ
 // The parent's ToolTimeout does not bound the delegation: the child applies
 // it to each of its own tool calls. SubAgentDef.Timeout bounds the whole
 // child run, with the clock paused while a child approval waits for a human.
-func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool, invoker SubAgentInvoker) toolResult {
+func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc types.ToolCallPart, tool types.Tool, invoker SubAgentInvoker) toolResult {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	var clock *pausableDeadline
@@ -2853,14 +2957,10 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 			continue
 		}
 		stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
+		a.registerChildCitation(d)
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			resultBuf.WriteString(v.Content)
-		case types.CitationDelta:
-			// A source the child cited is a source the whole answer rests
-			// on, so it is registered here too and gets one number across
-			// parent and child rather than one per agent.
-			a.citations.Add(v.Citation)
+		case types.PartDelta:
+			resultBuf.WriteString(v.Text)
 		case types.ErrorDelta:
 			childErr = v.Error
 		}
@@ -2920,7 +3020,7 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 
 // subAgentName names the child of a delegation: the sub-agent's own name
 // for a native delegate tool, the tool's name otherwise.
-func subAgentName(tc types.ToolUseContent, tool types.Tool) string {
+func subAgentName(tc types.ToolCallPart, tool types.Tool) string {
 	if st, ok := tool.(*subAgentTool); ok {
 		return st.name
 	}
@@ -2929,7 +3029,7 @@ func subAgentName(tc types.ToolUseContent, tool types.Tool) string {
 
 // runToolStep executes a regular tool, wrapped in a durable step. A RichTool
 // yields multi-modal Blocks; a plain Tool yields text only.
-func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.ToolUseContent, tool types.Tool) toolResult {
+func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.ToolCallPart, tool types.Tool) toolResult {
 	stepName := "tool-" + tc.ID
 	if types.IsIdempotent(tool) {
 		ctx = types.WithIdempotentStep(ctx)
@@ -2955,7 +3055,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		toolStart := time.Now()
 		var (
 			text    string
-			blocks  []types.ToolResultBlock
+			parts   []types.ToolOutputPart
 			execErr error
 		)
 		// Placeholders become real values only here, after the gate and any
@@ -2967,7 +3067,10 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		if rt, ok := tool.(types.RichTool); ok {
 			var tr types.ToolResult
 			tr, execErr = rt.ExecuteRich(stepCtx, args)
-			text, blocks = tr.Text, tr.Blocks
+			text, parts = tr.Text(), tr.Parts
+			if !tr.HasMedia() && !hasJSON(tr.Parts) {
+				parts = nil // plain text: the projection is the whole output
+			}
 			// Register the tool's sources in the run-wide registry so a page
 			// found by a local search tool and the same page found by the
 			// provider's server-side search share one footnote number. A
@@ -2980,7 +3083,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 				stream.send(types.CitationDelta{Citation: c, ToolCallID: tc.ID})
 			}
 			if execErr == nil && tr.IsError {
-				execErr = errors.New(tr.Text) // tool-signalled error without a Go error
+				execErr = errors.New(tr.Text()) // tool-signalled error without a Go error
 			}
 		} else {
 			text, execErr = tool.Execute(stepCtx, args)
@@ -2990,16 +3093,16 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		// timed-out tool from a successful one.
 		if execErr == nil && a.cfg.ToolTimeout > 0 && stepCtx.Err() == context.DeadlineExceeded {
 			execErr = fmt.Errorf("tool %s exceeded timeout %s: %w", tc.Name, a.cfg.ToolTimeout, context.DeadlineExceeded)
-			text, blocks = "", nil
+			text, parts = "", nil
 		}
 		a.cfg.Metrics.RecordToolCall(stepCtx, tc.Name, time.Since(toolStart), execErr)
 		if a.cfg.ToolRedactor != nil {
 			// Tokenize inside the step, so a durable runner records only
 			// placeholders. An error message can quote its input, so it is
 			// tokenized too.
-			text, blocks, execErr = a.tokenizeToolOutput(stepCtx, tool.Definition(), text, blocks, execErr)
+			text, parts, execErr = a.tokenizeToolOutput(stepCtx, tool.Definition(), text, parts, execErr)
 		}
-		out := types.StepResult{Kind: types.StepKindTool, ToolCallID: tc.ID, ToolResult: text, ToolBlocks: blocks}
+		out := types.StepResult{Kind: types.StepKindTool, ToolCallID: tc.ID, ToolResult: text, ToolParts: parts}
 		if execErr != nil {
 			out.ToolError = execErr.Error() // error-in-payload: recorded once, not retried
 		}
@@ -3019,25 +3122,36 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		// error): surface it as a tool error rather than dropping it.
 		res = toolResult{toolCallID: tc.ID, err: stepErr.Error()}
 	} else {
-		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, blocks: sr.ToolBlocks, err: sr.ToolError}
+		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, parts: sr.ToolParts, err: sr.ToolError}
 		a.afterToolHooks(ctx, stream, tc, tool.Definition(), &res)
 	}
-	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Blocks: res.blocks, Error: res.err, Version: types.ToolVersion(tool)})
+	var endParts []types.ToolOutputPart
+	if res.parts != nil {
+		endParts = res.output()
+	}
+	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Parts: endParts, Error: res.err, Version: types.ToolVersion(tool)})
 	return res
 }
 
-// tokenizeToolOutput applies the ToolRedactor to a tool's text, blocks, and
+// tokenizeToolOutput applies the ToolRedactor to a tool's text, parts, and
 // error. A redactor that withholds a successful result turns it into an error.
-func (a *Agent) tokenizeToolOutput(ctx context.Context, def types.ToolDef, text string, blocks []types.ToolResultBlock, execErr error) (string, []types.ToolResultBlock, error) {
+func (a *Agent) tokenizeToolOutput(ctx context.Context, def types.ToolDef, text string, parts []types.ToolOutputPart, execErr error) (string, []types.ToolOutputPart, error) {
 	if execErr != nil {
-		r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Text: execErr.Error(), IsError: true})
-		return "", nil, errors.New(r.Text)
+		r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Parts: []types.ToolOutputPart{types.Text(execErr.Error())}, IsError: true})
+		return "", nil, errors.New(r.Text())
 	}
-	r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Text: text, Blocks: blocks})
+	if parts == nil {
+		r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}})
+		if r.IsError {
+			return "", nil, errors.New(r.Text())
+		}
+		return r.Text(), nil, nil
+	}
+	r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Parts: parts})
 	if r.IsError {
-		return "", nil, errors.New(r.Text)
+		return "", nil, errors.New(r.Text())
 	}
-	return r.Text, r.Blocks, nil
+	return r.Text(), r.Parts, nil
 }
 
 // tokenizeCitations applies the ToolRedactor to the text fields of each
@@ -3049,8 +3163,8 @@ func (a *Agent) tokenizeCitations(ctx context.Context, def types.ToolDef, cites 
 		if s == "" {
 			return s, true
 		}
-		r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Text: s})
-		return r.Text, !r.IsError
+		r := a.cfg.ToolRedactor.TokenizeResult(ctx, def, types.ToolResult{Parts: []types.ToolOutputPart{types.Text(s)}})
+		return r.Text(), !r.IsError
 	}
 	for _, c := range cites {
 		ok := true
@@ -3103,7 +3217,7 @@ func (e *toolPanicError) ToolPanic() bool { return true }
 
 // toolPanic logs a recovered panic with its stack, records it as a failed
 // tool call, and returns the error that replaces the call's result.
-func (a *Agent) toolPanic(ctx context.Context, tc types.ToolUseContent, value any) error {
+func (a *Agent) toolPanic(ctx context.Context, tc types.ToolCallPart, value any) error {
 	err := &toolPanicError{tool: tc.Name, value: value}
 	a.cfg.Logger.Error("tool panic recovered",
 		"agent", a.cfg.Name, "tool", tc.Name, "tool_call_id", tc.ID, "panic", value, "stack", string(debug.Stack()))

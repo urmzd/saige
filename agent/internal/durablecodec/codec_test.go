@@ -14,18 +14,26 @@ func TestGobRoundTripsContent(t *testing.T) {
 		name string
 		msg  types.Message
 	}{
-		{"truncated turn", types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "partial"}, types.TruncationContent{Reason: "max_tokens"},
+		{"truncated turn", types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "partial"}, types.TruncationPart{Reason: "max_tokens"},
 		}}},
-		{"server tool and route", types.AssistantMessage{Content: []types.AssistantContent{
-			types.ServerToolContent{ID: "s", Kind: types.ServerToolKind("web_search"), Text: "r"},
-			types.RouteContent{Profile: "p"},
+		{"server tool and route", types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ServerToolCallPart{ID: "s", ToolKind: types.ServerToolKind("web_search"), Name: "web_search"},
+			types.ServerToolResultPart{CallID: "s", ToolKind: types.ServerToolKind("web_search"), Text: "r"},
+			types.RoutePart{Profile: "p"},
 		}}},
-		{"steered message", types.UserMessage{Content: []types.UserContent{
-			types.TextContent{Text: "x"}, types.SteerContent{ID: "sub"},
+		{"steered message", types.UserMessage{Parts: []types.UserPart{
+			types.TextPart{Text: "x"}, types.SteerPart{ID: "sub"},
 		}}},
-		{"tool call arguments", types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "c", Name: "f", Arguments: map[string]any{"a": []any{"x", map[string]any{"b": 1.0}}}},
+		{"media and tool output", types.UserMessage{Parts: []types.UserPart{
+			types.Image(types.Bytes(types.MediaPNG, []byte{1, 2, 3})),
+			types.ToolOK("c", types.Text("t"), types.JSONPart{JSON: []byte(`{"a":1}`)}, types.Document(types.URL("file:///d.pdf", types.MediaPDF))),
+		}}},
+		{"citation and refusal", types.AssistantMessage{Parts: []types.AssistantPart{
+			types.CitationPart{Citation: types.NewCitation(types.CitationWeb, "https://x", "x")}, types.RefusalPart{Text: "no"},
+		}}},
+		{"tool call arguments", types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "c", Name: "f", Arguments: map[string]any{"a": []any{"x", map[string]any{"b": 1.0}}}},
 		}}},
 	}
 	for _, tt := range tests {

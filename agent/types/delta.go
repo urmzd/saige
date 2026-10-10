@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -11,59 +12,79 @@ type Delta interface {
 	isDelta()
 }
 
-// ── Text streaming (from LLM) ──────────────────────────────────────
+// ── Part deltas (from LLM) ──────────────────────────────────────────
+// A model's output streams as parts. Every part has an Index, its position
+// in the final message, unique within one provider attempt. A producer
+// sends PartStart, then any number of PartDelta, then PartEnd for each
+// index. Deltas for different indices may interleave.
 
-// TextStartDelta signals the beginning of a text block.
-type TextStartDelta struct{}
-
-func (TextStartDelta) isDelta() {}
-
-// TextContentDelta carries an incremental text fragment.
-type TextContentDelta struct {
-	Content string
+// PartStart opens the part at Index.
+type PartStart struct {
+	Index int
+	Kind  PartKind
+	// MediaType is set for media kinds.
+	MediaType MediaType
+	// ID and Name are set for tool_call and server_tool_call, and ID (the
+	// call it answers) for server_tool_result, so a consumer can show a
+	// call before its arguments arrive.
+	ID, Name string
 }
 
-func (TextContentDelta) isDelta() {}
+func (PartStart) isDelta() {}
 
-// TextEndDelta signals the end of a text block.
-type TextEndDelta struct{}
-
-func (TextEndDelta) isDelta() {}
-
-// ── Tool call streaming (from LLM) ─────────────────────────────────
-// These deltas describe what the LLM is generating (its intent to call tools).
-
-// ToolCallStartDelta signals the LLM is generating a tool call.
-type ToolCallStartDelta struct {
-	ID   string
-	Name string
+// PartDelta appends to the open part at Index. Exactly one payload field is
+// set (see Validate).
+type PartDelta struct {
+	Index      int
+	Text       string // text
+	Thinking   string // thinking
+	Signature  string // thinking: appended to the signature
+	Args       string // tool_call: a JSON fragment of the arguments
+	Refusal    string // refusal
+	Data       []byte // audio_out, image_out: the next chunk of bytes
+	Transcript string // audio_out
 }
 
-func (ToolCallStartDelta) isDelta() {}
+func (PartDelta) isDelta() {}
 
-// ToolCallArgumentDelta carries a JSON fragment of arguments from the LLM.
-// ID names the call the fragment belongs to. Producers that interleave
-// parallel calls must set it; an empty ID means the most recently started call.
-type ToolCallArgumentDelta struct {
-	ID      string
-	Content string
+// Validate reports a delta whose index is negative or that sets no payload
+// field or more than one.
+func (d PartDelta) Validate() error {
+	if d.Index < 0 {
+		return fmt.Errorf("part delta: negative index %d", d.Index)
+	}
+	n := 0
+	for _, set := range []bool{d.Text != "", d.Thinking != "", d.Signature != "", d.Args != "",
+		d.Refusal != "", len(d.Data) > 0, d.Transcript != ""} {
+		if set {
+			n++
+		}
+	}
+	if n != 1 {
+		return fmt.Errorf("part delta %d: %d payload fields set, want 1", d.Index, n)
+	}
+	return nil
 }
 
-func (ToolCallArgumentDelta) isDelta() {}
-
-// ToolCallEndDelta signals the LLM finished generating a tool call.
-// ID names the call being closed, so parallel calls pair with their arguments
-// regardless of arrival order. An empty ID closes the oldest open call.
-type ToolCallEndDelta struct {
-	ID        string
-	Arguments map[string]any
-	// ArgumentsError is set when the streamed argument text was not valid
-	// JSON. Arguments is nil in that case. Producers must never report a parse
-	// failure as an empty argument map.
-	ArgumentsError string
+// PartEnd closes the part at Index. Part is the complete part: when it is
+// set it is authoritative, and when a producer that streamed fragments
+// leaves it nil the aggregator builds it from them.
+type PartEnd struct {
+	Index int
+	Part  AssistantPart
 }
 
-func (ToolCallEndDelta) isDelta() {}
+func (PartEnd) isDelta() {}
+
+// ConversionDelta reports how a provider attempt converted media it could
+// not take natively. It is emitted before the attempt's content and kept on
+// failover, because a conversion's cost is real.
+type ConversionDelta struct {
+	Profile string
+	Report  ConversionReport
+}
+
+func (ConversionDelta) isDelta() {}
 
 // ── Tool execution streaming (from SDK) ─────────────────────────────
 // These deltas describe tool execution. Each carries a ToolCallID so
@@ -88,42 +109,21 @@ func (ToolExecDelta) isDelta() {}
 
 // ToolExecEndDelta signals a tool has finished executing.
 // Result is the text projection shown to humans (unchanged contract).
-// Blocks carries optional rich output for consumers (e.g. TUIs) that render images.
+// Parts carries the full output for consumers, such as TUIs, that render
+// media. Citations are the sources the tool attributed its output to.
 type ToolExecEndDelta struct {
 	ToolCallID string
 	Name       string // tool name; empty when the producer does not know it
 	Result     string // text projection: UNCHANGED meaning
 	Error      string
-	Blocks     []ToolResultBlock // optional; nil for plain-text results
+	Parts      []ToolOutputPart // nil for a result with no parts
+	Citations  []Citation
 	// Version is the version the tool reported (types.ToolVersion), empty
 	// for a tool that reports none.
 	Version string
 }
 
 func (ToolExecEndDelta) isDelta() {}
-
-// ── Thinking streaming (from LLM) ──────────────────────────────────
-
-// ThinkingStartDelta signals the beginning of an extended thinking block.
-type ThinkingStartDelta struct{}
-
-func (ThinkingStartDelta) isDelta() {}
-
-// ThinkingContentDelta carries an incremental thinking fragment.
-type ThinkingContentDelta struct {
-	Content string
-}
-
-func (ThinkingContentDelta) isDelta() {}
-
-// ThinkingEndDelta signals the end of an extended thinking block.
-// Signature is an opaque token required for multi-turn round-trips
-// with providers that support extended thinking (e.g. Anthropic).
-type ThinkingEndDelta struct {
-	Signature string
-}
-
-func (ThinkingEndDelta) isDelta() {}
 
 // ── Marker deltas ───────────────────────────────────────────────────
 
@@ -158,11 +158,9 @@ func (HandoffDelta) isDelta() {}
 
 // ── Terminal deltas ─────────────────────────────────────────────────
 
-// CitationDelta carries one attribution as it is produced. Providers that
-// return citation metadata (Anthropic document citations, Gemini grounding,
-// OpenAI search annotations) emit these from their adapter; locally-executed
-// tools emit them via ToolResult.Citations. Either way the consumer sees one
-// delta type and the agent's CitationRegistry assigns the number.
+// CitationDelta carries one attribution a locally executed tool produced
+// (through ToolResult.Citations), as the agent's CitationRegistry numbers
+// it. Citations the model produces stream as CitationPart parts instead.
 //
 // The Ordinal is already assigned by the time a consumer sees it, so a UI can
 // render the marker immediately without holding its own numbering state.
@@ -293,6 +291,9 @@ type RouteDelta struct {
 	// Dials reports how the attempt's dials compiled for its model. Nil
 	// when the attempt carried no dials.
 	Dials *DialReport
+	// Conversions is the attempt's planned media conversions. Nil when the
+	// attempt converted nothing.
+	Conversions *ConversionReport
 }
 
 func (RouteDelta) isDelta() {}
@@ -300,7 +301,7 @@ func (RouteDelta) isDelta() {}
 // ── Run control deltas ───────────────────────────────────────────────
 
 // TruncatedDelta reports that a partial assistant turn was committed to the
-// tree with a TruncationContent marker, for example after a stop request or
+// tree with a TruncationPart marker, for example after a stop request or
 // when the output token limit cut the response short.
 type TruncatedDelta struct {
 	NodeID string // tree node holding the partial turn; empty if nothing was committed
@@ -338,32 +339,6 @@ type InterruptedDelta struct {
 }
 
 func (InterruptedDelta) isDelta() {}
-
-// ── Server tool deltas ───────────────────────────────────────────────
-
-// ServerToolCallDelta reports a tool call the provider executes itself (web
-// search, code execution, remote MCP). Nothing runs locally, so no gate sees
-// it; the delta exists so the call is visible and auditable.
-type ServerToolCallDelta struct {
-	ID    string
-	Kind  ServerToolKind
-	Name  string // provider-specific tool name, e.g. "web_search"
-	Input map[string]any
-}
-
-func (ServerToolCallDelta) isDelta() {}
-
-// ServerToolResultDelta carries the outcome of a ServerToolCallDelta.
-type ServerToolResultDelta struct {
-	ID      string
-	Kind    ServerToolKind
-	Text    string          // human-readable projection of the result
-	Result  json.RawMessage // provider-native result payload, if any
-	IsError bool
-	Files   []FileContent // files the tool produced (URIs only on the wire)
-}
-
-func (ServerToolResultDelta) isDelta() {}
 
 // ── Structured output deltas ─────────────────────────────────────────
 

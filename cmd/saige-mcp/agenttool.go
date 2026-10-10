@@ -175,7 +175,7 @@ func (b bridge) registerAgent(server *mcp.Server, at agentTool) {
 // agent cannot run a tool the client could not run itself.
 func (b bridge) runAgent(ctx context.Context, session *mcp.ServerSession, at agentTool, task string) (string, error) {
 	a := at.newAgent()
-	stream := a.Invoke(ctx, []agenttypes.Message{agenttypes.NewUserMessage(task)})
+	stream := a.Invoke(ctx, []agenttypes.Message{agenttypes.UserMsg(agenttypes.Text(task))})
 	transcript, err := agentsdk.Collect(stream, func(d agenttypes.Delta) {
 		m, ok := d.(agenttypes.MarkerDelta)
 		if !ok {

@@ -90,7 +90,7 @@ func TestStreamDeltasResolvingCallsResolver(t *testing.T) {
 	for name, mk := range outputs {
 		t.Run(name, func(t *testing.T) {
 			ch := make(chan types.Delta, 4)
-			ch <- types.TextContentDelta{Content: "hi"}
+			ch <- types.PartDelta{Index: 0, Text: "hi"}
 			ch <- types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"}
 			ch <- types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"}
 			ch <- types.DoneDelta{}
@@ -243,9 +243,9 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 		{
 			name: "one marker approved",
 			deltas: []types.Delta{
-				types.TextContentDelta{Content: "before"},
+				types.PartDelta{Index: 0, Text: "before"},
 				types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"},
-				types.TextContentDelta{Content: "after"},
+				types.PartDelta{Index: 0, Text: "after"},
 				types.DoneDelta{},
 			},
 			answers: "y\n",
@@ -255,7 +255,7 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 			name: "two markers",
 			deltas: []types.Delta{
 				types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"},
-				types.TextContentDelta{Content: "between"},
+				types.PartDelta{Index: 0, Text: "between"},
 				types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"},
 				types.DoneDelta{},
 			},
@@ -264,7 +264,7 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 		},
 		{
 			name:    "no markers",
-			deltas:  []types.Delta{types.TextContentDelta{Content: "plain"}, types.DoneDelta{}},
+			deltas:  []types.Delta{types.PartDelta{Index: 0, Text: "plain"}, types.DoneDelta{}},
 			answers: "",
 			want:    nil,
 		},
@@ -314,8 +314,8 @@ func (s stopEarlyOutput) StreamDeltas(_ AgentHeader, ch <-chan types.Delta) Verb
 
 func TestStreamDeltasResolvingFallbackRendererStopsEarly(t *testing.T) {
 	ch := make(chan types.Delta, 4)
-	ch <- types.TextContentDelta{Content: "hi"}
-	ch <- types.TextContentDelta{Content: "more"}
+	ch <- types.PartDelta{Index: 0, Text: "hi"}
+	ch <- types.PartDelta{Index: 0, Text: "more"}
 	ch <- types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"}
 	ch <- types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"}
 	close(ch)

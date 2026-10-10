@@ -13,7 +13,7 @@ import (
 // ResponseCodecVersion is the CachedResponse encoding version EncodeResponse
 // writes. DecodeResponse rejects other versions, so a store shared across
 // releases misses rather than replaying a value it cannot read.
-const ResponseCodecVersion = 1
+const ResponseCodecVersion = 2
 
 // ErrResponseCodec reports a stored value DecodeResponse cannot read.
 var ErrResponseCodec = errors.New("response cache: cannot decode stored value")
@@ -89,9 +89,7 @@ func DecodeResponse(b []byte) (CachedResponse, error) {
 // recordable reports whether the recorder keeps d in CachedResponse.Deltas.
 func recordable(d types.Delta) bool {
 	switch d.(type) {
-	case types.TextStartDelta, types.TextContentDelta, types.TextEndDelta,
-		types.ThinkingStartDelta, types.ThinkingContentDelta, types.ThinkingEndDelta,
-		types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta, types.CitationDelta:
+	case types.PartStart, types.PartDelta, types.PartEnd, types.CitationDelta:
 		return true
 	default:
 		return false

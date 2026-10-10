@@ -228,8 +228,8 @@ func lastRequestText(msgs []agenttypes.Message) string {
 	var sb strings.Builder
 	for _, m := range msgs {
 		if um, ok := m.(agenttypes.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(agenttypes.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(agenttypes.TextPart); ok {
 					sb.WriteString(tc.Text)
 				}
 			}
@@ -241,18 +241,18 @@ func lastRequestText(msgs []agenttypes.Message) string {
 func toolResultText(msgs []agenttypes.Message) string {
 	var sb strings.Builder
 	add := func(c any) {
-		if r, ok := c.(agenttypes.ToolResultContent); ok {
-			sb.WriteString(r.Text)
+		if r, ok := c.(agenttypes.ToolResultPart); ok {
+			sb.WriteString(r.Text())
 		}
 	}
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case agenttypes.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case agenttypes.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		}

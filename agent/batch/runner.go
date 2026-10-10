@@ -135,7 +135,7 @@ func asProvider(p types.BatchProvider) types.Provider {
 
 type namedOnly struct{ p types.BatchProvider }
 
-func (namedOnly) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (namedOnly) Stream(context.Context, types.Request) (<-chan types.Delta, error) {
 	return nil, errors.New("batch provider")
 }
 

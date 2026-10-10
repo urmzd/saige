@@ -34,7 +34,7 @@ func TestChatStreamWithOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := a.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("go")}, testTools, tc.opts)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: testTools, Options: new(tc.opts)})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(bodies) != 0 {
 					t.Fatalf("err = %v with %d requests, want a local rejection", err, len(bodies))

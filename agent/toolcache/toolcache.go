@@ -196,7 +196,7 @@ func (t *Tool) CachePolicy() types.CachePolicy {
 // Execute runs the tool through the cache and returns the text projection.
 func (t *Tool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	res, err := t.ExecuteRich(ctx, args)
-	return res.Text, err
+	return res.Text(), err
 }
 
 // ExecuteRich returns a cached result when one is fresh, and otherwise runs the
@@ -339,7 +339,7 @@ func (t *Tool) execute(ctx context.Context, args map[string]any) (result types.T
 		return rt.ExecuteRich(ctx, args)
 	}
 	text, err := t.inner.Execute(ctx, args)
-	return types.ToolResult{Text: text, IsError: err != nil}, err
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}, IsError: err != nil}, err
 }
 
 // store writes the outcome, honouring CacheErrors. A failure to write is
@@ -407,11 +407,7 @@ func detachedResult(res types.ToolResult, execErr error) (types.ToolResult, erro
 }
 
 func cloneResult(res types.ToolResult) (types.ToolResult, error) {
-	res.Blocks = append([]types.ToolResultBlock(nil), res.Blocks...)
-	for i := range res.Blocks {
-		res.Blocks[i].Data = append([]byte(nil), res.Blocks[i].Data...)
-		res.Blocks[i].JSON = append(json.RawMessage(nil), res.Blocks[i].JSON...)
-	}
+	res.Parts = types.CloneParts(res.Parts)
 	res.Citations = append([]types.Citation(nil), res.Citations...)
 	for i := range res.Citations {
 		if res.Citations[i].Meta == nil {

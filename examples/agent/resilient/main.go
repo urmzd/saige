@@ -45,13 +45,13 @@ func main() {
 
 	// Invoke and stream the response.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Explain the benefits of retry and fallback patterns in distributed systems."),
+		types.UserMsg(types.Text("Explain the benefits of retry and fallback patterns in distributed systems.")),
 	})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.UsageDelta:
 			fmt.Printf("\n[usage] prompt=%d completion=%d latency=%s\n",
 				d.PromptTokens, d.CompletionTokens, d.Latency)

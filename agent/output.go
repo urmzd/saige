@@ -104,8 +104,8 @@ func (o runOutput) textAnswerError(msg *types.AssistantMessage) error {
 		return nil
 	}
 	var text strings.Builder
-	for _, block := range msg.Content {
-		if tc, ok := block.(types.TextContent); ok {
+	for _, block := range msg.Parts {
+		if tc, ok := block.(types.TextPart); ok {
 			text.WriteString(tc.Text)
 		}
 	}
@@ -418,12 +418,12 @@ func closers(stack []byte) string {
 // PartialJSONDeltas: the text of a schema-constrained or prompted turn, or
 // the arguments of a final_answer call.
 type partialJSON struct {
-	text   bool   // track text deltas
-	tool   bool   // track final_answer argument deltas
-	callID string // the final_answer call being streamed
-	open   bool   // a final_answer call is the latest one started
-	buf    strings.Builder
-	last   string
+	text  bool // track text deltas
+	tool  bool // track final_answer argument deltas
+	index int  // the part index of the final_answer call being streamed
+	open  bool // a final_answer call is being streamed
+	buf   strings.Builder
+	last  string
 }
 
 func newPartialJSON(out runOutput, tools []types.ToolDef) *partialJSON {
@@ -442,24 +442,22 @@ func (p *partialJSON) push(d types.Delta) (types.PartialJSONDelta, bool) {
 		return types.PartialJSONDelta{}, false
 	}
 	switch v := d.(type) {
-	case types.TextContentDelta:
-		if !p.text {
-			return types.PartialJSONDelta{}, false
-		}
-		p.buf.WriteString(v.Content)
-	case types.ToolCallStartDelta:
-		p.open = p.tool && v.Name == FinalAnswerToolName
-		if p.open {
-			p.callID = v.ID
+	case types.PartStart:
+		if p.tool && v.Kind == types.KindToolCall && v.Name == FinalAnswerToolName {
+			p.open, p.index = true, v.Index
 			p.buf.Reset()
 			p.last = ""
 		}
 		return types.PartialJSONDelta{}, false
-	case types.ToolCallArgumentDelta:
-		if !p.tool || (v.ID != "" && v.ID != p.callID) || (v.ID == "" && !p.open) {
+	case types.PartDelta:
+		switch {
+		case p.text && v.Text != "":
+			p.buf.WriteString(v.Text)
+		case p.tool && p.open && v.Index == p.index && v.Args != "":
+			p.buf.WriteString(v.Args)
+		default:
 			return types.PartialJSONDelta{}, false
 		}
-		p.buf.WriteString(v.Content)
 	default:
 		return types.PartialJSONDelta{}, false
 	}

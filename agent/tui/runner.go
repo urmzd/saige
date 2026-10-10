@@ -128,7 +128,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 				continue
 			}
 		} else {
-			stream = agent.Invoke(ctx, []types.Message{types.NewUserMessage(input)})
+			stream = agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(input))})
 		}
 
 		// Markers are resolved inline by the renderer: Deltas() has a single
@@ -493,7 +493,7 @@ func (m runnerModel) submit(mode agentsdk.SubmitMode) (tea.Model, tea.Cmd) {
 
 func submitCmd(stream *agentsdk.EventStream, gen, local int, text string, mode agentsdk.SubmitMode) tea.Cmd {
 	return func() tea.Msg {
-		id, err := stream.Submit(types.NewUserMessage(text), mode)
+		id, err := stream.Submit(types.UserMsg(types.Text(text)), mode)
 		return submitResultMsg{gen: gen, local: local, id: id, err: err}
 	}
 }
@@ -570,7 +570,7 @@ func (m *runnerModel) injectPending(i int) {
 // startRun records text and starts a new run with it.
 func (m runnerModel) startRun(text string) (tea.Model, tea.Cmd) {
 	m.act.addUser(text, false)
-	stream := m.agent.Invoke(m.ctx, []types.Message{types.NewUserMessage(text)})
+	stream := m.agent.Invoke(m.ctx, []types.Message{types.UserMsg(types.Text(text))})
 	return m.attach(stream)
 }
 

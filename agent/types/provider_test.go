@@ -8,7 +8,7 @@ import (
 
 type testProvider struct{}
 
-func (testProvider) ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error) {
+func (testProvider) Stream(ctx context.Context, _ Request) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil
@@ -63,7 +63,8 @@ type scriptedProvider struct {
 	tools    []ToolDef
 }
 
-func (p *scriptedProvider) ChatStream(_ context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error) {
+func (p *scriptedProvider) Stream(_ context.Context, req Request) (<-chan Delta, error) {
+	messages, tools := req.Messages, req.Tools
 	p.messages, p.tools = messages, tools
 	if p.err != nil {
 		return nil, p.err
@@ -78,10 +79,10 @@ func (p *scriptedProvider) ChatStream(_ context.Context, messages []Message, too
 
 func TestGenerateTextConcatenatesDeltas(t *testing.T) {
 	p := &scriptedProvider{deltas: []Delta{
-		TextStartDelta{},
-		TextContentDelta{Content: "hello "},
-		TextContentDelta{Content: "world"},
-		TextEndDelta{},
+		PartStart{Index: 0, Kind: KindText},
+		PartDelta{Index: 0, Text: "hello "},
+		PartDelta{Index: 0, Text: "world"},
+		PartEnd{Index: 0},
 	}}
 	got, err := GenerateText(context.Background(), p, "hi")
 	if err != nil {
@@ -95,18 +96,18 @@ func TestGenerateTextConcatenatesDeltas(t *testing.T) {
 		t.Fatalf("request = %d messages, %d tools, want 1 and 0", len(p.messages), len(p.tools))
 	}
 	um, ok := p.messages[0].(UserMessage)
-	if !ok || len(um.Content) != 1 {
+	if !ok || len(um.Parts) != 1 {
 		t.Fatalf("message = %+v, want single-block UserMessage", p.messages[0])
 	}
-	if tc, ok := um.Content[0].(TextContent); !ok || tc.Text != "hi" {
-		t.Errorf("prompt block = %+v, want TextContent{hi}", um.Content[0])
+	if tc, ok := um.Parts[0].(TextPart); !ok || tc.Text != "hi" {
+		t.Errorf("prompt block = %+v, want TextContent{hi}", um.Parts[0])
 	}
 }
 
 func TestGenerateTextSurfacesErrorDelta(t *testing.T) {
 	streamErr := errors.New("boom")
 	p := &scriptedProvider{deltas: []Delta{
-		TextContentDelta{Content: "partial"},
+		PartDelta{Index: 0, Text: "partial"},
 		ErrorDelta{Error: streamErr},
 	}}
 	_, err := GenerateText(context.Background(), p, "hi")

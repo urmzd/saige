@@ -333,7 +333,7 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 		changed: make(chan struct{}),
 		timers:  map[string]*time.Timer{},
 	}
-	t.stream = sess.agent.Invoke(s.ctx, []types.Message{types.NewUserMessage(body.Message)})
+	t.stream = sess.agent.Invoke(s.ctx, []types.Message{types.UserMsg(types.Text(body.Message))})
 	sess.turns[t.id] = t
 	sess.last = t
 	go s.record(t)

@@ -14,27 +14,27 @@ import (
 
 func TestPrintDocumentPreservesTreeAndMetadata(t *testing.T) {
 	metadata := json.RawMessage(`{"spec":{"sample":2},"config":{"model":"example"},"large_id":9007199254740993}`)
-	conversation, err := tree.New(types.NewSystemMessage("system"), tree.WithMetadata(metadata))
+	conversation, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithMetadata(metadata))
 	if err != nil {
 		t.Fatal(err)
 	}
 	metadata[2] = 'X'
 	ctx := context.Background()
-	user, err := conversation.AddChild(ctx, conversation.Root().ID, types.NewUserMessage("read"))
+	user, err := conversation.AddChild(ctx, conversation.Root().ID, types.UserMsg(types.Text("read")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assistant, err := conversation.AddChild(ctx, user.ID, types.AssistantMessage{Content: []types.AssistantContent{
-		types.ThinkingContent{Thinking: "visible reasoning", Signature: "signature"},
-		types.ToolUseContent{ID: "call1", Name: "read", Arguments: map[string]any{"id": json.Number("9007199254740993"), "nullable": nil}},
+	assistant, err := conversation.AddChild(ctx, user.ID, types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ThinkingPart{Text: "visible reasoning", Signature: "signature"},
+		types.ToolCallPart{ID: "call1", Name: "read", Arguments: map[string]any{"id": json.Number("9007199254740993"), "nullable": nil}},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conversation.AddChild(ctx, assistant.ID, types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "call1", Text: `{"result":null}`})); err != nil {
+	if _, err := conversation.AddChild(ctx, assistant.ID, types.ToolResults(types.ToolResultPart{CallID: "call1", Parts: []types.ToolOutputPart{types.Text(`{"result":null}`)}})); err != nil {
 		t.Fatal(err)
 	}
-	_, alternate, err := conversation.Branch(ctx, user.ID, "alternate", types.NewAssistantMessage("alternative"))
+	_, alternate, err := conversation.Branch(ctx, user.ID, "alternate", types.AssistantMsg(types.Text("alternative")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ type printWriter func([]byte) (int, error)
 func (w printWriter) Write(p []byte) (int, error) { return w(p) }
 
 func TestPrintFailureAndWriterReentry(t *testing.T) {
-	conversation, err := tree.New(types.NewSystemMessage("system"))
+	conversation, err := tree.New(types.SystemMsg(types.Text("system")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestPrintFailureAndWriterReentry(t *testing.T) {
 		t.Fatal("nil node accepted")
 	}
 	for _, metadata := range []string{`null`, `[]`, `invalid`} {
-		if _, err := tree.New(types.NewSystemMessage("system"), tree.WithMetadata(json.RawMessage(metadata))); err == nil {
+		if _, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithMetadata(json.RawMessage(metadata))); err == nil {
 			t.Fatal("invalid metadata accepted", metadata)
 		}
 	}

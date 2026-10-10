@@ -88,7 +88,7 @@ func main() {
 
 	// Single-turn: invoke once and display results.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Research the latest Go features"),
+		types.UserMsg(types.Text("Research the latest Go features")),
 	})
 
 	if *interactive {

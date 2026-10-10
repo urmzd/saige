@@ -24,7 +24,7 @@ func (p *pricedProvider) Capabilities() types.ModelCapabilities {
 		Pricing:  types.Pricing{InputPerMTok: 3, OutputPerMTok: 15, AsOf: "2026-07-01"},
 	}
 }
-func (p *pricedProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *pricedProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil

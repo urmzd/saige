@@ -17,7 +17,7 @@ type Request struct {
 	// Index numbers the calls the model received, from 0.
 	Index int
 	// Options are the per-request controls the caller sent, or nil for a
-	// call that carried none (ChatStream or ChatStreamWithSchema).
+	// call that carried none (Stream or Stream with a schema).
 	Options *types.RequestOptions
 	// Effective is what an adapter would send: the model's configured
 	// Options with the request's on top and every dial compiled against the
@@ -25,7 +25,7 @@ type Request struct {
 	Effective types.RequestOptions
 	// Dials reports how the call's dials compiled. Nil when it had none.
 	Dials *types.DialReport
-	// Schema is the response schema of a ChatStreamWithSchema call.
+	// Schema is the response schema of a Stream with a schema call.
 	Schema *types.ParameterSchema
 }
 
@@ -41,7 +41,7 @@ type Response struct {
 	TextChunks []string
 	// ToolCalls are streamed in order, each with its arguments as a JSON
 	// fragment. An empty ID is filled in as "call_<index>_<n>".
-	ToolCalls []types.ToolUseContent
+	ToolCalls []types.ToolCallPart
 	// Usage is sent after the content. FinishReason, when set, is added to
 	// its FinishReasons, so a turn can end with "max_tokens" or
 	// "content_filter" without usage figures.
@@ -173,20 +173,16 @@ func (m *FunctionModel) declared() (types.ModelCapabilities, bool) {
 // EffectiveOptions implements types.OptionsReporter.
 func (m *FunctionModel) EffectiveOptions() types.RequestOptions { return m.Options.Clone() }
 
-// ChatStream implements types.Provider.
-func (m *FunctionModel) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return m.stream(ctx, messages, tools, nil, nil)
+// Stream implements types.Provider.
+func (m *FunctionModel) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return m.stream(ctx, req.Messages, req.Tools, req.Options, req.Schema)
 }
 
-// ChatStreamWithOptions implements types.OptionsProvider.
-func (m *FunctionModel) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return m.stream(ctx, messages, tools, &opts, nil)
-}
+// SupportsOptions implements types.OptionsProvider.
+func (m *FunctionModel) SupportsOptions() bool { return true }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (m *FunctionModel) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return m.stream(ctx, messages, tools, nil, schema)
-}
+// SupportsSchema implements types.StructuredOutputProvider.
+func (m *FunctionModel) SupportsSchema() bool { return true }
 
 // CallCount returns how many requests the model has received.
 func (m *FunctionModel) CallCount() int {
@@ -263,31 +259,39 @@ func cloneOptions(o *types.RequestOptions) *types.RequestOptions {
 	return &c
 }
 
-// deltas renders the response as a provider stream.
+// deltas renders the response as a provider stream: thinking, then text,
+// then tool calls, at consecutive part indices.
 func (r Response) deltas(index int) []types.Delta {
 	var out []types.Delta
+	next := 0
 	if r.Thinking != "" {
-		out = append(out, types.ThinkingStartDelta{}, types.ThinkingContentDelta{Content: r.Thinking}, types.ThinkingEndDelta{})
+		out = append(out, types.PartStart{Index: next, Kind: types.KindThinking},
+			types.PartDelta{Index: next, Thinking: r.Thinking}, types.PartEnd{Index: next})
+		next++
 	}
 	chunks := r.TextChunks
 	if len(chunks) == 0 && r.Text != "" {
 		chunks = []string{r.Text}
 	}
 	if len(chunks) > 0 {
-		out = append(out, types.TextStartDelta{})
+		out = append(out, types.PartStart{Index: next, Kind: types.KindText})
 		for _, c := range chunks {
-			out = append(out, types.TextContentDelta{Content: c})
+			if c != "" {
+				out = append(out, types.PartDelta{Index: next, Text: c})
+			}
 		}
-		out = append(out, types.TextEndDelta{})
+		out = append(out, types.PartEnd{Index: next})
+		next++
 	}
 	for i, tc := range r.ToolCalls {
 		id := tc.ID
 		if id == "" {
 			id = fmt.Sprintf("call_%d_%d", index, i)
 		}
-		out = append(out, types.ToolCallStartDelta{ID: id, Name: tc.Name})
+		out = append(out, types.PartStart{Index: next, Kind: types.KindToolCall, ID: id, Name: tc.Name})
 		if tc.ArgumentsError != "" {
-			out = append(out, types.ToolCallEndDelta{ID: id, ArgumentsError: tc.ArgumentsError})
+			out = append(out, types.PartEnd{Index: next, Part: types.ToolCallPart{ID: id, Name: tc.Name, ArgumentsError: tc.ArgumentsError}})
+			next++
 			continue
 		}
 		args := tc.Arguments
@@ -296,8 +300,9 @@ func (r Response) deltas(index int) []types.Delta {
 		}
 		raw, _ := json.Marshal(args)
 		out = append(out,
-			types.ToolCallArgumentDelta{ID: id, Content: string(raw)},
-			types.ToolCallEndDelta{ID: id, Arguments: args})
+			types.PartDelta{Index: next, Args: string(raw)},
+			types.PartEnd{Index: next, Part: types.ToolCallPart{ID: id, Name: tc.Name, Arguments: args}})
+		next++
 	}
 	if r.Usage != nil || r.FinishReason != "" {
 		var u types.UsageDelta

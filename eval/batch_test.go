@@ -21,25 +21,36 @@ type scriptedModel struct{}
 func (scriptedModel) Name() string  { return "scripted" }
 func (scriptedModel) Model() string { return "scripted-1" }
 
-func (m scriptedModel) ChatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (m scriptedModel) chatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
 	var prompt string
 	if u, ok := msgs[len(msgs)-1].(types.UserMessage); ok {
-		prompt = u.Content[0].(types.TextContent).Text
+		prompt = u.Parts[0].(types.TextPart).Text
 	}
 	answer := "answer:" + prompt
 	if strings.Contains(prompt, "impartial evaluator") {
 		answer = `{"reasoning":"fine","score":0.75}`
 	}
 	out := make(chan types.Delta, 4)
-	out <- types.TextStartDelta{}
-	out <- types.TextContentDelta{Content: answer}
-	out <- types.TextEndDelta{}
+	out <- types.PartStart{Index: 0, Kind: types.KindText}
+	out <- types.PartDelta{Index: 0, Text: answer}
+	out <- types.PartEnd{Index: 0}
 	close(out)
 	return out, nil
 }
 
-func (m scriptedModel) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
-	return m.ChatStream(ctx, msgs, tools)
+// Stream implements types.Provider.
+func (m scriptedModel) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil {
+		return m.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	}
+	return m.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (m scriptedModel) SupportsSchema() bool { return true }
+
+func (m scriptedModel) chatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+	return m.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }
 
 // countingBatches counts the batches submitted and their sizes.

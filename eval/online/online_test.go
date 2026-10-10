@@ -26,24 +26,24 @@ type turn struct {
 	msg types.Message
 }
 
-func user(text string) turn { return turn{types.NewUserMessage(text)} }
+func user(text string) turn { return turn{types.UserMsg(types.Text(text))} }
 
-func assistant(text string, extra ...types.AssistantContent) turn {
-	content := []types.AssistantContent{types.RouteContent{Model: "gpt-6-luna", Preset: "fast"}}
+func assistant(text string, extra ...types.AssistantPart) turn {
+	content := []types.AssistantPart{types.RoutePart{Model: "gpt-6-luna", Preset: "fast"}}
 	content = append(content, extra...)
 	if text != "" {
-		content = append(content, types.TextContent{Text: text})
+		content = append(content, types.TextPart{Text: text})
 	}
-	return turn{types.AssistantMessage{Content: content}}
+	return turn{types.AssistantMessage{Parts: content}}
 }
 
-func call(id, name string) types.AssistantContent {
-	return types.ToolUseContent{ID: id, Name: name, Arguments: map[string]any{"q": "x"}}
+func call(id, name string) types.AssistantPart {
+	return types.ToolCallPart{ID: id, Name: name, Arguments: map[string]any{"q": "x"}}
 }
 
 func result(id, text string, isErr bool) turn {
-	return turn{types.SystemMessage{Content: []types.SystemContent{
-		types.ToolResultContent{ToolCallID: id, Text: text, IsError: isErr},
+	return turn{types.SystemMessage{Parts: []types.SystemPart{
+		types.ToolResultPart{CallID: id, Parts: []types.ToolOutputPart{types.Text(text)}, IsError: isErr},
 	}}}
 }
 
@@ -51,7 +51,7 @@ func result(id, text string, isErr bool) turn {
 // the nodes in order.
 func conversation(t *testing.T, turns ...turn) (*tree.Tree, []types.NodeID) {
 	t.Helper()
-	tr, err := tree.New(types.NewSystemMessage("You are a support agent."))
+	tr, err := tree.New(types.SystemMsg(types.Text("You are a support agent.")))
 	if err != nil {
 		t.Fatal(err)
 	}

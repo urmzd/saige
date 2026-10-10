@@ -222,7 +222,7 @@ func TestInterruptExpiryPolicies(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			go func() {
-				msg, _, ok := a.awaitApproval(ctx, stream, types.ToolUseContent{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
+				msg, _, ok := a.awaitApproval(ctx, stream, types.ToolCallPart{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
 				done <- outcome{msg, ok}
 			}()
 			var posted []types.Interrupt
@@ -261,7 +261,7 @@ func TestMarkerCarriesInterruptAndReplyByID(t *testing.T) {
 	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}})
 	done := make(chan bool, 1)
 	go func() {
-		_, _, ok := a.awaitApproval(ctx, stream, types.ToolUseContent{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
+		_, _, ok := a.awaitApproval(ctx, stream, types.ToolCallPart{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
 		done <- ok
 	}()
 	m := nextMarker(t, stream)
@@ -329,7 +329,7 @@ func TestClarificationTool(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("paint it")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("paint it"))})
 			m := nextMarker(t, stream)
 			if m.Interrupt == nil || m.Interrupt.Kind != types.InterruptClarification || string(m.Interrupt.Payload) != `{"question":"Which color?"}` {
 				t.Fatalf("clarification interrupt = %+v", m.Interrupt)
@@ -360,7 +360,7 @@ func TestClarificationWithoutConsumerFails(t *testing.T) {
 	}}
 	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())})
 	err := withinDeadline(t, 3*time.Second, func() error {
-		_, err := a.RunDurable(context.Background(), nil, []types.Message{types.NewUserMessage("go")}, "")
+		_, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("go"))}, "")
 		return err
 	})
 	if !errors.Is(err, errNonStreamingApproval) {

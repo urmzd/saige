@@ -59,13 +59,13 @@ func TestWithHarnessToolsRegistersToolset(t *testing.T) {
 
 func TestWithHarnessToolsErrorFailsRuns(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "h", Provider: oneCallPerTurn()}, WithHarnessTools(tools.HarnessOptions{}))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); !errors.Is(err, tools.ErrNoRoot) {
 		t.Errorf("run err = %v, want ErrNoRoot", err)
 	}
-	if _, err := a.RunDurable(context.Background(), nil, []types.Message{types.NewUserMessage("hi")}, a.Tree().Active()); !errors.Is(err, tools.ErrNoRoot) {
+	if _, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("hi"))}, a.Tree().Active()); !errors.Is(err, tools.ErrNoRoot) {
 		t.Errorf("durable run err = %v, want ErrNoRoot", err)
 	}
 }

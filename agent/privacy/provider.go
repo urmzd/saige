@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -57,7 +58,7 @@ func (p *Provider) ContentSupport() types.ContentSupport {
 // request options are dropped when the inner provider cannot receive them.
 func (p *Provider) Capabilities() types.ModelCapabilities {
 	caps, _ := types.ProviderCapabilities(p.Inner)
-	if _, ok := p.Inner.(types.OptionsProvider); !ok {
+	if !types.AcceptsOptions(p.Inner) {
 		caps = caps.Without(types.CapToolChoice, types.CapParallelToolControl)
 	}
 	return caps
@@ -69,39 +70,27 @@ func (p *Provider) Unwrap() types.Provider { return p.Inner }
 // Close implements types.Closer.
 func (p *Provider) Close() error { return types.CloseProvider(p.Inner) }
 
-// ChatStream implements types.Provider.
-func (p *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.call(ctx, messages, func(msgs []types.Message) (<-chan types.Delta, error) {
-		return p.Inner.ChatStream(ctx, msgs, tools)
-	})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. A schema
-// the inner provider cannot enforce is rejected, not dropped.
-func (p *Provider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	sp, ok := p.Inner.(types.StructuredOutputProvider)
-	if !ok {
-		if schema != nil {
-			return nil, p.unsupported("a response schema")
-		}
-		return p.ChatStream(ctx, messages, tools)
+// Stream implements types.Provider. A schema or options the inner provider
+// cannot receive are rejected, not dropped.
+func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil && !types.AcceptsSchema(p.Inner) {
+		return nil, p.unsupported("a response schema")
 	}
-	return p.call(ctx, messages, func(msgs []types.Message) (<-chan types.Delta, error) {
-		return sp.ChatStreamWithSchema(ctx, msgs, tools, schema)
-	})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. Options the inner
-// provider cannot receive are rejected, not dropped.
-func (p *Provider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := p.Inner.(types.OptionsProvider)
-	if !ok {
+	if req.Options != nil && !types.AcceptsOptions(p.Inner) {
 		return nil, p.unsupported("request options")
 	}
-	return p.call(ctx, messages, func(msgs []types.Message) (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, msgs, tools, opts)
+	return p.call(ctx, req.Messages, func(msgs []types.Message) (<-chan types.Delta, error) {
+		r := req
+		r.Messages = msgs
+		return p.Inner.Stream(ctx, r)
 	})
 }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (p *Provider) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (p *Provider) SupportsOptions() bool { return true }
 
 func (p *Provider) unsupported(what string) error {
 	return &types.ProviderError{
@@ -133,35 +122,35 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 		var err error
 		switch msg := m.(type) {
 		case types.SystemMessage:
-			c := make([]types.SystemContent, len(msg.Content))
-			for j, part := range msg.Content {
+			c := make([]types.SystemPart, len(msg.Parts))
+			for j, part := range msg.Parts {
 				var t any
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
-				c[j] = t.(types.SystemContent)
+				c[j] = t.(types.SystemPart)
 			}
-			out[i] = types.SystemMessage{Content: c}
+			out[i] = types.SystemMessage{Parts: c}
 		case types.UserMessage:
-			c := make([]types.UserContent, len(msg.Content))
-			for j, part := range msg.Content {
+			c := make([]types.UserPart, len(msg.Parts))
+			for j, part := range msg.Parts {
 				var t any
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
-				c[j] = t.(types.UserContent)
+				c[j] = t.(types.UserPart)
 			}
-			out[i] = types.UserMessage{Content: c}
+			out[i] = types.UserMessage{Parts: c}
 		case types.AssistantMessage:
-			c := make([]types.AssistantContent, len(msg.Content))
-			for j, part := range msg.Content {
+			c := make([]types.AssistantPart, len(msg.Parts))
+			for j, part := range msg.Parts {
 				var t any
 				if t, err = tokenizeContent(ctx, v, part); err != nil {
 					return nil, err
 				}
-				c[j] = t.(types.AssistantContent)
+				c[j] = t.(types.AssistantPart)
 			}
-			out[i] = types.AssistantMessage{Content: c}
+			out[i] = types.AssistantMessage{Parts: c}
 		default:
 			out[i] = m
 		}
@@ -171,17 +160,17 @@ func TokenizeMessages(ctx context.Context, v Vault, messages []types.Message) ([
 
 func tokenizeContent(ctx context.Context, v Vault, part any) (any, error) {
 	switch c := part.(type) {
-	case types.TextContent:
+	case types.TextPart:
 		text, err := v.Tokenize(ctx, c.Text)
-		return types.TextContent{Text: text}, err
-	case types.ToolResultContent:
-		res, err := tokenizeResult(ctx, v, types.ToolResult{Text: c.Text, Blocks: c.Blocks})
+		return types.TextPart{Text: text}, err
+	case types.ToolResultPart:
+		res, err := tokenizeResult(ctx, v, types.ToolResult{Parts: c.Parts})
 		if err != nil {
 			return nil, err
 		}
-		c.Text, c.Blocks = res.Text, res.Blocks
+		c.Parts = res.Parts
 		return c, nil
-	case types.ToolUseContent:
+	case types.ToolCallPart:
 		args, err := tokenizeValue(ctx, v, c.Arguments)
 		if err != nil {
 			return nil, err
@@ -240,8 +229,9 @@ func jsonEscape(s string) string {
 }
 
 // restoreStream forwards in, restoring placeholders in text and tool call
-// arguments. Held text is flushed before each block end, before the final
-// delta, and when in closes.
+// arguments. Restorers are kept per part index, so interleaved parts never
+// share one. Held text is flushed before its part ends, before the final
+// delta, and when in closes. Thinking is never rewritten.
 //
 //nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta) <-chan types.Delta {
@@ -264,32 +254,36 @@ func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta) <-chan t
 		if er, ok := v.(escapedRestorer); ok {
 			restoreArgs = func(s string) string { return er.RestoreEscaped(s, jsonEscape) }
 		}
-		var text *StreamRestorer
-		args := map[string]*StreamRestorer{}
-		lastCall := ""
-		flushText := func() bool {
-			if text == nil {
-				return true
+		texts := map[int]*StreamRestorer{}
+		args := map[int]*StreamRestorer{}
+		flush := func(i int) bool {
+			if r, ok := texts[i]; ok {
+				delete(texts, i)
+				if rest := r.Flush(); rest != "" && !send(types.PartDelta{Index: i, Text: rest}) {
+					return false
+				}
 			}
-			rest := text.Flush()
-			text = nil
-			return rest == "" || send(types.TextContentDelta{Content: rest})
-		}
-		flushArgs := func(id string) bool {
-			r, ok := args[id]
-			if !ok {
-				return true
+			if r, ok := args[i]; ok {
+				delete(args, i)
+				if rest := r.Flush(); rest != "" && !send(types.PartDelta{Index: i, Args: rest}) {
+					return false
+				}
 			}
-			delete(args, id)
-			rest := r.Flush()
-			return rest == "" || send(types.ToolCallArgumentDelta{ID: id, Content: rest})
+			return true
 		}
 		flushAll := func() bool {
-			if !flushText() {
-				return false
+			idx := make([]int, 0, len(texts)+len(args))
+			for i := range texts {
+				idx = append(idx, i)
 			}
-			for id := range args {
-				if !flushArgs(id) {
+			for i := range args {
+				if _, dup := texts[i]; !dup {
+					idx = append(idx, i)
+				}
+			}
+			sort.Ints(idx)
+			for _, i := range idx {
+				if !flush(i) {
 					return false
 				}
 			}
@@ -298,40 +292,42 @@ func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta) <-chan t
 		for d := range in {
 			ok := true
 			switch x := d.(type) {
-			case types.TextContentDelta:
-				if text == nil {
-					text = NewStreamRestorer(v.Restore)
-				}
-				if s := text.Write(x.Content); s != "" {
-					ok = send(types.TextContentDelta{Content: s})
-				}
-			case types.TextEndDelta:
-				ok = flushText() && send(x)
-			case types.ToolCallStartDelta:
-				lastCall = x.ID
-				ok = send(x)
-			case types.ToolCallArgumentDelta:
-				id := x.ID
-				if id == "" {
-					id = lastCall
-				}
-				r, found := args[id]
-				if !found {
-					r = NewStreamRestorer(restoreArgs)
-					args[id] = r
-				}
-				if s := r.Write(x.Content); s != "" {
-					x.Content = s
+			case types.PartDelta:
+				switch {
+				case x.Text != "":
+					r := texts[x.Index]
+					if r == nil {
+						r = NewStreamRestorer(v.Restore)
+						texts[x.Index] = r
+					}
+					if s := r.Write(x.Text); s != "" {
+						x.Text = s
+						ok = send(x)
+					}
+				case x.Args != "":
+					r := args[x.Index]
+					if r == nil {
+						r = NewStreamRestorer(restoreArgs)
+						args[x.Index] = r
+					}
+					if s := r.Write(x.Args); s != "" {
+						x.Args = s
+						ok = send(x)
+					}
+				default:
 					ok = send(x)
 				}
-			case types.ToolCallEndDelta:
-				id := x.ID
-				if id == "" {
-					id = lastCall
-				}
-				ok = flushArgs(id)
-				if ok && x.Arguments != nil {
-					x.Arguments = restoreValue(v, x.Arguments).(map[string]any)
+			case types.PartEnd:
+				ok = flush(x.Index)
+				switch p := x.Part.(type) {
+				case types.TextPart:
+					p.Text = v.Restore(p.Text)
+					x.Part = p
+				case types.ToolCallPart:
+					if p.Arguments != nil {
+						p.Arguments = restoreValue(v, p.Arguments).(map[string]any)
+						x.Part = p
+					}
 				}
 				ok = ok && send(x)
 			case types.ErrorDelta, types.DoneDelta:

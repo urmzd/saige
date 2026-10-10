@@ -30,7 +30,7 @@ func TestExtractionHookStoresMemories(t *testing.T) {
 		agent.WithHooks(ExtractionHook(store, policy, ex)))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := agent.Collect(a.Invoke(ctx, []types.Message{types.NewUserMessage("use metric")}), nil); err != nil {
+	if _, err := agent.Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("use metric"))}), nil); err != nil {
 		t.Fatal(err)
 	}
 	if seen != 3 {

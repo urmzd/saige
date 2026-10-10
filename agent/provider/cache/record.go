@@ -37,16 +37,16 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 		openBlocks := 0
 
 		for d := range in {
-			switch d.(type) {
-			case types.TextStartDelta, types.ThinkingStartDelta, types.ToolCallStartDelta:
+			switch v := d.(type) {
+			case types.PartStart:
 				openBlocks++
-			case types.TextEndDelta, types.ThinkingEndDelta, types.ToolCallEndDelta:
+				if v.Kind == types.KindToolCall && !p.cfg.CacheToolCalls {
+					failed = true
+				}
+			case types.PartEnd:
 				openBlocks--
 			}
 			if openBlocks < 0 {
-				failed = true
-			}
-			if _, ok := d.(types.ToolCallStartDelta); ok && !p.cfg.CacheToolCalls {
 				failed = true
 			}
 			switch v := d.(type) {
@@ -118,19 +118,21 @@ func replay(cr CachedResponse) <-chan types.Delta {
 			return out
 		}
 		switch v := cloned.(type) {
-		case types.ToolCallStartDelta:
-			fresh := types.NewID()
-			if v.ID != "" {
-				ids[v.ID] = fresh
+		case types.PartStart:
+			if v.Kind == types.KindToolCall {
+				fresh := types.NewID()
+				if v.ID != "" {
+					ids[v.ID] = fresh
+				}
+				v.ID = fresh
+				cloned = v
 			}
-			v.ID = fresh
-			cloned = v
-		case types.ToolCallArgumentDelta:
-			v.ID = remap(v.ID)
-			cloned = v
-		case types.ToolCallEndDelta:
-			v.ID = remap(v.ID)
-			cloned = v
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok {
+				tc.ID = remap(tc.ID)
+				v.Part = tc
+				cloned = v
+			}
 		case types.CitationDelta:
 			v.ToolCallID = remap(v.ToolCallID)
 			cloned = v
@@ -149,15 +151,18 @@ func replay(cr CachedResponse) <-chan types.Delta {
 // lends an argument map to a tool or a citation map to a consumer.
 func cloneDelta(delta types.Delta) (types.Delta, error) {
 	switch value := delta.(type) {
-	case types.ToolCallEndDelta:
-		raw, err := json.Marshal(value.Arguments)
+	case types.PartEnd:
+		if value.Part == nil {
+			return value, nil
+		}
+		// A round trip through the part codec deep-copies the part, with
+		// numbers as json.Number, as a byte store returns them.
+		raw, err := types.MarshalPartInline(value.Part)
 		if err != nil {
 			return nil, err
 		}
-		value.Arguments = nil
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		err = decoder.Decode(&value.Arguments)
+		p, err := types.UnmarshalRolePart[types.AssistantPart](raw)
+		value.Part = p
 		return value, err
 	case types.CitationDelta:
 		raw, err := json.Marshal(value.Citation.Meta)

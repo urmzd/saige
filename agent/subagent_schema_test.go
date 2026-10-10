@@ -134,7 +134,7 @@ func TestSubAgentFailureOutcome(t *testing.T) {
 			child := SubAgentDef{Name: "child", Provider: &agenttest.ScriptedProvider{Responses: childResponses, Errors: childErrs}}
 			a := NewAgent(AgentConfig{Provider: parentProvider}, WithSubAgents(child), WithOutcomePolicy(tt.policy))
 			var routes []types.RouteDelta
-			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}), func(d types.Delta) {
+			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), func(d types.Delta) {
 				if r, ok := d.(types.RouteDelta); ok {
 					routes = append(routes, r)
 				}
@@ -181,7 +181,8 @@ func (p *recordingSwitcher) WithModel(m string) types.Provider {
 	return &c
 }
 
-func (p *recordingSwitcher) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *recordingSwitcher) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	*p.models = append(*p.models, p.model)
-	return p.ScriptedProvider.ChatStream(ctx, msgs, tools)
+	return p.ScriptedProvider.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }

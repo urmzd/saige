@@ -78,15 +78,15 @@ func canonical(m types.Message) canonicalMessage {
 	add := func(v any) { out.Content = append(out.Content, canonicalBlock{Type: fmt.Sprintf("%T", v), Value: v}) }
 	switch v := m.(type) {
 	case types.SystemMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	case types.UserMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	case types.AssistantMessage:
-		for _, c := range v.Content {
+		for _, c := range v.Parts {
 			add(c)
 		}
 	}

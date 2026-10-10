@@ -31,27 +31,27 @@ func (panicHandoffTool) Execute(context.Context, map[string]any) (string, error)
 }
 
 // toolResults returns every tool result on the agent's active branch.
-func toolResults(t *testing.T, a *Agent) []types.ToolResultContent {
+func toolResults(t *testing.T, a *Agent) []types.ToolResultPart {
 	t.Helper()
 	msgs, err := a.Tree().FlattenBranch(a.Tree().Active())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []types.ToolResultContent
+	var out []types.ToolResultPart
 	for _, m := range msgs {
-		var contents []types.SystemContent
+		var contents []types.SystemPart
 		switch v := m.(type) {
 		case types.SystemMessage:
-			contents = v.Content
+			contents = v.Parts
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if tr, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if tr, ok := c.(types.ToolResultPart); ok {
 					out = append(out, tr)
 				}
 			}
 		}
 		for _, c := range contents {
-			if tr, ok := c.(types.ToolResultContent); ok {
+			if tr, ok := c.(types.ToolResultPart); ok {
 				out = append(out, tr)
 			}
 		}
@@ -96,7 +96,7 @@ func TestToolPanicBecomesToolError(t *testing.T) {
 				ToolGate:         tt.gate,
 				MaxParallelTools: tt.parallel,
 			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatalf("run failed: %v", err)
@@ -106,7 +106,7 @@ func TestToolPanicBecomesToolError(t *testing.T) {
 				t.Fatalf("ToolExecEndDelta = %+v, want an error naming the panic", end)
 			}
 			results := toolResults(t, a)
-			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text, "panic") {
+			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text(), "panic") {
 				t.Fatalf("tool results = %+v, want one error result naming the panic", results)
 			}
 		})
@@ -122,7 +122,7 @@ func TestToolPanicUnderDurableRunnerStopsRun(t *testing.T) {
 		agenttest.TextResponse("unreachable"),
 	}}
 	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(panicTool{name: "boom"}), StepRunner: runner})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
 	err := stream.Wait()
@@ -159,17 +159,17 @@ func TestInvalidToolArgumentsNeverRunTheTool(t *testing.T) {
 		{
 			name: "malformed JSON reported by the producer",
 			call: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "write"},
-				types.ToolCallEndDelta{ID: "c1", ArgumentsError: "unexpected end of JSON input"},
+				types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "write"},
+				types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "write", ArgumentsError: "unexpected end of JSON input"}},
 			},
 			wantMsg: "invalid tool arguments: unexpected end of JSON input",
 		},
 		{
 			name: "malformed JSON in the argument stream",
 			call: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "write"},
-				types.ToolCallArgumentDelta{ID: "c1", Content: `{"path": "/tmp`},
-				types.ToolCallEndDelta{ID: "c1"},
+				types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "write"},
+				types.PartDelta{Index: 1, Args: `{"path": "/tmp`},
+				types.PartEnd{Index: 1},
 			},
 			wantMsg: "invalid tool arguments",
 		},
@@ -190,7 +190,7 @@ func TestInvalidToolArgumentsNeverRunTheTool(t *testing.T) {
 			gate := &countingGate{}
 			provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{tt.call, agenttest.TextResponse("ok")}}
 			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range stream.Deltas() {
 			}
 			if err := stream.Wait(); err != nil {
@@ -203,7 +203,7 @@ func TestInvalidToolArgumentsNeverRunTheTool(t *testing.T) {
 				t.Error("the gate saw invalid arguments")
 			}
 			results := toolResults(t, a)
-			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text, tt.wantMsg) {
+			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text(), tt.wantMsg) {
 				t.Fatalf("tool results = %+v, want an error containing %q", results, tt.wantMsg)
 			}
 		})
@@ -250,7 +250,7 @@ func TestApprovalEditsAreGatedAgain(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			for d := range stream.Deltas() {
 				if m, ok := d.(types.MarkerDelta); ok {
 					if err := stream.ResolveMarkerErr(m.ToolCallID, Resolution{Approved: true, ModifiedArgs: tt.edit}); err != nil {
@@ -271,7 +271,7 @@ func TestApprovalEditsAreGatedAgain(t *testing.T) {
 				return
 			}
 			results := toolResults(t, a)
-			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text, tt.wantText) {
+			if len(results) != 1 || !results[0].IsError || !strings.Contains(results[0].Text(), tt.wantText) {
 				t.Fatalf("tool results = %+v, want an error containing %q", results, tt.wantText)
 			}
 		})
@@ -283,11 +283,11 @@ func TestApprovalEditsAreGatedAgain(t *testing.T) {
 func TestOpenToolCallAtStreamEndIsTruncation(t *testing.T) {
 	tool := &agenttest.MockTool{Def: types.ToolDef{Name: "write"}}
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{
-		types.ToolCallStartDelta{ID: "c1", Name: "write"},
-		types.ToolCallArgumentDelta{ID: "c1", Content: `{"path":`},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "write"},
+		types.PartDelta{Index: 0, Args: `{"path":`},
 	}}}
 	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); !errors.Is(err, types.ErrResponseTruncated) {
@@ -316,7 +316,7 @@ func TestMarkerFoundThroughDecorator(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			prompts := 0
 			for d := range stream.Deltas() {
 				if m, ok := d.(types.MarkerDelta); ok {

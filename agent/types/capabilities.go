@@ -154,7 +154,7 @@ func stricterChatTools(a, b ChatCompletionsTools) ChatCompletionsTools {
 // It is the single answer to "can this model do X", replacing the scattered
 // optional-interface probes (StructuredOutputProvider, ContentNegotiator) that
 // can only say what an *adapter* implements, never what the *model behind it*
-// accepts. An adapter can implement ChatStreamWithSchema and still be pointed
+// accepts. An adapter can implement Stream with a schema and still be pointed
 // at a model that ignores schemas.
 //
 // A zero value is the honest "nothing is known and nothing may be assumed":

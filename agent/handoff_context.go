@@ -35,25 +35,25 @@ func (OwnerContext) Select(_ context.Context, request HandoffContext) ([]types.M
 			out = append(out, message)
 			continue
 		}
-		var transfer *types.HandoffContent
+		var transfer *types.HandoffPart
 		switch msg := message.(type) {
 		case types.SystemMessage:
-			for _, content := range msg.Content {
-				if h, ok := content.(types.HandoffContent); ok {
+			for _, content := range msg.Parts {
+				if h, ok := content.(types.HandoffPart); ok {
 					transfer = &h
 				}
 			}
 		case types.UserMessage:
-			var content []types.UserContent
-			for _, block := range msg.Content {
-				if h, ok := block.(types.HandoffContent); ok {
+			var content []types.UserPart
+			for _, block := range msg.Parts {
+				if h, ok := block.(types.HandoffPart); ok {
 					transfer = &h
 				} else {
 					content = append(content, block)
 				}
 			}
 			if len(content) > 0 {
-				latestTask = types.UserMessage{Content: content}
+				latestTask = types.UserMessage{Parts: content}
 			}
 		}
 		if transfer != nil {
@@ -63,7 +63,7 @@ func (OwnerContext) Select(_ context.Context, request HandoffContext) ([]types.M
 					out = append(out, latestTask)
 				}
 				seen = true
-				out = append(out, types.NewUserMessage(handoffBrief(*transfer)))
+				out = append(out, types.UserMsg(types.Text(handoffBrief(*transfer))))
 			}
 			continue
 		}
@@ -107,7 +107,7 @@ func (a *Agent) selectHandoffContext(ctx context.Context, active activeContext, 
 // handoffBrief is the user message a recipient reads for a transfer: the
 // reason, then the previous owner's handover note and context when it wrote
 // them.
-func handoffBrief(h types.HandoffContent) string {
+func handoffBrief(h types.HandoffPart) string {
 	brief := fmt.Sprintf("Handoff from %s to %s. Task brief or return data: %s", h.From, h.To, h.Reason)
 	if h.Message != "" {
 		brief += "\nHandover note: " + h.Message

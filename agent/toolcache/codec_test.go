@@ -18,13 +18,14 @@ func TestEntryCodecRoundTrip(t *testing.T) {
 		name  string
 		entry Entry
 	}{
-		{"text", Entry{Result: types.ToolResult{Text: "ok"}, StoredAt: now, ExpiresAt: now.Add(time.Minute)}},
-		{"blocks keep their bytes", Entry{Result: types.ToolResult{Text: "img", Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockKind("image"), MediaType: types.MediaPNG, Data: []byte{1, 2, 3}},
-			{Kind: types.ToolResultBlockKind("json"), JSON: json.RawMessage(`{"a":1}`)},
+		{"text", Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{types.Text("ok")}}, StoredAt: now, ExpiresAt: now.Add(time.Minute)}},
+		{"media keeps its bytes", Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{
+			types.Text("img"),
+			types.Image(types.Bytes(types.MediaPNG, []byte{1, 2, 3})),
+			types.JSONPart{JSON: json.RawMessage(`{"a":1}`)},
 		}}, StoredAt: now, ExpiresAt: now}},
-		{"cached failure", Entry{Result: types.ToolResult{Text: "boom", IsError: true}, Err: "boom", StoredAt: now, ExpiresAt: now}},
-		{"citation metadata", Entry{Result: types.ToolResult{Text: "c", Citations: []types.Citation{
+		{"cached failure", Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{types.Text("boom")}, IsError: true}, Err: "boom", StoredAt: now, ExpiresAt: now}},
+		{"citation metadata", Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{types.Text("c")}, Citations: []types.Citation{
 			{URI: "https://example.com", Meta: map[string]any{"rank": json.Number("2")}},
 		}}, StoredAt: now, ExpiresAt: now}},
 	}
@@ -57,12 +58,12 @@ func TestBytesCache(t *testing.T) {
 	store := memcache.New[[]byte]()
 	c := BytesCache(store)
 	ctx := context.Background()
-	entry := Entry{Result: types.ToolResult{Text: "v"}, StoredAt: time.Unix(1, 0).UTC(), ExpiresAt: time.Unix(2, 0).UTC()}
+	entry := Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{types.Text("v")}}, StoredAt: time.Unix(1, 0).UTC(), ExpiresAt: time.Unix(2, 0).UTC()}
 	if err := c.Set(ctx, "k", entry, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, found, err := c.Get(ctx, "k")
-	if err != nil || !found || got.Result.Text != "v" {
+	if err != nil || !found || got.Result.Text() != "v" {
 		t.Fatalf("Get = %+v %v %v", got, found, err)
 	}
 	if err := store.Set(ctx, "bad", []byte("garbage"), 0); err != nil {

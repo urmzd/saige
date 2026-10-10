@@ -48,7 +48,7 @@ type batchLine struct {
 
 // Submit implements types.BatchProvider with the Batch API on
 // /v1/chat/completions. Each request is validated and encoded as
-// ChatStreamWithOptions (or, with a schema, ChatStreamWithSchema) would
+// Stream with options (or, with a schema, Stream with a schema) would
 // encode it, without the stream options, so an option the model rejects
 // fails here, before the input file is uploaded.
 func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
@@ -109,7 +109,7 @@ func (a *Adapter) batchParams(r types.BatchRequest) (openai.ChatCompletionNewPar
 }
 
 // Submit implements types.BatchProvider with the Batch API on
-// /v1/responses. Requests are validated as ChatStreamWithOptions validates
+// /v1/responses. Requests are validated as Stream with options validates
 // them, including the controls the Responses API does not have.
 func (r *ResponsesAdapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
 	lines := make([]batchLine, len(reqs))
@@ -394,19 +394,19 @@ func decodeChatBody(raw json.RawMessage, res *types.BatchResult) error {
 		ch := b.Choices[0]
 		res.FinishReason = ch.FinishReason
 		if ch.Message.Content != nil && *ch.Message.Content != "" {
-			res.Message.Content = append(res.Message.Content, types.TextContent{Text: *ch.Message.Content})
+			res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: *ch.Message.Content})
 		}
 		if ch.Message.Refusal != nil && *ch.Message.Refusal != "" {
 			res.FinishReason = finishContentFilter
-			res.Message.Content = append(res.Message.Content, types.TextContent{Text: *ch.Message.Refusal})
+			res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: *ch.Message.Refusal})
 		}
 		for _, tc := range ch.Message.ToolCalls {
 			args, err := streamcheck.DecodeArguments(tc.Function.Arguments)
-			tu := types.ToolUseContent{ID: tc.ID, Name: tc.Function.Name, Arguments: args}
+			tu := types.ToolCallPart{ID: tc.ID, Name: tc.Function.Name, Arguments: args}
 			if err != nil {
 				tu.ArgumentsError = err.Error()
 			}
-			res.Message.Content = append(res.Message.Content, tu)
+			res.Message.Parts = append(res.Message.Parts, tu)
 		}
 	}
 	u := b.Usage
@@ -467,19 +467,19 @@ func decodeResponsesBody(raw json.RawMessage, res *types.BatchResult) error {
 			for _, c := range item.Content {
 				switch c.Type {
 				case "output_text":
-					res.Message.Content = append(res.Message.Content, types.TextContent{Text: c.Text})
+					res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: c.Text})
 				case "refusal":
 					res.FinishReason = finishContentFilter
-					res.Message.Content = append(res.Message.Content, types.TextContent{Text: c.Refusal})
+					res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: c.Refusal})
 				}
 			}
 		case itemFunctionCall:
 			args, err := streamcheck.DecodeArguments(item.Arguments)
-			tu := types.ToolUseContent{ID: item.CallID, Name: item.Name, Arguments: args}
+			tu := types.ToolCallPart{ID: item.CallID, Name: item.Name, Arguments: args}
 			if err != nil {
 				tu.ArgumentsError = err.Error()
 			}
-			res.Message.Content = append(res.Message.Content, tu)
+			res.Message.Parts = append(res.Message.Parts, tu)
 		}
 	}
 	u := b.Usage

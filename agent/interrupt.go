@@ -48,7 +48,7 @@ type decision struct {
 type interruptRequest struct {
 	kind    types.InterruptKind
 	phase   string
-	call    types.ToolUseContent
+	call    types.ToolCallPart
 	markers []types.Marker
 	payload []byte
 }
@@ -178,7 +178,7 @@ func replyAnswer(r types.InterruptReply) string {
 }
 
 // interruptKind classifies an approval by what it is about.
-func interruptKind(call types.ToolUseContent, phase string) types.InterruptKind {
+func interruptKind(call types.ToolCallPart, phase string) types.InterruptKind {
 	if call.Name == budgetToolName || strings.HasPrefix(phase, budgetToolName) {
 		return types.InterruptBudget
 	}

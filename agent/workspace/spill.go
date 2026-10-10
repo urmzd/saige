@@ -92,26 +92,27 @@ func (s *spillTool) ExecuteRich(ctx context.Context, args map[string]any) (types
 	rt, ok := s.inner.(types.RichTool)
 	if !ok {
 		text, err := s.Execute(ctx, args)
-		return types.ToolResult{Text: text}, err
+		return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}}, err
 	}
 	res, err := rt.ExecuteRich(ctx, args)
 	if err != nil || res.IsError {
 		return res, err
 	}
-	res.Text = s.spill(ctx, res.Text)
-	if len(res.Blocks) > 0 {
-		blocks := make([]types.ToolResultBlock, len(res.Blocks))
-		for i, b := range res.Blocks {
-			switch {
-			case b.Kind == types.ToolResultBlockText && len(b.Text) > s.opts.MaxBytes:
-				b.Text = s.spill(ctx, b.Text)
-			case b.Kind == types.ToolResultBlockJSON && len(b.JSON) > s.opts.MaxBytes:
-				b = types.ToolResultBlock{Kind: types.ToolResultBlockText, Text: s.spill(ctx, string(b.JSON))}
+	parts := make([]types.ToolOutputPart, len(res.Parts))
+	for i, p := range res.Parts {
+		switch v := p.(type) {
+		case types.TextPart:
+			if len(v.Text) > s.opts.MaxBytes {
+				p = types.Text(s.spill(ctx, v.Text))
 			}
-			blocks[i] = b
+		case types.JSONPart:
+			if len(v.JSON) > s.opts.MaxBytes {
+				p = types.Text(s.spill(ctx, string(v.JSON)))
+			}
 		}
-		res.Blocks = blocks
+		parts[i] = p
 	}
+	res.Parts = parts
 	return res, nil
 }
 

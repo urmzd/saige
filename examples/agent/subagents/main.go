@@ -57,19 +57,19 @@ func main() {
 
 	// Invoke with a research request.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Research the latest Go features"),
+		types.UserMsg(types.Text("Research the latest Go features")),
 	})
 
 	// Consume deltas, showing sub-agent attribution.
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.ToolExecStartDelta:
 			fmt.Printf("\n[tool-start] %s (id=%s)\n", d.Name, d.ToolCallID)
 		case types.ToolExecDelta:
-			if inner, ok := d.Inner.(types.TextContentDelta); ok {
-				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Content)
+			if inner, ok := d.Inner.(types.PartDelta); ok {
+				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Text)
 			}
 		case types.ToolExecEndDelta:
 			fmt.Printf("\n[tool-end] id=%s\n", d.ToolCallID)

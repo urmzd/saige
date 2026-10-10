@@ -13,7 +13,7 @@ import (
 // can tell which provider a child agent ended up with.
 type namedProvider struct{ id string }
 
-func (n *namedProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (n *namedProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil

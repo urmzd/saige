@@ -70,7 +70,7 @@ func TestUncertainAttemptNeedsReconciliation(t *testing.T) {
 	if err != nil || len(state.Uncertain) != 1 || state.Uncertain[0].Error != "step panic: after external write" {
 		t.Fatalf("state = %+v, %v", state, err)
 	}
-	result := types.StepResult{Kind: types.StepKindTool, ToolResult: "verified written", ToolBlocks: []types.ToolResultBlock{{Data: []byte{1, 2}}}}
+	result := types.StepResult{Kind: types.StepKindTool, ToolResult: "verified written", ToolParts: []types.ToolOutputPart{types.Image(types.Bytes(types.MediaPNG, []byte{1, 2}))}}
 	if err := e.Reconcile(context.Background(), "run", "write", &result); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestUncertainAttemptNeedsReconciliation(t *testing.T) {
 			t.Fatal("reconciled step ran")
 			return types.StepResult{}, nil
 		})
-		if err != nil || len(restored.ToolBlocks) != 1 || restored.ToolBlocks[0].Data[1] != 2 {
+		if err != nil || len(restored.ToolParts) != 1 || restored.ToolParts[0].(types.ImagePart).Source.Inline[1] != 2 {
 			t.Fatalf("replay %d: %+v, %v", i, restored, err)
 		}
 	}
@@ -183,7 +183,7 @@ func TestSuspendedStepIsNotUncertain(t *testing.T) {
 func TestTruncatedTurnIsRecorded(t *testing.T) {
 	e := newEngine()
 	a := open(t, e, "run")
-	partial := types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "part"}, types.TruncationContent{Reason: "interrupted"}}}}
+	partial := types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "part"}, types.TruncationPart{Reason: "interrupted"}}}}
 	got, err := a.r.RunStep(a.ctx, "llm-0", func(context.Context) (types.StepResult, error) { return partial, context.Canceled })
 	if !errors.Is(err, context.Canceled) || got.Message == nil {
 		t.Fatalf("%+v, %v", got, err)
@@ -193,7 +193,7 @@ func TestTruncatedTurnIsRecorded(t *testing.T) {
 		t.Fatal("truncated turn ran again")
 		return types.StepResult{}, nil
 	})
-	if err != nil || len(got.Message.Content) != 2 {
+	if err != nil || len(got.Message.Parts) != 2 {
 		t.Fatalf("%+v, %v", got, err)
 	}
 }
@@ -203,7 +203,7 @@ func TestApprovalExpiryAndConflict(t *testing.T) {
 	e := newEngine()
 	e.ApprovalTTL = time.Hour
 	a := open(t, e, "run")
-	req := types.ApprovalRequest{ID: "approval", ToolCall: types.ToolUseContent{ID: "call", Arguments: map[string]any{"integer": 9007199254740993}}}
+	req := types.ApprovalRequest{ID: "approval", ToolCall: types.ToolCallPart{ID: "call", Arguments: map[string]any{"integer": 9007199254740993}}}
 	if _, err := a.r.ResolveApproval(a.ctx, req); !errors.Is(err, types.ErrSuspended) || !errors.Is(err, run.ErrParked) {
 		t.Fatal(err)
 	}

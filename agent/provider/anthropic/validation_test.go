@@ -39,7 +39,7 @@ func TestThinkingValidation(t *testing.T) {
 			}
 			if !tc.valid {
 				for _, schema := range []*types.ParameterSchema{nil, {Type: "object"}} {
-					ch, err := a.ChatStreamWithSchema(context.Background(), nil, nil, schema)
+					ch, err := a.Stream(context.Background(), types.Request{Schema: schema})
 					if ch != nil || !errors.Is(err, types.ErrInvalidModelConfig) {
 						t.Fatalf("channel=%v error=%v", ch, err)
 					}
@@ -57,7 +57,7 @@ func TestAdaptiveThinkingEncodingAndManualSchemaConflict(t *testing.T) {
 		t.Fatalf("bad adaptive config: %+v", params)
 	}
 	manual := NewAdapter("test", "claude-sonnet-4-5", WithThinking(1024))
-	_, err := manual.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+	_, err := manual.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("forced schema while thinking: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestAdaptivePromptCache(t *testing.T) {
 			}))
 			defer server.Close()
 			a := NewAdapter("test", model, WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h"))
-			stream, err := a.ChatStream(context.Background(), []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reply")}, nil)
+			stream, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reply"))}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +138,7 @@ func TestSchemaWithThinkingIsRejected(t *testing.T) {
 			if got := a.Capabilities().StructuredOutput != types.StructuredOutputNone; got == tc.reject {
 				t.Errorf("structured output mode declared = %v, want %v", got, !tc.reject)
 			}
-			stream, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("reply")}, nil, &types.ParameterSchema{Type: "object"})
+			stream, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("reply"))}, Schema: &types.ParameterSchema{Type: "object"}})
 			if tc.reject {
 				if stream != nil || !errors.Is(err, types.ErrSchemaUnsupported) || !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("stream = %v, err = %v; want a schema-unsupported error", stream, err)

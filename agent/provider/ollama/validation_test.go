@@ -33,11 +33,11 @@ func TestAdapterValidatesExplicitReasoningAndWireOptions(t *testing.T) {
 				t.Fatalf("Validate=%v valid=%v", err, tc.valid)
 			}
 			if !tc.valid {
-				_, err = a.ChatStream(context.Background(), nil, nil)
+				_, err = a.Stream(context.Background(), types.Request{})
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("plain: %v", err)
 				}
-				_, err = a.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+				_, err = a.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("schema: %v", err)
 				}

@@ -53,19 +53,21 @@ func testContext(t *testing.T) context.Context {
 
 type provider struct{ calls *atomic.Int32 }
 
-func (p provider) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p provider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	m := req.Messages
 	p.calls.Add(1)
 	out := make(chan types.Delta, 20)
+	re := agenttest.Reindexer()
 	if len(m) <= 2 {
 		for _, d := range agenttest.ToolCallResponse("approval-call", "write", map[string]any{"value": "original"}) {
-			out <- d
+			out <- re(d)
 		}
 		for _, d := range agenttest.ToolCallResponse("independent-call", "read", nil) {
-			out <- d
+			out <- re(d)
 		}
 	} else {
 		for _, d := range agenttest.TextResponse("done") {
-			out <- d
+			out <- re(d)
 		}
 	}
 	close(out)
@@ -89,7 +91,7 @@ func TestSuspendDecideResumeAndReplay(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 
 	if _, err := e.Run(ctx, wf, "run", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
@@ -139,7 +141,7 @@ func TestSuspendDecideResumeAndReplay(t *testing.T) {
 	if err := e.Decide(ctx, "run", "marker/approval-call", "key", decision); !errors.Is(err, ErrClosed) {
 		t.Fatalf("reply to a finished run: %v", err)
 	}
-	if err := e.Start(ctx, wf, "run", []types.Message{types.NewUserMessage("other")}); !errors.Is(err, ErrConflict) {
+	if err := e.Start(ctx, wf, "run", []types.Message{types.UserMsg(types.Text("other"))}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed input: %v", err)
 	}
 	other := e.Register("other", factory)
@@ -162,7 +164,7 @@ func TestToolsReceiveStableIdempotencyKey(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	if _, err := e.Run(ctx, wf, "keyed", []types.Message{types.NewUserMessage("go")}); err != nil {
+	if _, err := e.Run(ctx, wf, "keyed", []types.Message{types.UserMsg(types.Text("go"))}); err != nil {
 		t.Fatal(err)
 	}
 	if len(keys) != 1 || keys[0] != "keyed:step:tool-call-1#0" {
@@ -182,7 +184,7 @@ func TestBudgetReceiptsReplayAfterResume(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "budget", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -203,7 +205,8 @@ func TestBudgetReceiptsReplayAfterResume(t *testing.T) {
 // usage.
 type stagedNoUsage struct{ calls *atomic.Int32 }
 
-func (p stagedNoUsage) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p stagedNoUsage) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	m := req.Messages
 	p.calls.Add(1)
 	deltas := agenttest.TextResponse("done")
 	if len(m) <= 2 {
@@ -222,7 +225,8 @@ type stagedProvider struct {
 	first []types.Delta
 }
 
-func (p stagedProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p stagedProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	p.calls.Add(1)
 	deltas := agenttest.TextResponse("done")
 	if len(messages) <= 2 {
@@ -251,7 +255,7 @@ func TestChildApprovalReplaysParentAndChildWithoutRepeatingEffects(t *testing.T)
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "child", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -286,7 +290,7 @@ func TestAdmissionApprovalPersistsBeforeProviderAndRestoresGrant(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "grant", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -320,7 +324,7 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	_, err := e.Run(ctx, wf, "separate", []types.Message{types.NewUserMessage("go")})
+	_, err := e.Run(ctx, wf, "separate", []types.Message{types.UserMsg(types.Text("go"))})
 	if err == nil || childCalls.Load() != 0 {
 		t.Fatalf("independent child dispatched: %d, err=%v", childCalls.Load(), err)
 	}
@@ -331,7 +335,7 @@ func TestSetupFailureFailsRun(t *testing.T) {
 	e := newEngine()
 	wf := e.Register("", func(string) *agent.Agent { return nil })
 	startWorker(t, e)
-	_, err := e.Run(ctx, wf, "broken", []types.Message{types.NewUserMessage("go")})
+	_, err := e.Run(ctx, wf, "broken", []types.Message{types.UserMsg(types.Text("go"))})
 	if !errors.Is(err, ErrFailed) || !strings.Contains(err.Error(), "nil agent") {
 		t.Fatalf("err = %v", err)
 	}
@@ -357,7 +361,7 @@ func TestToolPanicLeavesUncertainStep(t *testing.T) {
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "uncertain", input); !errors.Is(err, ErrIndeterminate) {
 		t.Fatalf("err = %v", err)
 	}

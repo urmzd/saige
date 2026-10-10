@@ -193,7 +193,7 @@ type AfterModelCallEvent struct {
 // cleared it, just before it runs.
 type BeforeToolEvent struct {
 	HookRun
-	Call types.ToolUseContent
+	Call types.ToolCallPart
 	Tool types.ToolDef
 	// Arguments may be replaced. They are validated against the tool's
 	// schema again, but not gated again. Replace the map rather than mutate
@@ -205,11 +205,12 @@ type BeforeToolEvent struct {
 // recorded. Values a ToolRedactor tokenized are placeholders here.
 type AfterToolEvent struct {
 	HookRun
-	Call types.ToolUseContent
+	Call types.ToolCallPart
 	Tool types.ToolDef
-	// Result and Error may be replaced. Blocks are read-only.
+	// Result and Error may be replaced. Parts are read-only; a replaced
+	// Result replaces their text.
 	Result string
-	Blocks []types.ToolResultBlock
+	Parts  []types.ToolOutputPart
 	Error  string
 }
 
@@ -241,7 +242,7 @@ type SubagentEndEvent struct {
 type InterruptEvent struct {
 	HookRun
 	Interrupt types.Interrupt
-	Call      types.ToolUseContent
+	Call      types.ToolCallPart
 	// Approved, Approver and Message describe the decision; they are set for
 	// InterruptResolved only.
 	Approved bool
@@ -255,7 +256,7 @@ type TurnEndEvent struct {
 	HookRun
 	Step    string
 	Message types.AssistantMessage
-	Results []types.ToolResultContent
+	Results []types.ToolResultPart
 	// Final is true for a turn without tool calls, which ends the user turn.
 	Final bool
 }
@@ -565,8 +566,8 @@ func (a *Agent) userInputHooks(ctx context.Context, stream *EventStream, msg typ
 // hasUserText reports whether msg carries content a person wrote, as
 // opposed to tool results or run metadata only.
 func hasUserText(msg types.UserMessage) bool {
-	for _, c := range msg.Content {
-		if _, ok := c.(types.ToolResultContent); ok || types.IsMetadataContent(c) {
+	for _, c := range msg.Parts {
+		if _, ok := c.(types.ToolResultPart); ok || types.IsMetadata(c) {
 			continue
 		}
 		return true
@@ -576,8 +577,8 @@ func hasUserText(msg types.UserMessage) bool {
 
 func userText(msg types.UserMessage) string {
 	var b strings.Builder
-	for _, c := range msg.Content {
-		if t, ok := c.(types.TextContent); ok {
+	for _, c := range msg.Parts {
+		if t, ok := c.(types.TextPart); ok {
 			b.WriteString(t.Text)
 		}
 	}
@@ -585,7 +586,7 @@ func userText(msg types.UserMessage) string {
 }
 
 func cloneUserMessage(m types.UserMessage) types.UserMessage {
-	return types.UserMessage{Content: slices.Clone(m.Content)}
+	return types.UserMessage{Parts: slices.Clone(m.Parts)}
 }
 
 // beforeCompactionHooks calls BeforeCompaction. skip reports that a hook
@@ -655,8 +656,8 @@ func (a *Agent) afterModelCallHooks(ctx context.Context, stream *EventStream, pr
 		ev.Usage = *usage
 	}
 	if msg != nil {
-		for _, c := range msg.Content {
-			if rc, ok := c.(types.RouteContent); ok && rc.Dials != nil {
+		for _, c := range msg.Parts {
+			if rc, ok := c.(types.RoutePart); ok && rc.Dials != nil {
 				d := rc.Dials.Clone()
 				ev.Dials = &d
 			}
@@ -676,7 +677,7 @@ func cloneOptions(opts *types.RequestOptions) *types.RequestOptions {
 // beforeToolHooks calls BeforeTool and may change tc.Arguments. done reports
 // that the call is finished with res: an abort, or arguments a hook changed
 // that no longer fit the schema.
-func (a *Agent) beforeToolHooks(ctx context.Context, stream *EventStream, tc *types.ToolUseContent, def types.ToolDef) (res toolResult, done bool) {
+func (a *Agent) beforeToolHooks(ctx context.Context, stream *EventStream, tc *types.ToolCallPart, def types.ToolDef) (res toolResult, done bool) {
 	if !hasHooks(a, pickBeforeTool) {
 		return toolResult{}, false
 	}
@@ -706,13 +707,13 @@ func (a *Agent) beforeToolHooks(ctx context.Context, stream *EventStream, tc *ty
 
 // afterToolHooks calls AfterTool on a finished call and may change its
 // result and error.
-func (a *Agent) afterToolHooks(ctx context.Context, stream *EventStream, tc types.ToolUseContent, def types.ToolDef, res *toolResult) {
+func (a *Agent) afterToolHooks(ctx context.Context, stream *EventStream, tc types.ToolCallPart, def types.ToolDef, res *toolResult) {
 	if !hasHooks(a, pickAfterTool) {
 		return
 	}
 	var live *HookAbortError
 	rec, _, err := a.recordHook(ctx, "hook-"+string(HookAfterTool)+"-"+tc.ID, func(ctx context.Context) types.HookRecord {
-		ev := &AfterToolEvent{HookRun: a.hookRun(ctx, stream), Call: tc, Tool: def, Result: res.result, Blocks: res.blocks, Error: res.err}
+		ev := &AfterToolEvent{HookRun: a.hookRun(ctx, stream), Call: tc, Tool: def, Result: res.result, Parts: res.parts, Error: res.err}
 		live = runHooks(ctx, a, HookAfterTool, pickAfterTool, ev)
 		r := types.HookRecord{Changed: true, Text: ev.Result, Error: ev.Error}
 		abortRecord(&r, live)
@@ -765,7 +766,7 @@ func (a *Agent) subagentEndHooks(ctx context.Context, stream *EventStream, callI
 	})
 }
 
-func (a *Agent) interruptHooks(ctx context.Context, stream *EventStream, event HookEvent, in types.Interrupt, call types.ToolUseContent, d *decision, approved bool) {
+func (a *Agent) interruptHooks(ctx context.Context, stream *EventStream, event HookEvent, in types.Interrupt, call types.ToolCallPart, d *decision, approved bool) {
 	pick := pickInterruptRaised
 	if event == HookInterruptResolved {
 		pick = pickInterruptResolved
@@ -801,16 +802,13 @@ func (a *Agent) turnEndHooks(ctx context.Context, stream *EventStream, step stri
 	return recordedAbort(HookTurnEnd, rec, live)
 }
 
-func resultContents(results []toolResult) []types.ToolResultContent {
+func resultContents(results []toolResult) []types.ToolResultPart {
 	if len(results) == 0 {
 		return nil
 	}
-	out := make([]types.ToolResultContent, len(results))
+	out := make([]types.ToolResultPart, len(results))
 	for i, r := range results {
-		out[i] = types.ToolResultContent{ToolCallID: r.toolCallID, Text: r.result, Blocks: r.blocks, IsError: r.err != "", ToolVersion: r.version}
-		if r.err != "" && out[i].Text == "" {
-			out[i].Text = r.err
-		}
+		out[i] = r.part()
 	}
 	return out
 }

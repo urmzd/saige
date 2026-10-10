@@ -48,22 +48,26 @@ func TestInterruptExpired(t *testing.T) {
 
 func TestIsMetadataContent(t *testing.T) {
 	tests := []struct {
-		c    any
+		c    Part
 		want bool
 	}{
-		{ConfigContent{}, true},
-		{HandoffContent{}, true},
-		{FeedbackContent{}, true},
-		{SteerContent{ID: "s"}, true},
-		{TruncationContent{Reason: "max_tokens"}, true},
-		{RouteContent{Model: "m"}, true},
-		{TextContent{}, false},
-		{ToolUseContent{}, false},
-		{ServerToolContent{}, false},
+		{ConfigPart{}, true},
+		{HandoffPart{}, true},
+		{FeedbackPart{}, true},
+		{SteerPart{ID: "s"}, true},
+		{TruncationPart{Reason: "max_tokens"}, true},
+		{RoutePart{Model: "m"}, true},
+		{TextPart{}, false},
+		{ToolCallPart{}, false},
+		{ServerToolCallPart{}, false},
+		{ApprovalPart{}, true},
+		{GuardrailPart{}, true},
+		{CompactionPart{}, true},
+		{ImagePart{}, false},
 	}
 	for _, tt := range tests {
-		if got := IsMetadataContent(tt.c); got != tt.want {
-			t.Errorf("IsMetadataContent(%T) = %v, want %v", tt.c, got, tt.want)
+		if got := IsMetadata(tt.c); got != tt.want {
+			t.Errorf("IsMetadata(%T) = %v, want %v", tt.c, got, tt.want)
 		}
 	}
 }

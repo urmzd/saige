@@ -2,69 +2,46 @@ package agent
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
 )
 
 func TestDefaultAggregatorToolArguments(t *testing.T) {
+	start := types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "f"}
 	tests := []struct {
-		name     string
-		deltas   []types.Delta
-		wantArgs map[string]any
-		wantErr  bool
+		name    string
+		deltas  []types.Delta
+		want    map[string]any
+		wantErr string // substring of ArgumentsError, "" for none
 	}{
 		{
-			name: "end arguments win over buffered text",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallArgumentDelta{Content: `{"x":`},
-				types.ToolCallEndDelta{Arguments: map[string]any{"x": 1}},
-			},
-			wantArgs: map[string]any{"x": 1},
+			name: "end part wins over buffered text",
+			deltas: []types.Delta{start, types.PartDelta{Index: 0, Args: `{"a":1}`},
+				types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "f", Arguments: map[string]any{"b": 2.0}}}},
+			want: map[string]any{"b": 2.0},
 		},
 		{
-			name: "buffered text decoded when end has no arguments",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallArgumentDelta{Content: `{"x":`},
-				types.ToolCallArgumentDelta{Content: `"y"}`},
-				types.ToolCallEndDelta{},
-			},
-			wantArgs: map[string]any{"x": "y"},
+			name: "buffered text decoded when end has no part",
+			deltas: []types.Delta{start, types.PartDelta{Index: 0, Args: `{"a":`},
+				types.PartDelta{Index: 0, Args: `1}`}, types.PartEnd{Index: 0}},
+			want: map[string]any{"a": 1.0},
 		},
 		{
-			name: "malformed buffered text reported",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallArgumentDelta{Content: `{"x":`},
-				types.ToolCallEndDelta{},
-			},
-			wantErr: true,
+			name:    "malformed buffered text reported",
+			deltas:  []types.Delta{start, types.PartDelta{Index: 0, Args: `{"a":`}, types.PartEnd{Index: 0}},
+			wantErr: "unexpected end of JSON input",
 		},
 		{
 			name: "producer reported parse error",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallEndDelta{ID: "a", ArgumentsError: "unexpected end of JSON input"},
-			},
-			wantErr: true,
+			deltas: []types.Delta{start,
+				types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "f", ArgumentsError: "bad json"}}},
+			wantErr: "bad json",
 		},
 		{
-			name: "no argument text is a call without arguments",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallEndDelta{},
-			},
-		},
-		{
-			name: "fragments without ID go to the newest call",
-			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "f"},
-				types.ToolCallStartDelta{ID: "b", Name: "g"},
-				types.ToolCallArgumentDelta{Content: `{"broken"`},
-				types.ToolCallEndDelta{ID: "a"},
-			},
+			name:   "no argument text is a call without arguments",
+			deltas: []types.Delta{start, types.PartEnd{Index: 0}},
 		},
 	}
 	for _, tt := range tests {
@@ -73,19 +50,19 @@ func TestDefaultAggregatorToolArguments(t *testing.T) {
 			for _, d := range tt.deltas {
 				agg.Push(d)
 			}
-			msg, ok := agg.Message().(types.AssistantMessage)
-			if !ok || len(msg.Content) == 0 {
-				t.Fatalf("message = %#v, want one tool call", agg.Message())
+			msg := agg.Message().(types.AssistantMessage)
+			got := msg.Parts[0].(types.ToolCallPart)
+			if got.ID != "c1" || got.Name != "f" {
+				t.Fatalf("call = %+v, want ID c1 and name f", got)
 			}
-			use := msg.Content[0].(types.ToolUseContent)
-			if (use.ArgumentsError != "") != tt.wantErr {
-				t.Fatalf("ArgumentsError = %q, wantErr %v", use.ArgumentsError, tt.wantErr)
+			if !reflect.DeepEqual(got.Arguments, tt.want) {
+				t.Errorf("arguments = %#v, want %#v", got.Arguments, tt.want)
 			}
-			if tt.wantErr && use.Arguments != nil {
-				t.Errorf("arguments = %v, want nil on a parse error", use.Arguments)
+			if tt.wantErr == "" && got.ArgumentsError != "" || !strings.Contains(got.ArgumentsError, tt.wantErr) {
+				t.Errorf("arguments error = %q, want %q", got.ArgumentsError, tt.wantErr)
 			}
-			if !tt.wantErr && !reflect.DeepEqual(use.Arguments, tt.wantArgs) {
-				t.Errorf("arguments = %v, want %v", use.Arguments, tt.wantArgs)
+			if tt.wantErr != "" && got.Arguments != nil {
+				t.Errorf("a failed decode produced arguments %#v", got.Arguments)
 			}
 		})
 	}
@@ -93,15 +70,13 @@ func TestDefaultAggregatorToolArguments(t *testing.T) {
 
 // Replaying a stored turn reproduces a call whose arguments failed to parse.
 func TestReplayKeepsArgumentsError(t *testing.T) {
-	stored := types.AssistantMessage{Content: []types.AssistantContent{
-		types.ToolUseContent{ID: "c1", Name: "f", ArgumentsError: "unexpected end of JSON input"},
-	}}
+	stored := types.AssistantMsg(types.ToolCallPart{ID: "c1", Name: "f", ArgumentsError: "unexpected end of JSON input"})
 	agg := NewDefaultAggregator()
 	for d := range Replay([]types.Message{stored}).Deltas() {
 		agg.Push(d)
 	}
 	msg := agg.Message().(types.AssistantMessage)
-	if got := msg.Content[0].(types.ToolUseContent); got.ArgumentsError == "" {
+	if got := msg.Parts[0].(types.ToolCallPart); got.ArgumentsError == "" {
 		t.Fatalf("replayed call = %+v, want the arguments error kept", got)
 	}
 }

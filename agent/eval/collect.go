@@ -93,9 +93,8 @@ func CollectAgentRun(ch <-chan types.Delta) AgentRun {
 // CollectAgentRunFrom drains ch into an [AgentRun] with latency measured from
 // start.
 //
-// Tool calls are built in one pass. Each ToolCallEndDelta closes the open
-// call with the same ID, or the oldest open call when the ID is empty, and
-// supplies its arguments or the error from parsing them. ToolExecStartDelta and ToolExecEndDelta are joined
+// Tool calls are built in one pass. Each tool call part's end supplies its
+// arguments or the error from parsing them. ToolExecStartDelta and ToolExecEndDelta are joined
 // by tool call ID to fill the result, the error, and the wall-clock execution
 // time. Deltas nested in ToolExecDelta belong to sub-agents and streaming
 // tools, so they are kept in Deltas but do not enter the top-level
@@ -164,7 +163,8 @@ type toolCollector struct {
 	execStart []time.Time
 	executed  []bool // an execution delta has claimed the record
 	byID      map[string]int
-	open      []int // indices of calls whose arguments are still streaming
+	open      map[int]int // part index -> record of a call still streaming
+	args      map[int]string
 }
 
 func (tc *toolCollector) add(id, name string) int {
@@ -205,37 +205,34 @@ func (tc *toolCollector) lookup(id, name string) int {
 	return tc.add(id, name)
 }
 
-func (tc *toolCollector) closeCall(id string) (int, bool) {
-	pos := -1
-	if id != "" {
-		for i, idx := range tc.open {
-			if tc.calls[idx].ID == id {
-				pos = i
-				break
-			}
-		}
-	}
-	if pos < 0 {
-		if len(tc.open) == 0 {
-			return 0, false
-		}
-		pos = 0
-	}
-	idx := tc.open[pos]
-	tc.open = append(tc.open[:pos], tc.open[pos+1:]...)
-	return idx, true
-}
-
 func (tc *toolCollector) observe(now time.Time, delta types.Delta) {
 	switch v := delta.(type) {
-	case types.ToolCallStartDelta:
-		tc.open = append(tc.open, tc.add(v.ID, v.Name))
-
-	case types.ToolCallEndDelta:
-		if idx, ok := tc.closeCall(v.ID); ok {
-			tc.calls[idx].Arguments = v.Arguments
-			tc.calls[idx].ArgumentsError = v.ArgumentsError
+	case types.PartStart:
+		if v.Kind == types.KindToolCall {
+			if tc.open == nil {
+				tc.open, tc.args = map[int]int{}, map[int]string{}
+			}
+			tc.open[v.Index] = tc.add(v.ID, v.Name)
+			delete(tc.args, v.Index)
 		}
+
+	case types.PartDelta:
+		if _, ok := tc.open[v.Index]; ok && v.Args != "" {
+			tc.args[v.Index] += v.Args
+		}
+
+	case types.PartEnd:
+		idx, ok := tc.open[v.Index]
+		if !ok {
+			break
+		}
+		delete(tc.open, v.Index)
+		if call, ok := v.Part.(types.ToolCallPart); ok {
+			tc.calls[idx].Arguments, tc.calls[idx].ArgumentsError = call.Arguments, call.ArgumentsError
+		} else {
+			tc.calls[idx].Arguments, tc.calls[idx].ArgumentsError = types.DecodeToolArguments(tc.args[v.Index])
+		}
+		delete(tc.args, v.Index)
 
 	case types.ToolExecStartDelta:
 		idx := tc.lookup(v.ToolCallID, v.Name)

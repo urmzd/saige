@@ -18,41 +18,42 @@ type summaryProvider struct {
 	calls []string
 }
 
-func (p *summaryProvider) ChatStream(_ context.Context, msgs []Message, _ []ToolDef) (<-chan Delta, error) {
+func (p *summaryProvider) Stream(_ context.Context, req Request) (<-chan Delta, error) {
+	msgs := req.Messages
 	p.mu.Lock()
 	p.calls = append(p.calls, MessagesToText(msgs))
 	p.mu.Unlock()
 	ch := make(chan Delta, 1)
-	ch <- TextContentDelta{Content: p.text}
+	ch <- PartDelta{Index: 0, Text: p.text}
 	close(ch)
 	return ch, nil
 }
 
 func call(id, name string) AssistantMessage {
-	return AssistantMessage{Content: []AssistantContent{ToolUseContent{ID: id, Name: name, Arguments: map[string]any{}}}}
+	return AssistantMessage{Parts: []AssistantPart{ToolCallPart{ID: id, Name: name, Arguments: map[string]any{}}}}
 }
 
 func result(id, text string) SystemMessage {
-	return NewToolResultMessage(ToolResultContent{ToolCallID: id, Text: text})
+	return ToolResults(ToolResultPart{CallID: id, Parts: []ToolOutputPart{Text(text)}})
 }
 
 // toolHistory is a system prompt, a task and turns of tool loops, including
 // one call answered by results spread over two messages.
 func toolHistory(turns int) []Message {
-	msgs := []Message{NewSystemMessage("sys"), NewUserMessage("the task")}
+	msgs := []Message{SystemMsg(Text("sys")), UserMsg(Text("the task"))}
 	for i := range turns {
 		a, b := fmt.Sprintf("c%da", i), fmt.Sprintf("c%db", i)
 		msgs = append(msgs,
-			AssistantMessage{Content: []AssistantContent{
-				TextContent{Text: fmt.Sprintf("step %d", i)},
-				ToolUseContent{ID: a, Name: "read", Arguments: map[string]any{}},
-				ToolUseContent{ID: b, Name: "grep", Arguments: map[string]any{}},
+			AssistantMessage{Parts: []AssistantPart{
+				TextPart{Text: fmt.Sprintf("step %d", i)},
+				ToolCallPart{ID: a, Name: "read", Arguments: map[string]any{}},
+				ToolCallPart{ID: b, Name: "grep", Arguments: map[string]any{}},
 			}},
 			result(a, strings.Repeat("data ", 50)),
 			result(b, strings.Repeat("more ", 50)),
 		)
 		if i%3 == 2 {
-			msgs = append(msgs, NewUserMessage(fmt.Sprintf("follow up %d", i)))
+			msgs = append(msgs, UserMsg(Text(fmt.Sprintf("follow up %d", i))))
 		}
 	}
 	return append(msgs, call("last", "read"), result("last", "tail"))
@@ -112,13 +113,13 @@ func TestStrategiesKeepToolPairsRandom(t *testing.T) {
 	ctx := context.Background()
 	rng := rand.New(rand.NewSource(7))
 	for iter := range 200 {
-		msgs := []Message{NewSystemMessage("sys"), NewUserMessage("task")}
+		msgs := []Message{SystemMsg(Text("sys")), UserMsg(Text("task"))}
 		for i := range 2 + rng.Intn(20) {
 			switch rng.Intn(4) {
 			case 0:
-				msgs = append(msgs, NewUserMessage(fmt.Sprintf("user %d", i)))
+				msgs = append(msgs, UserMsg(Text(fmt.Sprintf("user %d", i))))
 			case 1:
-				msgs = append(msgs, NewAssistantMessage(fmt.Sprintf("answer %d", i)))
+				msgs = append(msgs, AssistantMsg(Text(fmt.Sprintf("answer %d", i))))
 			default:
 				n := 1 + rng.Intn(3)
 				am := AssistantMessage{}
@@ -126,17 +127,17 @@ func TestStrategiesKeepToolPairsRandom(t *testing.T) {
 				for j := range n {
 					id := fmt.Sprintf("r%d-%d-%d", iter, i, j)
 					ids = append(ids, id)
-					am.Content = append(am.Content, ToolUseContent{ID: id, Name: "t"})
+					am.Parts = append(am.Parts, ToolCallPart{ID: id, Name: "t"})
 				}
 				msgs = append(msgs, am)
 				for len(ids) > 0 {
 					k := 1 + rng.Intn(len(ids))
-					var rs []ToolResultContent
+					var rs []ToolResultPart
 					for _, id := range ids[:k] {
-						rs = append(rs, ToolResultContent{ToolCallID: id, Text: "out"})
+						rs = append(rs, ToolResultPart{CallID: id, Parts: []ToolOutputPart{Text("out")}})
 					}
 					ids = ids[k:]
-					msgs = append(msgs, NewToolResultMessage(rs...))
+					msgs = append(msgs, ToolResults(rs...))
 				}
 			}
 		}
@@ -220,19 +221,19 @@ func TestSummaryNeedsATriggerUnlessForced(t *testing.T) {
 }
 
 func TestRelevantPlusSummarySelectsTheRelevantOldTurn(t *testing.T) {
-	msgs := []Message{NewSystemMessage("sys"), NewUserMessage("Help me plan the office move.")}
+	msgs := []Message{SystemMsg(Text("sys")), UserMsg(Text("Help me plan the office move."))}
 	topics := []string{"printer toner levels", "parking permits", "kitchen schedule", "desk layout", "network cabling"}
 	for i, topic := range topics {
-		msgs = append(msgs, NewUserMessage("Note about "+topic+"."), NewAssistantMessage("Noted the "+topic+"."))
+		msgs = append(msgs, UserMsg(Text("Note about "+topic+".")), AssistantMsg(Text("Noted the "+topic+".")))
 		if i == 1 {
 			msgs = append(msgs,
 				call("vault", "lookup"),
 				result("vault", "The server room door code is 4417, set by Imogen."),
-				NewAssistantMessage("Recorded the server room door code."))
+				AssistantMsg(Text("Recorded the server room door code.")))
 		}
 	}
-	msgs = append(msgs, NewUserMessage("Recap the plan."), NewAssistantMessage("Plan recapped."),
-		NewUserMessage("What is the server room door code Imogen set?"))
+	msgs = append(msgs, UserMsg(Text("Recap the plan.")), AssistantMsg(Text("Plan recapped.")),
+		UserMsg(Text("What is the server room door code Imogen set?")))
 
 	p := &summaryProvider{text: "summary of the rest"}
 	r := &RelevantPlusSummary{KeepTurns: 1, K: 1}
@@ -312,7 +313,7 @@ func TestCompactorStrategyReportsDroppedAndSummarized(t *testing.T) {
 		t.Fatalf("sliding window: dropped %v summarized %v", res.Dropped, res.Summarized)
 	}
 	res, err = AsStrategy(NewSummarizeCompactor(3, 2)).CompactEntries(context.Background(), CompactRequest{
-		Entries:  NewCompactEntries([]Message{NewSystemMessage("s"), NewUserMessage("a"), NewAssistantMessage("b"), NewUserMessage("c"), NewAssistantMessage("d"), NewUserMessage("e")}),
+		Entries:  NewCompactEntries([]Message{SystemMsg(Text("s")), UserMsg(Text("a")), AssistantMsg(Text("b")), UserMsg(Text("c")), AssistantMsg(Text("d")), UserMsg(Text("e"))}),
 		Provider: &summaryProvider{text: "sum"},
 	})
 	if err != nil {

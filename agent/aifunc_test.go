@@ -115,11 +115,11 @@ func TestAIFuncTool(t *testing.T) {
 		agenttest.TextResponse("low"),
 	}}
 	a := NewAgent(AgentConfig{Provider: outer, Tools: types.NewToolRegistry(tool)})
-	if err := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("triage")}).Wait(); err != nil {
+	if err := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("triage"))}).Wait(); err != nil {
 		t.Fatal(err)
 	}
 	results := toolResults(t, a)
-	if len(results) != 1 || results[0].Text != `{"priority":"low"}` || results[0].ToolVersion != f.Version() {
+	if len(results) != 1 || results[0].Text() != `{"priority":"low"}` || results[0].ToolVersion != f.Version() {
 		t.Fatalf("results = %+v", results)
 	}
 }

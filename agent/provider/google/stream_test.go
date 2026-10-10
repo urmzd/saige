@@ -70,20 +70,23 @@ func TestStreamEndStates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hello")}, nil)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hello"))}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			var text string
 			var streamErr error
+			var all []types.Delta
 			for d := range ch {
+				all = append(all, d)
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text += v.Content
+				case types.PartDelta:
+					text += v.Text
 				case types.ErrorDelta:
 					streamErr = v.Error
 				}
 			}
+			streamcheck.RunPartConformance(t, all)
 			if text != tc.wantText {
 				t.Fatalf("text = %q, want %q", text, tc.wantText)
 			}

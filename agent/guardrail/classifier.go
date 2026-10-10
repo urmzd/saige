@@ -54,10 +54,10 @@ func (c classifier) Check(ctx context.Context, in agent.GuardrailInput) (agent.G
 	}
 	content := strings.ReplaceAll(in.Text, "</content", "<\\/content")
 	messages := []types.Message{
-		types.NewSystemMessage(classifierPrompt + c.policy),
-		types.NewUserMessage(fmt.Sprintf("<content source=%q>\n%s\n</content>", in.Phase, content)),
+		types.SystemMsg(types.Text(classifierPrompt + c.policy)),
+		types.UserMsg(types.Text(fmt.Sprintf("<content source=%q>\n%s\n</content>", in.Phase, content))),
 	}
-	rx, err := in.Metered(c.provider).ChatStream(ctx, messages, nil)
+	rx, err := in.Metered(c.provider).Stream(ctx, types.Request{Messages: messages})
 	if err != nil {
 		return agent.GuardrailVerdict{}, err
 	}
@@ -67,8 +67,8 @@ func (c classifier) Check(ctx context.Context, in agent.GuardrailInput) (agent.G
 	)
 	for d := range rx {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			reply.WriteString(v.Content)
+		case types.PartDelta:
+			reply.WriteString(v.Text)
 		case types.ErrorDelta:
 			callErr = v.Error
 		}

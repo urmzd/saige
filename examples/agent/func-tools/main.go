@@ -87,12 +87,12 @@ func main() {
 	}, agentsdk.WithDeps(&Inventory{stock: map[string]int{"A-100": 7}}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("How many A-100 are in stock? Reserve 2 of them."),
+		types.UserMsg(types.Text("How many A-100 are in stock? Reserve 2 of them.")),
 	})
 	for d := range stream.Deltas() {
 		switch d := d.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.MarkerDelta:
 			fmt.Printf("[approving %s %v]\n", d.ToolName, d.Arguments)
 			_ = stream.ResolveMarkerErr(d.ToolCallID, agentsdk.Resolution{Approved: true, Approver: "example"})

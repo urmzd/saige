@@ -178,18 +178,18 @@ func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, 
 	return result, nil
 }
 
-// hasToolResult reports whether a message contains a ToolResultContent block.
+// hasToolResult reports whether a message contains a ToolResultPart block.
 func hasToolResult(msg Message) bool {
 	switch v := msg.(type) {
 	case SystemMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(ToolResultPart); ok {
 				return true
 			}
 		}
 	case UserMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(ToolResultPart); ok {
 				return true
 			}
 		}
@@ -245,11 +245,11 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 
 	// Build summary prompt
 	summaryReq := []Message{
-		NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		NewUserMessage(MessagesToText(toSummarize)),
+		SystemMsg(Text("Summarize the following conversation concisely, preserving key facts and decisions.")),
+		UserMsg(Text(MessagesToText(toSummarize))),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	rx, err := provider.Stream(ctx, Request{Messages: summaryReq})
 	if err != nil {
 		return messages, nil // fallback: no compaction
 	}
@@ -258,11 +258,11 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 	var streamErr error
 	for delta := range rx {
 		switch d := delta.(type) {
-		case TextContentDelta:
-			sb.WriteString(d.Content)
+		case PartDelta:
+			sb.WriteString(d.Text)
 		case ErrorDelta:
 			// Providers surface mid-stream failures (e.g. rate limits after the
-			// stream opened) as ErrorDelta, not as the ChatStream return error.
+			// stream opened) as ErrorDelta, not as the Stream return error.
 			streamErr = d.Error
 		}
 	}
@@ -274,8 +274,8 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 
 	result := make([]Message, 0, keepLast+3)
 	result = append(result, messages[0]) // system
-	result = append(result, NewUserMessage(SummaryRequestText))
-	result = append(result, NewAssistantMessage(summary))
+	result = append(result, UserMsg(Text(SummaryRequestText)))
+	result = append(result, AssistantMsg(Text(summary)))
 	result = append(result, messages[len(messages)-keepLast:]...)
 	return result, nil
 }
@@ -284,10 +284,10 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 // turn and assistant summary produced by a previous compaction.
 func isSummaryPair(a, b Message) bool {
 	um, ok := a.(UserMessage)
-	if !ok || len(um.Content) != 1 {
+	if !ok || len(um.Parts) != 1 {
 		return false
 	}
-	tc, ok := um.Content[0].(TextContent)
+	tc, ok := um.Parts[0].(TextPart)
 	if !ok || tc.Text != SummaryRequestText {
 		return false
 	}
@@ -301,49 +301,50 @@ func MessagesToText(msgs []Message) string {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case TextContent:
+				case TextPart:
 					b.WriteString("System: ")
 					b.WriteString(bc.Text)
 					b.WriteByte('\n')
-				case ToolResultContent:
+				case ToolResultPart:
 					b.WriteString("Tool Result [")
-					b.WriteString(bc.ToolCallID)
+					b.WriteString(bc.CallID)
 					b.WriteString("]: ")
-					b.WriteString(bc.Text)
+					b.WriteString(bc.Text())
 					b.WriteByte('\n')
 				}
 			}
 		case UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case TextContent:
+				case TextPart:
 					b.WriteString("User: ")
 					b.WriteString(bc.Text)
 					b.WriteByte('\n')
-				case ToolResultContent:
+				case ToolResultPart:
 					b.WriteString("Tool Result [")
-					b.WriteString(bc.ToolCallID)
+					b.WriteString(bc.CallID)
 					b.WriteString("]: ")
-					b.WriteString(bc.Text)
+					b.WriteString(bc.Text())
 					b.WriteByte('\n')
-				case FileContent:
+				case ImagePart, AudioPart, VideoPart, DocumentPart, FilePart:
+					src, _ := SourceOf(bc)
 					b.WriteString("User: [file: ")
-					b.WriteString(bc.Filename)
+					b.WriteString(src.Filename)
 					b.WriteString(" (")
-					b.WriteString(string(bc.MediaType))
+					b.WriteString(string(src.MediaType))
 					b.WriteString(")]\n")
 				}
 			}
 		case AssistantMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case TextContent:
+				case TextPart:
 					b.WriteString("Assistant: ")
 					b.WriteString(bc.Text)
 					b.WriteByte('\n')
-				case ToolUseContent:
+				case ToolCallPart:
 					b.WriteString("Tool Call [")
 					b.WriteString(bc.ID)
 					b.WriteString("]: ")

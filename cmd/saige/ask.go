@@ -95,7 +95,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 // resolved inline with allow, so a marked tool call can never leave the
 // command waiting for an answer nobody will give.
 func runAsk(ctx context.Context, agent *agentsdk.Agent, question string, out tui.Output, allow bool) error {
-	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
+	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
 	resolve := func(d types.MarkerDelta) {
 		if allow {
 			stream.ResolveMarker(d.ToolCallID, true, nil)

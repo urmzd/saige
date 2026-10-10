@@ -42,7 +42,7 @@ func TestToolChoiceEmulation(t *testing.T) {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
 			a := NewAdapter(NewClient(server.URL, tc.model, ""), opts...)
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want a local configuration error", err)

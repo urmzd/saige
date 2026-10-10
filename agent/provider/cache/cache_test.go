@@ -24,8 +24,8 @@ func collect(ch <-chan types.Delta) []types.Delta {
 func text(deltas []types.Delta) string {
 	var s string
 	for _, d := range deltas {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			s += tc.Content
+		if tc, ok := d.(types.PartDelta); ok {
+			s += tc.Text
 		}
 	}
 	return s
@@ -36,16 +36,16 @@ func TestMissThenHitText(t *testing.T) {
 		agenttest.TextResponse("hello"),
 	}}
 	p := newProvider(inner)
-	msgs := []types.Message{types.NewUserMessage("hi")}
+	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 
-	ch1, _ := p.ChatStream(context.Background(), msgs, nil)
+	ch1, _ := p.Stream(context.Background(), types.Request{Messages: msgs})
 	d1 := collect(ch1)
 	if text(d1) != "hello" {
 		t.Fatalf("miss text = %q, want hello", text(d1))
 	}
 
 	// Second identical call must be served from cache (inner has only 1 response).
-	ch2, _ := p.ChatStream(context.Background(), msgs, nil)
+	ch2, _ := p.Stream(context.Background(), types.Request{Messages: msgs})
 	d2 := collect(ch2)
 	if text(d2) != "hello" {
 		t.Fatalf("hit text = %q, want hello", text(d2))
@@ -55,14 +55,14 @@ func TestMissThenHitText(t *testing.T) {
 func TestHitReportsCacheHitUsage(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		{
-			types.TextStartDelta{},
-			types.TextContentDelta{Content: "x"},
-			types.TextEndDelta{},
+			types.PartStart{Index: 0, Kind: types.KindText},
+			types.PartDelta{Index: 0, Text: "x"},
+			types.PartEnd{Index: 0},
 			types.UsageDelta{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
 		},
 	}}
 	p := newProvider(inner)
-	msgs := []types.Message{types.NewUserMessage("q")}
+	msgs := []types.Message{types.UserMsg(types.Text("q"))}
 
 	collect(mustStream(t, p, msgs)) // prime cache (miss)
 	hit := collect(mustStream(t, p, msgs))
@@ -92,8 +92,8 @@ func TestDistinctMessagesDistinctKeys(t *testing.T) {
 	}}
 	p := newProvider(inner)
 
-	collect(mustStream(t, p, []types.Message{types.NewUserMessage("first")}))
-	d := collect(mustStream(t, p, []types.Message{types.NewUserMessage("second")}))
+	collect(mustStream(t, p, []types.Message{types.UserMsg(types.Text("first"))}))
+	d := collect(mustStream(t, p, []types.Message{types.UserMsg(types.Text("second"))}))
 	if text(d) != "b" {
 		t.Fatalf("second distinct call text = %q, want b (a fresh miss)", text(d))
 	}
@@ -104,7 +104,7 @@ func TestToolCallIsCached(t *testing.T) {
 		agenttest.ToolCallResponse("t1", "search", map[string]any{"q": "go"}),
 	}}
 	p := New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true})
-	msgs := []types.Message{types.NewUserMessage("find")}
+	msgs := []types.Message{types.UserMsg(types.Text("find"))}
 
 	collect(mustStream(t, p, msgs)) // miss records the tool-call deltas
 	calls := agenttest.CollectToolCalls(replayChan(collect(mustStream(t, p, msgs))))
@@ -115,11 +115,11 @@ func TestToolCallIsCached(t *testing.T) {
 
 func TestErrorStreamNotCached(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
-		{types.TextStartDelta{}, types.ErrorDelta{Error: context.DeadlineExceeded}},
+		{types.PartStart{Index: 0, Kind: types.KindText}, types.ErrorDelta{Error: context.DeadlineExceeded}},
 		agenttest.TextResponse("recovered"),
 	}}
 	p := newProvider(inner)
-	msgs := []types.Message{types.NewUserMessage("q")}
+	msgs := []types.Message{types.UserMsg(types.Text("q"))}
 
 	collect(mustStream(t, p, msgs)) // first call errors → must NOT cache
 	d := collect(mustStream(t, p, msgs))
@@ -130,8 +130,8 @@ func TestErrorStreamNotCached(t *testing.T) {
 
 func TestFileBytesAffectKey(t *testing.T) {
 	mk := func(data []byte) []types.Message {
-		return []types.Message{types.UserMessage{Content: []types.UserContent{
-			types.FileContent{URI: "mem://x", MediaType: types.MediaPNG, Data: data},
+		return []types.Message{types.UserMessage{Parts: []types.UserPart{
+			types.Image(types.Bytes(types.MediaPNG, data).With(types.URL("mem://x"))),
 		}}}
 	}
 	k1 := Key("m", mk([]byte("AAAA")), nil, nil)
@@ -148,11 +148,11 @@ func TestFileBytesAffectKey(t *testing.T) {
 func TestArgMapOrderStable(t *testing.T) {
 	// Two assistant tool-use messages with maps built in different insertion
 	// order but equal content must hash identically.
-	a := []types.Message{types.AssistantMessage{Content: []types.AssistantContent{
-		types.ToolUseContent{ID: "1", Name: "f", Arguments: map[string]any{"a": 1.0, "b": 2.0}},
+	a := []types.Message{types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ToolCallPart{ID: "1", Name: "f", Arguments: map[string]any{"a": 1.0, "b": 2.0}},
 	}}}
-	b := []types.Message{types.AssistantMessage{Content: []types.AssistantContent{
-		types.ToolUseContent{ID: "1", Name: "f", Arguments: map[string]any{"b": 2.0, "a": 1.0}},
+	b := []types.Message{types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ToolCallPart{ID: "1", Name: "f", Arguments: map[string]any{"b": 2.0, "a": 1.0}},
 	}}}
 	if Key("m", a, nil, nil) != Key("m", b, nil, nil) {
 		t.Fatal("argument map ordering must not affect the cache key")
@@ -160,7 +160,7 @@ func TestArgMapOrderStable(t *testing.T) {
 }
 
 func TestSchemaAndToolsAffectKey(t *testing.T) {
-	msgs := []types.Message{types.NewUserMessage("q")}
+	msgs := []types.Message{types.UserMsg(types.Text("q"))}
 	base := Key("m", msgs, nil, nil)
 	withSchema := Key("m", msgs, nil, &types.ParameterSchema{Type: "object"})
 	if base == withSchema {
@@ -181,7 +181,7 @@ func TestNameDecorates(t *testing.T) {
 
 func mustStream(t *testing.T, p *Provider, msgs []types.Message) <-chan types.Delta {
 	t.Helper()
-	ch, err := p.ChatStream(context.Background(), msgs, nil)
+	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}

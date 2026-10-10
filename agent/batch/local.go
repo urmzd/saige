@@ -160,7 +160,7 @@ func (l *Local) Submit(ctx context.Context, reqs []types.BatchRequest, _ types.B
 func (l *Local) check(r types.BatchRequest) error {
 	hasOpts := len(r.Options.OptionNames()) > 0 || r.Options.HasDials()
 	if r.Schema != nil {
-		if _, ok := l.provider.(types.StructuredOutputProvider); !ok {
+		if !types.AcceptsSchema(l.provider) {
 			return types.ErrSchemaUnsupported
 		}
 		if hasOpts {
@@ -168,7 +168,7 @@ func (l *Local) check(r types.BatchRequest) error {
 		}
 	}
 	if hasOpts {
-		if _, ok := l.provider.(types.OptionsProvider); !ok {
+		if !types.AcceptsOptions(l.provider) {
 			return types.ErrOptionsUnsupported
 		}
 	}
@@ -184,14 +184,11 @@ func (l *Local) run(ctx context.Context, r types.BatchRequest) types.BatchResult
 		stream <-chan types.Delta
 		err    error
 	)
-	switch {
-	case r.Schema != nil:
-		stream, err = l.provider.(types.StructuredOutputProvider).ChatStreamWithSchema(ctx, r.Messages, r.Tools, r.Schema)
-	case len(r.Options.OptionNames()) > 0 || r.Options.HasDials():
-		stream, err = l.provider.(types.OptionsProvider).ChatStreamWithOptions(ctx, r.Messages, r.Tools, r.Options)
-	default:
-		stream, err = l.provider.ChatStream(ctx, r.Messages, r.Tools)
+	req := types.Request{Messages: r.Messages, Tools: r.Tools, Schema: r.Schema}
+	if r.Schema == nil && (len(r.Options.OptionNames()) > 0 || r.Options.HasDials()) {
+		req.Options = new(r.Options)
 	}
+	stream, err = l.provider.Stream(ctx, req)
 	if err != nil {
 		return types.BatchResult{CustomID: r.CustomID, Outcome: types.BatchErrored,
 			Err: &types.BatchRequestError{Outcome: types.BatchErrored, Message: err.Error(), Err: err}}

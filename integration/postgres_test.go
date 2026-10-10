@@ -37,7 +37,7 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	}, agentsdk.WithStore(store))
 
 	const question = "Reply with exactly one word: pong"
-	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
+	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
 	text, _, err := drainStream(stream)
 	if err != nil {
 		t.Fatalf("agent run: %v", err)
@@ -64,8 +64,8 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(types.TextContent); ok && strings.Contains(tc.Text, question) {
+			for _, c := range v.Parts {
+				if tc, ok := c.(types.TextPart); ok && strings.Contains(tc.Text, question) {
 					sawUser = true
 				}
 			}

@@ -63,7 +63,7 @@ func TestToolChoiceWire(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(bodies) != 0 {
 					t.Fatalf("err = %v, requests = %d; want a local configuration error", err, len(bodies))
@@ -98,7 +98,7 @@ func TestPenaltiesAreSentAndValidated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,21 +130,24 @@ func TestServerToolDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var calls []types.ServerToolCallDelta
-	var results []types.ServerToolResultDelta
+	var calls []types.ServerToolCallPart
+	var results []types.ServerToolResultPart
 	var citations int
 	for d := range ch {
 		switch v := d.(type) {
-		case types.ServerToolCallDelta:
-			calls = append(calls, v)
-		case types.ServerToolResultDelta:
-			results = append(results, v)
-		case types.CitationDelta:
-			citations++
+		case types.PartEnd:
+			switch p := v.Part.(type) {
+			case types.ServerToolCallPart:
+				calls = append(calls, p)
+			case types.ServerToolResultPart:
+				results = append(results, p)
+			case types.CitationPart:
+				citations++
+			}
 		case types.ErrorDelta:
 			t.Fatal(v.Error)
 		}
@@ -163,7 +166,7 @@ func TestServerToolDeltas(t *testing.T) {
 		{types.ServerToolWebSearch, "", "Docs https://go.dev/doc", false},
 	} {
 		c, r := calls[i], results[i]
-		if c.ID == "" || c.ID != r.ID || c.Kind != tc.kind || r.Kind != tc.kind {
+		if c.ID == "" || c.ID != r.CallID || c.ToolKind != tc.kind || r.ToolKind != tc.kind {
 			t.Errorf("pair %d: call %+v, result %+v", i, c, r)
 		}
 		if tc.input != "" && (c.Input["code"] != tc.input || c.Input["language"] != "PYTHON") {

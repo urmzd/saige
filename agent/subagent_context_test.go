@@ -15,8 +15,8 @@ func userTexts(msgs []types.Message) []string {
 	var out []string
 	for _, m := range msgs {
 		if um, ok := m.(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if t, ok := c.(types.TextContent); ok {
+			for _, c := range um.Parts {
+				if t, ok := c.(types.TextPart); ok {
 					out = append(out, t.Text)
 				}
 			}
@@ -31,7 +31,7 @@ func userTexts(msgs []types.Message) []string {
 func runDelegation(t *testing.T, def SubAgentDef) (types.ToolExecEndDelta, []types.Message) {
 	t.Helper()
 	parent := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
-		append(agenttest.TextResponse("earlier"), types.ThinkingStartDelta{}, types.ThinkingContentDelta{Content: "private"}, types.ThinkingEndDelta{Signature: "sig"}),
+		append(agenttest.TextResponse("earlier"), types.PartDeltas(1, types.ThinkingPart{Text: "private", Signature: "sig"})...),
 		agenttest.ToolCallResponse("delegate", "delegate_to_child", map[string]any{"task": "summarize"}),
 		agenttest.TextResponse("finished"),
 	}}
@@ -40,10 +40,10 @@ func runDelegation(t *testing.T, def SubAgentDef) (types.ToolExecEndDelta, []typ
 	a := NewAgent(AgentConfig{Name: "coordinator", Provider: parent, SubAgents: []SubAgentDef{def}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("first question")})); err != nil {
+	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("first question"))})); err != nil {
 		t.Fatal(err)
 	}
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("second question")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("second question"))})
 	var end types.ToolExecEndDelta
 	for d := range stream.Deltas() {
 		if e, ok := d.(types.ToolExecEndDelta); ok && e.ToolCallID == "delegate" {
@@ -87,23 +87,23 @@ func TestSubAgentContextModes(t *testing.T) {
 		{
 			name: "filter keeps a tool call without its result",
 			def: SubAgentDef{Context: ContextFiltered, ContextFilter: MessageSelectorFunc(func(_ context.Context, h []types.Message) ([]types.Message, error) {
-				call := types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "lookup-1", Name: "lookup"}}}
-				return append(h, call, types.NewUserMessage("next")), nil
+				call := types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "lookup-1", Name: "lookup"}}}
+				return append(h, call, types.UserMsg(types.Text("next"))), nil
 			})},
 			wantErr: "broke tool pairing: tool call lookup-1 has no result",
 		},
 		{
 			name: "filter keeps a tool result without its call",
 			def: SubAgentDef{Context: ContextFiltered, ContextFilter: MessageSelectorFunc(func(_ context.Context, h []types.Message) ([]types.Message, error) {
-				return append(h, types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "lookup-2", Text: "x"})), nil
+				return append(h, types.ToolResults(types.ToolResultPart{CallID: "lookup-2", Parts: []types.ToolOutputPart{types.Text("x")}})), nil
 			})},
 			wantErr: "broke tool pairing: tool result lookup-2 has no earlier tool call",
 		},
 		{
 			name: "filter keeps a complete tool exchange",
 			def: SubAgentDef{Context: ContextFiltered, ContextFilter: MessageSelectorFunc(func(_ context.Context, h []types.Message) ([]types.Message, error) {
-				call := types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "lookup-3", Name: "lookup"}}}
-				return append(h[len(h)-1:], call, types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "lookup-3", Text: "x"}), types.NewUserMessage("next")), nil
+				call := types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "lookup-3", Name: "lookup"}}}
+				return append(h[len(h)-1:], call, types.ToolResults(types.ToolResultPart{CallID: "lookup-3", Parts: []types.ToolOutputPart{types.Text("x")}}), types.UserMsg(types.Text("next"))), nil
 			})},
 			wantTexts: []string{"second question", "next", "summarize"},
 		},
@@ -144,8 +144,8 @@ func TestSubAgentContextModes(t *testing.T) {
 						t.Fatal("child received the delegating turn's tool calls")
 					}
 				}
-				for _, c := range am.Content {
-					if _, ok := c.(types.ThinkingContent); ok {
+				for _, c := range am.Parts {
+					if _, ok := c.(types.ThinkingPart); ok {
 						t.Fatal("child received the parent's thinking")
 					}
 				}
@@ -210,7 +210,7 @@ func TestDelegationToAncestorIsRefused(t *testing.T) {
 	}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	var refused string
 	for d := range stream.Deltas() {
 		if ex, ok := d.(types.ToolExecDelta); ok {
@@ -229,11 +229,11 @@ func TestDelegationToAncestorIsRefused(t *testing.T) {
 
 func TestTextMessagesOnly(t *testing.T) {
 	history := []types.Message{
-		types.NewUserMessage("hi"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "calling"}, types.ToolUseContent{ID: "1", Name: "x"}}},
-		types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "1", Text: "r"}}},
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "2", Name: "x"}}},
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "done"}}},
+		types.UserMsg(types.Text("hi")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "calling"}, types.ToolCallPart{ID: "1", Name: "x"}}},
+		types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "1", Parts: []types.ToolOutputPart{types.Text("r")}}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "2", Name: "x"}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "done"}}},
 	}
 	got, err := TextMessagesOnly{}.SelectMessages(context.Background(), history)
 	if err != nil {
@@ -253,7 +253,7 @@ func TestChildInterruptListedAtParent(t *testing.T) {
 	a := gatedChildAgent()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	m := nextMarker(t, stream)
 	if m.ToolCallID != "delegate/read" || m.Interrupt == nil {
 		t.Fatalf("marker = %+v", m)
@@ -285,7 +285,7 @@ func TestHandoffCarriesMessageAndContext(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "triage", Provider: entry}, WithHandoffs(HandoffDef{Name: "billing", Provider: billing}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("refund please")})); err != nil {
+	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("refund please"))})); err != nil {
 		t.Fatal(err)
 	}
 	reqs := billing.Requests()
@@ -302,11 +302,11 @@ func TestHandoffCarriesMessageAndContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stored *types.HandoffContent
+	var stored *types.HandoffPart
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if h, ok := c.(types.HandoffContent); ok {
+			for _, c := range sm.Parts {
+				if h, ok := c.(types.HandoffPart); ok {
 					stored = &h
 				}
 			}

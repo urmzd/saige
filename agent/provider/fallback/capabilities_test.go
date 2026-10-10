@@ -15,7 +15,7 @@ type stubProvider struct {
 	media map[types.MediaType]bool
 }
 
-func (s *stubProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (s *stubProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil

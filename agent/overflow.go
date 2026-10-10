@@ -166,7 +166,7 @@ func (a *Agent) recoverOverflow(ctx context.Context, stream *EventStream, st *ov
 // switched to CompactConfig.SummaryModel, else the active provider. Every
 // summary call is admitted by the budget before it is sent and settled
 // afterwards, like a turn. It reports the new branch when the history
-// changed, after writing a CompactionContent record onto it and streaming a
+// changed, after writing a CompactionPart record onto it and streaming a
 // CompactionDelta. A failed compaction leaves the branch as it was and is
 // logged, not fatal; only a budget refusal or stop ends the run.
 func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *overflowState, resolved resolvedConfig, active activeContext, tr *tree.Tree, branch types.BranchID, trigger types.CompactionTrigger) (types.BranchID, bool, error) {
@@ -183,7 +183,7 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 	meter := &meteredProvider{Provider: summarizer, agent: a, stream: stream, step: fmt.Sprintf("compact-%s", branch)}
 	var (
 		newBranch types.BranchID
-		rec       *types.CompactionContent
+		rec       *types.CompactionPart
 		compacted bool
 	)
 	defer func() {
@@ -234,8 +234,8 @@ func (a *Agent) compactionProvider(active activeContext, cfg *types.CompactConfi
 
 // recordCompaction writes rec onto the branch compaction created and
 // streams it.
-func (a *Agent) recordCompaction(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, rec types.CompactionContent) error {
-	node, err := a.appendNode(ctx, tr, branch, types.SystemMessage{Content: []types.SystemContent{rec}})
+func (a *Agent) recordCompaction(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, rec types.CompactionPart) error {
+	node, err := a.appendNode(ctx, tr, branch, types.SystemMessage{Parts: []types.SystemPart{rec}})
 	if err != nil {
 		return err
 	}
@@ -266,7 +266,7 @@ func usesTreeCompaction(cfg *types.CompactConfig, force bool) bool {
 // from its result costs nothing and is not retried on the same history. It
 // returns the new branch and a record of the compaction, or nil when the
 // branch was left as it was.
-func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tree, branch types.BranchID, provider types.Provider, limit int, force bool) (types.BranchID, *types.CompactionContent) {
+func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tree, branch types.BranchID, provider types.Provider, limit int, force bool) (types.BranchID, *types.CompactionPart) {
 	log := a.cfg.Logger
 	tip, err := tr.Tip(branch)
 	if err != nil {
@@ -312,7 +312,7 @@ func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tre
 	a.persistBranch(ctx, tr, newBranch)
 	log.Debug("compacted to new branch", "agent", a.cfg.Name, "branch", newBranch)
 
-	rec := &types.CompactionContent{Strategy: string(types.CompactSummarize), Steps: []string{string(types.CompactSummarize)}}
+	rec := &types.CompactionPart{Strategy: string(types.CompactSummarize), Steps: []string{string(types.CompactSummarize)}}
 	after, err := visibleHistory(tr, newBranch)
 	if err == nil {
 		summarized := map[types.NodeID]bool{}
@@ -382,28 +382,28 @@ func stripMetadata(m types.Message) (types.Message, bool) {
 	switch v := m.(type) {
 	case types.SystemMessage:
 		out := types.SystemMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	case types.UserMessage:
 		out := types.UserMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	case types.AssistantMessage:
 		out := types.AssistantMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	}
 	return m, true
 }
@@ -427,8 +427,8 @@ func compactionQuery(messages []types.Message) string {
 			continue
 		}
 		var parts []string
-		for _, c := range um.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range um.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				parts = append(parts, tc.Text)
 			}
 		}
@@ -443,7 +443,7 @@ func compactionQuery(messages []types.Message) string {
 // moves the run onto a new branch holding its output. Messages kept
 // verbatim are copied with their metadata. It returns nil when the strategy
 // failed, changed nothing, or would separate a tool call from its result.
-func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.BranchID, strategy types.CompactionStrategy, provider types.Provider, cfg *types.CompactConfig, trigger types.CompactionTrigger) (types.BranchID, *types.CompactionContent) {
+func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.BranchID, strategy types.CompactionStrategy, provider types.Provider, cfg *types.CompactConfig, trigger types.CompactionTrigger) (types.BranchID, *types.CompactionPart) {
 	log := a.cfg.Logger
 	hist, err := visibleHistory(tr, branch)
 	if err != nil {
@@ -498,7 +498,7 @@ func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.B
 	}
 	a.persistBranch(ctx, tr, newBranch)
 
-	rec := &types.CompactionContent{
+	rec := &types.CompactionPart{
 		Strategy:     strategy.Name(),
 		Steps:        res.Steps,
 		TokensBefore: a.countTokens(ctx, hist.messages),
@@ -681,7 +681,7 @@ type meteredProvider struct {
 	err   error
 }
 
-func (m *meteredProvider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (m *meteredProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
 	settle := func(usage *types.UsageDelta, _ bool) (*types.UsageDelta, error) { return usage, nil }
 	if m.agent != nil && m.agent.cfg.Budget != nil {
 		m.mu.Lock()
@@ -698,7 +698,7 @@ func (m *meteredProvider) ChatStream(ctx context.Context, messages []types.Messa
 			return settled, err
 		}
 	}
-	rx, err := m.Provider.ChatStream(ctx, messages, tools)
+	rx, err := m.Provider.Stream(ctx, req)
 	if err != nil {
 		m.finish(settle(nil, true))
 		return nil, err

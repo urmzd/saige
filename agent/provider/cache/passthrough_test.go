@@ -15,7 +15,7 @@ type richProvider struct {
 	media map[types.MediaType]bool
 }
 
-func (r *richProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (r *richProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil

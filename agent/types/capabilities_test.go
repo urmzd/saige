@@ -10,7 +10,7 @@ type capProvider struct {
 	caps ModelCapabilities
 }
 
-func (c *capProvider) ChatStream(context.Context, []Message, []ToolDef) (<-chan Delta, error) {
+func (c *capProvider) Stream(_ context.Context, _ Request) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil
@@ -20,7 +20,7 @@ func (c *capProvider) Capabilities() ModelCapabilities { return c.caps }
 // bareProvider reports nothing: the "unknown", not "none", case.
 type bareProvider struct{}
 
-func (bareProvider) ChatStream(context.Context, []Message, []ToolDef) (<-chan Delta, error) {
+func (bareProvider) Stream(_ context.Context, _ Request) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil

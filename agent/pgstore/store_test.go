@@ -61,7 +61,7 @@ func testNode(id, parent types.NodeID, branch types.BranchID, depth int) *types.
 	return &types.Node{
 		ID:        id,
 		ParentID:  parent,
-		Message:   types.NewUserMessage("msg " + string(id)),
+		Message:   types.UserMsg(types.Text("msg " + string(id))),
 		Version:   1,
 		Depth:     depth,
 		BranchID:  branch,

@@ -28,9 +28,9 @@ func sampleNode() *types.Node {
 	return &types.Node{
 		ID:       "node-1",
 		ParentID: "root",
-		Message: types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "hello"},
-			types.ThinkingContent{Thinking: "hmm"},
+		Message: types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "hello"},
+			types.ThinkingPart{Text: "hmm"},
 		}},
 		State:      types.NodeArchived,
 		Version:    3,
@@ -112,11 +112,11 @@ func TestFileWALRoundTrip(t *testing.T) {
 		t.Errorf("ArchivedAt round-trip: got %v want %v", got.ArchivedAt, node.ArchivedAt)
 	}
 	am, ok := got.Message.(types.AssistantMessage)
-	if !ok || len(am.Content) != 2 {
+	if !ok || len(am.Parts) != 2 {
 		t.Fatalf("message round-trip: %#v", got.Message)
 	}
-	if txt, ok := am.Content[0].(types.TextContent); !ok || txt.Text != "hello" {
-		t.Errorf("text content round-trip: %#v", am.Content[0])
+	if txt, ok := am.Parts[0].(types.TextPart); !ok || txt.Text != "hello" {
+		t.Errorf("text content round-trip: %#v", am.Parts[0])
 	}
 
 	if ops[1].Kind != types.TxOpSetBranch || ops[1].BranchID != "main" || ops[1].TipID != node.ID {

@@ -24,7 +24,7 @@ func TestAgentCheckpointRoundTripsThroughStore(t *testing.T) {
 		Provider:     provider,
 	}, WithStore(store))
 
-	stream := ag.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); err != nil {
