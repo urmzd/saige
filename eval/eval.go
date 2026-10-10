@@ -151,6 +151,19 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 		scorers = sampled
 	}
 
+	var results []ObservationResult
+	var done []bool
+	if cfg.batch != nil {
+		results, done = make([]ObservationResult, len(observations)), make([]bool, len(observations))
+		runTasks(ctx, cfg.batch, scoreTasks("", observations, scorers, cfg.Logger, results, done))
+	} else {
+		results, done = scoreAll(ctx, cfg, observations, scorers)
+	}
+	return suiteFrom(ctx, name, cfg, observations, results, done)
+}
+
+// scoreAll scores every observation, up to cfg.Concurrency at once.
+func scoreAll(ctx context.Context, cfg *Config, observations []Observation, scorers []Scorer) ([]ObservationResult, []bool) {
 	results := make([]ObservationResult, len(observations))
 	done := make([]bool, len(observations))
 
@@ -189,6 +202,12 @@ launch:
 	}
 	wg.Wait()
 
+	return results, done
+}
+
+// suiteFrom builds the suite from the scored observations, gates it and
+// reports incomplete or failed runs.
+func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Observation, results []ObservationResult, done []bool) (*SuiteResult, error) {
 	completed := make([]ObservationResult, 0, len(results))
 	for i, r := range results {
 		if done[i] {
@@ -301,6 +320,10 @@ func PopulateAll(ctx context.Context, observations []Observation, subject Subjec
 		ctx = types.ContextWithDialPolicy(ctx, *cfg.dialPolicy)
 	}
 	errs := make([]error, len(observations))
+	if cfg.batch != nil {
+		runTasks(ctx, cfg.batch, populateTasks("", observations, subject, errs))
+		return finishPopulate(cfg, observations, errs)
+	}
 
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
@@ -326,7 +349,12 @@ func PopulateAll(ctx context.Context, observations []Observation, subject Subjec
 		}(i)
 	}
 	wg.Wait()
+	return finishPopulate(cfg, observations, errs)
+}
 
+// finishPopulate records each subject error on its observation and joins
+// them.
+func finishPopulate(cfg *Config, observations []Observation, errs []error) error {
 	var joined []error
 	for i, err := range errs {
 		obs := &observations[i]

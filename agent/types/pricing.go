@@ -71,6 +71,16 @@ type Pricing struct {
 	// PerRequest is a flat charge per call, used by server-side tools such as
 	// web search that bill per invocation rather than per token.
 	PerRequest float64
+	// BatchDiscount is the fraction taken off every token rate for a call
+	// made through the vendor's batch API, such as 0.5 for half price. Zero
+	// means no batch discount is declared, and Batch then bills at the
+	// interactive rates, which over-counts rather than under-counts.
+	BatchDiscount float64
+	// BatchCachedInputPerMTok is the cache-read rate through the batch API.
+	// Vendors differ on whether the batch discount stacks with a cache
+	// discount, so a cache read is billed at CachedInputPerMTok unless this
+	// is set.
+	BatchCachedInputPerMTok float64
 	// AsOf is the date these rates were recorded, e.g. "2026-07-24". Stale
 	// rates are the most likely reason a budget disagrees with an invoice.
 	AsOf string
@@ -178,6 +188,40 @@ func perMTok(tokens int, ratePerM float64) float64 {
 	return float64(tokens) / 1e6 * ratePerM
 }
 
+// Batch returns the rate card for calls made through the vendor's batch API:
+// input, output and cache-write rates reduced by BatchDiscount, and cache
+// reads at BatchCachedInputPerMTok when declared, else at the interactive
+// cache-read rate. Per-request charges are kept, since no vendor discounts
+// them. The batch fields are cleared on the result, so applying Batch twice
+// does not discount twice. Without a declared discount the interactive rates
+// are returned, which over-counts rather than under-counts.
+func (p Pricing) Batch() Pricing {
+	d := p.BatchDiscount
+	cached := p.BatchCachedInputPerMTok
+	p.BatchDiscount, p.BatchCachedInputPerMTok = 0, 0
+	if d <= 0 || d >= 1 || p.Free {
+		return p
+	}
+	if cached == 0 {
+		cached = p.CachedInputPerMTok
+		if cached == 0 {
+			cached = p.InputPerMTok // an unset cache rate means the input rate
+		}
+	}
+	f := 1 - d
+	if p.CacheWritePerMTok == 0 {
+		p.CacheWritePerMTok = p.InputPerMTok
+	}
+	p.InputPerMTok *= f
+	p.OutputPerMTok *= f
+	p.CacheWritePerMTok *= f
+	p.CachedInputPerMTok = cached
+	if p.Source != "" {
+		p.Source += " (batch)"
+	}
+	return p
+}
+
 // Describe renders the rate card for a CLI listing.
 func (p Pricing) Describe() string {
 	if p.Free {
@@ -194,6 +238,9 @@ func (p Pricing) Describe() string {
 	}
 	if p.PerRequest > 0 {
 		parts = append(parts, fmt.Sprintf("%.4f/request", p.PerRequest))
+	}
+	if p.BatchDiscount > 0 {
+		parts = append(parts, fmt.Sprintf("batch -%.0f%%", p.BatchDiscount*100))
 	}
 	s := p.currency() + " " + strings.Join(parts, ", ")
 	if p.AsOf != "" {

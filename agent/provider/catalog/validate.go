@@ -186,12 +186,15 @@ func checkSpecPricing(path string, s ModelSpec, found *issues) {
 		}
 	}
 	if p := s.Pricing; p != nil {
-		rates := []float64{p.InputPerMTok, p.OutputPerMTok, p.CachedInputPerMTok, p.CacheWritePerMTok, p.PerRequest}
+		rates := []float64{p.InputPerMTok, p.OutputPerMTok, p.CachedInputPerMTok, p.CacheWritePerMTok, p.PerRequest, p.BatchCachedInputPerMTok}
 		for _, r := range rates {
 			if r < 0 {
 				found.errorf(path+".pricing", CodePricing, "rates must not be negative")
 				break
 			}
+		}
+		if p.BatchDiscount < 0 || p.BatchDiscount >= 1 {
+			found.errorf(path+".pricing.batch_discount", CodePricing, "batch_discount must be at least 0 and below 1")
 		}
 		if (slices.ContainsFunc(rates, func(r float64) bool { return r != 0 }) || p.Free) && p.AsOf == "" {
 			found.errorf(path+".pricing.as_of", CodePricing, "as_of is required when a rate is set")

@@ -44,6 +44,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **Adapters for three model vendors and a local runtime**: Anthropic, OpenAI and Google, plus open-weight models served by Ollama, all behind one `types.Provider` interface, with retry and fallback composition. See [vendors, runtimes and adapters](docs/concepts.md#vendors-runtimes-and-adapters).
 - **Nullable tool properties** with separate presence rules across vendor APIs and MCP. See [tool schemas](docs/tool-schemas.md).
 - **Typed function tools**: `agent.Func` derives the schema from a struct, decodes arguments strictly, and passes typed dependencies; `agent.AIFunc` is a typed function a model computes. Both are versioned by content. See [typed function tools](docs/func-tools.md).
+- **Batch processing** through the vendor batch APIs at half price, with durable jobs, batch budgets, a local fallback for Ollama, and eval runs and judges as batches. See [batch processing](docs/batch.md).
 - **Durable runs** that resume after a crash, on a local engine or on Postgres through [duraturo](https://github.com/urmzd/duraturo), plus response caching
 - **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client, with approval enforced for mutating tools
 - **Harness toolset**: `agent.WithHarnessTools` adds `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `execute_code` (shell, Python, Go behind a subprocess or Docker sandbox), `fetch_url`, and scratch tools, read-only unless you enable more, with approvals and automatic spilling of large results. See [harness tools](docs/harness-tools.md).
@@ -359,6 +360,7 @@ Run any of these with `go run ./examples/quickstart/<name>` from a clone.
 | **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |
 | **RAG** | Ingest, chunk, embed, hybrid search on Postgres, citations | [rag](rag/README.md) |
 | **Evals** | Scorers, gates and experiments for agents, retrieval and graphs | [eval](eval/README.md) |
+| **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/batch.md) |
 | **Durable runs** | Journaled steps that resume after a crash, on a local engine or Postgres | [durable execution](docs/durable-execution.md) |
 
 See [concepts](docs/concepts.md) for the full picture.

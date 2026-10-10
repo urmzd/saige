@@ -51,7 +51,7 @@ var untrustedFields = map[reflect.Type]map[string]bool{
 	},
 	reflect.TypeFor[catalog.PricingSpec](): {
 		"currency": true, "input_per_mtok": true, "output_per_mtok": true, "cached_input_per_mtok": true,
-		"cache_write_per_mtok": true, "per_request": true, "free": true, "as_of": true, "source": true,
+		"cache_write_per_mtok": true, "per_request": true, "batch_discount": true, "batch_cached_input_per_mtok": true, "free": true, "as_of": true, "source": true,
 	},
 	reflect.TypeFor[catalog.Fee](): {"currency": true, "per_use": true, "as_of": true, "source": true},
 	reflect.TypeFor[catalog.OptionsSpec](): {
