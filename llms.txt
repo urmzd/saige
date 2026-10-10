@@ -15,6 +15,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
+- [docs/agent-definitions.md](docs/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
 - [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
 - [docs/tool-calling.md](docs/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
@@ -51,6 +52,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 
 - Quick start: examples/quickstart/agent/main.go, examples/quickstart/tool/main.go, examples/quickstart/structured/main.go, examples/quickstart/dials/main.go, examples/quickstart/rag/main.go
 - Presets: agent/provider/catalog/data/default.json, agent/provider/preset/preset.go
+- Agent definitions: agent/definition/definition.go, agent/definition/decode.go, agent/definition/registry.go, agent/definition/source.go, agent/definition/rule.go, agent/definition/bind/bind.go, agent/definition/pgsource/pgsource.go, examples/agents/, cmd/saige/agents.go, cmd/saige-mcp/definition.go
 - CLI: cmd/saige/main.go, cmd/saige/serve.go, cmd/saige/serve_server.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/catalog.go, cmd/saige/connect.go
 - MCP: cmd/saige-mcp/main.go, cmd/saige-mcp/bridge.go, cmd/saige-mcp/http.go, cmd/saige-mcp/agenttool.go, cmd/saige-mcp/packs.go, cmd/saige-mcp/deps.go, agent/mcp/mcp.go, agent/mcp/pool.go, agent/mcp/catalog.go, agent/mcp/config.go
 - Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go, agent/types/compact_strategy.go

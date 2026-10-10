@@ -22,6 +22,10 @@ saige chat --tools harness --workspace ./repo  # add write_file, edit_file, exec
 saige ask "What is retrieval-augmented generation?"
 echo "Explain transformers" | saige ask --template minimal
 
+# Run an agent definition (see docs/agent-definitions.md)
+saige ask --agents-dir examples/agents --agent assistant "What does go.mod declare?"
+saige chat --agent repo-steward@^1 --workspace .
+
 # With RAG/KG tools attached to the agent
 saige chat --rag-db "postgres://localhost/mydb" --kg-db "postgres://localhost/mydb"
 saige ask --rag-db "$SAIGE_RAG_DB" "What does the paper say about attention?"
@@ -206,6 +210,27 @@ saige catalog schema                  # the JSON Schema of the file format
 ```
 
 A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
+
+## Agent Definitions
+
+An agent definition is a Markdown file with YAML frontmatter: `*.agent.md`, or any `.md` file in a directory named `agents`. Directories are searched lowest precedence first: `~/.config/saige/agents`, the project's `.saige/agents`, then each `--agents-dir`.
+
+```bash
+saige agent list                        # every definition, highest version first
+saige agent show repo-steward@^1        # source, digests, sub-agents, skill hashes, the file
+saige agent validate [PATH...]          # offline checks; exit 2 when anything is invalid
+saige agent schema                      # JSON Schema of the frontmatter
+saige ask --agent assistant "question"  # also chat, and serve (one pinned agent per session)
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--agent` | On `ask`, `chat` and `serve`: run a definition, `NAME` or `NAME@RANGE`. `--preset`, `--model` and `--provider` override its model; `--tools` and `--system` cannot be combined with it. |
+| `--agents-dir` | Add a directory of definitions (repeatable). |
+| `--mcp-config` | MCP configuration file whose servers a definition's `tools.mcp` may name. |
+| `--agents-reload` | On `serve --agent`: reload the definitions this often, so new sessions see edits. |
+
+A project's `.saige/agents` is untrusted unless `SAIGE_TRUST_PROJECT_AGENTS=1` or it is named with `--agents-dir`: it may not connect to MCP servers, use memory, loosen approvals, or use the `exec` and `web` harness groups. See [agent definitions](../../docs/agent-definitions.md).
 
 ## Provider Auto-Detection
 

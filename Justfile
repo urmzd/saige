@@ -15,7 +15,7 @@ test-race:
 # Run the Postgres-backed tests (no Ollama needed) against integration-up's database
 test-postgres:
     SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
-    go test -count=1 -p 1 ./integration/... ./agent/pgstore/... ./rag/pgstore/... ./rag/knowledge/pgstore/... ./agent/durable/duraturo/... ./cmd/saige/
+    go test -count=1 -p 1 ./integration/... ./agent/pgstore/... ./rag/pgstore/... ./rag/knowledge/pgstore/... ./agent/durable/duraturo/... ./agent/definition/... ./cmd/saige/
 
 # Run tests with coverage report
 test-cover:

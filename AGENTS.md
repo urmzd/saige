@@ -6,7 +6,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 
 | Package | Role |
 |---------|------|
-| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `models`, `update`, `version` |
+| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `agent` (definitions), `models`, `update`, `version` |
 | `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) over stdio JSON-RPC |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
 | `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
@@ -22,6 +22,9 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/privacy/` | Swaps personal data for placeholders at the provider and tool boundary |
 | `agent/guardrail/` | Built-in input and output guardrails: PII and regex detection, length, JSON schema, model classifier |
 | `agent/workspace/` | Content-addressed scratch artifacts for a run, with tools to write, read and list them |
+| `agent/definition/` | Agent definitions: Markdown with YAML frontmatter, strict decoding, JSON Schema, sources (directory, fs.FS, reader, HTTPS, layered, untrusted), registry with `name@range` resolution, digests, pinning and reload, approval rule syntax |
+| `agent/definition/bind/` | Binds a resolved definition to agent options: model, harness, MCP and registry tools, skills, memory, sub-agents, approval gate, compaction, guardrails, limits |
+| `agent/definition/pgsource/` | Postgres definition source with LISTEN/NOTIFY reload |
 | `agent/memory/` | Durable, host-scoped memory across conversations; writes need approval |
 | `agent/memory/pgstore/` | Postgres memory store: hybrid pgvector and BM25 recall, retention, and opt-in conversation recall |
 | `agent/memory/memorytest/` | Conformance suite every memory store runs |
@@ -84,6 +87,12 @@ saige rag search --db DSN --query Q # standalone RAG search
 saige kg search --db DSN --query Q  # standalone KG search
 saige serve --tools fs,fetch --workspace .   # HTTP + SSE turn stream with approve/cancel
 
+# Agent definitions (*.agent.md in ~/.config/saige/agents, .saige/agents, --agents-dir)
+saige agent list                               # every definition, highest version first
+saige agent show repo-steward@^1               # digests, sub-agents, skill hashes, the file
+saige agent validate examples/agents           # offline checks; exit 2 when invalid
+saige ask --agents-dir examples/agents --agent assistant "question"   # also chat and serve
+
 # Evals
 saige eval init evals                          # scaffold a corpus and manifest
 saige eval validate evals                      # check the manifest and corpus offline
@@ -100,6 +109,7 @@ saige-mcp --tools kg --db DSN                 # KG tools over MCP/stdio
 saige-mcp --tools all --db DSN --searxng-url URL
 saige-mcp --tools all --read-only             # omit every mutating tool
 saige-mcp --tools kg --db DSN --approval elicit   # elicit (default), host, or deny
+saige-mcp --tools kg --db DSN --agents-dir agents --agent researcher   # a definition as the agent tool
 ```
 
 Marked tools ask for approval through the MCP client by default (`--approval elicit`); `host` relies on the client's own permission prompt.
@@ -115,6 +125,7 @@ go vet ./...        # static analysis
 go build ./...      # compile all packages
 gofmt -w .          # format
 fsrc run README.md  # re-embed examples/quickstart into the README (CI fails on drift)
+fsrc run docs/agent-definitions.md  # re-embed examples/agents (a test fails on drift)
 ```
 
 ## Commit Convention

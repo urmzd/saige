@@ -1,0 +1,626 @@
+{
+  "$defs": {
+    "ApprovalSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ask": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "capabilities": {
+          "additionalProperties": {
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deny_after": {
+          "type": "integer"
+        },
+        "grant": {
+          "enum": [
+            "once",
+            "args",
+            "tool",
+            "session"
+          ],
+          "type": "string"
+        },
+        "hide_denied": {
+          "type": "boolean"
+        },
+        "ramp_after": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "BudgetSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_unpriced": {
+          "type": "boolean"
+        },
+        "max_cost": {
+          "type": "number"
+        },
+        "max_requests": {
+          "type": "integer"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "on_exceed": {
+          "enum": [
+            "stop",
+            "ask"
+          ],
+          "type": "string"
+        },
+        "warn_at": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CompactionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "items": {
+            "$ref": "#/$defs/CompactionSpec"
+          },
+          "type": "array"
+        },
+        "exclude_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "keep_last": {
+          "type": "integer"
+        },
+        "keep_tool_results": {
+          "type": "integer"
+        },
+        "keep_turns": {
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "type": "integer"
+        },
+        "select_k": {
+          "type": "integer"
+        },
+        "strategy": {
+          "enum": [
+            "none",
+            "sliding_window",
+            "summarize",
+            "clear_tool_results",
+            "keep_recent",
+            "summary",
+            "relevant_plus_summary",
+            "chain"
+          ],
+          "type": "string"
+        },
+        "summary_model": {
+          "type": "string"
+        },
+        "target_tokens": {
+          "type": "integer"
+        },
+        "threshold": {
+          "type": "integer"
+        },
+        "window_size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "type": "object"
+    },
+    "Dials": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "boolean"
+        },
+        "creativity": {
+          "enum": [
+            "deterministic",
+            "focused",
+            "balanced",
+            "creative"
+          ],
+          "type": "string"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningDial"
+        },
+        "reproducible": {
+          "type": "integer"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolChoice"
+        }
+      },
+      "type": "object"
+    },
+    "GuardrailSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "type": "integer"
+        },
+        "name": {
+          "enum": [
+            "pii",
+            "regex",
+            "max_length",
+            "classifier"
+          ],
+          "type": "string"
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "patterns": {
+          "items": {
+            "$ref": "#/$defs/PatternSpec"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "redact": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "GuardrailsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/GuardrailSpec"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "output": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/GuardrailSpec"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LimitsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/BudgetSpec"
+        },
+        "llm_timeout": {
+          "description": "Go duration, for example \"30s\" or \"2m\"",
+          "type": "string"
+        },
+        "max_iterations": {
+          "type": "integer"
+        },
+        "tool_timeout": {
+          "description": "Go duration, for example \"30s\" or \"2m\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MCPRef": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "MemorySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "type": "integer"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        },
+        "recall": {
+          "enum": [
+            "tool",
+            "inject",
+            "select",
+            "off"
+          ],
+          "type": "string"
+        },
+        "retention": {
+          "description": "Go duration, for example \"30s\" or \"2m\"",
+          "type": "string"
+        },
+        "store": {
+          "type": "string"
+        },
+        "write": {
+          "items": {
+            "enum": [
+              "semantic",
+              "episodic",
+              "procedural"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "store"
+      ],
+      "type": "object"
+    },
+    "ModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "use": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "use"
+      ],
+      "type": "object"
+    },
+    "PatternSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "expr": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "expr"
+      ],
+      "type": "object"
+    },
+    "ReasoningDial": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "enum": [
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "off",
+            "adaptive",
+            "on"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SkillRef": {
+      "additionalProperties": false,
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "lazy",
+            "eager",
+            "pinned",
+            "search",
+            "trigger"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "triggers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "SubagentBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_cost": {
+          "type": "number"
+        },
+        "max_iterations": {
+          "type": "integer"
+        },
+        "max_requests": {
+          "type": "integer"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "timeout": {
+          "description": "Go duration, for example \"30s\" or \"2m\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SubagentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/SubagentBudget"
+        },
+        "description": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "delegate",
+            "spawn",
+            "handoff"
+          ],
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "type": "object"
+    },
+    "ToolChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "none",
+            "required",
+            "named"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "ToolsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "harness": {
+          "items": {
+            "enum": [
+              "read",
+              "write",
+              "exec",
+              "web"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcp": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/MCPRef"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "registry": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/urmzd/saige/main/agent/definition/definition.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "saige/v1"
+      ],
+      "type": "string"
+    },
+    "approval": {
+      "$ref": "#/$defs/ApprovalSpec"
+    },
+    "compaction": {
+      "$ref": "#/$defs/CompactionSpec"
+    },
+    "description": {
+      "type": "string"
+    },
+    "dials": {
+      "$ref": "#/$defs/Dials"
+    },
+    "guardrails": {
+      "$ref": "#/$defs/GuardrailsSpec"
+    },
+    "limits": {
+      "$ref": "#/$defs/LimitsSpec"
+    },
+    "memory": {
+      "$ref": "#/$defs/MemorySpec"
+    },
+    "metadata": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ModelRef"
+        }
+      ]
+    },
+    "name": {
+      "maxLength": 48,
+      "pattern": "^[a-z]([a-z0-9-]*[a-z0-9])?$",
+      "type": "string"
+    },
+    "skills": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/SkillRef"
+          }
+        ]
+      },
+      "type": "array"
+    },
+    "subagents": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/SubagentRef"
+          }
+        ]
+      },
+      "type": "array"
+    },
+    "tools": {
+      "$ref": "#/$defs/ToolsSpec"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name",
+    "version"
+  ],
+  "title": "saige agent definition frontmatter",
+  "type": "object"
+}

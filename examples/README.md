@@ -20,6 +20,15 @@ The programs embedded in the root README's Quick Start. Each builds the `default
 | [`quickstart/dials`](quickstart/dials/) | Creativity and reasoning depth dials |
 | [`quickstart/rag`](quickstart/rag/) | Ingest and hybrid search on Postgres, with Ollama embeddings |
 
+## Agent definitions
+
+Definitions in [`agents/`](agents/), run with `saige ask --agents-dir examples/agents --agent NAME`. See [agent definitions](../docs/agent-definitions.md).
+
+| Definition | Description |
+|------------|-------------|
+| [`agents/assistant.agent.md`](agents/assistant.agent.md) | A concise assistant with the read harness group |
+| [`agents/repo-steward.agent.md`](agents/repo-steward.agent.md) | Read-only git commands allowed by approval rules, a preset with a fallback, and the assistant as a sub-agent |
+
 ## Agent
 
 | Example | Description |

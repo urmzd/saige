@@ -71,6 +71,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	}
 
 	addPersistentFlags(rootCmd)
+	addAgentPersistentFlags(rootCmd)
 	rootCmd.AddCommand(
 		newChatCmd(ctx),
 		newAskCmd(ctx),
@@ -80,6 +81,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		newServeCmd(ctx),
 		newModelsCmd(),
 		newCatalogCmd(ctx),
+		newAgentCmd(ctx),
 		newUpdateCmd(),
 		newVersionCmd(),
 	)
