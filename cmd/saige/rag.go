@@ -14,13 +14,14 @@ import (
 func newRagCmd(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rag",
-		Short: "RAG document operations (search, lookup, ingest, delete)",
+		Short: "RAG document operations (search, lookup, ingest, sync, delete)",
 	}
 
 	cmd.AddCommand(
 		newRagSearchCmd(ctx),
 		newRagLookupCmd(ctx),
 		newRagIngestCmd(ctx),
+		newRagSyncCmd(ctx),
 		newRagDeleteCmd(ctx),
 	)
 
