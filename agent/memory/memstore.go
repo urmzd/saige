@@ -90,7 +90,7 @@ func (m *MemStore) Recall(ctx context.Context, s Scope, query string, budget int
 		}
 	}
 	m.mu.RUnlock()
-	return rank(in, query, budget, m.now()), nil
+	return rankRecords(in, query, budget, m.now()), nil
 }
 
 // Forget implements Store.

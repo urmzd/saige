@@ -17,6 +17,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
 - [docs/func-tools.md](docs/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
 - [docs/approval-policy.md](docs/approval-policy.md): Approval policy: grants by scope and expiry, denial limits, capability defaults, replay
+- [docs/memory.md](docs/memory.md): Memory: host scope, approval-gated writes, recall modes, Postgres hybrid recall, conversation recall, retention, post-run extraction
 - [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
 - [docs/durable-execution.md](docs/durable-execution.md): Durable runs: local engine and duraturo engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
 - [docs/observability.md](docs/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
