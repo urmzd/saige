@@ -102,7 +102,11 @@ func (s PGSource) Lookup(ctx context.Context, ref Ref) (Record, error) {
 }
 
 func (s PGSource) load(ctx context.Context, conversation, node string) (Record, error) {
-	path, err := pgstore.NewStore(s.Pool, conversation, nil).LoadPath(ctx, types.NodeID(node))
+	store, err := pgstore.New(pgstore.Config{Pool: s.Pool, ConversationID: conversation})
+	if err != nil {
+		return Record{}, fmt.Errorf("online: load %s: %w", node, err)
+	}
+	path, err := store.LoadPath(ctx, types.NodeID(node))
 	if err != nil {
 		return Record{}, fmt.Errorf("online: load %s: %w", node, err)
 	}

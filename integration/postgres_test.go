@@ -30,7 +30,7 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 10*time.Minute)
 
-	store := agentpgstore.NewStore(pool, uuid.NewString(), nil)
+	store := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: uuid.NewString()}))
 	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "persistent",
 		SystemPrompt: "You are a concise assistant.",
@@ -108,7 +108,7 @@ func TestRAGPipelinePostgres(t *testing.T) {
 	truncate(t, pool, "rag_document", "rag_original", "rag_section", "rag_variant")
 
 	pipe, err := rag.NewPipeline(
-		rag.WithStore(ragpgstore.NewStore(pool, nil)),
+		rag.WithStore(must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))),
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithEmbedders(embedderregistry.NewTextOnly(variantTextEmbedder{embedder})),
 		rag.WithRecursiveChunker(256, 25),

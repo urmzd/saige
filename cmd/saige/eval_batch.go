@@ -35,7 +35,10 @@ func applyEvalBatch(client *harness.Client, runner *harness.Runner, scripts int,
 		}
 		store = fs
 	}
-	jobs := batch.NewRunner(bp, store, batch.WithPollInterval(10*time.Second, time.Minute))
+	jobs, err := batch.NewRunner(batch.RunnerConfig{Provider: bp, Store: store}, batch.WithPollInterval(10*time.Second, time.Minute))
+	if err != nil {
+		return err
+	}
 	client.Provider = batch.NewCoalescer(jobs, batch.WithWindow(evalBatchWindow), batch.WithJobPrefix("eval-"+suite))
 	runner.Concurrency = max(scripts, 1)
 	fmt.Fprintf(os.Stderr, "batch: %d scripts through %s batches (results may take minutes to hours)\n", scripts, client.ProviderName())

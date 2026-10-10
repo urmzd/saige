@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestLegacyRowsMigrate loads node rows the release before typed parts
@@ -64,7 +65,7 @@ func TestLegacyRowsMigrate(t *testing.T) {
 		}
 	}
 
-	store := NewStore(pool, conv, nil)
+	store := must.Get(New(Config{Pool: pool, ConversationID: conv}))
 	load := func() *tree.Tree {
 		t.Helper()
 		tr, err := tree.LoadFromStore(ctx, store, dump.RootID, "")

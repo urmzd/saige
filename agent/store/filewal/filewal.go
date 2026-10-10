@@ -227,10 +227,21 @@ type WAL struct {
 	reads int
 }
 
-// New opens (creating if necessary) the JSONL WAL at path. A torn final line
-// left by a crash mid-Commit is truncated away so later appends start on a
-// fresh line; the torn transaction was never acknowledged, so nothing is lost.
-func New(path string) (*WAL, error) {
+// Config names the WAL's file.
+type Config struct {
+	// Path is the JSONL log file, created when missing. Required.
+	Path string
+}
+
+// New opens (creating if necessary) the JSONL WAL at cfg.Path. A torn final
+// line left by a crash mid-Commit is truncated away so later appends start
+// on a fresh line; the torn transaction was never acknowledged, so nothing
+// is lost. An empty path is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config) (*WAL, error) {
+	path := cfg.Path
+	if path == "" {
+		return nil, fmt.Errorf("%w: filewal: Config.Path is required", types.ErrInvalidConfig)
+	}
 	if err := repairTail(path); err != nil {
 		return nil, fmt.Errorf("filewal: repair %s: %w", path, err)
 	}
@@ -271,7 +282,7 @@ func repairTail(path string) error {
 
 // Close closes the underlying file. In-flight (uncommitted) transactions are
 // discarded, matching crash semantics.
-func (w *WAL) Close() error {
+func (w *WAL) Close(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.f.Close()

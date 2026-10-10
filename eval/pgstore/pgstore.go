@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store"
 )
@@ -46,11 +47,24 @@ type Store struct {
 
 var _ store.Store = (*Store)(nil)
 
-// New returns a store for tenant on pool. It checks that the eval tables
-// exist and returns ErrSchemaMissing when they do not. Migration is
-// separate: call postgres.RunMigrations, which also checks the server
-// version, before New.
-func New(ctx context.Context, pool *pgxpool.Pool, tenant string) (*Store, error) {
+// Config names the database and tenant a Store serves.
+type Config struct {
+	// Pool is the database. Required. The caller owns it.
+	Pool *pgxpool.Pool
+	// Tenant scopes every run the store reads and writes.
+	Tenant string
+}
+
+// New returns a store for cfg.Tenant on cfg.Pool. It checks that the eval
+// tables exist, which is why it takes a context, and returns
+// ErrSchemaMissing when they do not. Migration is separate: call
+// postgres.RunMigrations, which also checks the server version, before New.
+// A nil pool is an error wrapping types.ErrInvalidConfig.
+func New(ctx context.Context, cfg Config) (*Store, error) {
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("%w: eval pgstore: Config.Pool is required", types.ErrInvalidConfig)
+	}
+	pool, tenant := cfg.Pool, cfg.Tenant
 	var missing int
 	err := pool.QueryRow(ctx, `SELECT count(*) FROM unnest($1::text[]) AS t(name) WHERE to_regclass(t.name) IS NULL`,
 		[]string{"eval_run", "eval_unit", "eval_unit_attempt", "eval_score"}).Scan(&missing)

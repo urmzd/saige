@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 	"github.com/urmzd/saige/rag/knowledge/types"
 )
@@ -106,7 +107,7 @@ func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int 
 func TestEntityGroupIsolation(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	idA := mustUpsert(t, store, "a", "Ada Lovelace", "person", "from a", testVec(1))
 	idB := mustUpsert(t, store, "b", "Ada Lovelace", "person", "from b", testVec(2))
@@ -207,7 +208,7 @@ func factUUIDs(facts []types.ScoredFact) map[string]bool {
 func TestSearchGroupScoping(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	relA, _ := seedGroup(t, store, "a", 1, nil)
 	relB, _ := seedGroup(t, store, "b", 2, nil)
@@ -274,7 +275,7 @@ func TestSearchGroupScoping(t *testing.T) {
 func TestEpisodeMetadataProvenanceRoundTrip(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	meta := map[string]string{"channel": "slack", "author": "alice"}
 	relUUID, epWithMeta := seedGroup(t, store, "g", 1, meta)
@@ -330,7 +331,7 @@ func TestEpisodeMetadataProvenanceRoundTrip(t *testing.T) {
 func TestDeleteEpisodesGroup(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	seedGroup(t, store, "a", 1, nil)
 	relB, epB := seedGroup(t, store, "b", 2, nil)
@@ -541,7 +542,7 @@ func TestMigrationUpgradeFromUnscopedKGSchema(t *testing.T) {
 		}
 	}
 
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	// Backfilled rows are visible to group-scoped search. Text search matches
 	// the g1 entities' summaries; embedding search needs a vector, which the

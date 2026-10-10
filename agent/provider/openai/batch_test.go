@@ -152,7 +152,7 @@ func TestBatchChatCompletions(t *testing.T) {
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
 	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL), WithMaxTokens(64)))
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-openai", batchRequests())
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestBatchResponses(t *testing.T) {
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
 	ra := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
-	r := batch.NewRunner(ra, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: ra, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-responses", batchRequests())
 	if err != nil {
 		t.Fatal(err)

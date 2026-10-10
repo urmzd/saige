@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
@@ -84,7 +85,7 @@ func TestRAGKeywordSearchSurvivesProcessBoundary(t *testing.T) {
 	ctx := context.Background()
 
 	newPipeline := func() ragtypes.Pipeline {
-		p, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder())...)
+		p, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 		if err != nil {
 			t.Fatalf("pipeline: %v", err)
 		}
@@ -133,7 +134,7 @@ func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	ctx := context.Background()
 
 	newPipeline := func() ragtypes.Pipeline {
-		p, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder())...)
+		p, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 		if err != nil {
 			t.Fatalf("pipeline: %v", err)
 		}
@@ -181,7 +182,7 @@ func TestRAGImageIngestReturnsTheImage(t *testing.T) {
 	auto.RegisterImages(agenttypes.ExtractorFunc(func(context.Context, []byte, agenttypes.MediaType) ([]agenttypes.UserPart, error) {
 		return []agenttypes.UserPart{agenttypes.Text("A bar chart of okapi sightings per year.")}, nil
 	}))
-	p, err := rag.NewPipeline(append(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder()), rag.WithContentExtractor(auto))...)
+	p, err := rag.NewPipeline(append(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder()), rag.WithContentExtractor(auto))...)
 	if err != nil {
 		t.Fatal(err)
 	}

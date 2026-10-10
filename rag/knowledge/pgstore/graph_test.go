@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgxvector "github.com/pgvector/pgvector-go/pgx"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/knowledge/internal/engine"
 	"github.com/urmzd/saige/rag/knowledge/types"
 )
@@ -76,7 +77,7 @@ func relationUUID(t *testing.T, res *types.IngestResult, relType string) string 
 func TestFactProvenanceFromAssertingEpisodes(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	eng := engine.New(engine.WithStore(NewStore(pool, nil)), engine.WithExtractor(provenanceScript))
+	eng := engine.New(engine.WithStore(must.Get(New(Config{Pool: pool}))), engine.WithExtractor(provenanceScript))
 
 	e1 := ingest(t, eng, &types.EpisodeInput{Name: "e1", Body: "Alice works at Acme", GroupID: "g"})
 	worksAt := relationUUID(t, e1, "works_at")
@@ -117,7 +118,7 @@ func episodeNames(eps []types.Episode) []string {
 func TestNamespaceSharesEntitiesAcrossDocuments(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	eng := engine.New(engine.WithStore(store), engine.WithExtractor(provenanceScript))
 
 	a := ingest(t, eng, &types.EpisodeInput{Name: "a", Body: "Alice works at Acme", GroupID: "ns", DocumentID: "docA"})
@@ -192,7 +193,7 @@ func TestNamespaceSharesEntitiesAcrossDocuments(t *testing.T) {
 func TestSearchMatchesFactTextAndBoundsRows(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	carol := mustUpsert(t, store, "g", "Carol", "person", "engineer", testVec(1))
 	dave := mustUpsert(t, store, "g", "Dave", "person", "manager", testVec(2))
@@ -323,7 +324,7 @@ func TestGetNodeBatchesHopsAndCapsSize(t *testing.T) {
 	}
 	t.Cleanup(traced.Close)
 
-	seed := NewStore(pool, nil)
+	seed := must.Get(New(Config{Pool: pool}))
 	center := mustUpsert(t, seed, "s", "Center", "thing", "", nil)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO kg_entity (uuid, name, type, group_id)
@@ -348,19 +349,19 @@ func TestGetNodeBatchesHopsAndCapsSize(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		opts          []StoreOption
+		opts          []Option
 		wantNeighbors int
 		wantEdges     int
 		wantTruncated bool
 	}{
 		{"full traversal", nil, 1000, 1001, false},
-		{"node cap", []StoreOption{WithTraversalLimits(100, 0)}, 100, 100, true},
-		{"edge cap", []StoreOption{WithTraversalLimits(0, 10)}, 10, 10, true},
+		{"node cap", []Option{WithTraversalLimits(100, 0)}, 100, 100, true},
+		{"edge cap", []Option{WithTraversalLimits(0, 10)}, 10, 10, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			counter.n.Store(0)
-			store := NewStore(traced, nil, tc.opts...)
+			store := must.Get(New(Config{Pool: traced}, tc.opts...))
 			node, err := store.GetNode(ctx, center, 2)
 			if err != nil {
 				t.Fatal(err)
@@ -490,7 +491,7 @@ func TestDeleteDocumentRestoresSupersededRelations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := testPool(t)
 			ctx := context.Background()
-			store := NewStore(pool, nil)
+			store := must.Get(New(Config{Pool: pool}))
 			eng := engine.New(engine.WithStore(store), engine.WithExtractor(reportsToScript))
 
 			rels := make(map[string]string)
@@ -537,7 +538,7 @@ func TestDeleteDocumentRestoresSupersededRelations(t *testing.T) {
 func TestSearchFactsAsOf(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	eng := engine.New(engine.WithStore(store), engine.WithExtractor(reportsToScript), engine.WithEmbedder(constEmbedder{}))
 
 	ingestAt := func(body string, y int) string {

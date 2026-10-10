@@ -2,6 +2,8 @@
 package pgstore
 
 import (
+	"fmt"
+	agenttypes "github.com/urmzd/saige/agent/types"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,14 +33,14 @@ type Store struct {
 	maxEdges int
 }
 
-// StoreOption configures a Store.
-type StoreOption func(*Store)
+// Option configures a Store.
+type Option func(*Store)
 
 // WithTraversalLimits caps the neighbors and edges one GetNode call
 // returns. A traversal that reaches either cap stops and reports
 // NodeDetail.Truncated. Values of zero or less keep the defaults
 // (DefaultMaxNodes, DefaultMaxEdges).
-func WithTraversalLimits(maxNodes, maxEdges int) StoreOption {
+func WithTraversalLimits(maxNodes, maxEdges int) Option {
 	return func(s *Store) {
 		if maxNodes > 0 {
 			s.maxNodes = maxNodes
@@ -49,15 +51,28 @@ func WithTraversalLimits(maxNodes, maxEdges int) StoreOption {
 	}
 }
 
-// NewStore creates a new PostgreSQL-backed knowledge store.
-// The pool should already be connected; schema migration is handled separately via postgres.RunMigrations.
-func NewStore(pool *pgxpool.Pool, logger *slog.Logger, opts ...StoreOption) *Store {
+// Config names the database a Store uses.
+type Config struct {
+	// Pool is the database, already connected; schema migration is
+	// separate (postgres.RunMigrations). Required. The caller owns it.
+	Pool *pgxpool.Pool
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// New creates a PostgreSQL-backed knowledge store. A nil pool is an error
+// wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Store, error) {
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("%w: knowledge pgstore: Config.Pool is required", agenttypes.ErrInvalidConfig)
+	}
+	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Store{pool: pool, logger: logger, maxNodes: DefaultMaxNodes, maxEdges: DefaultMaxEdges}
+	s := &Store{pool: cfg.Pool, logger: logger, maxNodes: DefaultMaxNodes, maxEdges: DefaultMaxEdges}
 	for _, o := range opts {
 		o(s)
 	}
-	return s
+	return s, nil
 }

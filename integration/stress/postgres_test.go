@@ -320,7 +320,7 @@ func TestPgstoreIngestAndHybridSearch(t *testing.T) {
 	)
 	pool := pgPool(t, 32)
 	ctx := testContext(t, 3*time.Minute)
-	s := pgstore.NewStore(pool, quietLogger)
+	s := must.Get(pgstore.New(pgstore.Config{Pool: pool, Logger: quietLogger}))
 
 	doc := func(k int) *ragtypes.Document {
 		id := fmt.Sprintf("doc-%04d", k)

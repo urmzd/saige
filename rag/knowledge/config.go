@@ -96,7 +96,11 @@ func NewGraph(ctx context.Context, opts ...Option) (types.Graph, error) {
 	if cfg.Store != nil {
 		store = cfg.Store
 	} else if cfg.PostgresPool != nil {
-		store = pgstore.NewStore(cfg.PostgresPool, cfg.Logger)
+		pg, err := pgstore.New(pgstore.Config{Pool: cfg.PostgresPool, Logger: cfg.Logger})
+		if err != nil {
+			return nil, err
+		}
+		store = pg
 	} else {
 		return nil, fmt.Errorf("no backend configured: use WithPostgres or WithStore")
 	}

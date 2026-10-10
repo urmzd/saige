@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
@@ -100,7 +101,7 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 
 	// Knowledge side: public constructor with an injected fake extractor and
 	// no embedder: SearchFacts degrades to fulltext-only, no LLM required.
-	kgStore := kgpgstore.NewStore(pool, nil)
+	kgStore := must.Get(kgpgstore.New(kgpgstore.Config{Pool: pool}))
 	graph, err := knowledge.NewGraph(ctx,
 		knowledge.WithStore(kgStore),
 		knowledge.WithExtractor(&kgFakeExtractor{}),
@@ -110,7 +111,7 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 	}
 
 	// RAG side: real pg store, real plaintext content extractor, fake embedder.
-	ragStore := ragpgstore.NewStore(pool, nil)
+	ragStore := must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))
 	pipe, err := rag.NewPipeline(
 		rag.WithStore(ragStore),
 		rag.WithContentExtractor(extractor.NewAuto()),

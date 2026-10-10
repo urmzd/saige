@@ -137,7 +137,11 @@ func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, wi
 			return nil, fmt.Errorf("rag embedder: %w", err)
 		}
 	}
-	pipeline, err := rag.NewPipeline(append(ragPipelineOptions(pgstore.NewStore(pool, nil), variantEmb), extra...)...)
+	store, err := pgstore.New(pgstore.Config{Pool: pool})
+	if err != nil {
+		return nil, fmt.Errorf("rag store: %w", err)
+	}
+	pipeline, err := rag.NewPipeline(append(ragPipelineOptions(store, variantEmb), extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rag pipeline: %w", err)
 	}

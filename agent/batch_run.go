@@ -89,7 +89,10 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 		if budget != nil {
 			ropts = append(ropts, batch.WithBudget(budget))
 		}
-		r = batch.NewRunner(bp, batch.NewMemoryStore(), ropts...)
+		var err error
+		if r, err = batch.NewRunner(batch.RunnerConfig{Provider: bp, Store: batch.NewMemoryStore()}, ropts...); err != nil {
+			return nil, err
+		}
 	}
 	id := cfg.JobID
 	if id == "" {

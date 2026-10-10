@@ -105,7 +105,7 @@ func TestBatchSubmitPollResults(t *testing.T) {
 		{CustomID: "too big", Messages: []types.Message{types.UserMsg(types.Text("x"))}},
 		{CustomID: "late", Messages: []types.Message{types.UserMsg(types.Text("y"))}},
 	}
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-anthropic", reqs)
 	if err != nil {
 		t.Fatal(err)

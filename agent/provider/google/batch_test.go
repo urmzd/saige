@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func redirectTo(t *testing.T, srv *httptest.Server) *http.Client {
@@ -80,7 +81,7 @@ func TestGeminiBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-gemini", batchReqs())
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +175,7 @@ func TestVertexBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := batch.NewRunner(vb, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: vb, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-vertex", batchReqs())
 	if err != nil {
 		t.Fatal(err)

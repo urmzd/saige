@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/pgstore"
 	"github.com/urmzd/saige/rag/source"
@@ -75,7 +76,7 @@ func TestRAGSyncSkipsSecretsAndKeepsSkippedDocuments(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pipe, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), hashEmbedder())...)
+	pipe, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 	if err != nil {
 		t.Fatal(err)
 	}

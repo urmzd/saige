@@ -20,6 +20,7 @@ import (
 	"github.com/urmzd/saige/agent/memory/memorytest"
 	agentpg "github.com/urmzd/saige/agent/pgstore"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -179,7 +180,8 @@ func newStore(t *testing.T, cfg Config) (*Store, *conceptEmbedder) {
 	if cfg.MinSimilarity == 0 {
 		cfg.MinSimilarity = 0.3
 	}
-	s, err := New(pool, cfg)
+	cfg.Pool = pool
+	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +201,7 @@ func TestConformance(t *testing.T) {
 }
 
 func TestNewRequiresEmbedder(t *testing.T) {
-	if _, err := New(&pgxpool.Pool{}, Config{}); err == nil {
+	if _, err := New(Config{Pool: &pgxpool.Pool{}}); err == nil {
 		t.Fatal("New without an embedder succeeded")
 	}
 }
@@ -439,7 +441,7 @@ func TestSelectorMode(t *testing.T) {
 
 func TestSearchRejectsDimensionMismatch(t *testing.T) {
 	pool := testPool(t)
-	s, err := New(pool, Config{Embedder: shortEmbedder{}})
+	s, err := New(Config{Pool: pool, Embedder: shortEmbedder{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +464,7 @@ func (shortEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 // saveTurns writes a conversation to agent/pgstore as a chain of nodes.
 func saveTurns(t *testing.T, pool *pgxpool.Pool, conversationID string, msgs ...types.Message) {
 	t.Helper()
-	store := agentpg.NewStore(pool, conversationID, nil)
+	store := must.Get(agentpg.New(agentpg.Config{Pool: pool, ConversationID: conversationID}))
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	parent := types.NodeID("")
 	for i, m := range msgs {

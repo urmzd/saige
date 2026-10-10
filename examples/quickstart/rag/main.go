@@ -33,7 +33,7 @@ func main() {
 
 	emb := ollama.NewEmbedder(ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"}))
 	pipe, err := rag.NewPipeline(
-		rag.WithStore(pgstore.NewStore(pool, nil)),
+		rag.WithStore(pgstore.New(pgstore.Config{Pool: pool})),
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
 		rag.WithRecursiveChunker(512, 64),

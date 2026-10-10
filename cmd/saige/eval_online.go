@@ -87,7 +87,7 @@ Lines, with personal data redacted.`,
 	_ = cmd.MarkFlagRequired("store")
 	fl.StringVar(&f.tenant, "tenant", "", tenantFlagUsage)
 	fl.StringVar(&f.source, "source", "", "PostgreSQL URL of the stored conversations (default: --store when it is a PostgreSQL URL)")
-	fl.StringVar(&f.scope, "scope", "", "Read only conversations of this tenant scope (agent/pgstore.NewScopedStore)")
+	fl.StringVar(&f.scope, "scope", "", "Read only conversations of this tenant scope (agent/pgstore.WithScope)")
 	fl.StringVar(&f.suite, "suite", online.DefaultSuite, "Suite name of the recorded run")
 	fl.DurationVar(&f.since, "since", time.Hour, "Window to sweep, ending now (ignored when --from is set)")
 	fl.StringVar(&f.from, "from", "", "Window start, RFC 3339")

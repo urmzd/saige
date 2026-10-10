@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/agent/agenttest"
 	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/rag"
@@ -173,7 +174,13 @@ func TestNewRAGPipelineEmbedderOnlyWhenNeeded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cf := newTestFlags(tt.provider, "", tt.embedProvider, "")
-			p, err := newRAGPipeline(context.Background(), nil, cf, tt.withEmbedder)
+			// The pool connects lazily, and building a pipeline sends nothing.
+			pool, err := pgxpool.New(context.Background(), "postgres://localhost:1/none")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pool.Close()
+			p, err := newRAGPipeline(context.Background(), pool, cf, tt.withEmbedder)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error")

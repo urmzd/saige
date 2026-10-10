@@ -14,11 +14,11 @@ import (
 func newWAL(t *testing.T) (*filewal.WAL, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "wal.jsonl")
-	w, err := filewal.New(path)
+	w, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { w.Close() })
+	t.Cleanup(func() { w.Close(context.Background()) })
 	return w, path
 }
 
@@ -76,12 +76,12 @@ func TestFileWALRoundTrip(t *testing.T) {
 	)
 
 	// Reopen from disk to prove durability, not in-memory state.
-	w.Close()
-	reopened, err := filewal.New(path)
+	w.Close(ctx)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 
 	committed, err := reopened.Recover(ctx)
 	if err != nil {
@@ -184,15 +184,15 @@ func TestFileWALTornFinalLineTolerated(t *testing.T) {
 	if len(committed) != 1 || committed[0] != txID {
 		t.Fatalf("Recover = %v, want [%s]", committed, txID)
 	}
-	w.Close()
+	w.Close(ctx)
 
 	// Reopening (the crash-restart path) truncates the torn tail so new
 	// commits land on a fresh line and remain readable.
-	reopened, err := filewal.New(path)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 	tx2 := commitTx(t, reopened, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n2"})
 
 	committed, err = reopened.Recover(ctx)
@@ -241,12 +241,12 @@ func TestFileWALMarkApplied(t *testing.T) {
 	}
 
 	// Applied markers survive reopen.
-	w.Close()
-	reopened, err := filewal.New(path)
+	w.Close(ctx)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 	committed, err = reopened.Recover(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -295,12 +295,12 @@ func TestFileWALCompact(t *testing.T) {
 	// works: a post-compact commit lands in the new file.
 	tx4 := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n4"})
 
-	w.Close()
-	reopened, err := filewal.New(path)
+	w.Close(ctx)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 
 	committed, err := reopened.Recover(ctx)
 	if err != nil {
@@ -356,11 +356,11 @@ func TestFileWALCompactCrashLeftoverTempIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := filewal.New(path)
+	w, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("New with stray compact temp: %v", err)
 	}
-	defer w.Close()
+	defer w.Close(ctx)
 
 	txID := commitTx(t, w, types.TxOp{Kind: types.TxOpSetBranch, BranchID: "main", TipID: "n1"})
 	committed, err := w.Recover(ctx)

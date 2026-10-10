@@ -78,12 +78,12 @@ func migrateTree(ctx context.Context, target string, write bool) (int, string, e
 		n, err := migrateTreeFile(target, raw, write)
 		return n, "tree", err
 	}
-	w, err := filewal.New(target)
+	w, err := filewal.New(filewal.Config{Path: target})
 	if err != nil {
 		return 0, "", err
 	}
 	n, err := w.MigrateMessages(ctx, !write)
-	if cerr := w.Close(); err == nil {
+	if cerr := w.Close(ctx); err == nil {
 		err = cerr
 	}
 	return n, "wal", err

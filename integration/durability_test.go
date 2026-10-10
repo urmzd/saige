@@ -32,7 +32,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	walPath := filepath.Join(t.TempDir(), "tree.wal")
 
 	// ── Process 1: run a conversation, checkpoint it ──────────────────
-	wal1, err := filewal.New(walPath)
+	wal1, err := filewal.New(filewal.Config{Path: walPath})
 	if err != nil {
 		t.Fatalf("open wal: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	}
 	rootID := tr.Root().ID
 	convID := string(rootID)
-	store1 := agentpgstore.NewStore(pool, convID, nil)
+	store1 := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: convID}))
 
 	tool, calls := addTool()
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
@@ -72,17 +72,17 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
-	if err := wal1.Close(); err != nil {
+	if err := wal1.Close(ctx); err != nil {
 		t.Fatalf("close wal: %v", err)
 	}
 
 	// ── Process 2 (simulated fresh process): recover + rehydrate ──────
-	wal2, err := filewal.New(walPath)
+	wal2, err := filewal.New(filewal.Config{Path: walPath})
 	if err != nil {
 		t.Fatalf("reopen wal: %v", err)
 	}
-	t.Cleanup(func() { _ = wal2.Close() })
-	store2 := agentpgstore.NewStore(pool, convID, nil)
+	t.Cleanup(func() { _ = wal2.Close(ctx) })
+	store2 := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: convID}))
 
 	recovered, err := agentsdk.RecoverAndLoadTree(ctx, wal2, store2, rootID, "")
 	if err != nil {
