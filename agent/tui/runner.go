@@ -296,6 +296,8 @@ const (
 	keyCtrlC = "ctrl+c"
 	// keyFilter opens the transcript filter.
 	keyFilter = "ctrl+f"
+	keyEsc    = "esc"
+	keyEnter  = "enter"
 )
 
 func newRunnerModel(agent *agentsdk.Agent, ctx context.Context, tmpl Template) runnerModel {
@@ -454,7 +456,7 @@ func (m runnerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
-	case "esc":
+	case keyEsc:
 		switch {
 		case m.running() && !m.stopping:
 			m.stop()
@@ -465,7 +467,7 @@ func (m runnerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "enter":
+	case keyEnter:
 		if m.phase == phaseMarker && m.marker() != nil {
 			return m.answerMarker()
 		}
@@ -530,10 +532,10 @@ func (m runnerModel) scrollKey(key string) scrollAction {
 // returns to the message input; Esc clears it.
 func (m runnerModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key := msg.String(); key {
-	case "enter", keyFilter:
+	case keyEnter, keyFilter:
 		m.endFilter()
 		return m, nil
-	case "esc":
+	case keyEsc:
 		m.filter = transcriptFilter{}
 		m.endFilter()
 		return m, nil

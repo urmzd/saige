@@ -285,10 +285,10 @@ func (m StreamModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.filtering {
 		switch key {
-		case "enter":
+		case keyEnter:
 			m.filtering = false
 			m.filterInput.Blur()
-		case "esc":
+		case keyEsc:
 			m.filtering = false
 			m.filterInput.Blur()
 			m.filter = transcriptFilter{}
@@ -314,7 +314,7 @@ func (m StreamModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.expandThinking = !m.expandThinking
 		m.refresh()
 		return m, nil
-	case "esc":
+	case keyEsc:
 		if m.filter.active() {
 			m.filter = transcriptFilter{}
 			m.refresh()
