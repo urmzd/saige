@@ -10,14 +10,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/rag"
+	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/pgstore"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
 // hashEmbedder is a deterministic bag-of-words embedder sized for the default
 // 768-dimension rag_variant.embedding column.
-func hashEmbedder() *textEmbedder {
-	return &textEmbedder{embed: func(_ context.Context, texts []string) ([][]float32, error) {
+func hashEmbedder() ragtypes.VariantEmbedder {
+	return embedderregistry.Text(embedFunc(func(_ context.Context, texts []string) ([][]float32, error) {
 		out := make([][]float32, len(texts))
 		for i, text := range texts {
 			v := make([]float32, 768)
@@ -38,7 +39,7 @@ func hashEmbedder() *textEmbedder {
 			out[i] = v
 		}
 		return out, nil
-	}}
+	}))
 }
 
 // ragTestPool connects to SAIGE_TEST_POSTGRES_DSN the way the CLI does and

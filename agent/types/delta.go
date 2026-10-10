@@ -149,7 +149,7 @@ func (MarkerDelta) isDelta() {}
 // mid-stream. The EventStream does not close: subsequent deltas come from the
 // new active agent. Consumers use this to re-render headers / attribution.
 type HandoffDelta struct {
-	From   string // previously active agent ("" if entry agent)
+	From   string // previously active agent; the entry agent reports its own name
 	To     string // newly active agent
 	Reason string
 }
@@ -313,14 +313,15 @@ func (TruncatedDelta) isDelta() {}
 // message is held until the run reaches a safe point.
 type QueuedDelta struct {
 	SubmissionID string
-	Mode         string // "queue", "steer", "interrupt", "subagent", or "wrap_up"
+	Mode         string // "queue", "steer", "interrupt", "subagent" for a spawned child's result, or "wrap_up"
 	Position     int    // 1-based position among pending submissions
 }
 
 func (QueuedDelta) isDelta() {}
 
-// InjectedDelta reports that a queued or steering message was appended to
-// the conversation and will be seen by the next model call.
+// InjectedDelta reports that a queued or steering message, or the result of
+// a spawned sub-agent, was appended to the conversation and will be seen by
+// the next model call.
 type InjectedDelta struct {
 	SubmissionID string
 	Mode         string // "queue", "steer", "interrupt", "subagent", or "wrap_up"

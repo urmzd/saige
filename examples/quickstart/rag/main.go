@@ -35,7 +35,7 @@ func main() {
 	pipe, err := rag.NewPipeline(
 		rag.WithStore(pgstore.NewStore(pool, nil)),
 		rag.WithContentExtractor(extractor.NewAuto()),
-		rag.WithEmbedders(embedderregistry.NewTextOnly(textEmbedder{emb})),
+		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
 		rag.WithRecursiveChunker(512, 64),
 		rag.WithBM25(nil), // keyword search runs in Postgres through pg_search
 	)
@@ -55,15 +55,4 @@ func main() {
 	for _, hit := range res.Hits {
 		fmt.Printf("%.3f %s\n", hit.Score, hit.Variant.Text)
 	}
-}
-
-// textEmbedder embeds the text of each content variant.
-type textEmbedder struct{ e *ollama.OllamaEmbedder }
-
-func (t textEmbedder) Embed(ctx context.Context, variants []ragtypes.ContentVariant) ([][]float32, error) {
-	texts := make([]string, len(variants))
-	for i, v := range variants {
-		texts[i] = v.Text
-	}
-	return t.e.Embed(ctx, texts)
 }
