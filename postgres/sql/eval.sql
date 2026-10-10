@@ -60,4 +60,6 @@ CREATE TABLE IF NOT EXISTS eval_score (
     FOREIGN KEY (tenant, run_id, key) REFERENCES eval_unit(tenant, run_id, key) ON DELETE CASCADE
 )
 ---
+ALTER TABLE eval_score ADD COLUMN IF NOT EXISTS inconclusive BOOLEAN NOT NULL DEFAULT false
+---
 CREATE INDEX IF NOT EXISTS idx_agent_node_finished ON agent_node(created_at, uuid) WHERE role = 'assistant'

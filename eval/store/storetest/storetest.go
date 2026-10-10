@@ -34,6 +34,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"CopiesOnPutAndGet", testCopies},
 		{"SaveAndLoadSuite", testSaveAndLoadSuite},
 		{"SaveSuiteRejectsDuplicateKeys", testSaveSuiteDuplicates},
+		{"InconclusiveRoundTrip", testInconclusiveRoundTrip},
 		{"LatestSucceeded", testLatestSucceeded},
 		{"ConcurrentPuts", testConcurrentPuts},
 	}
@@ -332,6 +333,50 @@ func testSaveAndLoadSuite(t *testing.T, s store.Store) {
 	}
 	if v := loaded.Check(eval.Assertion{Metric: "m", Op: eval.GTE, Threshold: 0.5}); len(v) != 1 || v[0].CaseID != "q2" {
 		t.Fatalf("Check on loaded suite = %v, want one violation on q2", v)
+	}
+}
+
+// testInconclusiveRoundTrip stores a suite with results that could not be
+// measured and checks that the classification, the counts, and the gate
+// outcome come back.
+func testInconclusiveRoundTrip(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	unmeasured := eval.Observation{ID: "q2"}
+	eval.MarkSubjectError(&unmeasured, eval.Infra(errors.New("provider down")))
+	suite := &eval.SuiteResult{
+		Name:      "suite",
+		CreatedAt: base,
+		Results: []eval.ObservationResult{
+			{Observation: eval.Observation{ID: "q1"}, Scores: []eval.Score{{Name: "m", Value: 1}, {Name: "judge", Error: "rate limited", Inconclusive: true}}},
+			{Observation: unmeasured},
+		},
+		SubjectErrors: 1,
+		Inconclusive:  2,
+	}
+	suite.Aggregate = eval.Aggregate(suite.Results)
+	if got := suite.Gate(eval.Assertion{Metric: "m", Op: eval.GTE, Threshold: 1}); got != eval.OutcomeInconclusive {
+		t.Fatalf("Gate = %s, want inconclusive", got)
+	}
+	run, err := store.SaveSuite(ctx, s, "r1", suite, nil, eval.Provenance{})
+	if err != nil {
+		t.Fatalf("SaveSuite: %v", err)
+	}
+	stored, err := s.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Outcome != eval.OutcomeInconclusive || stored.Inconclusive != 2 || len(stored.Violations) == 0 || !stored.Violations[0].Inconclusive() {
+		t.Fatalf("stored run = %+v", stored)
+	}
+	loaded, err := store.LoadSuite(ctx, s, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Inconclusive != 2 || !eval.SubjectInconclusive(loaded.Results[1].Observation) || !loaded.Results[0].Scores[1].Inconclusive {
+		t.Fatalf("LoadSuite = %+v", loaded)
+	}
+	if got := loaded.Gate(eval.Assertion{Metric: "m", Op: eval.GTE, Threshold: 1}); got != eval.OutcomeInconclusive {
+		t.Fatalf("Gate on the loaded suite = %s, want inconclusive", got)
 	}
 }
 

@@ -71,6 +71,10 @@ const (
 	CaseOnlyBase CaseStatus = "only_base"
 	// CaseOnlyExp means only the exp arm scored the case.
 	CaseOnlyExp CaseStatus = "only_exp"
+	// CaseInconclusive means the arms cannot be compared on the case
+	// because one of them could not measure it: its subject or scorer
+	// failed on infrastructure (see [IsInfra]).
+	CaseInconclusive CaseStatus = "inconclusive"
 )
 
 // CaseDiff is one case's change in one metric.
@@ -146,6 +150,14 @@ type Comparison struct {
 	// because the context ended.
 	BaseIncomplete int `json:"base_incomplete,omitempty"`
 	ExpIncomplete  int `json:"exp_incomplete,omitempty"`
+	// BaseInconclusive and ExpInconclusive count results that could not
+	// be measured because infrastructure failed; they are left out of the
+	// aggregates, deltas, and pass rates.
+	BaseInconclusive int `json:"base_inconclusive,omitempty"`
+	ExpInconclusive  int `json:"exp_inconclusive,omitempty"`
+	// Confidence is the confidence level of the intervals in DeltaStats and
+	// PassStats.
+	Confidence float64 `json:"confidence,omitempty"`
 	// BaseOutcome and ExpOutcome are each arm's gate outcome, when gated.
 	// [CompareVariants] sets them only when given [WithAssertions].
 	BaseOutcome Outcome `json:"base_outcome,omitempty"`
@@ -294,6 +306,7 @@ func CompareVariants(results []ObservationResult, baseline string, opts ...Optio
 // their verdicts.
 func summarize(s *SuiteResult, variant string, assertions []Assertion) {
 	s.Aggregate = Aggregate(s.Results)
+	s.Inconclusive = countInconclusive(s.Results)
 	for _, r := range s.Results {
 		if SubjectError(r.Observation) != "" {
 			s.SubjectErrors++
@@ -342,6 +355,8 @@ func compareSuites(cfg *Config, baseSuite, expSuite *SuiteResult) *Comparison {
 		ExpSubjectErrors:  expSuite.SubjectErrors,
 		BaseIncomplete:    baseSuite.Incomplete,
 		ExpIncomplete:     expSuite.Incomplete,
+		BaseInconclusive:  baseSuite.Inconclusive,
+		ExpInconclusive:   expSuite.Inconclusive,
 		BaseOutcome:       baseSuite.Outcome,
 		ExpOutcome:        expSuite.Outcome,
 	}
@@ -355,6 +370,7 @@ func compareSuites(cfg *Config, baseSuite, expSuite *SuiteResult) *Comparison {
 	if confidence <= 0 || confidence >= 1 {
 		confidence = DefaultConfidence
 	}
+	result.Confidence = confidence
 
 	for name, expVal := range expAgg {
 		baseVal, ok := baseAgg[name]
@@ -622,8 +638,9 @@ type diffKey struct {
 
 // caseRollup accumulates one arm's samples of one case.
 type caseRollup struct {
-	values      []float64
-	gated, pass int
+	values       []float64
+	gated, pass  int
+	inconclusive bool
 }
 
 func rollup(results []ObservationResult, key keyer) map[diffKey]*caseRollup {
@@ -643,6 +660,7 @@ func rollup(results []ObservationResult, key keyer) map[diffKey]*caseRollup {
 			if s.Error == "" {
 				c.values = append(c.values, s.Value)
 			}
+			c.inconclusive = c.inconclusive || s.Inconclusive
 			if s.Passed != nil {
 				c.gated++
 				if *s.Passed {
@@ -670,9 +688,26 @@ func (c *caseRollup) passRate() *float64 {
 	return &r
 }
 
+// unmeasured indexes the cases whose subject failed on infrastructure, which
+// have no scores to roll up.
+func unmeasured(results []ObservationResult, key keyer) map[pairKey]bool {
+	out := map[pairKey]bool{}
+	for _, r := range results {
+		if SubjectInconclusive(r.Observation) {
+			k := caseOf(key(r.Observation))
+			out[k] = true
+		}
+	}
+	return out
+}
+
 // caseDiffs builds the per-case diff between two arms.
 func caseDiffs(base, exp []ObservationResult, key keyer, lowerIsBetter map[string]bool) []CaseDiff {
 	baseR, expR := rollup(base, key), rollup(exp, key)
+	baseU, expU := unmeasured(base, key), unmeasured(exp, key)
+	inconclusive := func(r *caseRollup, u map[pairKey]bool, k diffKey) bool {
+		return (r != nil && r.inconclusive) || u[pairKey{id: k.id, turn: k.turn, variant: k.variant}]
+	}
 	keys := make([]diffKey, 0, len(baseR)+len(expR))
 	for k := range baseR {
 		keys = append(keys, k)
@@ -703,40 +738,55 @@ func caseDiffs(base, exp []ObservationResult, key keyer, lowerIsBetter map[strin
 			Base: b.mean(), Exp: e.mean(),
 			BasePassRate: b.passRate(), ExpPassRate: e.passRate(),
 		}
+		unknown := inconclusive(b, baseU, k) || inconclusive(e, expU, k)
 		if b.mean() == nil && e.mean() == nil && b.passRate() == nil && e.passRate() == nil {
-			// Every score errored on both sides: nothing to compare.
+			if unknown {
+				d.Status = CaseInconclusive
+				out = append(out, d)
+			}
+			// Otherwise every score errored on both sides: nothing to
+			// compare.
 			continue
 		}
-		var change float64
-		var known bool
-		switch {
-		case d.BasePassRate != nil && d.ExpPassRate != nil:
-			change, known = *d.ExpPassRate-*d.BasePassRate, true
-			if d.Base != nil && d.Exp != nil {
-				d.Change = *d.Exp - *d.Base
-			}
-		case d.Base != nil && d.Exp != nil:
-			change, known = *d.Exp-*d.Base, true
-			d.Change = change
-			if lowerIsBetter[k.metric] {
-				change = -change
-			}
-		}
-		switch {
-		case !known && (d.Base != nil || d.BasePassRate != nil):
-			d.Status = CaseOnlyBase
-		case !known:
-			d.Status = CaseOnlyExp
-		case change > eqTolerance:
-			d.Status = CaseImproved
-		case change < -eqTolerance:
-			d.Status = CaseRegressed
-		default:
-			d.Status = CaseUnchanged
-		}
+		d.Status = caseStatus(&d, lowerIsBetter[k.metric], unknown)
 		out = append(out, d)
 	}
 	return out
+}
+
+// caseStatus sets d.Change and returns the status of a case with a value or
+// verdict on at least one side. unknown reports that one arm could not
+// measure the case.
+func caseStatus(d *CaseDiff, lowerIsBetter, unknown bool) CaseStatus {
+	var change float64
+	var known bool
+	switch {
+	case d.BasePassRate != nil && d.ExpPassRate != nil:
+		change, known = *d.ExpPassRate-*d.BasePassRate, true
+		if d.Base != nil && d.Exp != nil {
+			d.Change = *d.Exp - *d.Base
+		}
+	case d.Base != nil && d.Exp != nil:
+		change, known = *d.Exp-*d.Base, true
+		d.Change = change
+		if lowerIsBetter {
+			change = -change
+		}
+	}
+	switch {
+	case !known && unknown:
+		return CaseInconclusive
+	case !known && (d.Base != nil || d.BasePassRate != nil):
+		return CaseOnlyBase
+	case !known:
+		return CaseOnlyExp
+	case change > eqTolerance:
+		return CaseImproved
+	case change < -eqTolerance:
+		return CaseRegressed
+	default:
+		return CaseUnchanged
+	}
 }
 
 // copyObservations deep-copies the dataset fields of each observation:

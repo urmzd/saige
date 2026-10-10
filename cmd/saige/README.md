@@ -162,17 +162,28 @@ saige eval run --manifest evals/saige.eval.json --store eval-results --resume <r
 saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=2000'
 saige eval runs --store eval-results [--suite S] [--limit N]
 saige eval show <run-id> --store eval-results
+saige eval compare <run-id> --store eval-results            # regression gate against the previous succeeded run
+saige eval compare --suite pr-42 --baseline-suite main --store eval-results --format markdown --output compare.md
 saige eval runs --store postgres://user:pass@host/db --tenant acme   # a PostgreSQL results store
 saige eval online --store postgres://user:pass@host/db --since 24h --rate 0.1 --scorer tool_success_rate
 saige eval online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
 saige eval scorers
 ```
 
-`runs`, `show` and `scorers` accept `--format json`.
+`runs`, `show` and `scorers` accept `--format json`. `compare` accepts `--format human|markdown|junit|json`.
 
 The API key is chosen by the host the request goes to, never by the first variable that happens to be set: `--api-key`, then the variable the manifest names with `api_key_env` (only the host's own variable or a `SAIGE_EVAL_*` variable), then `SAIGE_EVAL_API_KEY`, then the host's own key (`OPENAI_API_KEY` for api.openai.com, `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `GITHUB_TOKEN` for GitHub Models). The base URL comes from `--api-base`, the manifest, `SAIGE_EVAL_API_BASE`, or `OPENAI_BASE_URL`. A base URL from the manifest receives only `--api-key` or the host's own variable; confirm it with `--api-base` to send it `SAIGE_EVAL_API_KEY` or a `SAIGE_EVAL_*` variable.
 
-Each script gets an `outputs/` directory and a `metrics.json`. `--continue-on-error` (default true) keeps running after a failed experiment, writes `<experiment>/error.json`, and exits non-zero with all failures joined. The command exits with status 1 when a script fails or an assertion is violated, and with status 2 when the manifest or corpus fails validation (`saige eval validate` uses the same code). Errors are printed once, as `error: <msg>`.
+Each script gets an `outputs/` directory and a `metrics.json`. `--continue-on-error` (default true) keeps running after a failed experiment, writes `<experiment>/error.json`, and exits non-zero with all failures joined. A script or edit turn whose request fails on infrastructure (a rate limit, an outage, a timeout, bad credentials, an unreachable endpoint, or cancellation) is inconclusive rather than failed, since the model never answered.
+
+| Exit status | `saige eval run` | `saige eval compare` |
+| --- | --- | --- |
+| 0 | every script ran and every assertion held, with at most `--max-inconclusive` of the scripts inconclusive | no metric regressed |
+| 1 | a script failed for another reason, or a measured result violated an assertion | a metric regressed, or the candidate failed its `--assert` gate |
+| 2 | the manifest, corpus or flags are invalid (`saige eval validate` uses the same code) | invalid flags, or the baseline is the candidate |
+| 3 | nothing failed for real, but more than `--max-inconclusive` (default 0) of the scripts were inconclusive or the gate was; rerun it, for example with `--resume` | inconclusive: a metric had fewer than `--min-cases` paired cases, only one run measured it, or the candidate's gate was inconclusive |
+
+Errors are printed once, as `error: <msg>`. `saige eval compare` pairs the cases both runs measured, checks each metric's pass rate (gated metrics) or mean, and fails when a drop beyond `--max-regression` (or a per-metric `--threshold`) is significant at `--significance`. Its flags, report formats and a GitHub Actions recipe are in [Regression Gate in CI](../../eval/README.md#regression-gate-in-ci).
 
 ## Presets and the Catalog
 

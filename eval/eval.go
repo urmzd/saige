@@ -82,9 +82,15 @@ type Score struct {
 	// Samples is set when the score came from a [Sampled] scorer: Value is
 	// then the reduced value and Samples describes the spread behind it.
 	Samples *SampleStats `json:"samples,omitempty"`
+	// Inconclusive is set with Error when the scorer failed on
+	// infrastructure (see [IsInfra]), such as a judge whose provider was
+	// down. Such a score says nothing about the output: gates report it as
+	// inconclusive instead of failed and leave its Passed nil.
+	Inconclusive bool `json:"inconclusive,omitempty"`
 	// Passed is set by [SuiteResult.Gate] when a per-case [Assertion]
 	// covers this score: true when every such assertion held, false when
-	// one failed or the score errored. Nil means no gate applied.
+	// one failed or the score errored. Nil means no gate applied, or an
+	// inconclusive score.
 	Passed *bool `json:"passed,omitempty"`
 }
 
@@ -111,7 +117,12 @@ type SuiteResult struct {
 	UnstableScores int `json:"unstable_scores,omitempty"`
 	// SubjectErrors counts observations whose subject failed (see
 	// [AnnotationSubjectError]). They appear in Results with no scores.
+	// Failures on infrastructure are counted here and in Inconclusive.
 	SubjectErrors int `json:"subject_errors,omitempty"`
+	// Inconclusive counts results that could not be measured (see
+	// [ObservationResult.Inconclusive]): the subject or a scorer failed on
+	// infrastructure. They are left out of pass rates and aggregates.
+	Inconclusive int `json:"inconclusive,omitempty"`
 	// Incomplete counts observations that were not scored because the
 	// context ended first. They are left out of Results, and Run returns
 	// the context's error alongside the partial suite.
@@ -119,7 +130,9 @@ type SuiteResult struct {
 	// Outcome is the gate result set by [SuiteResult.Gate]; empty when the
 	// suite was never gated.
 	Outcome Outcome `json:"outcome,omitempty"`
-	// Violations lists the failed gates behind a failed Outcome.
+	// Violations lists the failed gates behind a failed or inconclusive
+	// Outcome. A passed outcome can still list inconclusive violations
+	// within the [GatePolicy] tolerance.
 	Violations []Violation `json:"violations,omitempty"`
 }
 
@@ -128,8 +141,8 @@ type SuiteResult struct {
 // (typically by a [Subject]).
 //
 // A scorer error does not abort the suite: it is recorded as a [Score] with
-// its Error field set, excluded from [Aggregate], and counted in
-// [SuiteResult.ErroredCases]. If scorers errored and no score succeeded
+// its Error field set (and Inconclusive when [IsInfra] reports the error),
+// excluded from [Aggregate], and counted in [SuiteResult.ErroredCases]. If scorers errored and no score succeeded
 // anywhere in the suite, Run returns the suite result alongside a non-nil
 // error so callers can still inspect per-case failures.
 //
@@ -249,9 +262,10 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 		UnstableScores: unstable,
 		SubjectErrors:  subjectErrors,
 		Incomplete:     len(observations) - len(completed),
+		Inconclusive:   countInconclusive(completed),
 	}
 	if len(cfg.Assertions) > 0 {
-		suite.Gate(cfg.Assertions...)
+		suite.GateWith(cfg.GatePolicy, cfg.Assertions...)
 	}
 
 	if suite.Incomplete > 0 {
@@ -286,7 +300,7 @@ func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, lo
 				return nil, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error()})
+			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {
@@ -310,8 +324,9 @@ func Populate(ctx context.Context, observations []Observation, subject Subject) 
 
 // PopulateAll runs a [Subject] against every observation, up to the
 // [WithConcurrency] limit at once. A subject error does not stop the others:
-// it is recorded on that observation under [AnnotationSubjectError], and
-// [Run] reports the observation without scoring it. PopulateAll returns the
+// it is recorded on that observation under [AnnotationSubjectError] (with
+// [AnnotationSubjectInconclusive] when [IsInfra] reports it), and [Run]
+// reports the observation without scoring it. PopulateAll returns the
 // joined subject errors, or nil when every subject succeeded. If ctx ends,
 // observations not yet started are marked with the context's error.
 func PopulateAll(ctx context.Context, observations []Observation, subject Subject, opts ...Option) error {
@@ -358,16 +373,11 @@ func finishPopulate(cfg *Config, observations []Observation, errs []error) error
 	var joined []error
 	for i, err := range errs {
 		obs := &observations[i]
+		MarkSubjectError(obs, err)
 		if err == nil {
-			delete(obs.Annotations, AnnotationSubjectError)
 			continue
 		}
 		cfg.Logger.Error("subject failed", "observation", obs.ID, "error", err)
-		msg, _ := json.Marshal(err.Error())
-		if obs.Annotations == nil {
-			obs.Annotations = map[string]json.RawMessage{}
-		}
-		obs.Annotations[AnnotationSubjectError] = msg
 		joined = append(joined, fmt.Errorf("observation %q: %w", obs.ID, err))
 	}
 	return errors.Join(joined...)

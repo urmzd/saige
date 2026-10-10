@@ -499,3 +499,56 @@ func TestWatchCatchesUpFromSince(t *testing.T) {
 		t.Fatalf("catch-up report = %+v", rep)
 	}
 }
+
+// TestJudgeOutageIsInconclusive checks that a judge whose provider is down
+// leaves an inconclusive score: counted on the run, and never a reason to
+// promote the unit as a failing case.
+func TestJudgeOutageIsInconclusive(t *testing.T) {
+	ctx := context.Background()
+	outage := &types.ProviderError{Provider: "scripted", Kind: types.ErrorKindUnavailable, Code: 503, Err: errors.New("overloaded")}
+	prov := &agenttest.ScriptedProvider{
+		Responses: [][]types.Delta{nil, judgeResponse(0.9)},
+		Errors:    []error{outage, nil},
+	}
+	ms := memstore.New()
+	s := &online.Sampler{
+		Store:   ms,
+		Scorers: []eval.Scorer{eval.ContainsScorer("a")},
+		Judges:  []eval.Scorer{eval.NewJudgeScorer(&online.BudgetedGenerator{Provider: prov})},
+	}
+	rep, err := s.Sweep(ctx, manyRecords(2), online.Window{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Run.Inconclusive != 1 {
+		t.Fatalf("run inconclusive = %d, want 1: %+v", rep.Run.Inconclusive, rep.Run)
+	}
+	units, _ := ms.Units(ctx, rep.Run.ID, store.UnitFilter{})
+	var judged []eval.Score
+	for _, u := range units {
+		for _, sc := range u.Scores {
+			if sc.Name == "judge_score" {
+				judged = append(judged, sc)
+			}
+		}
+	}
+	inconclusive := 0
+	for _, sc := range judged {
+		if sc.Inconclusive {
+			if sc.Error == "" {
+				t.Fatalf("inconclusive score without its error: %+v", sc)
+			}
+			inconclusive++
+		}
+	}
+	if len(judged) != 2 || inconclusive != 1 {
+		t.Fatalf("judge scores = %+v, want one of two inconclusive", judged)
+	}
+	cases, err := online.Promote(ctx, units, online.PromoteOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) != 0 {
+		t.Fatalf("promoted %d cases from a judge outage: %+v", len(cases), cases)
+	}
+}

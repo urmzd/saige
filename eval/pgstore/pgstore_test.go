@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,5 +212,156 @@ func TestReplaceRefreshesScoreIndex(t *testing.T) {
 	}
 	if len(reg) != 1 || *reg[0].Candidate != 0 {
 		t.Fatalf("diff after replacing the unit = %+v, want the new attempt's score", reg)
+	}
+}
+
+func TestDiffLeavesOutInconclusiveCandidates(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := newStore(t, pool)
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	saveRun(t, s, "base", base, map[string]float64{"q1": 1, "q2": 1, "q3": 1})
+	if err := s.CreateRun(ctx, eval.RunRecord{ID: "cand", Suite: "s", Status: eval.RunSucceeded, StartedAt: base.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// q1: the judge's provider was down. q2: the subject never answered.
+	// q3: the scorer failed for a real reason.
+	unmeasured := eval.Observation{ID: "q2"}
+	eval.MarkSubjectError(&unmeasured, eval.Infra(errors.New("connector unreachable")))
+	for _, u := range []eval.Unit{
+		{RunID: "cand", Observation: eval.Observation{ID: "q1"}, Scores: []eval.Score{{Name: "m", Error: "503", Inconclusive: true}}},
+		{RunID: "cand", Observation: unmeasured},
+		{RunID: "cand", Observation: eval.Observation{ID: "q3"}, Scores: []eval.Score{{Name: "m", Error: "bad output"}}},
+	} {
+		if _, err := s.PutUnit(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := s.Diff(ctx, "base", "cand", pgstore.DiffFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inconclusive := map[string]bool{}
+	for _, d := range all {
+		inconclusive[d.Key] = d.CandidateInconclusive
+	}
+	if !inconclusive["q1/0"] || !inconclusive["q2/0"] || inconclusive["q3/0"] {
+		t.Fatalf("candidate inconclusive by key = %v, want q1 and q2 only: %+v", inconclusive, all)
+	}
+
+	reg, err := s.Diff(ctx, "base", "cand", pgstore.DiffFilter{Regressions: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg) != 1 || reg[0].Key != "q3/0" || !reg[0].CandidateErrored {
+		t.Fatalf("regressions = %+v, want only q3 (a real scorer failure)", reg)
+	}
+
+	units, err := s.Units(ctx, "cand", store.UnitFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	suite := eval.SuiteFromUnits(eval.RunRecord{Suite: "s"}, units)
+	if suite.Inconclusive != 2 {
+		t.Fatalf("inconclusive units read back = %d, want 2", suite.Inconclusive)
+	}
+}
+
+// freshDatabase creates an empty database on SAIGE_TEST_POSTGRES_DSN's server
+// and returns a pool on it, so a test can change the schema without touching
+// the tables other tests share.
+func freshDatabase(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	testPool(t) // skips without a server
+	ctx := context.Background()
+	dsn := os.Getenv("SAIGE_TEST_POSTGRES_DSN")
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	name := "saige_eval_pgstore_" + strings.ToLower(rand.Text()[:12])
+	if _, err := admin.Exec(ctx, `CREATE DATABASE `+name); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, name))
+	})
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + name
+	boot, err := pgxpool.New(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = boot.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
+	boot.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := postgres.NewPool(ctx, postgres.Config{URL: u.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestMigrationKeepsOlderScoresReadable migrates a database that an older
+// release created, without eval_score.inconclusive, and checks that its rows
+// read as conclusive and new rows can be written.
+func TestMigrationKeepsOlderScoresReadable(t *testing.T) {
+	pool := freshDatabase(t)
+	ctx := context.Background()
+	if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE eval_score DROP COLUMN inconclusive`); err != nil {
+		t.Fatal(err)
+	}
+	s, err := pgstore.New(ctx, pool, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	// Write the old release's rows directly, as its PutUnit did.
+	if err := s.CreateRun(ctx, eval.RunRecord{ID: "old", Suite: "s", Status: eval.RunSucceeded, StartedAt: base}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO eval_unit (tenant, run_id, key, attempt, observation_id, labels, recorded_at, unit)
+		VALUES ('', 'old', 'q1/0', 1, 'q1', '{}', now(),
+		        '{"run_id":"old","key":"q1/0","attempt":1,"observation":{"id":"q1","turn":0,"input":null,"output":null,"timing":{"total_ms":0}},"scores":[{"name":"m","value":0,"error":"timeout"}]}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO eval_score (tenant, run_id, key, name, value, errored, passed)
+		VALUES ('', 'old', 'q1/0', 'm', 0, true, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{}); err != nil {
+		t.Fatalf("migrating an older schema: %v", err)
+	}
+	saveRun(t, s, "new", base.Add(time.Hour), map[string]float64{"q1": 1})
+	diffs, err := s.Diff(ctx, "new", "old", pgstore.DiffFilter{Regressions: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diffs) != 1 || !diffs[0].CandidateErrored || diffs[0].CandidateInconclusive {
+		t.Fatalf("diff against the older run = %+v, want its errored score as a conclusive regression", diffs)
+	}
+	loaded, err := store.LoadSuite(ctx, s, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Inconclusive != 0 || len(loaded.Results) != 1 || loaded.Results[0].Scores[0].Error != "timeout" {
+		t.Fatalf("older run read back as %+v", loaded)
+	}
+	if loaded.Gate(eval.Assertion{Metric: "m", Op: eval.GTE, Threshold: 1}) != eval.OutcomeFailed {
+		t.Fatalf("older errored score gated as %s, want failed", loaded.Outcome)
 	}
 }

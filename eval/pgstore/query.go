@@ -78,6 +78,13 @@ type ScoreDiff struct {
 	// its value is meaningless.
 	BaseErrored      bool `json:"base_errored,omitempty"`
 	CandidateErrored bool `json:"candidate_errored,omitempty"`
+	// BaseInconclusive and CandidateInconclusive mark an errored score
+	// whose scorer failed on infrastructure (see [eval.Score.Inconclusive]),
+	// which says nothing about the output. CandidateInconclusive is also
+	// set for a score missing from the candidate because its subject failed
+	// on infrastructure for that case (see [eval.SubjectInconclusive]).
+	BaseInconclusive      bool `json:"base_inconclusive,omitempty"`
+	CandidateInconclusive bool `json:"candidate_inconclusive,omitempty"`
 }
 
 // Delta is Candidate minus Base. ok is false when either side is missing or
@@ -94,7 +101,9 @@ type DiffFilter struct {
 	// Metric keeps one metric; empty keeps all.
 	Metric string
 	// Regressions keeps only scores that dropped by more than MinDrop, plus
-	// keys whose candidate score errored or went missing.
+	// keys whose candidate score errored or went missing. A candidate score
+	// that is inconclusive (see ScoreDiff.CandidateInconclusive) is not a
+	// regression and is left out.
 	Regressions bool
 	// MinDrop is the smallest drop counted as a regression.
 	MinDrop float64
@@ -110,27 +119,42 @@ func (s *Store) Diff(ctx context.Context, baseRunID, candidateRunID string, filt
 	}
 	rows, err := s.pool.Query(ctx, `
 		WITH b AS (
-		    SELECT key, name, value, errored FROM eval_score
-		    WHERE tenant = $1 AND run_id = $2 AND ($4 = '' OR name = $4)
+		    SELECT s.key, s.name, s.value, s.errored, s.inconclusive, u.observation_id
+		    FROM eval_score s
+		    JOIN eval_unit u ON u.tenant = s.tenant AND u.run_id = s.run_id AND u.key = s.key
+		    WHERE s.tenant = $1 AND s.run_id = $2 AND ($4 = '' OR s.name = $4)
 		), c AS (
-		    SELECT key, name, value, errored FROM eval_score
+		    SELECT key, name, value, errored, inconclusive FROM eval_score
 		    WHERE tenant = $1 AND run_id = $3 AND ($4 = '' OR name = $4)
+		), unmeasured AS (
+		    SELECT DISTINCT observation_id FROM eval_unit
+		    WHERE tenant = $1 AND run_id = $3
+		      AND unit->'observation'->'annotations'->'eval.subject_inconclusive' = 'true'::jsonb
+		), j AS (
+		    SELECT coalesce(b.key, c.key) AS key, coalesce(b.name, c.name) AS name,
+		           b.key IS NULL AS b_missing, c.key IS NULL AS c_missing,
+		           b.value AS b_value, coalesce(b.errored, false) AS b_errored,
+		           coalesce(b.inconclusive, false) AS b_inconclusive,
+		           c.value AS c_value, coalesce(c.errored, false) AS c_errored,
+		           coalesce(c.inconclusive, false)
+		               OR (c.key IS NULL AND b.observation_id IN (SELECT observation_id FROM unmeasured)) AS c_inconclusive
+		    FROM b FULL JOIN c ON b.key = c.key AND b.name = c.name
 		)
-		SELECT coalesce(b.key, c.key), coalesce(b.name, c.name),
-		       b.value, coalesce(b.errored, false), c.value, coalesce(c.errored, false)
-		FROM b FULL JOIN c ON b.key = c.key AND b.name = c.name
+		SELECT key, name, b_value, b_errored, b_inconclusive, c_value, c_errored, c_inconclusive
+		FROM j
 		WHERE NOT $5::bool
-		   OR (b.key IS NOT NULL AND NOT b.errored AND (
-		          c.key IS NULL OR c.errored OR c.value < b.value - $6))
-		ORDER BY CASE WHEN b.errored OR c.errored THEN NULL ELSE c.value - b.value END ASC NULLS FIRST,
-		         coalesce(b.name, c.name) COLLATE "C", coalesce(b.key, c.key) COLLATE "C"`,
+		   OR (NOT b_missing AND NOT b_errored AND NOT c_inconclusive AND (
+		          c_missing OR c_errored OR c_value < b_value - $6))
+		ORDER BY CASE WHEN b_errored OR c_errored THEN NULL ELSE c_value - b_value END ASC NULLS FIRST,
+		         name COLLATE "C", key COLLATE "C"`,
 		s.tenant, baseRunID, candidateRunID, filter.Metric, filter.Regressions, filter.MinDrop)
 	if err != nil {
 		return nil, fmt.Errorf("eval pgstore: diff: %w", err)
 	}
 	diffs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ScoreDiff, error) {
 		var d ScoreDiff
-		err := row.Scan(&d.Key, &d.Metric, &d.Base, &d.BaseErrored, &d.Candidate, &d.CandidateErrored)
+		err := row.Scan(&d.Key, &d.Metric, &d.Base, &d.BaseErrored, &d.BaseInconclusive,
+			&d.Candidate, &d.CandidateErrored, &d.CandidateInconclusive)
 		return d, err
 	})
 	if err != nil {

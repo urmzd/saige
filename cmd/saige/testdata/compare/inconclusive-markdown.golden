@@ -1,0 +1,34 @@
+### saige eval compare: inconclusive
+
+**inconclusive**: 0 of 1 metrics regressed. Candidate `outage` against baseline `base` (commit `c0ffee040000` against `c0ffee010000`), suite `nightly`.
+
+0 baseline and 18 candidate results could not be measured because infrastructure failed; they are left out.
+
+| Metric | Basis | Baseline | Candidate | Delta | 95% interval | Cases | Status |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- |
+| `correct` | pass rate | 1 | 1 | +0 | [+0, +0] | 2 | **inconclusive**: 2 paired cases, fewer than the 3 required |
+
+<details><summary>Inconclusive cases (18)</summary>
+
+| Case | Metric | Baseline | Candidate |
+| --- | --- | ---: | ---: |
+| `q00` | `correct` | pass 1 | unmeasured |
+| `q01` | `correct` | pass 1 | unmeasured |
+| `q02` | `correct` | pass 1 | unmeasured |
+| `q03` | `correct` | pass 1 | unmeasured |
+| `q04` | `correct` | pass 1 | unmeasured |
+| `q05` | `correct` | pass 1 | unmeasured |
+| `q06` | `correct` | pass 1 | unmeasured |
+| `q07` | `correct` | pass 1 | unmeasured |
+| `q08` | `correct` | pass 1 | unmeasured |
+| `q09` | `correct` | pass 1 | unmeasured |
+| `q10` | `correct` | pass 1 | unmeasured |
+| `q11` | `correct` | pass 1 | unmeasured |
+| `q12` | `correct` | pass 1 | unmeasured |
+| `q13` | `correct` | pass 1 | unmeasured |
+| `q14` | `correct` | pass 1 | unmeasured |
+| `q15` | `correct` | pass 1 | unmeasured |
+| `q16` | `correct` | pass 1 | unmeasured |
+| `q17` | `correct` | pass 1 | unmeasured |
+
+</details>

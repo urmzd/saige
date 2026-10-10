@@ -89,6 +89,13 @@ type Runner struct {
 	Assert []eval.Assertion
 	// OnGated, when set, is called with the gated suite after Assert ran.
 	OnGated func(*eval.SuiteResult)
+
+	// MaxInconclusive is the largest share of scripts that may be
+	// inconclusive, because their requests failed on infrastructure (see
+	// [eval.IsInfra]), while the run still counts as decided. Above it, a
+	// run with no real failure returns an [*InconclusiveError]. Zero, the
+	// default, tolerates none. It is also the [eval.GatePolicy] of Assert.
+	MaxInconclusive float64
 }
 
 // ErrorFile is the per-script failure record the [Runner] writes.
@@ -121,6 +128,37 @@ func (e *AssertionError) Error() string {
 // Is matches [ErrAssertionsFailed].
 func (e *AssertionError) Is(target error) bool { return target == ErrAssertionsFailed }
 
+// ErrInconclusive matches an [*InconclusiveError] with errors.Is.
+var ErrInconclusive = errors.New("eval run inconclusive")
+
+// InconclusiveError reports a run that did not decide: nothing failed for
+// real, but more scripts than [Runner.MaxInconclusive] tolerates could not
+// be measured because infrastructure failed, or the gate was
+// [eval.OutcomeInconclusive]. Rerun it, for example with [Runner.Resume].
+type InconclusiveError struct {
+	// Rate is the share of scripts that were inconclusive, and Max the
+	// share tolerated.
+	Rate, Max float64
+	// Violations are the inconclusive gate violations, when gated.
+	Violations []eval.Violation
+	// Err joins the script failures behind the outcome, if any.
+	Err error
+}
+
+func (e *InconclusiveError) Error() string {
+	msg := fmt.Sprintf("run inconclusive: %.3g%% of scripts could not be measured (%.3g%% tolerated)", 100*e.Rate, 100*e.Max)
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+// Is matches [ErrInconclusive].
+func (e *InconclusiveError) Is(target error) bool { return target == ErrInconclusive }
+
+// Unwrap returns the script failures.
+func (e *InconclusiveError) Unwrap() error { return e.Err }
+
 // Run executes all flows for each script. Scripts whose metrics file
 // already exists are skipped unless Force is set. Progress is logged to
 // stderr. A failed script writes error.json in its directory. Without
@@ -131,12 +169,15 @@ func (e *AssertionError) Is(target error) bool { return target == ErrAssertionsF
 // a failure to save is joined into the returned error. With Assert set, the
 // recorded units are gated and a failed gate is joined as an
 // [*AssertionError].
+//
+// A script that fails on infrastructure (see [eval.IsInfra]), including a
+// cancelled run, is inconclusive rather than failed. When no script failed
+// for real and no gate failed, Run returns an [*InconclusiveError] wrapping
+// those failures if the share of inconclusive scripts exceeds
+// MaxInconclusive, or the gate was inconclusive, and nil otherwise.
 func (r *Runner) Run(ctx context.Context, scripts []Script) error {
 	if r.Resume != "" && r.Results == nil {
 		return errNoResumeStore(r.Resume)
-	}
-	if r.Results == nil && len(r.Assert) == 0 {
-		return r.run(ctx, scripts, nil, nil)
 	}
 	suite := r.Suite
 	if suite == "" {
@@ -150,16 +191,32 @@ func (r *Runner) Run(ctx context.Context, scripts []Script) error {
 		}
 	}
 	rec := newSuiteRecorder(suite)
-	runErr := r.run(ctx, scripts, rec, carried)
+	runErr, allInfra := r.run(ctx, scripts, rec, carried)
 
 	var gateErr error
+	gateInconclusive := false
 	if len(r.Assert) > 0 {
 		rec.suite.Aggregate = eval.Aggregate(rec.suite.Results)
-		if rec.suite.Gate(r.Assert...) == eval.OutcomeFailed {
+		switch rec.suite.GateWith(eval.GatePolicy{MaxInconclusive: r.MaxInconclusive}, r.Assert...) {
+		case eval.OutcomeFailed:
 			gateErr = &AssertionError{Violations: append([]eval.Violation(nil), rec.suite.Violations...)}
+		case eval.OutcomeInconclusive:
+			gateInconclusive = true
 		}
 		if r.OnGated != nil {
 			r.OnGated(rec.suite)
+		}
+	}
+	if gateErr == nil && (runErr == nil || allInfra) {
+		rate := rec.suite.InconclusiveRate()
+		switch {
+		case gateInconclusive || rate > r.MaxInconclusive || ctx.Err() != nil:
+			// A cancelled run never started some scripts, which the
+			// rate cannot see, so it is always inconclusive.
+			runErr = &InconclusiveError{Rate: rate, Max: r.MaxInconclusive, Violations: inconclusiveViolations(rec.suite.Violations), Err: runErr}
+		case runErr != nil:
+			fmt.Fprintf(os.Stderr, "ignoring inconclusive scripts within the %.3g%% tolerated: %v\n", 100*r.MaxInconclusive, runErr)
+			runErr = nil
 		}
 	}
 	if r.Results == nil {
@@ -184,6 +241,17 @@ func (r *Runner) Run(ctx context.Context, scripts []Script) error {
 		r.OnSaved(run)
 	}
 	return errors.Join(runErr, gateErr)
+}
+
+// inconclusiveViolations returns the inconclusive violations, or nil.
+func inconclusiveViolations(vs []eval.Violation) []eval.Violation {
+	var out []eval.Violation
+	for _, v := range vs {
+		if v.Inconclusive() {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func errNoResumeStore(id string) error {
@@ -275,7 +343,10 @@ type scriptOutcome struct {
 	err     error
 }
 
-func (r *Runner) run(ctx context.Context, scripts []Script, rec *suiteRecorder, carried map[string][]eval.ObservationResult) error {
+// run executes the scripts and returns their failures joined. allInfra
+// reports that there was at least one failure and every one of them is an
+// infrastructure failure (see [eval.IsInfra]).
+func (r *Runner) run(ctx context.Context, scripts []Script, rec *suiteRecorder, carried map[string][]eval.ObservationResult) (err error, allInfra bool) {
 	metricsFile := r.MetricsFile
 	if metricsFile == "" {
 		metricsFile = "metrics.json"
@@ -354,7 +425,11 @@ launch:
 	if err := ctx.Err(); err != nil && !containsErr(failures, err) {
 		failures = append(failures, err)
 	}
-	return errors.Join(failures...)
+	allInfra = len(failures) > 0
+	for _, f := range failures {
+		allInfra = allInfra && eval.IsInfra(f)
+	}
+	return errors.Join(failures...), allInfra
 }
 
 // containsErr reports whether any of errs matches target.

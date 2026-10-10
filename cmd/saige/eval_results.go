@@ -38,10 +38,10 @@ func newEvalRunsCmd() *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(runs)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "RUN\tSUITE\tSTATUS\tOUTCOME\tUNITS\tERRORED\tCOST\tCOMMIT\tSTARTED")
+			fmt.Fprintln(w, "RUN\tSUITE\tSTATUS\tOUTCOME\tUNITS\tERRORED\tINCONCLUSIVE\tCOST\tCOMMIT\tSTARTED")
 			for _, r := range runs {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
-					r.ID, r.Suite, r.Status, dash(string(r.Outcome)), r.Units, r.ErroredCases,
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+					r.ID, r.Suite, r.Status, dash(string(r.Outcome)), r.Units, r.ErroredCases, r.Inconclusive,
 					formatCost(r.CostUSD), formatCommit(r.Provenance), r.StartedAt.Local().Format(time.DateTime))
 			}
 			return w.Flush()
@@ -132,8 +132,8 @@ func printRun(r eval.RunRecord) error {
 	if !r.FinishedAt.IsZero() {
 		row("duration", r.FinishedAt.Sub(r.StartedAt).Round(time.Millisecond).String())
 	}
-	row("units", fmt.Sprintf("%d (errored %d, subject errors %d, incomplete %d, unstable scores %d)",
-		r.Units, r.ErroredCases, r.SubjectErrors, r.Incomplete, r.UnstableScores))
+	row("units", fmt.Sprintf("%d (errored %d, subject errors %d, incomplete %d, inconclusive %d, unstable scores %d)",
+		r.Units, r.ErroredCases, r.SubjectErrors, r.Incomplete, r.Inconclusive, r.UnstableScores))
 	row("cost", formatCost(r.CostUSD))
 	row("commit", formatCommit(r.Provenance))
 	if len(r.Provenance.Models) > 0 {

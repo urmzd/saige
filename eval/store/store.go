@@ -218,3 +218,27 @@ func LatestSucceeded(ctx context.Context, s Store, suite string) (eval.RunRecord
 	}
 	return runs[0], nil
 }
+
+// BaselineFor returns the run a candidate is compared against by default:
+// the newest succeeded run of suite that started no later than the
+// candidate, excluding the candidate itself and runs whose gate was
+// [eval.OutcomeInconclusive], since those measured too little to compare
+// against. An empty suite means the candidate's own. A separate suite lets
+// runs of the main branch serve as the baseline of pull request runs. It
+// returns ErrNotFound when there is none.
+func BaselineFor(ctx context.Context, s Store, suite string, candidate eval.RunRecord) (eval.RunRecord, error) {
+	if suite == "" {
+		suite = candidate.Suite
+	}
+	runs, err := s.ListRuns(ctx, RunFilter{Suite: suite, Status: []eval.RunStatus{eval.RunSucceeded}})
+	if err != nil {
+		return eval.RunRecord{}, err
+	}
+	for _, r := range runs {
+		if r.ID == candidate.ID || r.StartedAt.After(candidate.StartedAt) || r.Outcome == eval.OutcomeInconclusive {
+			continue
+		}
+		return r, nil
+	}
+	return eval.RunRecord{}, fmt.Errorf("%w: no succeeded run of suite %q before run %q", ErrNotFound, suite, candidate.ID)
+}

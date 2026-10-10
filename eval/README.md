@@ -177,6 +177,36 @@ if result.Gate(gates...) == eval.OutcomeFailed {
 
 An errored score, a metric that never scored, an incomplete suite, and subject failures are all violations, so a broken run cannot pass the gate. To require a gate to hold on every sample of a sampled scorer, sample with the `Min` reducer.
 
+### Inconclusive Results
+
+A result is a real failure only when the subject answered and the answer was judged wrong, or when the subject or scorer failed for a reason a retry cannot fix (an invalid request, a context overflow, a content filter, a truncated reply, an unclassified error). When the infrastructure failed instead, the result says nothing about the system and is **inconclusive**. `eval.IsInfra(err)` decides:
+
+| Inconclusive | Real failure |
+|--------------|--------------|
+| `types.ErrorKindRateLimit`, `ErrorKindUnavailable`, `ErrorKindTransient`, `ErrorKindAuth` | `ErrorKindInvalidRequest`, `ErrorKindContextLength`, `ErrorKindContentFilter`, `ErrorKindTruncated` |
+| `context.Canceled`, `context.DeadlineExceeded` | `ErrorKindPermanent` and any unclassified error |
+| network failures `types.ClassifyTransportError` recognizes (refused or reset connections, dial errors, timeouts) | a score below its threshold |
+| batch requests (`types.BatchRequestError`, with `WithBatch` or `saige eval run --batch`) that expired, were canceled, or errored without a classified cause | a batch request that errored with a classified real cause, such as an invalid request |
+| errors wrapped with `eval.Infra(err)` or matching `eval.ErrInfra`, such as an unreachable connector | |
+
+`PopulateAll` marks an inconclusive subject failure with the `eval.subject_inconclusive` annotation next to `eval.subject_error` (`eval.MarkSubjectError` does the same for code that records failures itself), and `Run` sets `Score.Inconclusive` on a scorer error `IsInfra` reports, such as a judge whose provider was down. `SuiteResult.Inconclusive` counts the results that could not be measured; they are left out of aggregates, `PassRate`, `GroupPassRate`, `MinPassRate`, and the paired statistics, so a Wilson interval covers only measured cases and `Completeness` shows the gap.
+
+`Check` reports them as violations of kind `inconclusive` (`Violation.Kind` is `metric`, `scorer`, `subject`, or `inconclusive`), as it does an incomplete suite and a metric missing from a scope where nothing was measured. `Gate` and `GateWith` decide the outcome:
+
+- `failed` when any violation is a real failure, whatever else happened;
+- `inconclusive` when every violation is inconclusive and the share of inconclusive cases (`SuiteResult.InconclusiveRate`, by observation ID, counting incomplete observations) is above `GatePolicy.MaxInconclusive`;
+- `passed` otherwise. The default policy tolerates no inconclusive case.
+
+```go
+outcome := suite.GateWith(eval.GatePolicy{MaxInconclusive: 0.05}, gates...)
+switch outcome {
+case eval.OutcomeFailed:       // a measured result broke a gate: fix the system
+case eval.OutcomeInconclusive: // too much was lost to outages: rerun
+}
+```
+
+Runs and units stored before this distinction existed carry no marker, so their subject and scorer errors still read as failures.
+
 To scope a scorer instead of a gate, wrap it: `eval.Where{"lang": "go"}.Scorer(scorer)` scores matching observations and declines the rest.
 
 ## Sampling
@@ -229,7 +259,8 @@ Every run option applies: `WithConcurrency` caps subjects and scorers, `WithSamp
 |-------|---------|
 | `DeltaStats` | Mean paired difference per metric over cases scored on both sides (`N`), with a bootstrap interval. Repeated samples of a case are averaged first, so `N` counts cases. `WithBootstrap(resamples, confidence)` tunes it |
 | `PassStats` | For metrics gated on both sides: each arm's pass rate with a Wilson interval, the paired difference with McNemar's interval, and the exact McNemar p-value. Only cases where the arms disagree move it. When a case was sampled more than once, `CaseRates` is set and the rates and difference are means of per-case pass rates with case-level bootstrap intervals |
-| `Cases` | Per-case diff (`improved`, `regressed`, `unchanged`, `only_base`, `only_exp`). Samples of one case roll up; gate verdicts decide when both arms were gated, values otherwise. `WithLowerIsBetter("latency_ms")` flips the direction for a metric |
+| `Cases` | Per-case diff (`improved`, `regressed`, `unchanged`, `only_base`, `only_exp`, `inconclusive`). Samples of one case roll up; gate verdicts decide when both arms were gated, values otherwise. A case one arm could not measure because infrastructure failed is `inconclusive`, never a regression. `WithLowerIsBetter("latency_ms")` flips the direction for a metric |
+| `BaseInconclusive`, `ExpInconclusive` | Results each arm could not measure; they are never paired |
 | `MissingInBase`, `MissingInExp` | Metrics scored on only one side, which have no delta |
 | `BaseCounts`, `ExpCounts` | Number of scores behind each aggregate |
 
@@ -242,6 +273,24 @@ if regs := cmp.Regressions(); len(regs) > 0 {
     // fail CI, listing regs
 }
 ```
+
+`Comparison.Gate` turns a comparison into a regression decision. For each metric it uses the paired pass rate when both arms were gated on it and the paired mean otherwise, and the metric regresses when it dropped by more than the tolerance. With `Significant`, the whole interval of the drop (at `Comparison.Confidence`, set with `WithBootstrap`) must lie beyond the tolerance, so noise does not fail the gate:
+
+```go
+rep := eval.CompareSuites(baseline, current, eval.WithBootstrap(eval.DefaultResamples, 0.95)).Gate(eval.RegressionPolicy{
+    MaxRegression: 0.02,                                // default tolerated drop
+    Thresholds:    map[string]float64{"faithfulness": 0}, // per metric
+    Significant:   true,
+    MinCases:      10,                                   // fewer paired cases is inconclusive
+    LowerIsBetter: map[string]bool{"latency_ms": true},
+})
+// rep.Outcome is failed (a metric regressed), inconclusive (a metric had too
+// few paired cases or was measured by one arm only), or passed.
+// rep.Metrics holds one MetricVerdict per metric; rep.Regressions the cases
+// that got worse.
+```
+
+Without `Metrics` it checks the metrics either arm gated, or every shared metric plus those the candidate lost when nothing was gated. `saige eval compare` runs the same gate over two stored runs; see [Regression Gate in CI](#regression-gate-in-ci).
 
 Cases pair by ID, Turn, Sample, and the `variant` label, so two suites from `Experiment.Run` compare each variant with itself and `CaseDiff.Variant` names it. When each arm holds one variant and they differ, as in `CompareVariants`, cases pair without the variant.
 
@@ -403,7 +452,7 @@ for _, d := range drops {
 }
 ```
 
-`Diff` sorts missing and errored scores first, then the largest drop. With `Regressions` it keeps only baseline scores that dropped by more than `MinDrop`, errored, or went missing in the candidate.
+`Diff` sorts missing and errored scores first, then the largest drop. With `Regressions` it keeps only baseline scores that dropped by more than `MinDrop`, errored, or went missing in the candidate. A candidate score that is inconclusive, or missing because the candidate's subject failed on infrastructure for that case, sets `CandidateInconclusive` and is never a regression. `eval_score.inconclusive` holds the flag; `RunMigrations` adds the column to a table an older release created, and rows written before it read as conclusive.
 
 Every eval command that takes `--store` accepts a PostgreSQL URL in place of a directory, and `--tenant` picks the scope:
 
@@ -457,6 +506,7 @@ rep, err := s.Sweep(ctx, online.PGSource{Pool: pool}, online.Window{From: time.N
 - **Sampling** is deterministic: a record is in the sample by a hash of `Seed`, its conversation, and its node, so the same seed picks the same runs in every sweep and in watch mode, whatever the order. A higher rate keeps every run a lower rate kept. `Rate` zero scores every matching run.
 - **Filters** select by model, preset, tools called, error, and any label (`Filter.Where`), including the labels below.
 - **Judges** are charged to `Budget` through `BudgetedGenerator`, which reserves before each call and settles with the reported usage. Once the budget refuses a call, judges decline the remaining runs, the deterministic scorers still run, and `Report.JudgesSkipped` counts the refusals.
+- **Judge outages** are inconclusive: a judge call that fails on infrastructure (see [Inconclusive Results](#inconclusive-results)) records an errored score with `Inconclusive` set, `RunRecord.Inconclusive` counts it, and `Promote` never promotes a unit for it.
 - **Results** are one `RunRecord` per sweep (suite `online` by default, label `source=online`, the window in `Provenance.Extra`), with one unit per scored run. A unit's observation ID is the node that ended the run, and its labels carry `source`, `conversation`, `node`, `model`, `preset`, and `errored`. A record with a trace ID also sets `Unit.Trace`. An empty window still records an empty run.
 
 **Long-running mode.** `Sampler.Watch` keeps one run open and scores each run a producer announces, until its context ends. Producers call `online.Announce` after storing the run's final node; with `postgres.Notifier` the announcement crosses processes. Notifications are hints, not a queue, so set `WatchOptions.Since` to sweep the runs that finished while no watcher was listening:
@@ -469,7 +519,7 @@ rep, err := s.Watch(ctx, n, online.PGSource{Pool: pool}, online.WatchOptions{Sin
 _ = online.Announce(ctx, n, "", online.Ref{Conversation: convID, Node: string(node.ID)})
 ```
 
-**Promote to dataset.** `online.Promote` turns failing or flagged units into dataset cases: the input, an expected output when `PromoteOptions.Expected` supplies one, and otherwise a rubric built from the reasons the unit failed. Every string in the input, expected output, rubric, and reasons is run through the `agent/privacy` redactor (the default detector unless `Detector` is set) and replaced irreversibly, so those fields never hold a value the detector finds, such as an email address, phone number, card number, or secret. `online.Failing(threshold, metrics...)` promotes flagged units (label `flagged=true`), failed gates, errored scores, and the listed metrics below the threshold. `WriteCases` writes JSON Lines; `Case.Observation` turns a case back into an `eval.Observation`.
+**Promote to dataset.** `online.Promote` turns failing or flagged units into dataset cases: the input, an expected output when `PromoteOptions.Expected` supplies one, and otherwise a rubric built from the reasons the unit failed. Every string in the input, expected output, rubric, and reasons is run through the `agent/privacy` redactor (the default detector unless `Detector` is set) and replaced irreversibly, so those fields never hold a value the detector finds, such as an email address, phone number, card number, or secret. `online.Failing(threshold, metrics...)` promotes flagged units (label `flagged=true`), failed gates, errored scores that are not inconclusive, and the listed metrics below the threshold. `WriteCases` writes JSON Lines; `Case.Observation` turns a case back into an `eval.Observation`.
 
 ```go
 units, _ := results.Units(ctx, rep.Run.ID, store.UnitFilter{})
@@ -488,6 +538,96 @@ saige eval online --store postgres://user:pass@host/db --watch --scorer tool_suc
 ```
 
 Filters are `--only-model`, `--only-preset`, `--tool`, `--label key=value`, and `--errored true|false`; `--scope` reads one tenant's conversations and `--tenant` writes to one tenant's results. `--watch` listens on `--channel` (default `saige.eval.online`) until interrupted, after sweeping the last `--since`.
+
+## Regression Gate in CI
+
+`saige eval compare` gates a stored run against a baseline run from the same results store, using `Comparison.Gate`:
+
+```bash
+saige eval compare RUN_ID --store eval-results                     # against the newest earlier succeeded run of its suite
+saige eval compare --suite pr-42 --baseline-suite main --store "$DSN" # the newest pr-42 run against the newest earlier main run
+saige eval compare RUN_ID --baseline BASE_ID --store eval-results \
+  --max-regression 0.02 --threshold faithfulness=0 --significance 0.05 --min-cases 10 \
+  --lower-is-better latency_ms --assert 'turn_succeeded>=1'
+saige eval compare RUN_ID --store eval-results --format markdown --output compare.md
+saige eval compare RUN_ID --store eval-results --format junit --output compare.xml
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--baseline` | A run ID, or `latest` (default): the newest succeeded run of `--baseline-suite` (default the candidate's suite) that started before the candidate, skipping runs whose gate was inconclusive |
+| `--metric` | Metrics to check (default: the metrics either run gated, else every shared metric) |
+| `--max-regression`, `--threshold metric=value` | Tolerated drop, overall and per metric: a share of cases for a gated metric, the metric's units otherwise |
+| `--significance` | A drop counts only when the (1 - significance) interval lies beyond the tolerance (default 0.05); `1` counts any drop beyond it |
+| `--min-cases` | Fewest paired cases a metric needs (default 3); fewer is inconclusive |
+| `--lower-is-better` | Ungated metrics where a rise is the regression |
+| `--assert`, `--max-inconclusive` | Gate both runs again first; the candidate's gate counts too |
+| `--format` | `human` (default), `markdown` (a pull request comment), `junit` (one test case per metric; a regression is a failure, an inconclusive metric is skipped), `json` |
+| `--output` | Write the report to a file; a one-line summary always goes to stderr |
+
+Exit status: 0 no regression, 1 a metric regressed or the candidate failed its gate, 3 inconclusive, 2 invalid input. `saige eval run` uses 3 the same way, for a run lost to infrastructure failures, so CI can rerun on 3 and fail on 1.
+
+A GitHub Actions job that records every main branch run as the baseline, gates each pull request against it, comments the result, and reruns once when the run is inconclusive:
+
+```yaml
+name: eval
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      SAIGE_EVAL_STORE: ${{ secrets.SAIGE_EVAL_STORE }} # postgres://... shared by every run
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # main for the baseline, one suite per pull request for candidates
+      SUITE: ${{ github.event_name == 'push' && 'main' || format('pr-{0}', github.event.pull_request.number) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - run: go install github.com/urmzd/saige/cmd/saige@latest
+
+      # Exit 3 means the run was lost to an outage or a rate limit: rerun it
+      # once. Exit 1 is a real failure and stops here.
+      - name: Run the suite
+        run: |
+          for attempt in 1 2; do
+            code=0
+            saige eval run --manifest evals/saige.eval.json --force \
+              --store "$SAIGE_EVAL_STORE" --suite "$SUITE" --assert 'turn_succeeded>=1' || code=$?
+            [ "$code" -eq 3 ] || break
+          done
+          exit "$code"
+
+      - name: Compare with main
+        if: github.event_name == 'pull_request'
+        run: |
+          code=0
+          saige eval compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
+            --format markdown --output compare.md || code=$?
+          saige eval compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
+            --format junit --output compare.xml || true
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file compare.md --edit-last \
+            || gh pr comment "${{ github.event.pull_request.number }}" --body-file compare.md
+          exit "$code"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v7
+        if: always() && github.event_name == 'pull_request'
+        with:
+          name: eval-compare
+          path: compare.xml
+```
+
+Give the main branch runs their own suite and each pull request its own, as here, so a pull request is never compared with another pull request and `--suite` always finds the run just recorded. Pass `compare.xml` to any JUnit test reporter to show each metric as a test.
 
 ## On-Disk Format
 
