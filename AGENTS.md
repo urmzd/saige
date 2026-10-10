@@ -20,6 +20,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/provider/split/` | Traffic splits: weighted arms, guarded canaries, shadow arms with their own budget |
 | `agent/provider/wrapper/` | Decorator conventions: `Unwrap`, `As`, `Members`, `Innermost` |
 | `agent/privacy/` | Swaps personal data for placeholders at the provider and tool boundary |
+| `agent/guardrail/` | Built-in input and output guardrails: PII and regex detection, length, JSON schema, model classifier |
 | `agent/workspace/` | Content-addressed scratch artifacts for a run, with tools to write, read and list them |
 | `agent/memory/` | Durable, host-scoped memory across conversations; writes need approval |
 | `agent/memory/pgstore/` | Postgres memory store: hybrid pgvector and BM25 recall, retention, and opt-in conversation recall |

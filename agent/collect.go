@@ -79,6 +79,15 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 			if v.Error != "" {
 				t.ToolErrors++
 			}
+		case types.GuardrailDelta:
+			// An output guardrail rewrote the answer the turn streamed.
+			if v.Phase == types.GuardrailPhaseOutput && v.Action == types.GuardrailActionRewrite {
+				endTurn()
+				prefix := strings.TrimSuffix(all.String(), t.Text)
+				all.Reset()
+				all.WriteString(prefix + v.Text)
+				t.Text = v.Text
+			}
 		case types.ToolExecDelta, types.PartialJSONDelta:
 			// Sub-agent and derived deltas are not this agent's turn.
 		default:

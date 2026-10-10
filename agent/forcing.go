@@ -281,6 +281,9 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if err := a.reportUsage(ctx, stream, active.provider, usage); err != nil {
 		return err
 	}
+	if err := a.guardOutput(ctx, stream, tr, branch, msg, fmt.Sprintf("llm-%s-final", branch)); err != nil {
+		return err
+	}
 	if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
 		return err
 	}

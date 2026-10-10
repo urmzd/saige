@@ -101,6 +101,10 @@ type EventStream struct {
 	// approvals is the conversation's approval policy state, nil when the
 	// agent has no ApprovalPolicy.
 	approvals *approvalState
+	// hookSeq numbers the recorded hook steps of points the loop meets in
+	// order, so their step names repeat on replay.
+	hookMu  sync.Mutex
+	hookSeq map[HookEvent]int
 }
 
 func newEventStream(ctx context.Context, cancel context.CancelFunc) *EventStream {
