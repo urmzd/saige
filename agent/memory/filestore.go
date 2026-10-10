@@ -304,7 +304,7 @@ func (f *FileStore) Recall(ctx context.Context, s Scope, query string, budget in
 		}
 		all = append(all, recs...)
 	}
-	return rank(all, query, budget, f.now()), nil
+	return rankRecords(all, query, budget, f.now()), nil
 }
 
 func (f *FileStore) readScope(ctx context.Context, s Scope) ([]Record, error) {

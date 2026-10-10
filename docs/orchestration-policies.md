@@ -440,6 +440,7 @@ The host sets the scope. A call without one fails with `ErrNoScope`. A scope see
 Writes pass `Policy.CheckContent`. Without `Redact`, content with a detected value fails with `ErrSensitive`. Tags pass the same check. File names chosen by `create` and `rename` pass `Policy.CheckName`, which rejects a detected value even with a redactor, because a redacted name no longer means the same thing. `Retention` sets an expiry, and expired records are not recalled.
 A tool write uses the tool call ID as its idempotency key. Host code that extracts memories after a run calls `Policy.Remember`.
 Recall is external input. `FormatRecords` wraps each record in a tag the content cannot close, and `InjectMessage` returns a user message for `RecallByInjection` inside an outer tag the content cannot close either.
+See [memory](memory.md) for recall modes, the Postgres store, conversation recall, and retention.
 `FileStore` reaches files through `os.Root`, so a path or link cannot leave the scope directory. `MemStore` and `NewFixture` serve tests and evals. `KGStore` writes episodes to a knowledge graph under a group derived from the scope; it matches that group exactly and needs a graph that can delete episodes for `Forget`.
 
 Local MCP clients, connection pools, and the `saige-mcp` server already exist.
