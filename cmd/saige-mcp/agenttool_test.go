@@ -20,7 +20,7 @@ import (
 func agentSession(t *testing.T, b bridge, at agentTool, elicit func(*mcp.ElicitRequest) (*mcp.ElicitResult, error)) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := mcp.NewServer(&mcp.Implementation{Name: "saige-mcp", Version: "test"}, nil)
+	server := newServer("test")
 	b.registerAgent(server, at)
 	serverT, clientT := mcp.NewInMemoryTransports()
 	ss, err := server.Connect(ctx, serverT, nil)

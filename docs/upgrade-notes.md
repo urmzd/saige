@@ -6,6 +6,9 @@ These behavior changes can affect existing code. Each entry says what changed an
 
 | Change | What to do |
 | --- | --- |
+| An Anthropic response that stops with `model_context_window_exceeded` ends with an `ErrorKindContextLength` error instead of passing as a final answer. | Handle it like any context-length error, for example with compaction. |
+| The OpenAI Responses adapter sends the in-memory prompt cache retention as `in_memory`; the API now rejects `in-memory`. | None. `WithPromptCache` still accepts either spelling. |
+| saige-mcp negotiates MCP protocol `2025-11-25` or older, never `2026-07-28`, because that revision forbids the elicitation approval relies on. Clients on the new SDKs try `server/discover` first and then fall back to `initialize`, so a connection costs one more request against the HTTP rate limit. | None. Allow for the extra request when sizing `--rate-burst`. |
 | The Anthropic and OpenAI chat adapters set SDK retries to 0 by default. | Wrap them in `retry.New(adapter, retry.DefaultConfig())`, or pass `WithMaxRetries(n)` for a bare adapter. The OpenAI embedder keeps the SDK default; pass `WithMaxRetries(0)` when a retry decorator wraps it. The `saige` CLI now wraps hosted providers in `retry.Provider`. |
 | `fallback.New` uses `fallback.DefaultFallbackOn`: it falls back on every error except cancellation, `ErrInvalidModelConfig`, `ErrorKindInvalidRequest` and budget errors. | Set `FallbackOn` (for example `types.IsTransient`) to keep transient-only fallback. |
 | Retry, fallback, cache, privacy and tracing decorators reject a response schema the inner provider cannot enforce, with an error matching `types.ErrSchemaUnsupported` and `types.ErrInvalidModelConfig`. Request options are rejected the same way (`types.ErrOptionsUnsupported`). | Use a provider that implements `StructuredOutputProvider`, or drop the schema. A fallback chain skips such a member and tries the next. |

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/urmzd/saige/agent/provider/catalog"
@@ -222,20 +223,14 @@ func (r *ResponsesAdapter) stream(ctx context.Context, messages []types.Message,
 }
 
 // applyPromptCache encodes WithPromptCache. The Responses API spells the
-// in-memory retention "in-memory".
+// retention values the same way as Chat Completions.
 func (r *ResponsesAdapter) applyPromptCache(params *responses.ResponseNewParams) error {
 	var chat openai.ChatCompletionNewParams
 	if err := r.base.applyPromptCache(&chat); err != nil {
 		return err
 	}
 	params.PromptCacheKey = chat.PromptCacheKey
-	switch chat.PromptCacheRetention {
-	case "":
-	case promptCacheInMemory:
-		params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetentionInMemory
-	default:
-		params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetention(chat.PromptCacheRetention)
-	}
+	params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetention(chat.PromptCacheRetention)
 	return nil
 }
 
@@ -344,7 +339,9 @@ func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
 // one user message per image block.
 func appendResponsesToolResults(out responses.ResponseInputParam, results []types.ToolResultContent) responses.ResponseInputParam {
 	for _, tr := range results {
-		out = append(out, responses.ResponseInputItemParamOfFunctionCallOutput(tr.ToolCallID, openAIToolResultText(tr)))
+		item := responses.ResponseInputItemParamOfFunctionCallOutput(openAIToolResultText(tr))
+		item.OfFunctionCallOutput.CallID = param.NewOpt(tr.ToolCallID)
+		out = append(out, item)
 	}
 	for _, tr := range results {
 		for _, b := range tr.Blocks {

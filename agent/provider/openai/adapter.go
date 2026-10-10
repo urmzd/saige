@@ -840,6 +840,16 @@ func classifyOpenAIError(model string, err error, beforeOutput bool) error {
 		if apiErr.Code != "" {
 			msg = apiErr.Code + ": " + msg
 		}
+		// The SDK's Error() is a bare status line, which leaves nothing to
+		// act on. Add the API's own message, but never the request URL or
+		// raw body, which can carry secrets.
+		if apiErr.Message != "" {
+			detail := apiErr.Message
+			if apiErr.Code != "" {
+				detail = apiErr.Code + ": " + detail
+			}
+			err = fmt.Errorf("%w: %s", err, detail)
+		}
 		return streamcheck.HTTPError(providerName, model, apiErr.StatusCode, header, msg, err)
 	}
 	var streamErr *ssestream.StreamError

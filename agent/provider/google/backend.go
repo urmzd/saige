@@ -43,6 +43,9 @@ var detectCredentials = func() (*auth.Credentials, error) {
 // authenticate by itself.
 func (b backend) newClient(ctx context.Context, apiKey string) (*genai.Client, error) {
 	cc := &genai.ClientConfig{APIKey: apiKey, Backend: b.kind, HTTPClient: withHeaderTransport(b.httpClient)}
+	// saige's retry layer owns retries; one attempt keeps the SDK's own
+	// retry loop off even if its default changes.
+	cc.HTTPOptions.RetryOptions = &genai.HTTPRetryOptions{Attempts: genai.Ptr[int32](1)}
 	if b.kind == genai.BackendVertexAI {
 		if b.project == "" || b.location == "" {
 			return nil, errVertexTarget

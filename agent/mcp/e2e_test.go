@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,17 +34,22 @@ type testServer struct {
 	http    *httptest.Server
 	handler atomic.Pointer[http.Handler]
 	calls   sync.Map // tool name -> *atomic.Int64
+	// done releases hung handlers before the HTTP server closes. The SDK
+	// sends notifications/cancelled in the background, so a session closed
+	// right after a timeout may never deliver it.
+	done chan struct{}
 }
 
 func newTestServer(t *testing.T) *testServer {
 	t.Helper()
-	ts := &testServer{t: t}
+	ts := &testServer{t: t, done: make(chan struct{})}
 	ts.server = mcpsdk.NewServer(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil)
 	ts.resetSessions()
 	ts.http = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		(*ts.handler.Load()).ServeHTTP(w, r)
 	}))
 	t.Cleanup(ts.http.Close)
+	t.Cleanup(func() { close(ts.done) })
 
 	ts.add(&mcpsdk.Tool{Name: "echo", Description: "echo text", InputSchema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
 		Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: true}},
@@ -77,8 +83,12 @@ func newTestServer(t *testing.T) *testServer {
 		})
 	ts.add(&mcpsdk.Tool{Name: "hang", InputSchema: objectSchema},
 		func(ctx context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			<-ctx.Done()
-			return nil, ctx.Err()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ts.done:
+				return nil, errors.New("test finished")
+			}
 		})
 	ts.add(&mcpsdk.Tool{Name: "big", InputSchema: objectSchema},
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
@@ -787,8 +797,15 @@ func TestPoolAcquireSharesOneHandshake(t *testing.T) {
 	var inits atomic.Int64
 	inner := ts.http.Config.Handler
 	ts.http.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A handshake is one initialize request. Clients on the 2026-07-28
+		// protocol first try server/discover, which a stateful server
+		// rejects, so that probe is not counted.
 		if r.Method == http.MethodPost && r.Header.Get("Mcp-Session-Id") == "" {
-			inits.Add(1)
+			body, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+				inits.Add(1)
+			}
 		}
 		inner.ServeHTTP(w, r)
 	})

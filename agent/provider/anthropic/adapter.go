@@ -25,6 +25,13 @@ const stopPauseTurn = "pause_turn"
 // errPausedTurn reports a server tool turn the API paused before its answer.
 var errPausedTurn = errors.New("response paused during server tool use before a final answer; the turn cannot be resumed")
 
+// stopContextWindowExceeded is the stop reason of a response cut off because
+// the conversation reached the model's context window.
+const stopContextWindowExceeded = string(anthropic.StopReasonModelContextWindowExceeded)
+
+// errContextWindowExceeded reports a response the context window cut off.
+var errContextWindowExceeded = errors.New("response stopped at the model's context window before a final answer")
+
 // Compile-time interface checks.
 var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
@@ -564,7 +571,8 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 			case "message_delta":
 				if string(evt.Delta.StopReason) != "" {
 					finishReason = string(evt.Delta.StopReason)
-					releaseHeld(!types.IsTruncationFinishReason(finishReason) && !types.IsContentFilterFinishReason(finishReason))
+					releaseHeld(!types.IsTruncationFinishReason(finishReason) && !types.IsContentFilterFinishReason(finishReason) &&
+						finishReason != stopContextWindowExceeded)
 				}
 				if evt.Usage.OutputTokens > 0 {
 					outputTokens = int(evt.Usage.OutputTokens)
@@ -593,6 +601,11 @@ func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStream
 			out <- types.ErrorDelta{Error: streamcheck.StreamError("anthropic", model, streamcheck.ErrIncompleteStream, !emitted)}
 		case types.IsContentFilterFinishReason(finishReason):
 			out <- types.ErrorDelta{Error: streamcheck.Refused("anthropic", model, finishReason)}
+		case finishReason == stopContextWindowExceeded:
+			// The answer is partial; reporting it as the context limit lets
+			// the loop compact or fail instead of taking it as final.
+			out <- types.ErrorDelta{Error: &types.ProviderError{Provider: "anthropic", Model: model,
+				Kind: types.ErrorKindContextLength, Err: errContextWindowExceeded}}
 		case finishReason == stopPauseTurn:
 			// The API paused a long server tool turn and expects the partial
 			// response sent back to continue it. Server tool blocks are not
@@ -852,7 +865,7 @@ func propertyToSchema(p types.PropertyDef) map[string]any {
 }
 
 // streamErrorPrefix is how the SDK reports an error event received inside an
-// SSE stream; the event's JSON follows it.
+// SSE stream when it cannot decode the event's JSON; the raw JSON follows it.
 const streamErrorPrefix = "received error while streaming: "
 
 // classifyAnthropicError maps an error that ended a stream to a ProviderError.
@@ -862,7 +875,12 @@ const streamErrorPrefix = "received error while streaming: "
 // no output has reached the consumer.
 func classifyAnthropicError(model string, err error, beforeOutput bool) error {
 	var apiErr *anthropic.Error
-	if errors.As(err, &apiErr) {
+	if errors.As(err, &apiErr) && apiErr.StatusCode < 300 {
+		// The SDK reports an error event inside a 200 stream as an API error
+		// carrying the stream's status and the event's JSON.
+		return streamcheck.EventError("anthropic", model, apiErr.RawJSON(), err)
+	}
+	if apiErr != nil {
 		var header map[string][]string
 		if apiErr.Response != nil {
 			header = apiErr.Response.Header
