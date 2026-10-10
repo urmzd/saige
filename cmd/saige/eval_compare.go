@@ -27,6 +27,7 @@ const exitInconclusive = 3
 // Report formats of saige eval compare.
 const (
 	formatText     = "text"
+	formatHuman    = "human"
 	formatJSON     = "json"
 	formatMarkdown = "markdown"
 	formatJUnit    = "junit"
@@ -110,7 +111,7 @@ measured, or an inconclusive gate), 2 invalid input.`,
 // compareFormat normalizes the global --format for saige eval compare.
 func compareFormat(format string) (string, error) {
 	switch format {
-	case "", "human", formatText:
+	case "", formatHuman, formatText:
 		return formatText, nil
 	case formatJSON, formatMarkdown, formatJUnit:
 		return format, nil

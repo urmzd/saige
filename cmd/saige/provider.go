@@ -72,7 +72,7 @@ func addPersistentFlags(cmd *cobra.Command) {
 	pf.StringVar(persistentFlagVars.embedModel, "embed-model", "", "Embedding model name (embed-provider-specific default)")
 	pf.StringVar(persistentFlagVars.ragDB, "rag-db", envOr("SAIGE_RAG_DB", ""), "Postgres DSN for RAG tools")
 	pf.StringVar(persistentFlagVars.kgDB, "kg-db", envOr("SAIGE_KG_DB", ""), "Postgres DSN for KG tools")
-	pf.StringVar(persistentFlagVars.format, "format", "human", "Output format: json|human")
+	pf.StringVar(persistentFlagVars.format, "format", formatHuman, "Output format: json|human")
 }
 
 // isJSON returns true when the user requested JSON output via --format json.
