@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   reconcile:
+    environment: release
     name: Reconcile
     runs-on: ubuntu-latest
     permissions:
