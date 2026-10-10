@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/store/walrecover"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
@@ -80,9 +81,16 @@ type AgentConfig struct {
 	// this has no effect under the others.
 	MaxParallelTools int
 
-	// File pipeline configuration.
-	Resolvers  map[string]types.Resolver           // URI scheme → Resolver (e.g. "file", "https", "s3")
-	Extractors map[types.MediaType]types.Extractor // MediaType → Extractor for non-native types
+	// File pipeline configuration. Resolvers fetch the bytes of media
+	// parts by URI scheme (e.g. "file", "s3"). Extractors are converters
+	// for the media types they name: NewAgent turns each into an extract
+	// converter and permits extract for its modality, as WithExtractors
+	// documents.
+	Resolvers  map[string]types.Resolver
+	Extractors map[types.MediaType]types.Extractor
+	// Conversion is how parts the serving model cannot take natively are
+	// fitted to it (see WithConversion). The zero value rejects them.
+	Conversion types.ConversionPolicy
 
 	// ResponseSchema constrains the final answer to this JSON schema. See
 	// WithResponseSchema for how it combines with tools.
@@ -276,9 +284,29 @@ func WithResolvers(resolvers map[string]types.Resolver) AgentOption {
 	return func(c *AgentConfig) { c.Resolvers = resolvers }
 }
 
-// WithExtractors sets media type extractors for non-native content.
+// WithExtractors registers an extract converter for each media type and
+// permits the extract action for its modality, so a part of that type the
+// serving model cannot take natively is sent as the extractor's output. A
+// part the model takes natively is sent as it is. An extractor that fails
+// rejects the request unless the modality dial permits a later action,
+// such as omit.
+//
+// It is shorthand for WithConversion with convert.Extract converters and
+// the dial {document: [extract]} (per modality of the registered types).
 func WithExtractors(extractors map[types.MediaType]types.Extractor) AgentOption {
 	return func(c *AgentConfig) { c.Extractors = extractors }
+}
+
+// WithConversion sets how the parts of a request are fitted to the model
+// that serves it: the modality dial at agent scope, the converters the
+// permitted actions use, the cache that memoizes them, a cost cap and the
+// cache scope (set one per tenant when an agent's cache is shared). It
+// applies on top of the policy a provider was built with
+// (provider.Config.Conversion), on every attempt of a router or fallback
+// chain. Without it, a part the serving model cannot take natively rejects
+// the call; see package convert.
+func WithConversion(p types.ConversionPolicy) AgentOption {
+	return func(c *AgentConfig) { c.Conversion = p }
 }
 
 // WithResponseSchema constrains the final answer to a JSON schema.
@@ -489,6 +517,10 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	if cfg.ToolGate == nil {
 		cfg.ToolGate = types.AllowAllGate{}
 	}
+	cfg.Conversion = conversionPolicy(cfg.Conversion, cfg.Extractors)
+	// The extractors are now converters, which sub-agents inherit with the
+	// policy.
+	cfg.Extractors = nil
 	tools := types.NewToolRegistry()
 	if cfg.Tools != nil {
 		tools = types.NewToolRegistry(cfg.Tools.All()...)
@@ -997,16 +1029,17 @@ func (a *Agent) callProvider(ctx context.Context, provider types.Provider, out r
 		// request carries options or a schema, not both.
 		opts = nil
 	}
+	call := a.converting(provider)
 	if opts != nil && types.AcceptsOptions(provider) {
-		return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools, Options: opts})
+		return call.Stream(ctx, types.Request{Messages: messages, Tools: tools, Options: opts})
 	}
 	if out.native() && len(tools) == 0 {
 		if err := checkStructuredOutput(provider); err != nil {
 			return nil, err
 		}
-		return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools, Schema: out.schema})
+		return call.Stream(ctx, types.Request{Messages: messages, Tools: tools, Schema: out.schema})
 	}
-	return provider.Stream(ctx, types.Request{Messages: messages, Tools: tools})
+	return call.Stream(ctx, types.Request{Messages: messages, Tools: tools})
 }
 
 // checkStructuredOutput rejects a response schema the provider cannot apply.
@@ -1047,24 +1080,15 @@ func satisfiesResponseSchema(schema *types.ParameterSchema, msg *types.Assistant
 
 // ── File resolution ──────────────────────────────────────────────────
 
-// resolveFiles walks messages and loads the bytes of media parts that have
-// none. For each such part, it resolves the source URI via the
-// scheme-matched Resolver, then checks the provider's ContentNegotiator: if
-// the media type is native, the part is kept; otherwise, it is converted via
-// an Extractor.
-//
-// A file that cannot be loaded is never passed on silently. A missing
-// resolver (for a scheme other than http or https, which providers can fetch
-// themselves), a resolver error, or an extractor error for a type the
-// provider cannot read is logged and replaced with a text notice, so the
-// model knows the file is missing and raw bytes never reach it as text.
-func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []types.Message {
-	// Determine native content support from the provider. This prefers the
-	// model-level capability declaration over the adapter-level negotiator: an
-	// adapter knows how to encode an image, but only the model decides whether
-	// it can read one.
-	support := types.ProviderContentSupport(a.cfg.Provider)
-
+// resolveSources fills the locators of media parts before planning: a part
+// without bytes whose URI scheme has a Resolver is fetched, and bytes
+// without a digest get one, so conversions can be memoized by digest. It
+// never replaces a part. A part it cannot resolve keeps its locators and is
+// marked unavailable with the reason, and the attempt's conversion plan
+// then rejects it (or omits it, when the modality dial permits). A URI with
+// no resolver, such as https or gs, is left for the provider to fetch: the
+// plan decides per attempt whether the serving endpoint reads it.
+func (a *Agent) resolveSources(ctx context.Context, messages []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
 		um, ok := msg.(types.UserMessage)
@@ -1072,63 +1096,42 @@ func (a *Agent) resolveFiles(ctx context.Context, messages []types.Message) []ty
 			out = append(out, msg)
 			continue
 		}
-
-		var replaced []types.UserPart
-		for _, c := range um.Parts {
+		var changed bool
+		parts := make([]types.UserPart, len(um.Parts))
+		for i, c := range um.Parts {
+			parts[i] = c
 			src, media := types.SourceOf(c)
-			if !media || len(src.Inline) > 0 {
-				replaced = append(replaced, c)
+			if !media {
 				continue
 			}
-
-			// Extract URI scheme.
-			scheme := uriScheme(src.URI)
-			resolver, found := a.cfg.Resolvers[scheme]
-			if !found {
-				if scheme == "http" || scheme == "https" {
-					replaced = append(replaced, c) // providers can fetch web URLs
-					continue
+			if len(src.Inline) > 0 {
+				if src.Digest == "" {
+					parts[i], changed = withSource(c, types.Bytes(src.MediaType, src.Inline).With(src)), true
 				}
-				replaced = append(replaced, a.fileNotice(src, fmt.Sprintf("no resolver for scheme %q", scheme)))
 				continue
 			}
-
+			resolver, found := a.cfg.Resolvers[uriScheme(src.URI)]
+			if src.URI == "" || !found {
+				continue
+			}
+			changed = true
 			resolved, err := resolver.Resolve(ctx, src.URI)
 			if err != nil {
-				replaced = append(replaced, a.fileNotice(src, err.Error()))
+				a.cfg.Logger.Warn("media could not be resolved",
+					"agent", a.cfg.Name, "uri", src.URI, "media_type", src.MediaType, "error", err)
+				parts[i] = withSource(c, src.Unavailable(err.Error()))
 				continue
 			}
-
 			if src.MediaType == "" {
 				src.MediaType = resolved.MediaType
 			}
-			src = types.Bytes(src.MediaType, resolved.Data).With(src)
-			part := withSource(c, src)
-
-			// Check if provider handles this type natively.
-			if support.Supports(src.MediaType) {
-				replaced = append(replaced, part)
-				continue
-			}
-
-			// Try to extract to text content blocks.
-			if ext, ok := a.cfg.Extractors[src.MediaType]; ok {
-				blocks, err := ext.Extract(ctx, src.Inline, src.MediaType)
-				if err == nil {
-					replaced = append(replaced, blocks...)
-					continue
-				}
-				replaced = append(replaced, a.fileNotice(src, "extract "+string(src.MediaType)+": "+err.Error()))
-				continue
-			}
-
-			// Neither the provider nor an extractor can read this type. Raw
-			// bytes are never forwarded as text, so the file becomes a notice.
-			replaced = append(replaced, a.fileNotice(src,
-				"media type "+string(src.MediaType)+" is not supported by the provider and no extractor is registered"))
+			parts[i] = withSource(c, types.Bytes(src.MediaType, resolved.Data).With(src))
 		}
-
-		out = append(out, types.UserMessage{Parts: replaced})
+		if !changed {
+			out = append(out, msg)
+			continue
+		}
+		out = append(out, types.UserMessage{Parts: parts})
 	}
 	return out
 }
@@ -1153,14 +1156,6 @@ func withSource(p types.UserPart, src types.Source) types.UserPart {
 	default:
 		return types.Media(src)
 	}
-}
-
-// fileNotice logs a file that could not be loaded and returns the text block
-// that stands in for it.
-func (a *Agent) fileNotice(src types.Source, reason string) types.UserPart {
-	a.cfg.Logger.Warn("file could not be loaded",
-		"agent", a.cfg.Name, "uri", src.URI, "media_type", src.MediaType, "error", reason)
-	return types.TextPart{Text: fmt.Sprintf("[file %s could not be loaded: %s]", src.URI, reason)}
 }
 
 // uriScheme extracts the scheme from a URI (e.g. "file" from "file:///path").
@@ -1555,7 +1550,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// the way the run ends.
 		active = withOutputTool(active, out)
 		active.messages = withSchemaInstruction(active.messages, out)
-		active.dialLayers = dialLayers(active, resolved)
+		active.dialLayers, active.modality = splitModality(dialLayers(active, resolved))
 
 		// Check the step limits. If the cap fires while the last assistant turn
 		// left tool calls pending (pendingWork), the run was truncated, not
@@ -1593,8 +1588,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		if a.handoffs != nil && resolved.compactCfg.Enabled() {
 			return errors.New("handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported")
 		}
-		// Resolve file URIs to data.
-		active.messages = a.resolveFiles(ctx, active.messages)
+		// Fetch media bytes the resolvers can reach. What the serving model
+		// cannot take is planned per attempt by the conversion decorator.
+		active.messages = a.resolveSources(ctx, active.messages)
 
 		// Compact if configured: summarize or trim onto a new branch, then
 		// re-flatten. A turn is compacted once before it is sent, or again
@@ -1647,7 +1643,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		)
 		// A parallel guardrail that already blocked saves the call.
 		if guard == nil || !guard.attach(cancelTurn) {
-			msg, usage, llmErr = a.getAssistantMessage(turnCtx, stream, active.provider, active.messages, toolDefs, opts, stepName)
+			msg, usage, llmErr = a.getAssistantMessage(a.withConversion(turnCtx, active.modality), stream, active.provider, active.messages, toolDefs, opts, stepName)
 		}
 		interruptedBy := stream.inbox.endTurn()
 		cancelTurn(nil)
@@ -1737,7 +1733,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// applied to the final answer: a draft that ends the run without
 		// tool calls is replaced by one schema-constrained, tool-free turn.
 		if a.needsSchemaTurn(out, msg, toolDefs) {
-			msg, usage, llmErr = a.getAssistantMessage(ctx, stream, active.provider, active.messages, nil, nil, stepName+"-schema")
+			msg, usage, llmErr = a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, active.messages, nil, nil, stepName+"-schema")
 			if llmErr != nil {
 				log.Error("structured output call failed", "error", llmErr, "iteration", iterCount)
 				return llmErr
@@ -1975,8 +1971,10 @@ type activeContext struct {
 	// agent's, or a handoff member's when it sets its own.
 	dials     types.Dials
 	dialScope string
-	// dialLayers are every dial layer of the next call, turn included.
+	// dialLayers are every dial layer of the next call, turn included,
+	// without the modality dial, which is in modality.
 	dialLayers []types.DialLayer
+	modality   []types.DialLayer
 }
 
 // resolveActive selects the active agent for this iteration and overlays its
@@ -2168,14 +2166,27 @@ func (a *Agent) modelStep(
 	// durable runner may call fn with a context derived from its own, which
 	// does not carry a schema scoped by Structured.
 	out := a.output(ctx)
+	// The conversion runtime is read here for the same reason: the step's
+	// context may not carry it.
+	conv, _ := convert.RuntimeFrom(ctx)
 	start := time.Now()
 	res, err := a.cfg.StepRunner.RunStep(ctx, stepName, func(stepCtx context.Context) (stepResult types.StepResult, stepError error) {
 		ran = true
+		// Conversions the call runs settle on their own; their receipts are
+		// kept with the step so a replay restores them too.
+		var receipts []types.BudgetReceipt
+		defer func() { stepResult.ConversionReceipts = receipts }()
+		rt := conv
+		rt.OnReceipt = func(r types.BudgetReceipt) { receipts = append(receipts, r) }
+		stepCtx = convert.WithRuntime(stepCtx, rt)
 		if a.cfg.Budget != nil {
-			reservation, pricing, err := a.reserveProviderCall(stepCtx, stream, provider, stepName)
+			extra := a.conversionEstimate(stepCtx, provider, types.Request{Messages: llmMessages, Tools: toolDefs, Options: opts})
+			reservation, pricing, err := a.reserveProviderCall(stepCtx, stream, provider, stepName, extra)
 			if err != nil {
 				return types.StepResult{}, err
 			}
+			rt.Budget, rt.Reservation = a.cfg.Budget, reservation.ID
+			stepCtx = convert.WithRuntime(stepCtx, rt)
 			defer func() {
 				usage, failed := liveUsage, stepError != nil
 				if errors.Is(stepError, errInterruptRequested) {
@@ -2243,6 +2254,9 @@ func (a *Agent) modelStep(
 		}
 		var streamErr error
 		lastRoute := localRoute
+		// lastConversion is the executed conversion report of the attempt
+		// that produced the turn.
+		var lastConversion *types.ConversionReport
 		for delta := range rx {
 			switch d := delta.(type) {
 			case types.UsageDelta:
@@ -2260,10 +2274,15 @@ func (a *Agent) modelStep(
 				// runLoop re-emits it as the turn error, so don't forward twice.
 				streamErr = d.Error
 			default:
-				if rd, ok := delta.(types.RouteDelta); ok {
+				switch v := delta.(type) {
+				case types.RouteDelta:
 					// The last route of the call names the configuration
 					// that produced the committed turn.
-					lastRoute = &rd
+					lastRoute = &v
+					lastConversion = nil
+				case types.ConversionDelta:
+					r := v.Report.Clone()
+					lastConversion = &r
 				}
 				delta = a.numberCitation(delta)
 				stream.send(delta) // live streaming (no-op runner path)
@@ -2334,9 +2353,12 @@ func (a *Agent) modelStep(
 			m.Parts = append(m.Parts, types.ToolCallPart{ID: id, ArgumentsError: errTruncatedToolCall})
 			ok = true
 		}
-		if ok && lastRoute != nil {
+		if ok {
+			stampThinkingOrigin(m.Parts, servingProvider(provider, lastRoute))
+		}
+		if ok && (lastRoute != nil || lastConversion != nil) {
 			// Metadata: stripped before the next provider call.
-			m.Parts = append(m.Parts, types.RoutePartFrom(*lastRoute))
+			m.Parts = append(m.Parts, routePart(provider, lastRoute, lastConversion))
 		}
 		if ok {
 			msg = &m
@@ -2374,6 +2396,13 @@ func (a *Agent) modelStep(
 	if !ran && res.Receipt != nil && a.cfg.Budget != nil {
 		if err := a.cfg.Budget.Restore(*res.Receipt); err != nil {
 			return nil, nil, err
+		}
+	}
+	if !ran && a.cfg.Budget != nil {
+		for _, r := range res.ConversionReceipts {
+			if err := a.cfg.Budget.Restore(r); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	if !ran && res.Message != nil {

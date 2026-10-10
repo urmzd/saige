@@ -25,7 +25,6 @@ var (
 	_ types.OptionsReporter          = (*attemptTimeout)(nil)
 	_ types.NamedProvider            = (*attemptTimeout)(nil)
 	_ types.ModelProvider            = (*attemptTimeout)(nil)
-	_ types.ContentNegotiator        = (*attemptTimeout)(nil)
 )
 
 func withAttemptTimeout(p types.Provider, d time.Duration) types.Provider {
@@ -47,10 +46,6 @@ func (t *attemptTimeout) Model() string { return types.ProviderModel(t.Inner) }
 func (t *attemptTimeout) Capabilities() types.ModelCapabilities {
 	caps, _ := types.ProviderCapabilities(t.Inner)
 	return caps
-}
-
-func (t *attemptTimeout) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(t.Inner)
 }
 
 func (t *attemptTimeout) EffectiveOptions() types.RequestOptions {

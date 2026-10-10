@@ -356,9 +356,9 @@ for _, entry := range a.FeedbackSummary() {
 
 Feedback nodes have `NodeFeedback` state. They cannot have children added, forming dead-end branches that do not interfere with the conversation flow. During `Replay`, feedback emits `FeedbackDelta` for consumers that track ratings.
 
-## File Pipeline
+## Media and conversion
 
-Automatic URI resolution and content negotiation for multi-modal input:
+Resolvers fetch media bytes by URI scheme. A part the serving model cannot take natively is rejected unless the conversion policy permits an action for its modality (see [Modality conversion](../docs/modality-conversion.md)):
 
 ```go
 a := agent.NewAgent(agent.AgentConfig{
@@ -368,8 +368,12 @@ a := agent.NewAgent(agent.AgentConfig{
         "file": myFileResolver,
         "s3":   myS3Resolver,
     }),
-    agent.WithExtractors(map[types.MediaType]types.Extractor{
-        types.MediaPDF: myPDFExtractor,
+    agent.WithConversion(types.ConversionPolicy{
+        Dial: types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{
+            types.ModalityDocument: {types.ActExtract, types.ActOmit},
+            types.ModalityAudio:    {types.ActTranscribe},
+        }},
+        Converters: []types.Converter{convert.Documents(), convert.Transcribe(gemini)},
     }),
 )
 ```

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
 )
@@ -301,24 +302,33 @@ func TestRestRequestCarriesOutputModalities(t *testing.T) {
 	}
 }
 
-func TestContentSupportMatchesMapping(t *testing.T) {
-	support := (&Adapter{}).ContentSupport()
-	for _, mt := range []types.MediaType{types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP, types.MediaPDF,
-		types.MediaText, types.MediaWAV, types.MediaMP3, types.MediaMP4} {
-		if !support.Supports(mt) {
-			t.Errorf("expected native support for %s", mt)
-		}
-	}
-	if support.Supports(types.MediaDOCX) {
-		t.Error("DOCX is not read natively")
-	}
-}
-
 func TestMediaToolResultsByModel(t *testing.T) {
 	for model, want := range map[string]bool{"gemini-3.1-flash-lite": true, "gemini-3-pro": true, "gemini-10-flash": true,
 		"gemini-2.5-flash": false, "gemini-2.0": false, "text-embedding-004": false} {
 		if got := mediaToolResults(model); got != want {
 			t.Errorf("mediaToolResults(%q) = %v, want %v", model, got, want)
 		}
+	}
+}
+
+// On Vertex AI the adapter reports the Vertex offering, which reads gs://
+// URIs, so a Cloud Storage image is planned as native there and rejected on
+// the Gemini API instead of reaching the model as a text notice.
+func TestOfferingFollowsTheBackend(t *testing.T) {
+	img := types.Image(types.URL("gs://bucket/cat.png", types.MediaPNG))
+	msgs := []types.Message{types.UserMsg(types.Text("what is it?"), img)}
+	vertex := &Adapter{model: "gemini-3.1-flash-lite", backend: backend{kind: genai.BackendVertexAI}}
+	if got := vertex.Offering().Endpoint.Name; got != endpointVertex {
+		t.Fatalf("vertex endpoint = %q", got)
+	}
+	if _, err := convert.PlanConversions(vertex.Offering(), msgs, types.ConversionPolicy{}); err != nil {
+		t.Fatalf("gs:// on Vertex: %v", err)
+	}
+	gemini := &Adapter{model: "gemini-3.1-flash-lite", backend: backend{kind: genai.BackendGeminiAPI}}
+	if got := gemini.Offering().Endpoint.Name; got != endpointGemini {
+		t.Fatalf("gemini endpoint = %q", got)
+	}
+	if _, err := convert.PlanConversions(gemini.Offering(), msgs, types.ConversionPolicy{}); !errors.Is(err, types.ErrModalityUnsupported) {
+		t.Fatalf("gs:// on the Gemini API: err = %v, want a rejection", err)
 	}
 }

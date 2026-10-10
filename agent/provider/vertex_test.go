@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -114,7 +115,7 @@ func TestBuildRoutesResponsesOnlyModels(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, isResponses := p.(*openai.ResponsesAdapter)
+		_, isResponses := wrapper.As[*openai.ResponsesAdapter](p)
 		if isResponses != wantResponses {
 			t.Errorf("%s: adapter %T, want Responses=%v", model, p, wantResponses)
 		}

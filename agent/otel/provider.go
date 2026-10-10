@@ -215,12 +215,6 @@ func (p *TracedProvider) WithTarget(t types.Target) (types.Provider, error) {
 	return &TracedProvider{Inner: inner, tracer: p.tracer, opts: p.opts}, nil
 }
 
-// ContentSupport delegates to the inner provider, preferring its model-level
-// capability declaration over the adapter-level negotiator.
-func (p *TracedProvider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(p.Inner)
-}
-
 // Capabilities implements types.CapabilityReporter by delegating to the inner
 // provider. Tracing changes observability, not what the model accepts.
 //
@@ -268,6 +262,7 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 			firstSeen bool
 			route     types.RouteDelta
 			sawRoute  bool
+			conv      *types.ConversionReport
 		)
 		defer func() {
 			if sawUsage {
@@ -292,6 +287,9 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 				if route.Dials != nil {
 					span.SetAttributes(dialAttributes(*route.Dials)...)
 				}
+			}
+			if conv != nil {
+				span.SetAttributes(conversionAttributes(*conv)...)
 			}
 			span.End()
 		}()
@@ -323,6 +321,18 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 					attrs = append(attrs, dialAttributes(*v.Dials)...)
 				}
 				span.AddEvent("saige.route.attempt", trace.WithAttributes(attrs...))
+				// A conversion belongs to the attempt it was made for.
+				conv = nil
+			case types.ConversionDelta:
+				// The last attempt's report is the serving one; every report
+				// is an event, since a failed attempt's conversion was paid.
+				r := v.Report
+				conv = &r
+				attrs := conversionAttributes(r)
+				if v.Profile != "" {
+					attrs = append(attrs, attribute.String("saige.route.profile", v.Profile))
+				}
+				span.AddEvent("saige.conversion", trace.WithAttributes(attrs...))
 			case types.ErrorDelta:
 				recordSpanError(span, v.Error, p.opts.redactor)
 			}
@@ -435,6 +445,25 @@ func routeAttributes(r types.RouteDelta) []attribute.KeyValue {
 	add("saige.route.config_hash", r.ConfigHash)
 	add("saige.catalog.revision", r.CatalogRevision)
 	return attrs
+}
+
+// conversionAttributes records how an attempt fitted its parts to the
+// offering: the offering, the report hash, and one "path:action[:via]" entry
+// per part that was not native.
+func conversionAttributes(r types.ConversionReport) []attribute.KeyValue {
+	var decisions []string
+	for _, d := range r.Decisions {
+		e := d.Path.String() + ":" + d.Action
+		if d.Via != "" {
+			e += ":" + d.Via
+		}
+		decisions = append(decisions, e)
+	}
+	return []attribute.KeyValue{
+		attribute.String("saige.conversion.offering", r.Offering),
+		attribute.String("saige.conversion.hash", r.Hash),
+		attribute.StringSlice("saige.conversion.decisions", decisions),
+	}
 }
 
 // recordSpanError marks span as failed and attaches the error classification.

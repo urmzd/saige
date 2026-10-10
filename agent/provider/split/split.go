@@ -171,7 +171,6 @@ var (
 	_ types.ModelProvider            = (*Split)(nil)
 	_ types.ModelSwitcher            = (*Split)(nil)
 	_ types.CapabilityReporter       = (*Split)(nil)
-	_ types.ContentNegotiator        = (*Split)(nil)
 	_ types.StructuredOutputProvider = (*Split)(nil)
 	_ types.OptionsProvider          = (*Split)(nil)
 	_ types.SessionProvider          = (*Split)(nil)
@@ -292,23 +291,6 @@ func (s *Split) Capabilities() types.ModelCapabilities {
 		out = out.Intersect(next)
 	}
 	return optionscheck.Narrow(out, s.arms...)
-}
-
-// ContentSupport implements types.ContentNegotiator as the intersection over
-// the arms.
-func (s *Split) ContentSupport() types.ContentSupport {
-	out := types.ProviderContentSupport(s.arms[0])
-	for _, p := range s.arms[1:] {
-		next := types.ProviderContentSupport(p)
-		merged := map[types.MediaType]bool{}
-		for mt, ok := range out.NativeTypes {
-			if ok && next.NativeTypes[mt] {
-				merged[mt] = true
-			}
-		}
-		out = types.ContentSupport{NativeTypes: merged}
-	}
-	return out
 }
 
 // Unwrap returns the arms in configuration order. Shadow arms are not
@@ -646,13 +628,13 @@ func (s *Split) attempt(ctx context.Context, send func(types.Delta) bool, q requ
 }
 
 // isOutput reports whether forwarding d commits the request to this arm.
-// Usage, terminal markers and routes do not: adapters such as Anthropic's
-// report usage when the message starts, before any output, and the most
-// common transient failure follows it. Usage that precedes output is held
-// back instead (see attempt).
+// Usage, terminal markers, routes and conversion reports do not: adapters
+// such as Anthropic's report usage when the message starts, before any
+// output, and the most common transient failure follows it. Usage that
+// precedes output is held back instead (see attempt).
 func isOutput(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.DoneDelta, types.ErrorDelta, types.RouteDelta:
+	case types.UsageDelta, types.DoneDelta, types.ErrorDelta, types.RouteDelta, types.ConversionDelta:
 		return false
 	default:
 		return true

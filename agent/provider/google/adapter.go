@@ -26,7 +26,6 @@ var (
 	_ types.ModelProvider            = (*Adapter)(nil)
 	_ types.ModelSwitcher            = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
-	_ types.ContentNegotiator        = (*Adapter)(nil)
 )
 
 // Option configures the Google adapter.
@@ -559,6 +558,29 @@ func (a *Adapter) Capabilities() types.ModelCapabilities {
 	return catalog.MustLookup(providerName, a.model)
 }
 
+// Catalog endpoints of the two Google backends.
+const (
+	endpointGemini = "google-gemini"
+	endpointVertex = "google-vertex"
+)
+
+// Offering implements types.OfferingReporter: the model's offering on the
+// backend this adapter targets. Vertex AI reads gs:// URIs, which the
+// Gemini API does not.
+func (a *Adapter) Offering() types.Offering {
+	endpoint := endpointGemini
+	if a.backend.kind == genai.BackendVertexAI {
+		endpoint = endpointVertex
+	}
+	if o, ok := catalog.LookupOffering(endpoint, providerName, a.model); ok {
+		return o
+	}
+	if caps := a.Capabilities(); caps.Offering != nil {
+		return caps.Offering.Clone()
+	}
+	return types.OfferingFromCapabilities(a.Capabilities())
+}
+
 // serverToolDecls converts the configured server tools into Gemini tool
 // declarations.
 func (a *Adapter) serverToolDecls() []*genai.Tool {
@@ -572,13 +594,6 @@ func (a *Adapter) serverToolDecls() []*genai.Tool {
 		}
 	}
 	return out
-}
-
-// ContentSupport implements types.ContentNegotiator.
-func (a *Adapter) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{
-		NativeTypes: nativeTypes(),
-	}
 }
 
 func toGeminiTools(defs []types.ToolDef) []*genai.Tool {

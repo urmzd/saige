@@ -321,7 +321,6 @@ var (
 	_ types.ModelProvider            = (*Session)(nil)
 	_ types.TargetSwitcher           = (*Session)(nil)
 	_ types.CapabilityReporter       = (*Session)(nil)
-	_ types.ContentNegotiator        = (*Session)(nil)
 	_ types.StructuredOutputProvider = (*Session)(nil)
 	_ types.OptionsProvider          = (*Session)(nil)
 	_ types.SessionProvider          = (*Session)(nil)
@@ -465,40 +464,6 @@ func (s *Session) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(out, members...)
 }
 
-// reachable returns the profiles a request may currently use: the pinned or
-// default group, or every profile.
-func (s *Session) reachable() []Profile {
-	ids, _ := s.router.members(s.currentPin())
-	if ids == nil {
-		return s.router.cfg.Profiles
-	}
-	var out []Profile
-	for _, p := range s.router.cfg.Profiles {
-		if slices.Contains(ids, p.ID) {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// ContentSupport implements types.ContentNegotiator as the intersection over
-// the profiles, because any profile may serve the request.
-func (s *Session) ContentSupport() types.ContentSupport {
-	profiles := s.reachable()
-	out := types.ProviderContentSupport(profiles[0].Provider)
-	for _, p := range profiles[1:] {
-		next := types.ProviderContentSupport(p.Provider)
-		merged := map[types.MediaType]bool{}
-		for mt, ok := range out.NativeTypes {
-			if ok && next.NativeTypes[mt] {
-				merged[mt] = true
-			}
-		}
-		out = types.ContentSupport{NativeTypes: merged}
-	}
-	return out
-}
-
 // Stream implements types.Provider. A request with options is eligible
 // only on profiles that accept request options and whose capabilities
 // validate them, so a forced tool choice never reaches a profile that would
@@ -533,6 +498,8 @@ func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta
 type compiled struct {
 	opts   types.RequestOptions
 	report *types.DialReport
+	// conversions is the member's conversion plan, when it converts media.
+	conversions *types.ConversionReport
 }
 
 // dialSurface names the API the profile's adapter serves, for dials whose
@@ -547,8 +514,10 @@ func dialSurface(p types.Provider) string {
 // eligible reports why a profile cannot serve q, or nil, and what it would
 // send. Dials compile here, per candidate: a contractual dial the model
 // cannot honor filters the profile out, while an advisory dial that is
-// mapped or dropped never does.
-func (q request) eligible(c Candidate, p types.Provider, want []types.Capability, prev *types.RequestOptions) (compiled, error) {
+// mapped or dropped never does. The member's conversion plan is made here
+// too: a part no permitted action can fit to the member's offering filters
+// it out, while a planned conversion never does.
+func (q request) eligible(ctx context.Context, c Candidate, p types.Provider, want []types.Capability, prev *types.RequestOptions) (compiled, error) {
 	if missing := c.Capabilities.Missing(want...); len(missing) > 0 {
 		return compiled{}, fmt.Errorf("profile %s: %w: missing %v", c.ID, types.ErrInvalidModelConfig, missing)
 	}
@@ -562,8 +531,8 @@ func (q request) eligible(c Candidate, p types.Provider, want []types.Capability
 		}
 		merged = merged.Merge(*q.opts)
 	}
-	ctx := types.DialContext{Tools: len(q.tools) > 0, Schema: q.schema != nil, Surface: dialSurface(p), Previous: prev}
-	eff, rep, err := types.CompileOptions(c.Capabilities, merged, ctx)
+	dctx := types.DialContext{Tools: len(q.tools) > 0, Schema: q.schema != nil, Surface: dialSurface(p), Previous: prev}
+	eff, rep, err := types.CompileOptions(c.Capabilities, merged, dctx)
 	if err != nil {
 		return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
 	}
@@ -574,7 +543,27 @@ func (q request) eligible(c Candidate, p types.Provider, want []types.Capability
 			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
 		}
 	}
-	return compiled{opts: eff, report: rep}, nil
+	out := compiled{opts: eff, report: rep}
+	if planner, ok := wrapper.As[types.ConversionPlanner](p); ok {
+		plan, _, err := planner.PlanConversions(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
+		if err != nil {
+			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
+		}
+		if converts(plan) {
+			out.conversions = &plan
+		}
+	}
+	return out, nil
+}
+
+// converts reports whether a plan does more than send its parts natively.
+func converts(r types.ConversionReport) bool {
+	for _, d := range r.Decisions {
+		if d.Action != types.DecisionNative && d.Action != types.DecisionLowered {
+			return true
+		}
+	}
+	return false
 }
 
 // plan is the validated attempt order for one request.
@@ -653,7 +642,7 @@ func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[t
 		Pinned:          st.Pin,
 	}
 	members, group := s.router.members(st.Pin)
-	skippedFirst, reasons := s.collectCandidates(q, want, st, members, sent, &p, &rc)
+	skippedFirst, reasons := s.collectCandidates(ctx, q, want, st, members, sent, &p, &rc)
 	if cfg.Budget != nil {
 		rc.Headroom = Headroom{Known: true, Remaining: cfg.Budget.Remaining(), Status: cfg.Budget.Status()}
 	}
@@ -743,7 +732,7 @@ func (p *plan) applyPinsAndLocks(st RouteState, locks []string, group string) {
 // restricted to members when set. It reports whether the group's first
 // member was skipped because it cannot serve the request, and why each
 // skipped member was.
-func (s *Session) collectCandidates(q request, want []types.Capability, st RouteState, members []types.ProfileID, sent map[types.ProfileID]types.RequestOptions, p *plan, rc *RouteContext) (bool, []error) {
+func (s *Session) collectCandidates(ctx context.Context, q request, want []types.Capability, st RouteState, members []types.ProfileID, sent map[types.ProfileID]types.RequestOptions, p *plan, rc *RouteContext) (bool, []error) {
 	skippedFirst := false
 	var reasons []error
 	for i, candidate := range s.router.Candidates() {
@@ -752,7 +741,7 @@ func (s *Session) collectCandidates(q request, want []types.Capability, st Route
 		if o, ok := sent[candidate.ID]; ok {
 			prev = &o
 		}
-		c, err := q.eligible(candidate, provider, want, prev)
+		c, err := q.eligible(ctx, candidate, provider, want, prev)
 		if members != nil && !slices.Contains(members, candidate.ID) {
 			// Outside the group, but the previous profile still matters: it
 			// may hold a lock that outranks the group.
@@ -922,6 +911,17 @@ func (s *Session) relay(ctx context.Context, out chan<- types.Delta, p plan, q r
 							held = append(held, d)
 							continue
 						}
+					case types.ConversionDelta:
+						// A conversion's cost is real whether or not the
+						// attempt serves: it is forwarded at once, never held
+						// or dropped, and does not commit the attempt.
+						v.Profile = string(id)
+						if !send(v) {
+							cancel()
+							go drain(src)
+							return
+						}
+						continue
 					}
 					// Output commits the attempt: replaying it on another
 					// profile would duplicate what the caller has seen. Usage
@@ -1015,6 +1015,10 @@ func (s *Session) routeDelta(id types.ProfileID, provider types.Provider, c comp
 	if c.report != nil {
 		r := c.report.Clone()
 		d.Dials = &r
+	}
+	if c.conversions != nil {
+		r := c.conversions.Clone()
+		d.Conversions = &r
 	}
 	return d
 }

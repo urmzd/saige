@@ -50,17 +50,6 @@ func baseType(mt types.MediaType) string {
 	return strings.ToLower(strings.TrimSpace(base))
 }
 
-// nativeTypes lists every media type the request mapping sends natively.
-func nativeTypes() map[types.MediaType]bool {
-	out := map[types.MediaType]bool{types.MediaPDF: true, types.MediaText: true}
-	for _, set := range []map[string]bool{imageTypes, audioTypes, videoTypes} {
-		for mt := range set {
-			out[types.MediaType(mt)] = true
-		}
-	}
-	return out
-}
-
 // mediaToolResults reports whether model takes media inside a function
 // response. Gemini 3 models do; earlier ones accept only a JSON response.
 func mediaToolResults(model string) bool {

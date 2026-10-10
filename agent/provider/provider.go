@@ -27,6 +27,7 @@ import (
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go/option"
 	openaisdk "github.com/openai/openai-go/v3/option"
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/google"
@@ -107,6 +108,11 @@ type Config struct {
 	Vertex *Vertex
 	// Getenv reads the environment. Nil uses os.Getenv.
 	Getenv func(string) string
+	// Conversion is how parts the model cannot take natively are fitted to
+	// it. The zero value rejects them. The modality dial of Dials and
+	// DialLayers applies above Conversion.Dial, and an agent's policy
+	// (agent.WithConversion) above both.
+	Conversion types.ConversionPolicy
 }
 
 // Vertex names the Google Cloud project and location that serve a Google
@@ -207,7 +213,10 @@ func knownProvider(name string) types.ProviderName {
 	return ""
 }
 
-// Build constructs and validates the adapter cfg describes.
+// Build constructs and validates the adapter cfg describes, behind a
+// conversion decorator (convert.Provider) that fits each request's parts to
+// the model's offering with cfg.Conversion and the modality dial. Use
+// wrapper.As to reach the adapter itself.
 func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	getenv := cfg.Getenv
 	if getenv == nil {
@@ -248,6 +257,10 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	if cfg, err = withDials(cfg, caps); err != nil {
 		return nil, err
 	}
+	// The modality dial is spent by the conversion decorator; the adapter
+	// gets the dials that compile to options.
+	var modality []types.DialLayer
+	cfg.DialLayers, modality = splitModality(cfg.DialLayers)
 
 	var p types.Provider
 	switch name {
@@ -268,7 +281,24 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 			return nil, err
 		}
 	}
-	return p, nil
+	return convert.New(p, cfg.Conversion, modality...), nil
+}
+
+// splitModality separates the modality dial from the layers an adapter
+// compiles.
+func splitModality(layers []types.DialLayer) (rest, modality []types.DialLayer) {
+	for _, l := range layers {
+		if l.Dials.Modality != nil {
+			modality = append(modality, types.DialLayer{Scope: l.Scope, Dials: types.Dials{Modality: l.Dials.Modality}}.Clone())
+			l = l.Clone()
+			l.Dials.Modality = nil
+			if l.Dials.IsZero() && l.Hold == nil {
+				continue
+			}
+		}
+		rest = append(rest, l)
+	}
+	return rest, modality
 }
 
 // credentialsFor resolves how the adapter authenticates: an API key, or for

@@ -152,7 +152,7 @@ func stricterChatTools(a, b ChatCompletionsTools) ChatCompletionsTools {
 // pair: the flags it accepts, the features it supports, and its hard limits.
 //
 // It is the single answer to "can this model do X", replacing the scattered
-// optional-interface probes (StructuredOutputProvider, ContentNegotiator) that
+// optional-interface probes (such as StructuredOutputProvider) that
 // can only say what an *adapter* implements, never what the *model behind it*
 // accepts. An adapter can implement Stream with a schema and still be pointed
 // at a model that ignores schemas.
@@ -222,9 +222,10 @@ type ModelCapabilities struct {
 	// answers "which", and a CLI listing wants the second.
 	ServerTools []ServerToolKind
 
-	// Media declares which media types reach the model natively. This is the
-	// model-level counterpart of ContentNegotiator, which only describes the
-	// adapter.
+	// Media declares which media types reach the model natively: the union
+	// of the offering's input modalities. Conversion planning reads the
+	// offering itself (Offering.Modalities), which also holds the limits and
+	// the locators each modality accepts.
 	Media ContentSupport
 
 	// Known means the exact model name is declared. False covers both provider
@@ -606,18 +607,4 @@ func MissingCapabilities(p Provider, want ...Capability) []Capability {
 		return append([]Capability(nil), want...)
 	}
 	return mc.Missing(want...)
-}
-
-// ProviderContentSupport resolves the media types p handles natively,
-// preferring the model-level declaration over the adapter-level
-// ContentNegotiator. The adapter can only say what it knows how to encode; the
-// model decides what it can actually read.
-func ProviderContentSupport(p Provider) ContentSupport {
-	if mc, ok := ProviderCapabilities(p); ok && len(mc.Media.NativeTypes) > 0 {
-		return mc.Media
-	}
-	if cn, ok := p.(ContentNegotiator); ok {
-		return cn.ContentSupport()
-	}
-	return ContentSupport{}
 }

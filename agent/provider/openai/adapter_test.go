@@ -7,21 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/urmzd/saige/agent/types"
 )
-
-func TestContentSupportClaimsMatchMapping(t *testing.T) {
-	support := (&Adapter{}).ContentSupport()
-	for _, mt := range []types.MediaType{types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP, types.MediaPDF} {
-		if !support.Supports(mt) {
-			t.Errorf("expected native support for %s", mt)
-		}
-	}
-	if support.Supports(types.MediaCSV) {
-		t.Error("CSV must not be claimed native")
-	}
-}
 
 func TestGenerateSingleTurnText(t *testing.T) {
 	chunks := []string{

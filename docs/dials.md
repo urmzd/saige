@@ -24,6 +24,7 @@ Raw options keep their meaning and their strictness. Dials are additive: nothing
 | Parallel | `parallel` | `true`, `false` | `false` is contractual, `true` advisory | `parallel_tools` |
 | Reproducible | `reproducible` | a seed | contractual | `seed` |
 | Cache | `cache` | `true`, `false` | advisory | the prompt cache mode the catalog row declares |
+| Modality | `modality` | `{"default": action, "per": {"audio": ["transcribe", "omit"]}}` | contractual | a conversion plan, not a vendor parameter; see [Modality conversion](modality-conversion.md) |
 
 A depth without a mode means `on`. Reasoning merges whole: a layer that sets it replaces mode and depth together. Stop sequences and penalties have no portable meaning and stay raw-only.
 

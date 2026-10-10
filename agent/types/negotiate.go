@@ -1,6 +1,8 @@
 package types
 
-// ContentSupport declares which media types a provider handles natively.
+// ContentSupport declares which media types a model reads natively. It is
+// the projection of an offering's input modalities onto
+// ModelCapabilities.Media.
 type ContentSupport struct {
 	NativeTypes map[MediaType]bool
 }
@@ -8,10 +10,4 @@ type ContentSupport struct {
 // Supports returns true if the given media type is natively supported.
 func (cs ContentSupport) Supports(mt MediaType) bool {
 	return cs.NativeTypes[mt]
-}
-
-// ContentNegotiator is an optional interface for provider adapters
-// to declare native file support.
-type ContentNegotiator interface {
-	ContentSupport() ContentSupport
 }

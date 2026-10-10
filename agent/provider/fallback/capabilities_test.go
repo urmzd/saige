@@ -7,12 +7,11 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// stubProvider reports a fixed identity, capability set and media support.
+// stubProvider reports a fixed identity and capability set.
 type stubProvider struct {
 	name  string
 	model string
 	caps  *types.ModelCapabilities // nil = does not report
-	media map[types.MediaType]bool
 }
 
 func (s *stubProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
@@ -22,9 +21,6 @@ func (s *stubProvider) Stream(_ context.Context, _ types.Request) (<-chan types.
 }
 func (s *stubProvider) Name() string  { return s.name }
 func (s *stubProvider) Model() string { return s.model }
-func (s *stubProvider) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{NativeTypes: s.media}
-}
 func (s *stubProvider) Capabilities() types.ModelCapabilities {
 	if s.caps == nil {
 		return types.ModelCapabilities{}
@@ -89,22 +85,6 @@ func TestCapabilitiesCollapseWhenAMemberDoesNotReport(t *testing.T) {
 	}
 	if caps.Known {
 		t.Error("Known must be false when a member is unknown")
-	}
-}
-
-func TestContentSupportIsTheIntersection(t *testing.T) {
-	// A PDF the primary reads natively must still be extracted to text, because
-	// the secondary cannot read it.
-	f := New(
-		&stubProvider{name: "a", media: map[types.MediaType]bool{types.MediaPNG: true, types.MediaPDF: true}},
-		&stubProvider{name: "b", media: map[types.MediaType]bool{types.MediaPNG: true}},
-	)
-	got := types.ProviderContentSupport(f)
-	if got.Supports(types.MediaPDF) {
-		t.Error("media only the primary handles must not be advertised by the chain")
-	}
-	if !got.Supports(types.MediaPNG) {
-		t.Error("shared media must survive")
 	}
 }
 

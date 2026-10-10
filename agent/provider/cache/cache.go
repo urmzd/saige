@@ -79,7 +79,6 @@ var (
 	_ types.ModelProvider            = (*Provider)(nil)
 	_ types.ModelSwitcher            = (*Provider)(nil)
 	_ types.CapabilityReporter       = (*Provider)(nil)
-	_ types.ContentNegotiator        = (*Provider)(nil)
 	_ types.OptionsProvider          = (*Provider)(nil)
 	_ types.SessionProvider          = (*Provider)(nil)
 	_ types.Closer                   = (*Provider)(nil)
@@ -125,12 +124,6 @@ func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
 		return nil, err
 	}
 	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity, flights: p.flights}, nil
-}
-
-// ContentSupport implements types.ContentNegotiator by delegating to the inner
-// provider, so caching an adapter does not hide its native media support.
-func (p *Provider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(p.inner)
 }
 
 // Capabilities implements types.CapabilityReporter by delegating to the inner

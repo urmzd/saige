@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/urmzd/saige/agent/cache/memcache"
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/otel"
 	"github.com/urmzd/saige/agent/privacy"
 	"github.com/urmzd/saige/agent/provider/cache"
@@ -106,7 +107,6 @@ var forwarded = []struct {
 	}},
 	{"TargetSwitcher", func(p types.Provider) bool { _, ok := p.(types.TargetSwitcher); return ok }},
 	{"CapabilityReporter", func(p types.Provider) bool { _, ok := p.(types.CapabilityReporter); return ok }},
-	{"ContentNegotiator", func(p types.Provider) bool { _, ok := p.(types.ContentNegotiator); return ok }},
 	{"StructuredOutputProvider", func(p types.Provider) bool { _, ok := p.(types.StructuredOutputProvider); return ok }},
 	{"OptionsProvider", func(p types.Provider) bool { _, ok := p.(types.OptionsProvider); return ok }},
 	{"SessionProvider", func(p types.Provider) bool { _, ok := p.(types.SessionProvider); return ok }},
@@ -124,6 +124,7 @@ type wrapped struct {
 func wrappers(t *testing.T) []wrapped {
 	return []wrapped{
 		{"retry", func(p types.Provider) types.Provider { return retry.New(p, retry.DefaultConfig()) }, true},
+		{"convert", func(p types.Provider) types.Provider { return convert.New(p, types.ConversionPolicy{}) }, true},
 		{"fallback", func(p types.Provider) types.Provider { return fallback.New(p) }, true},
 		{"cache", func(p types.Provider) types.Provider {
 			return cache.New(p, cache.Config{Cache: memcache.New[cache.CachedResponse]()})
@@ -172,9 +173,6 @@ func TestWrappersKeepOptionalInterfaces(t *testing.T) {
 			caps, _ := types.ProviderCapabilities(p)
 			if !caps.SupportsAll(types.CapTools, types.CapStructuredOutput, types.CapToolChoice) {
 				t.Errorf("%s capabilities = %v", w.name, caps.List())
-			}
-			if !types.ProviderContentSupport(p).Supports(types.MediaPNG) {
-				t.Errorf("%s hides native media support", w.name)
 			}
 
 			choice := types.ToolChoice{Mode: types.ToolChoiceRequired}
@@ -244,7 +242,7 @@ func TestWrappersRejectOptionsTheInnerProviderCannotReceive(t *testing.T) {
 func TestSingleWrappersForwardEffectiveOptions(t *testing.T) {
 	for _, w := range wrappers(t) {
 		switch w.name {
-		case "retry", "cache", "privacy", "tracing":
+		case "retry", "convert", "cache", "privacy", "tracing":
 		default:
 			continue
 		}

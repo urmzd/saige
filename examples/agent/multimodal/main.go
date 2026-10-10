@@ -1,7 +1,9 @@
-// Package main demonstrates file upload with content negotiation. It registers
-// a file:// resolver that reads files from disk, attaches a FileContent block
-// to a user message, and lets the agent's file pipeline resolve the URI and
-// check the provider's ContentNegotiator for native media type support.
+// Package main demonstrates media input with a conversion policy. It
+// registers a file:// resolver that reads files from disk, attaches the file
+// to a user message, and lets the agent resolve the URI. An image the model
+// reads natively is sent as it is; a PDF or text document is extracted to
+// text, because the policy permits extract for documents; anything else the
+// model cannot take is rejected.
 package main
 
 import (
@@ -13,6 +15,7 @@ import (
 	"strings"
 
 	agentsdk "github.com/urmzd/saige/agent"
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -21,11 +24,10 @@ func main() {
 	client := ollama.NewClient("http://localhost:11434", "llava", "")
 	adapter := ollama.NewAdapter(client)
 
-	// Check what content types the provider supports natively.
-	support := adapter.ContentSupport()
-	fmt.Println("Provider native types:")
-	for mt, ok := range support.NativeTypes {
-		if ok {
+	// Show what the model takes natively, as its catalog offering declares.
+	if offering, ok := convert.Target(adapter); ok {
+		fmt.Println("Native input media:")
+		for _, mt := range offering.Modalities.MediaTypes() {
 			fmt.Printf("  - %s\n", mt)
 		}
 	}
@@ -49,6 +51,11 @@ func main() {
 		Provider:     adapter,
 		Resolvers: map[string]types.Resolver{
 			"file": fileResolver,
+		},
+		// Documents the model cannot read are extracted to text.
+		Conversion: types.ConversionPolicy{
+			Dial:       types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{types.ModalityDocument: {types.ActExtract}}},
+			Converters: []types.Converter{convert.Documents()},
 		},
 	})
 

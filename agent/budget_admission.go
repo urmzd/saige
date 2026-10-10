@@ -12,7 +12,10 @@ import (
 // any provider operation. No reservation is held while a decision is pending.
 // A turn interrupted before or during admission returns errTurnInterrupted,
 // so the loop replaces the turn instead of failing the run.
-func (a *Agent) reserveProviderCall(stepCtx context.Context, stream *EventStream, provider types.Provider, stepName string) (types.BudgetReservation, types.Pricing, error) {
+//
+// extra is the estimate of the conversions the call plans, added to the
+// reservation so they are paid for out of it (see types.Budget.Carve).
+func (a *Agent) reserveProviderCall(stepCtx context.Context, stream *EventStream, provider types.Provider, stepName string, extra types.ConversionEstimate) (types.BudgetReservation, types.Pricing, error) {
 	caps, _ := types.ProviderCapabilities(provider)
 	if interruptRequested(stepCtx) {
 		return types.BudgetReservation{}, caps.Pricing, errTurnInterrupted
@@ -22,7 +25,7 @@ func (a *Agent) reserveProviderCall(stepCtx context.Context, stream *EventStream
 	if reservation, ok := a.admission.take(); ok {
 		return a.recordReservation(stepCtx, provider, caps.Pricing, reservation, stepName)
 	}
-	reservation, err := a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
+	reservation, err := a.cfg.Budget.ReserveWith(types.NewID(), caps.Pricing, extra)
 	if errors.Is(err, types.ErrBudgetExceeded) && a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
 		call := types.ToolCallPart{ID: stepName, Name: budgetToolName}
 		_, approved := a.awaitApprovalPhase(stepCtx, stream, call, []types.Marker{a.cfg.Budget.ApprovalMarker()}, "budget-admission")
@@ -36,7 +39,7 @@ func (a *Agent) reserveProviderCall(stepCtx context.Context, stream *EventStream
 		}
 		if approved {
 			a.cfg.Budget.Grant(0)
-			reservation, err = a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
+			reservation, err = a.cfg.Budget.ReserveWith(types.NewID(), caps.Pricing, extra)
 		}
 	}
 	if err != nil {

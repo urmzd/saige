@@ -19,7 +19,6 @@ var (
 	_ types.ModelProvider            = (*ResponsesAdapter)(nil)
 	_ types.ModelSwitcher            = (*ResponsesAdapter)(nil)
 	_ types.CapabilityReporter       = (*ResponsesAdapter)(nil)
-	_ types.ContentNegotiator        = (*ResponsesAdapter)(nil)
 	_ types.OptionsProvider          = (*ResponsesAdapter)(nil)
 	_ catalog.ModelLister            = (*ResponsesAdapter)(nil)
 )
@@ -62,16 +61,21 @@ func (r *ResponsesAdapter) WithModel(model string) types.Provider {
 // Capabilities implements types.CapabilityReporter.
 func (r *ResponsesAdapter) Capabilities() types.ModelCapabilities { return r.base.Capabilities() }
 
-// ContentSupport implements types.ContentNegotiator. Audio input is not part
-// of the Responses API input format; documents beyond PDF are.
-func (r *ResponsesAdapter) ContentSupport() types.ContentSupport {
-	cs := r.base.ContentSupport()
-	for _, mt := range []types.MediaType{types.MediaText, types.MediaCSV, types.MediaJSON, types.MediaHTML,
-		types.MediaDOCX, types.MediaXLSX, types.MediaPPTX} {
-		cs.NativeTypes[mt] = true
+// Offering implements types.OfferingReporter: the model's offering on the
+// Responses endpoint, whose input modalities and locators differ from Chat
+// Completions'.
+func (r *ResponsesAdapter) Offering() types.Offering {
+	if o, ok := catalog.LookupOffering(endpointResponses, providerName, string(r.base.model)); ok {
+		return o
 	}
-	return cs
+	if caps := r.Capabilities(); caps.Offering != nil {
+		return caps.Offering.Clone()
+	}
+	return types.OfferingFromCapabilities(r.Capabilities())
 }
+
+// endpointResponses names the catalog endpoint of the Responses API.
+const endpointResponses = "openai-responses"
 
 func validSummary(mode string) bool {
 	switch shared.ReasoningSummary(mode) {
