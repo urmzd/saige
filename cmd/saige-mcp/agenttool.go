@@ -245,7 +245,13 @@ func (b bridge) runs() *agenthost.Manager[*agentRun] {
 
 // directRuns holds the runs of a bridge that cannot hold approvals: each
 // lasts one call.
-var directRuns = agenthost.NewManager[*agentRun](agenthost.Options{Max: 1 << 20, Prefix: "run_"})
+var directRuns = func() *agenthost.Manager[*agentRun] {
+	m, err := agenthost.New[*agentRun](agenthost.Config{Max: 1 << 20, Prefix: "run_"})
+	if err != nil {
+		panic(err) // a constant, valid configuration
+	}
+	return m
+}()
 
 // drive waits for the run's next event: its end, or a marker to decide.
 // Every marker the agent raises is decided as a direct call to the tool

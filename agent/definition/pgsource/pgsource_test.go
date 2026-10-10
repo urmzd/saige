@@ -126,7 +126,7 @@ func TestNotifyReload(t *testing.T) {
 	pool := database(t)
 	ctx := context.Background()
 	notifier := postgres.NewNotifier(pool, postgres.NotifierOptions{})
-	defer func() { _ = notifier.Close() }()
+	defer func() { _ = notifier.Close(ctx) }()
 	src := pgsource.New(pool, notifier)
 	if _, err := src.Put(ctx, file("a", "1.0.0", "")); err != nil {
 		t.Fatal(err)

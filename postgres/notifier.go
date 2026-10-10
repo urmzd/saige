@@ -226,19 +226,29 @@ func (n *Notifier) release(channel string) {
 
 // Close stops listening, closes the listening connection and ends every
 // subscription. It does not close the pool. It is idempotent.
-func (n *Notifier) Close() error {
+func (n *Notifier) Close(ctx context.Context) error {
 	n.mu.Lock()
 	if n.closed {
 		n.mu.Unlock()
-		<-n.done
-		return nil
+		return waitDone(ctx, n.done)
 	}
 	n.closed = true
 	n.mu.Unlock()
 	n.stop()
-	<-n.done
-	n.hub.Close()
-	return nil
+	if err := waitDone(ctx, n.done); err != nil {
+		return err
+	}
+	return n.hub.Close(ctx)
+}
+
+// waitDone waits for done to close, or for ctx to end.
+func waitDone(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (n *Notifier) isClosed() bool {

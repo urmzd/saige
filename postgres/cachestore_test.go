@@ -112,9 +112,9 @@ func TestCacheStoreInvalidation(t *testing.T) {
 	store := NewCacheStore(pool, CacheStoreOptions{})
 
 	n1 := NewNotifier(pool, NotifierOptions{})
-	defer n1.Close()
+	defer n1.Close(ctx)
 	n2 := NewNotifier(pool, NotifierOptions{})
-	defer n2.Close()
+	defer n2.Close(ctx)
 
 	local1, local2 := memcache.New[toolcache.Entry](), memcache.New[toolcache.Entry]()
 	p1, err := notify.NewCache(ctx, notify.CacheConfig[toolcache.Entry]{
@@ -123,14 +123,14 @@ func TestCacheStoreInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p1.Close()
+	defer p1.Close(ctx)
 	p2, err := notify.NewCache(ctx, notify.CacheConfig[toolcache.Entry]{
 		Local: local2, Shared: toolcache.BytesCache(store), Notifier: n2, Channel: "saige.cache.tool",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p2.Close()
+	defer p2.Close(ctx)
 
 	entry := func(text string) toolcache.Entry {
 		now := time.Now().UTC().Truncate(time.Millisecond)

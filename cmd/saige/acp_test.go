@@ -125,7 +125,7 @@ func newACPFixture(t *testing.T, opts acpOptions, newAgent func(acpBindRequest) 
 		return agenthost.Agent{Agent: a, Tools: reg, MaxGrant: types.GrantTool}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	f.srv = newACPServer(ctx, opts)
+	f.srv = must.Get(newACPServer(ctx, opts))
 	agentIn, clientOut := io.Pipe()
 	clientIn, agentOut := io.Pipe()
 	asc := acp.NewAgentSideConnection(f.srv, agentOut, agentIn)

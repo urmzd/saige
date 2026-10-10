@@ -154,7 +154,7 @@ func TestWatchWithPostgresNotifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
-	defer n.Close()
+	defer n.Close(context.Background())
 
 	s := &online.Sampler{Store: results, Scorers: []eval.Scorer{eval.ContainsScorer("30 days")}}
 	ctx, cancel := context.WithCancel(context.Background())

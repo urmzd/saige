@@ -49,9 +49,9 @@ func TestNotifierPublishSubscribe(t *testing.T) {
 	pool := notifyDatabase(t)
 	ctx := context.Background()
 	pub := NewNotifier(pool, NotifierOptions{})
-	defer pub.Close()
+	defer pub.Close(ctx)
 	sub := NewNotifier(pool, NotifierOptions{})
-	defer sub.Close()
+	defer sub.Close(ctx)
 
 	a, cancelA, err := sub.Subscribe(ctx, "saige.test")
 	if err != nil {
@@ -85,7 +85,7 @@ func TestNotifierLargePayload(t *testing.T) {
 	pool := notifyDatabase(t)
 	ctx := context.Background()
 	n := NewNotifier(pool, NotifierOptions{PayloadTTL: time.Hour})
-	defer n.Close()
+	defer n.Close(ctx)
 	ch, cancel, err := n.Subscribe(ctx, "big")
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestNotifierReconnect(t *testing.T) {
 		ApplicationName: "saige-notifier-reconnect",
 		OnReconnect:     func() { reconnects.Add(1) },
 	})
-	defer n.Close()
+	defer n.Close(ctx)
 	ch, cancel, err := n.Subscribe(ctx, "survive")
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestNotifierCloseAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if err := n.Close(); err != nil {
+	if err := n.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := <-ch; ok {
@@ -207,14 +207,14 @@ func TestNotifierCloseAndCancel(t *testing.T) {
 	if _, _, err := n.Subscribe(context.Background(), "c"); !errors.Is(err, types.ErrNotifierClosed) {
 		t.Fatalf("Subscribe after Close = %v", err)
 	}
-	_ = n.Close()
+	_ = n.Close(ctx)
 }
 
 // Subscribe waits for the listener; a cancelled context ends the wait.
 func TestNotifierSubscribeRespectsContext(t *testing.T) {
 	pool := notifyDatabase(t)
 	n := NewNotifier(pool, NotifierOptions{})
-	defer n.Close()
+	defer n.Close(context.Background())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, _, err := n.Subscribe(ctx, "c"); !errors.Is(err, context.Canceled) {

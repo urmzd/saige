@@ -238,12 +238,12 @@ func (s *Session[H]) IdleFor(now time.Time) time.Duration {
 }
 
 // Close cancels the running turn and releases the agent. It is safe to
-// call more than once.
-func (s *Session[H]) Close() {
+// call more than once and returns nil.
+func (s *Session[H]) Close(context.Context) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	s.closed = true
 	stream, running, release := s.stream, s.running, s.agent.Release
@@ -254,10 +254,11 @@ func (s *Session[H]) Close() {
 	if release != nil {
 		release()
 	}
+	return nil
 }
 
-// Options configure a Manager.
-type Options struct {
+// Config configures a Manager.
+type Config struct {
 	// Max caps live sessions; 0 means 64.
 	Max int
 	// IdleTTL drops a session that had no running turn for this long; 0
@@ -272,7 +273,7 @@ type Options struct {
 
 // Manager holds a host's sessions.
 type Manager[H any] struct {
-	opts     Options
+	opts     Config
 	mu       sync.Mutex
 	sessions map[string]*Session[H]
 	// reserved counts slots held by creates still building their agent,
@@ -280,15 +281,28 @@ type Manager[H any] struct {
 	reserved int
 }
 
-// NewManager returns an empty manager.
-func NewManager[H any](opts Options) *Manager[H] {
-	if opts.Max <= 0 {
-		opts.Max = 64
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithMax sets Config.Max.
+func WithMax(n int) Option { return func(c *Config) { c.Max = n } }
+
+// New returns an empty manager. A negative Max, IdleTTL or ArtifactBudget
+// is an error wrapping types.ErrInvalidConfig.
+func New[H any](cfg Config, opts ...Option) (*Manager[H], error) {
+	for _, o := range opts {
+		o(&cfg)
 	}
-	if opts.IdleTTL <= 0 {
-		opts.IdleTTL = time.Hour
+	if cfg.Max < 0 || cfg.IdleTTL < 0 || cfg.ArtifactBudget < 0 {
+		return nil, fmt.Errorf("%w: agenthost: negative Max, IdleTTL or ArtifactBudget", types.ErrInvalidConfig)
 	}
-	return &Manager[H]{opts: opts, sessions: map[string]*Session[H]{}}
+	if cfg.Max == 0 {
+		cfg.Max = 64
+	}
+	if cfg.IdleTTL == 0 {
+		cfg.IdleTTL = time.Hour
+	}
+	return &Manager[H]{opts: cfg, sessions: map[string]*Session[H]{}}, nil
 }
 
 // Create builds an agent with build and adds a session for it. id names the
@@ -356,7 +370,7 @@ func (m *Manager[H]) Remove(id string) *Session[H] {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	if s != nil {
-		s.Close()
+		_ = s.Close(context.Background())
 	}
 	return s
 }
@@ -374,7 +388,7 @@ func (m *Manager[H]) Evict(now time.Time) []*Session[H] {
 	}
 	m.mu.Unlock()
 	for _, s := range dropped {
-		s.Close()
+		_ = s.Close(context.Background())
 	}
 	return dropped
 }
@@ -401,7 +415,7 @@ func (m *Manager[H]) CloseAll() {
 	m.sessions = map[string]*Session[H]{}
 	m.mu.Unlock()
 	for _, s := range all {
-		s.Close()
+		_ = s.Close(context.Background())
 	}
 }
 

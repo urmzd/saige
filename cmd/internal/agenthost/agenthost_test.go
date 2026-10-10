@@ -21,7 +21,7 @@ func scripted(responses ...[]types.Delta) func() (Agent, error) {
 }
 
 func TestManagerCapAndRemove(t *testing.T) {
-	m := NewManager[int](Options{Max: 1, Prefix: "s_"})
+	m := must.Get(New[int](Config{Max: 1, Prefix: "s_"}))
 	var released atomic.Int32
 	s, err := m.Create("", 7, func() (Agent, error) {
 		a, _ := scripted()()
@@ -58,7 +58,7 @@ func TestManagerCapAndRemove(t *testing.T) {
 }
 
 func TestSessionOneTurnAtATimeAndIdle(t *testing.T) {
-	m := NewManager[struct{}](Options{IdleTTL: time.Minute})
+	m := must.Get(New[struct{}](Config{IdleTTL: time.Minute}))
 	block := make(chan struct{})
 	tool := &types.ToolFunc{
 		Def: types.ToolDef{Name: "wait", Parameters: types.ParameterSchema{Type: "object"}, Capability: types.ToolCapabilityRead},
@@ -109,7 +109,7 @@ func TestSessionOneTurnAtATimeAndIdle(t *testing.T) {
 }
 
 func TestDecideChecksTheGrant(t *testing.T) {
-	m := NewManager[struct{}](Options{})
+	m := must.Get(New[struct{}](Config{}))
 	s, _ := m.Create("", struct{}{}, func() (Agent, error) {
 		a, _ := scripted()()
 		a.MaxGrant = types.GrantTool

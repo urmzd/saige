@@ -25,19 +25,19 @@ func eventually(t *testing.T, cond func() bool) {
 func TestCacheInvalidatesOtherLocals(t *testing.T) {
 	ctx := context.Background()
 	n := NewMemory(0)
-	defer n.Close()
+	defer n.Close(ctx)
 	shared := memcache.New[string]()
 	localA, localB := memcache.New[string](), memcache.New[string]()
 	a, err := NewCache(ctx, CacheConfig[string]{Local: localA, Shared: shared, Notifier: n, Channel: "inv"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer a.Close(ctx)
 	b, err := NewCache(ctx, CacheConfig[string]{Local: localB, Shared: shared, Notifier: n, Channel: "inv"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer b.Close(ctx)
 
 	if err := a.Set(ctx, "k", "v1", 0); err != nil {
 		t.Fatal(err)
@@ -83,11 +83,11 @@ func TestCacheBypassesLocalAfterNotifierCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Close(ctx)
 	if err := c.Set(ctx, "k", "v1", 0); err != nil {
 		t.Fatal(err)
 	}
-	_ = n.Close()
+	_ = n.Close(ctx)
 	eventually(t, c.degraded.Load)
 	// Another writer changes the shared level without a notification.
 	_ = shared.Set(ctx, "k", "v2", 0)
@@ -126,7 +126,7 @@ func (h *hookedCache) Set(ctx context.Context, key, value string, ttl time.Durat
 func TestCacheSetRacingRemoteWrite(t *testing.T) {
 	ctx := context.Background()
 	n := NewMemory(0)
-	defer n.Close()
+	defer n.Close(ctx)
 	store := memcache.New[string]()
 	localA, localB := memcache.New[string](), memcache.New[string]()
 	var a *Cache[string]
@@ -134,7 +134,7 @@ func TestCacheSetRacingRemoteWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer b.Close(ctx)
 	hooked := &hookedCache{Cache: store}
 	hooked.afterSet = func() {
 		// B overwrites the key after A's shared write, and its
@@ -148,7 +148,7 @@ func TestCacheSetRacingRemoteWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer a.Close(ctx)
 
 	if err := a.Set(ctx, "k", "from-a", 0); err != nil {
 		t.Fatal(err)

@@ -23,7 +23,7 @@ import (
 func heldSession(t *testing.T, at agentTool, timeout time.Duration) (*mcp.ClientSession, *approvals.Store) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	held := newHeldApprovals(ctx, t.TempDir(), timeout, 200*time.Millisecond)
+	held := must.Get(newHeldApprovals(ctx, t.TempDir(), timeout, 200*time.Millisecond))
 	held.poll = 10 * time.Millisecond
 	t.Cleanup(func() { held.close(); cancel() })
 	cs := agentSession(t, bridge{approval: approvalElicit, held: held}, at, nil)
@@ -184,7 +184,7 @@ func TestHeldApprovalExpires(t *testing.T) {
 
 func TestHeldApprovalsWriteNothingUntilUsed(t *testing.T) {
 	dir := t.TempDir() + "/approvals"
-	held := newHeldApprovals(context.Background(), dir, time.Minute, time.Second)
+	held := must.Get(newHeldApprovals(context.Background(), dir, time.Minute, time.Second))
 	p := &agenttest.ScriptedProvider{Responses: [][]agenttypes.Delta{agenttest.TextResponse("Paris")}}
 	cs := agentSession(t, bridge{approval: approvalElicit, held: held}, scriptedAgent(p), nil)
 	if res := callAgent(t, cs, "capital of France"); resultText(res) != "Paris" {

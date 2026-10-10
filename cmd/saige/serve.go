@@ -180,7 +180,10 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 // listenAndServe runs the HTTP server until ctx ends. tools is logged; a
 // negative count is not.
 func listenAndServe(ctx, srvCtx context.Context, cmd *cobra.Command, addr string, opts serveOptions, tools int) error {
-	s := newServer(srvCtx, opts)
+	s, err := newServer(srvCtx, opts)
+	if err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

@@ -191,8 +191,12 @@ func (c *Cache[V]) publish(ctx context.Context, key string) error {
 
 // Close stops the invalidation subscription and waits for it to end. It
 // does not close Local, Shared or the notifier.
-func (c *Cache[V]) Close() error {
+func (c *Cache[V]) Close(ctx context.Context) error {
 	c.cancel()
-	<-c.done
-	return nil
+	select {
+	case <-c.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

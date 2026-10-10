@@ -29,7 +29,7 @@ func mapAll(t *testing.T, m *Mapper, deltas []types.Delta) []Event {
 		}
 		out = append(out, events...)
 	}
-	return append(out, m.Close()...)
+	return append(out, m.Flush()...)
 }
 
 func TestMapperSequences(t *testing.T) {

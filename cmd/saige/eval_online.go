@@ -182,7 +182,7 @@ func runEvalOnline(ctx context.Context, cmd *cobra.Command, f evalOnlineFlags) e
 	var rep online.Report
 	if f.watch {
 		n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
-		defer func() { _ = n.Close() }()
+		defer func() { _ = n.Close(ctx) }()
 		wctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		rep, err = s.Watch(wctx, n, src, online.WatchOptions{

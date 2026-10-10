@@ -57,7 +57,7 @@ func newServeFixtureWith(t *testing.T, opts serveOptions, calls *atomic.Int32) *
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	app := newServer(ctx, opts)
+	app := must.Get(newServer(ctx, opts))
 	srv := httptest.NewServer(app.handler())
 	t.Cleanup(srv.Close)
 	return &serveFixture{t: t, srv: srv, app: app, calls: calls}
@@ -310,8 +310,8 @@ func TestServeOneTurnAtATime(t *testing.T) {
 }
 
 func TestServeGuard(t *testing.T) {
-	h := newServer(context.Background(), serveOptions{}).handler()
-	withToken := newServer(context.Background(), serveOptions{token: "s3cret"}).handler()
+	h := must.Get(newServer(context.Background(), serveOptions{})).handler()
+	withToken := must.Get(newServer(context.Background(), serveOptions{token: "s3cret"})).handler()
 	tests := []struct {
 		name    string
 		handler http.Handler
