@@ -165,11 +165,21 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 			return "", false, err
 		}
 	}
+	if skip, err := a.beforeCompactionHooks(ctx, stream, force, len(active.messages)); err != nil || skip {
+		return "", false, err
+	}
 	meter := &meteredProvider{Provider: active.provider, agent: a, stream: stream, step: fmt.Sprintf("compact-%s", branch)}
 	var (
 		newBranch types.BranchID
 		ok        bool
+		compacted bool
 	)
+	defer func() {
+		if !compacted {
+			newBranch = ""
+		}
+		a.afterCompactionHooks(ctx, stream, force, len(active.messages), compacted, newBranch)
+	}()
 	switch {
 	case usesTreeCompaction(resolved.compactCfg, force):
 		newBranch, ok = a.treeCompact(ctx, st, tr, branch, meter, resolved.compactCfg.MaxInputTokens, force)
@@ -190,6 +200,7 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 	}
 	st.lastPromptTokens = 0
 	st.compacted = true
+	compacted = true
 	return newBranch, true, nil
 }
 

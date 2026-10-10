@@ -60,15 +60,19 @@ type interruptRequest struct {
 // tool error to report.
 func (a *Agent) awaitInterrupt(ctx context.Context, stream *EventStream, req interruptRequest) (decision, bool) {
 	if runner, ok := a.cfg.StepRunner.(types.ApprovalRunner); ok {
-		d, err := runner.ResolveApproval(ctx, types.ApprovalRequest{ID: req.phase + "/" + req.call.ID, ToolCall: req.call, Markers: req.markers})
-		if err != nil {
+		in := types.Interrupt{ID: req.phase + "/" + req.call.ID, Kind: req.kind, RunID: stream.runID, Path: stream.path}
+		a.interruptHooks(ctx, stream, HookInterruptRaised, in, req.call, nil, false)
+		d, err := runner.ResolveApproval(ctx, types.ApprovalRequest{ID: in.ID, ToolCall: req.call, Markers: req.markers})
+		out, ok := decision{message: "rejected: " + d.Message, approver: d.Approver, denied: true}, false
+		switch {
+		case err != nil:
 			stream.stopRun(err)
-			return decision{message: err.Error()}, false
+			out = decision{message: err.Error()}
+		case d.Approved:
+			out, ok = decision{approved: true, args: d.ModifiedArgs, message: d.Message, approver: d.Approver, grant: d.Grant}, true
 		}
-		if !d.Approved {
-			return decision{message: "rejected: " + d.Message, approver: d.Approver, denied: true}, false
-		}
-		return decision{approved: true, args: d.ModifiedArgs, message: d.Message, approver: d.Approver, grant: d.Grant}, true
+		a.interruptHooks(ctx, stream, HookInterruptResolved, in, req.call, &out, ok)
+		return out, ok
 	}
 	if stream.nonStreaming {
 		stream.stopRun(errNonStreamingApproval)
@@ -76,6 +80,14 @@ func (a *Agent) awaitInterrupt(ctx context.Context, stream *EventStream, req int
 	}
 
 	in := stream.newInterrupt(req.kind, req.phase, req.call.ID, req.markers, req.payload, a.cfg.InterruptTTL, a.cfg.InterruptPolicy)
+	d, ok := a.waitInterrupt(ctx, stream, req, in)
+	a.interruptHooks(ctx, stream, HookInterruptResolved, in, req.call, &d, ok)
+	return d, ok
+}
+
+// waitInterrupt posts in and waits for its reply, applying the expiry
+// policy. InterruptRaised hooks see each posting.
+func (a *Agent) waitInterrupt(ctx context.Context, stream *EventStream, req interruptRequest, in types.Interrupt) (decision, bool) {
 	escalated := false
 	for {
 		reply, err := stream.postInterrupt(in, req.call.ID)
@@ -90,6 +102,7 @@ func (a *Agent) awaitInterrupt(ctx context.Context, stream *EventStream, req int
 			Markers:    req.markers,
 			Interrupt:  &posted,
 		})
+		a.interruptHooks(ctx, stream, HookInterruptRaised, posted, req.call, nil, false)
 		select {
 		case r, ok := <-reply:
 			stream.withdrawInterrupt(req.call.ID)

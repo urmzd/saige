@@ -56,6 +56,8 @@ func wireRoundTripCases() []Delta {
 		ServerToolResultDelta{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
 			IsError: true, Files: []FileContent{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},
 		PartialJSONDelta{JSON: json.RawMessage(`{"title":"dra"}`)},
+		GuardrailDelta{Guardrail: "pii", Phase: GuardrailPhaseOutput, Action: GuardrailActionRewrite, Reason: "email", Text: "[REDACTED:EMAIL]"},
+		GuardrailDelta{Guardrail: "policy", Phase: GuardrailPhaseInput, Action: GuardrailActionBlock, Reason: "off topic", Canceled: true},
 	}
 }
 
