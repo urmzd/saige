@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.27.0 (2026-10-10)
+
+### Features
+
+- **eval**: add a Postgres results store and online, trace-sourced evals (#74) ([ea21a54](https://github.com/urmzd/saige/commit/ea21a54cac943f618a2157ff5529f715a8514b1e))
+- streamable-HTTP saige-mcp with agent tool, and richer agenttest models (#73) ([61acf5a](https://github.com/urmzd/saige/commit/61acf5a83f2a9713a697e97bdfdc8cc7e25363f6))
+
+### Misc
+
+- add stress suite, -cpu benchmarks and nightly stress workflow (#71) ([ead29c8](https://github.com/urmzd/saige/commit/ead29c82cef6d9894e7614b38ba46a2fb28f8a69))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.26.0...v0.27.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
