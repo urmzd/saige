@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.0 (2026-10-10)
+
+### Breaking
+
+- **agent**: bounded sub-agent budgets, private scratch, and pass-by-reference delegation (#75) ([50667ba](https://github.com/urmzd/saige/commit/50667babe70580e1f0e1e765140f50732938b2b4))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.25.0...v0.26.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
