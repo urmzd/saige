@@ -19,7 +19,7 @@ func cacheRequest(last types.Message) anthropic.MessageNewParams {
 	if last != nil {
 		msgs = append(msgs, last)
 	}
-	system, aMsgs := toAnthropicParams(msgs)
+	system, aMsgs := toParams(msgs)
 	return anthropic.MessageNewParams{
 		System:   system,
 		Messages: aMsgs,

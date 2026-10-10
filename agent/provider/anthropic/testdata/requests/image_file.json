@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "file_id": "file_img",
+            "type": "file"
+          },
+          "type": "image"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

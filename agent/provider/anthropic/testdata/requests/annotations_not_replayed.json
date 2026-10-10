@@ -1,0 +1,31 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "q",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "cited",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "ok",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

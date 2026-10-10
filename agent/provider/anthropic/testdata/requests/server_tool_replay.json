@@ -1,0 +1,51 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "where is go",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "srvtoolu_1",
+          "input": {
+            "query": "go"
+          },
+          "name": "web_search",
+          "type": "server_tool_use"
+        },
+        {
+          "content": [
+            {
+              "encrypted_content": "abc",
+              "title": "Go",
+              "type": "web_search_result",
+              "url": "https://go.dev"
+            }
+          ],
+          "tool_use_id": "srvtoolu_1",
+          "type": "web_search_tool_result"
+        },
+        {
+          "text": "Go is at go.dev.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "thanks",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

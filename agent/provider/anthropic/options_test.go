@@ -96,7 +96,7 @@ func TestTrimPrefill(t *testing.T) {
 		{"user last untouched", []types.Message{types.UserMsg(types.Text("q "))}, 1, "q "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, out := toAnthropicParams(tc.msgs)
+			_, out := toParams(tc.msgs)
 			if len(out) != tc.wantLen {
 				t.Fatalf("messages = %d, want %d", len(out), tc.wantLen)
 			}

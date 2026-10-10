@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -127,7 +128,9 @@ func TestToolArgumentIntegrity(t *testing.T) {
 			name: "malformed call ends with an error before the next block starts",
 			events: []sseEvent{{"message_start", evStart}, {"content_block_start", evToolStart},
 				{"content_block_delta", evArgs(`{"path":}`)}, {"content_block_stop", evBlockStop},
-				{"content_block_start", evTextStart}, {"content_block_delta", evText("done")}, {"content_block_stop", evBlockStop},
+				{"content_block_start", strings.Replace(evTextStart, `"index":0`, `"index":1`, 1)},
+				{"content_block_delta", strings.Replace(evText("done"), `"index":0`, `"index":1`, 1)},
+				{"content_block_stop", strings.Replace(evBlockStop, `"index":0`, `"index":1`, 1)},
 				{"message_delta", evMessageDelta("end_turn", 20)}, {"message_stop", evStop}},
 			wantArgsErr: 1,
 		},
