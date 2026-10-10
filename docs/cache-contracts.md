@@ -71,7 +71,7 @@ store := postgres.NewCacheStore(pool, postgres.CacheStoreOptions{})
 stop := store.StartSweeper(ctx, time.Minute, logger)
 defer stop()
 
-responses := cache.New(inner, cache.Config{
+responses, err := cache.New(inner, cache.Config{
     Cache: cache.BytesCache(store), ScopeKey: tenant, ConfigKey: revision,
 })
 cached, err := toolcache.New(tool, toolcache.Config{

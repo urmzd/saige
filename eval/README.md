@@ -410,7 +410,7 @@ The `store.Store` interface has three implementations: `memstore` (in memory), `
 
 `CaptureProvenance` reads the commit and dirty flag from git when it is available and from the binary's VCS stamp otherwise; a run outside any repository records no commit rather than failing.
 
-`saige eval run --store DIR` records each harness run there (set `harness.Runner.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
+`saige eval run --store DIR` records each harness run there (set `harness.Config.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
 
 ## Storing Results in Postgres
 
@@ -483,8 +483,12 @@ import (
 )
 
 budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.50), MaxRequests: 200})
+model, err := openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"}) // a cheap judge model
+if err != nil {
+    return err
+}
 judge := eval.NewJudgeScorer(&online.BudgetedGenerator{
-    Provider: openai.NewAdapter(key, "gpt-6-luna"), // a cheap judge model
+    Provider: model,
     Budget:   budget,
 }, eval.WithJudgeRubric("Score 1 when the answer is correct and complete."))
 

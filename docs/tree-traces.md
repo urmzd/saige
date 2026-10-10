@@ -14,7 +14,7 @@ if err != nil {
     return err
 }
 conversation, err := tree.New(
-    types.NewSystemMessage(systemPrompt),
+    types.SystemMsg(types.Text(systemPrompt)),
     tree.WithMetadata(metadata),
 )
 if err != nil {

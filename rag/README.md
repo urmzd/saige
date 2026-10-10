@@ -38,8 +38,8 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-pipe, _ := rag.NewPipeline(
-    rag.WithStore(pgstore.NewStore(pool, nil)),
+store, _ := pgstore.New(pgstore.Config{Pool: pool})
+pipe, _ := rag.New(rag.Config{Store: store},
     rag.WithContentExtractor(myExtractor),
     rag.WithEmbedders(myEmbedderRegistry),
     rag.WithRecursiveChunker(512, 50),
@@ -97,7 +97,7 @@ Ingest behavior:
 Filtered vector search on pgstore uses pgvector iterative index scans (pgvector 0.8.0 or later) so a selective filter still fills the limit:
 
 ```go
-pgstore.NewStore(pool, nil,
+pgstore.New(pgstore.Config{Pool: pool},
     pgstore.WithIterativeScan(pgstore.IterativeScanStrict), // default: auto-detect
     pgstore.WithEFSearch(100),
 )
@@ -109,7 +109,7 @@ A scope is an isolation boundary such as a tenant. Every document belongs to one
 
 ```go
 // One pipeline per tenant: ingests, searches, and UUID lookups stay inside "acme".
-pipe, _ := rag.NewPipeline(rag.WithStore(store), rag.WithContentExtractor(ext), rag.WithScope("acme"))
+pipe, _ := rag.New(rag.Config{Store: store, ContentExtractor: ext}, rag.WithScope("acme"))
 
 // One shared pipeline: each call names its scope.
 pipe.Ingest(ctx, &types.RawDocument{SourceURI: uri, Data: data, Scope: "acme"})
@@ -213,8 +213,8 @@ rag.WithFuser(fusion.Weighted{Weights: map[string]float64{"vector": 2, "bm25": 1
 Weights and the RRF constant can also be set for a whole pipeline, with any fuser, and overridden per search. A search's weights override the pipeline's key by key:
 
 ```go
-pipe, _ := rag.NewPipeline(
-    rag.WithStore(store), rag.WithEmbedders(embedders), rag.WithBM25(nil),
+pipe, _ := rag.New(rag.Config{Store: store},
+    rag.WithEmbedders(embedders), rag.WithBM25(nil),
     rag.WithFusionWeights(map[string]float64{"vector": 1, "bm25": 2}),
     rag.WithFusionK(20),
 )
@@ -337,8 +337,8 @@ rag.WithHyDE(myLLM, 3) // generate 3 hypothetical docs
 
 ```go
 obs, err := ragotel.NewObserver(ragotel.Config{TracerProvider: tp, MeterProvider: mp})
-pipe, _ := rag.NewPipeline(..., rag.WithObserver(obs))
-graph, _ := knowledge.NewGraph(ctx, ..., knowledge.WithObserver(obs))
+pipe, _ := rag.New(rag.Config{...}, rag.WithObserver(obs))
+graph, _ := knowledge.New(knowledge.Config{...}, knowledge.WithObserver(obs))
 ```
 
 A search opens `rag.search` with children `rag.transform`, one `rag.retrieve` per retriever and query (with `rag.retriever` and `rag.hits`), `rag.fuse`, `rag.rerank`, `rag.expand`, and `rag.assemble`. An ingest opens `rag.ingest` with `rag.extract`, `rag.chunk`, `rag.embed`, `rag.write`, `rag.index`, and `rag.graph`. Query text is never recorded. Metrics cover embedding calls (`rag.embedding.duration`, `rag.embedding.inputs`) and retriever calls (`rag.retrieval.duration`, `rag.retrieval.hits`). Wrap a provider embedder in `embedderregistry.NewObserved` to see it under its own name.

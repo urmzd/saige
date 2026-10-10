@@ -35,22 +35,28 @@ import (
     "github.com/urmzd/saige/agent/provider/ollama"
 )
 
-client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "nomic-embed-text")
-a := agent.NewAgent(agent.AgentConfig{
+provider, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+if err != nil {
+    return err
+}
+a, err := agent.New(agent.Config{
     Name:         "assistant",
     SystemPrompt: "You are a helpful assistant.",
-    Provider:     ollama.NewAdapter(client),
+    Provider:     provider,
     Tools:        types.NewToolRegistry(myTool),
 },
     agent.WithMaxIter(20),
     agent.WithLogger(slog.Default()),
 )
+if err != nil {
+    return err
+}
 
-stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("Hello!")})
+stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Hello!"))})
 for delta := range stream.Deltas() {
     switch d := delta.(type) {
-    case types.TextContentDelta:
-        fmt.Print(d.Content)
+    case types.PartDelta:
+        fmt.Print(d.Text)
     }
 }
 ```
@@ -63,7 +69,7 @@ The interface is named `Provider`, but each implementation is an **adapter**: a 
 
 ```go
 type Provider interface {
-    ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error)
+    Stream(ctx context.Context, req Request) (<-chan Delta, error)
 }
 ```
 
@@ -76,7 +82,7 @@ type Provider interface {
 | Anthropic (vendor) | Messages | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | no |
 | Google (vendor) | Gemini API, Vertex AI | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
 
-The OpenAI package has two adapters. `openai.NewAdapter` uses Chat Completions, and `openai.NewResponsesAdapter` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
+The OpenAI package has two adapters. `openai.New` uses Chat Completions, and `openai.NewResponses` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
 
 > **Note:** Anthropic does not offer an embedding API. When Anthropic serves the chat model
 > and you use RAG or Knowledge Graph features, supply a separate embedder from another
@@ -91,9 +97,13 @@ the default context window is small enough that long prompts are truncated
 silently. Set it explicitly when prompts are large:
 
 ```go
-client := ollama.NewClient("http://localhost:11434", "qwen3.5:9b", "",
+client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:9b"},
     ollama.WithChatOptions(ollama.Options{NumCtx: 16384, Temperature: 0.4}),
 )
+if err != nil {
+    return err
+}
+provider, err := ollama.New(ollama.Config{Client: client})
 ```
 
 | Option | Effect |
@@ -107,8 +117,9 @@ otherwise. The format grammar constrains every token the model emits, so a
 reasoning model left to think produces grammar-shaped reasoning and returns no
 usable content.
 
-Reasoning content arrives as `ThinkingStartDelta`, `ThinkingContentDelta`, and
-`ThinkingEndDelta`, always closed before any text or tool-call delta opens.
+Reasoning content arrives as a thinking part (`PartStart` with `KindThinking`,
+then `PartDelta.Thinking`), always closed before any text or tool-call part
+opens.
 
 ## Messages
 
@@ -116,27 +127,21 @@ Three roles. Tool results are content blocks, not a separate role.
 
 | Type | Role | Content Types |
 |------|------|---------------|
-| `SystemMessage` | system | `TextContent`, `ToolResultContent`, `ConfigContent` |
-| `UserMessage` | user | `TextContent`, `ToolResultContent`, `ConfigContent`, `FileContent` |
-| `AssistantMessage` | assistant | `TextContent`, `ToolUseContent`, `ThinkingContent` |
+| `SystemMessage` | system | `TextPart`, `ToolResultPart`, `ConfigPart` |
+| `UserMessage` | user | `TextPart`, `ToolResultPart`, `ConfigPart`, media parts (`ImagePart`, `DocumentPart`, ...) |
+| `AssistantMessage` | assistant | `TextPart`, `ToolCallPart`, `ThinkingPart` |
 
-`ToolResultContent` carries an `IsError` field that signals whether the text represents an error or a successful result. This distinction is preserved through to the LLM: Anthropic passes it natively, Google uses an `error` key in the function response, and OpenAI/Ollama prefix the text with `[TOOL ERROR]`.
+`ToolResultPart` carries an `IsError` field that signals whether the text represents an error or a successful result. This distinction is preserved through to the LLM: Anthropic passes it natively, Google uses an `error` key in the function response, and OpenAI/Ollama prefix the text with `[TOOL ERROR]`.
 
 ## Deltas
 
-18 concrete types across six categories: LLM-side, thinking, execution-side, marker, feedback, and metadata.
+The main delta types, by category: LLM-side, execution-side, marker, feedback, metadata and terminal.
 
 | Type | Category | Purpose |
 |------|----------|---------|
-| `TextStartDelta` | LLM | Text block opened |
-| `TextContentDelta` | LLM | Text chunk |
-| `TextEndDelta` | LLM | Text block closed |
-| `ThinkingStartDelta` | Thinking | Extended thinking block opened |
-| `ThinkingContentDelta` | Thinking | Thinking chunk |
-| `ThinkingEndDelta` | Thinking | Thinking block closed (carries signature) |
-| `ToolCallStartDelta` | LLM | Tool call generation started |
-| `ToolCallArgumentDelta` | LLM | JSON argument chunk |
-| `ToolCallEndDelta` | LLM | Tool call complete |
+| `PartStart` | LLM | A text, thinking, tool-call or media part opened at `Index` |
+| `PartDelta` | LLM | A chunk of an open part: text, thinking, signature, arguments or data |
+| `PartEnd` | LLM | A part closed; a tool call's carries the complete `ToolCallPart` |
 | `ToolExecStartDelta` | Execution | Tool began executing |
 | `ToolExecDelta` | Execution | Streaming delta from tool/sub-agent |
 | `ToolExecEndDelta` | Execution | Tool finished |
@@ -194,7 +199,10 @@ total order instead. `agent.WithSequentialTools()` runs the calls one at a time,
 in the order the model requested them:
 
 ```go
-a := agent.NewAgent(cfg, agent.WithSequentialTools())
+a, err := agent.New(cfg, agent.WithSequentialTools())
+if err != nil {
+    return err
+}
 ```
 
 It is sugar for `agent.WithMaxParallelTools(1)`. A larger cap bounds regular tool
@@ -210,7 +218,7 @@ Both engines save requests before suspension and preserve completed results duri
 Sub-agents are registered as tools and execute within parallel tool dispatch. Their deltas are forwarded through the parent's stream. **Sub-agents are stateless**: a fresh agent is constructed for each delegation, so conversation history is not preserved between calls. This is intentional. Sub-agents are task executors, not persistent conversational partners.
 
 ```go
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Provider: adapter,
     SubAgents: []agent.SubAgentDef{
         {
@@ -223,6 +231,9 @@ a := agent.NewAgent(agent.AgentConfig{
         },
     },
 })
+if err != nil {
+    return err
+}
 ```
 
 `SubAgentDef.Timeout` bounds the whole delegated run, apart from time spent
@@ -276,9 +287,12 @@ Constrain LLM responses to a JSON schema:
 
 ```go
 schema := types.SchemaFrom[MyResponse]()
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Provider: adapter,
 }, agent.WithResponseSchema(schema))
+if err != nil {
+    return err
+}
 ```
 
 Without tools every turn is sent with the schema. With tools, turns are sent
@@ -289,7 +303,7 @@ that reply is the final answer. A provider that cannot enforce a schema fails
 the run with `types.ErrInvalidModelConfig`, also behind retry, fallback and
 tracing decorators. The schema is never dropped.
 
-`AgentConfig.ServerTools` (`WithServerTools`) is informational: the loop
+`agent.Config.ServerTools` (`WithServerTools`) is informational: the loop
 neither sends nor validates it. Enable provider-run tools on the adapter with
 `anthropic.WithServerTools` or `google.WithServerTools`.
 
@@ -301,10 +315,18 @@ import (
     "github.com/urmzd/saige/agent/provider/fallback"
 )
 
-provider := fallback.New(
-    retry.New(primary, retry.DefaultConfig()),
-    retry.New(backup, retry.DefaultConfig()),
-)
+first, err := retry.New(primary, retry.DefaultConfig())
+if err != nil {
+    return err
+}
+second, err := retry.New(backup, retry.DefaultConfig())
+if err != nil {
+    return err
+}
+provider, err := fallback.Of(first, second)
+if err != nil {
+    return err
+}
 ```
 
 ## Compaction
@@ -322,7 +344,7 @@ Data-driven context management:
 | `CompactRelevantPlusSummary` | Also keep the K older spans most relevant to the latest user turn (BM25) |
 | `CompactChain` | Apply strategies in order until the history fits `TargetTokens` |
 
-Every compaction streams a `CompactionDelta` and records a `CompactionContent` on its new branch. See [context management](../docs/context-management.md).
+Every compaction streams a `CompactionDelta` and records a `CompactionPart` on its new branch. See [context management](../docs/context-management.md).
 
 ## Conversation Tree
 
@@ -361,7 +383,7 @@ Feedback nodes have `NodeFeedback` state. They cannot have children added, formi
 Resolvers fetch media bytes by URI scheme. A part the serving model cannot take natively is rejected unless the conversion policy permits an action for its modality (see [Modality conversion](../docs/modality-conversion.md)):
 
 ```go
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Provider: adapter,
 },
     agent.WithResolvers(map[string]types.Resolver{
@@ -376,6 +398,9 @@ a := agent.NewAgent(agent.AgentConfig{
         Converters: []types.Converter{convert.Documents(), convert.Transcribe(gemini)},
     }),
 )
+if err != nil {
+    return err
+}
 ```
 
 ## TUI
@@ -434,7 +459,7 @@ model := &agenttest.FunctionModel{
             return agenttest.Response{Text: `{"city": "Paris"}`}, nil
         }
         if len(tools) > 0 && req.Index == 0 {
-            return agenttest.Response{ToolCalls: []types.ToolUseContent{
+            return agenttest.Response{ToolCalls: []types.ToolCallPart{
                 {Name: "greet", Arguments: map[string]any{"name": "Ada"}},
             }}, nil
         }
@@ -464,8 +489,11 @@ model := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{
     Tools:  []string{"search"}, // empty calls every offered tool
     Rounds: 2,                  // tool-calling turns before the answer
 })
-a := agent.NewAgent(agent.AgentConfig{Provider: model, Tools: registry})
-text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("go")}))
+a, err := agent.New(agent.Config{Provider: model, Tools: registry})
+if err != nil {
+    return err
+}
+text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))}))
 ```
 
 A fake argument is the property's default, then its first enum value, then a fixed sample for its type. `RequiredOnly` leaves optional properties out. The emulator honors the tool choice (`none` answers at once, a named choice calls only that tool), and a call with a response schema gets `FakeValue` JSON for the schema. Set `Caps` or `CatalogModel` on the returned model to test capability checks.

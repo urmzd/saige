@@ -11,10 +11,10 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `cmd/internal/agenthost/` | Session layer shared by serve, acp and saige-mcp: pinned binding, one turn at a time, grant checks |
 | `cmd/internal/approvals/` | File store of held approvals that `saige approvals` decides |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
-| `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
+| `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackPart, HandoffPart |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
 | `agent/provider/` | Adapters implementing `types.Provider`: Anthropic (Messages), OpenAI (Chat Completions, Responses), Google (Gemini API, Vertex AI) and the local Ollama runtime; `provider.Build` factory |
-| `agent/provider/cache/` | Response-cache decorator: memoizes ChatStream by deterministic request hash |
+| `agent/provider/cache/` | Response-cache decorator: memoizes Stream by deterministic request hash |
 | `agent/provider/retry/`, `agent/provider/fallback/` | Retry with backoff and Retry-After; ordered fallback across adapters |
 | `agent/provider/router/` | Routing sessions over complete model configurations: sticky and affinity policies, route locks, classified failover |
 | `agent/provider/catalog/` | Model catalog: embedded `data/default.json`, strict loading, layered sources, merge rules, preset resolution and validation |

@@ -59,7 +59,7 @@ Converters, the cache, a cost cap and the cache scope come from the policy: `pro
 ```go
 gemini, _ := provider.Build(ctx, provider.Config{Provider: provider.Google, Model: "gemini-3.1-flash-lite", Vertex: &provider.Vertex{}})
 
-a := agent.NewAgent(agent.AgentConfig{Provider: claude},
+a, err := agent.New(agent.Config{Provider: claude},
 	agent.WithConversion(types.ConversionPolicy{
 		Dial: types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{
 			types.ModalityDocument: {types.ActExtract, types.ActOmit},
@@ -70,6 +70,9 @@ a := agent.NewAgent(agent.AgentConfig{Provider: claude},
 		MaxCost:    types.USD(0.01), // per request, estimated
 		Scope:      tenantID,         // memoize per tenant
 	}))
+if err != nil {
+	return err
+}
 ```
 
 In the catalog:

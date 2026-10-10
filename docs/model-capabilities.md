@@ -7,16 +7,16 @@ It explains the contracts and records known limits.
 
 Reasoning support already existed. Adapters now enforce configured controls before network I/O
 instead of silently dropping incompatible options. Call `adapter.Validate()` for an early check;
-both plain and schema streaming paths revalidate, including after `WithModel`. Invalid settings
+both plain and schema streaming paths revalidate, including after `WithTarget`. Invalid settings
 return a permanent `ProviderError` wrapping `types.ErrInvalidModelConfig`. A retry wrapper does
-not retry them. Constructors keep their existing signatures; Google also validates at construction.
+not retry them. `New` checks the configuration it needs to build a client; Google also validates the controls at construction.
 
 ```go
-p := openai.NewAdapter(key, "o3", openai.WithTemperature(0))
-err := p.Validate() // temperature: not declared supported for this model
+p, err := openai.New(openai.Config{APIKey: key, Model: "o3"}, openai.WithTemperature(0))
+err = p.Validate() // temperature: not declared supported for this model
 if errors.Is(err, types.ErrInvalidModelConfig) { /* fix the configuration */ }
 
-p = openai.NewAdapter(key, "o3", openai.WithReasoningEffort("high"))
+p, err = openai.New(openai.Config{APIKey: key, Model: "o3"}, openai.WithReasoningEffort("high"))
 err = p.Validate() // nil
 ```
 
@@ -256,8 +256,8 @@ saige models --format json
 **1. Decorators silently erased capabilities.** `retry`, `fallback` and `cache`
 did not forward `ContentNegotiator`, so wrapping an adapter made the file
 pipeline believe the model supported no media natively and extract every image
-and PDF to text. `cache` also did not implement `ModelSwitcher`, so a
-`ConfigContent` model switch under a cache was dropped *and* the request was
+and PDF to text. `cache` also did not forward model switching, so a
+`ConfigPart` model switch under a cache was dropped *and* the request was
 answered from the original model's cache entries. `otel` had the same gap.
 All four now forward content support, model switching and capabilities;
 `fallback` intersects rather than reporting its primary's.
@@ -267,7 +267,7 @@ skips thought parts, and never inspected `Part.Thought`. Every reasoning token
 from Gemini 2.5 and 3 was billed and thrown away before reaching the agent
 loop. `ThoughtSignature` was never round-tripped either, which degrades
 multi-turn function calling on Gemini 3. Both fixed; thinking is now emitted as
-`ThinkingContentDelta` and signatures survive the round trip.
+thinking part deltas and signatures survive the round trip.
 
 **3. Google adapter had no options at all.** No Vertex backend (no project,
 location, or ADC), no thinking config, no temperature/topP/topK/seed/stop/
@@ -350,9 +350,9 @@ The shipped presets use the cheapest current model per vendor
 **B. OpenAI server-side tools are declared but not wired.** Google search
 grounding and code execution (`google.WithServerTools`) and Anthropic web
 search and code execution (`anthropic.WithServerTools`) are sent and their
-calls stream back as `ServerToolCallDelta` and `ServerToolResultDelta`.
+calls stream back as `ServerToolCallPart` and `ServerToolResultPart` parts.
 Anthropic remote MCP is rejected, because it needs the MCP connector. OpenAI
-has a Responses API adapter (`openai.NewResponsesAdapter`,
+has a Responses API adapter (`openai.NewResponses`,
 `agent/provider/openai/responses.go`): `provider.Build` serves
 `responses_only` rows (gpt-6.1-sol, gpt-6-astra) through it, and a
 `no_reasoning` row (gpt-6-luna, gpt-6-sol) when a reasoning dial is on. That
@@ -396,7 +396,7 @@ vision. Unrecognised local models resolve to the baseline with `Known == false`;
 there is no runtime probe.
 
 **H. Server-tool calls are invisible to telemetry.** Provider-executed tools
-stream as `ServerToolCallDelta` and `ServerToolResultDelta`, but they emit no
+stream as `ServerToolCallPart` and `ServerToolResultPart` parts, but they emit no
 `ToolExec*` deltas, tool spans or tool metrics, so traces and metrics do not
 count them.
 

@@ -74,7 +74,7 @@ policy.Recall = memory.RecallByInjection
 policy.InjectBudget = 500
 msg, ok, err := policy.StartMessage(ctx, store, "assistant", userText)
 if err != nil { return err }
-input := []types.Message{types.NewUserMessage(userText)}
+input := []types.Message{types.UserMsg(types.Text(userText))}
 if ok {
     input = append([]types.Message{msg}, input...)
 }
@@ -91,8 +91,11 @@ if err != nil { return err }
 if err := postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{MemoryEmbeddingDim: 768}); err != nil {
     return err
 }
-store, err := pgstore.New(pool, pgstore.Config{
-    Embedder:      ollama.NewEmbedder(ollama.NewClient(host, "", "nomic-embed-text")),
+client, err := ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: "nomic-embed-text"})
+if err != nil { return err }
+store, err := pgstore.New(pgstore.Config{
+    Pool:          pool,
+    Embedder:      ollama.NewEmbedder(client),
     MinSimilarity: 0.5,
 })
 if err != nil { return err }
@@ -115,9 +118,9 @@ Records are embedded with `types.PurposeDocument` and queries with `types.Purpos
 The Postgres store can also index past conversations kept by `agent/pgstore`, so an agent can answer "what did we discuss about X" in a later session. It is opt-in: nothing is indexed until the host calls `IndexConversation`.
 
 ```go
-conv, err := agentpg.NewScopedStore(pool, tenant, sessionID, nil)
+conv, err := agentpg.New(agentpg.Config{Pool: pool, Scope: tenant, ConversationID: sessionID})
 if err != nil { return err }
-// ... run the agent with AgentConfig.Store = conv ...
+// ... run the agent with agent.Config.Store = conv ...
 n, err := store.IndexConversation(ctx, scope, conv.ConversationID())
 ```
 

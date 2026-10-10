@@ -18,24 +18,29 @@ import (
     "github.com/urmzd/saige/agent/provider/ollama"
 )
 
-client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "nomic-embed-text")
-adapter := ollama.NewAdapter(client)
+adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+if err != nil {
+    return err
+}
 
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Name:         "assistant",
     SystemPrompt: "You are a helpful assistant.",
     Provider:     adapter,
     Tools:        types.NewToolRegistry(),
     MaxIter:      10,
 })
+if err != nil {
+    return err
+}
 
 stream := a.Invoke(ctx, []types.Message{
-    types.NewUserMessage("Hello!"),
+    types.UserMsg(types.Text("Hello!")),
 })
 
 for delta := range stream.Deltas() {
-    if d, ok := delta.(types.TextContentDelta); ok {
-        fmt.Print(d.Content)
+    if d, ok := delta.(types.PartDelta); ok {
+        fmt.Print(d.Text)
     }
 }
 ```
@@ -44,11 +49,11 @@ for delta := range stream.Deltas() {
 
 | Concept | Description |
 |---------|-------------|
-| **Provider** | Implement `ChatStream` to plug in any LLM backend |
+| **Provider** | Implement `Stream(ctx, Request)` to plug in any LLM backend |
 | **Tools** | Register tools via `ToolRegistry`; use `ToolFunc` for inline definitions |
 | **Compaction** | Configure via `CompactCfg: &types.CompactConfig{Strategy: types.CompactNone\|Sliding\|Summarize}` |
 | **Sub-agents** | Delegate tasks to child agents with their own providers and tools |
-| **File Upload** | Attach files via `types.NewFileMessage(uri)` or `types.NewUserMessageWithFiles(text, files...)`; URIs are resolved by `Resolvers` and extracted by `Extractors` in `AgentConfig` |
+| **File Upload** | Attach files as media parts, `types.UserMsg(types.Text(text), types.Media(types.URL(uri, mediaType)))`; URIs are resolved by `Resolvers` and extracted by `Extractors` in `agent.Config` |
 | **Embeddings** | `types.Embedder` interface; `ollama.NewEmbedder(client)` for Ollama-backed vector embeddings |
 | **Feedback** | `a.Feedback(nodeID, types.RatingPositive, "comment")`: attach RLHF ratings as permanent leaf nodes |
 

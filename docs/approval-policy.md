@@ -4,12 +4,15 @@ Gates and markers decide which tool calls need a human decision.
 An `agent.ApprovalPolicy` decides whether a person must be asked again, based on the decisions already made in the conversation.
 
 ```go
-a := agent.NewAgent(cfg, agent.WithApprovalPolicy(agent.ApprovalPolicy{
+a, err := agent.New(cfg, agent.WithApprovalPolicy(agent.ApprovalPolicy{
     RiskDefaults: true, // read runs, write and unknown ask, destructive always asks
     DenyAfter:    3,    // stop asking about a tool after three denials
     HideDenied:   false,
     RampAfter:    0,    // opt in to auto-approve writes after k approvals
 }))
+if err != nil {
+    return err
+}
 ```
 
 Without a policy every held call is asked about, as before.
@@ -56,7 +59,7 @@ Grants and the ramp never cover a destructive tool. Every destructive call is as
 
 ## Records and replay
 
-Each decision is recorded as `types.ApprovalContent` in the tool result message of its call: `approved`, `granted` (with the `types.Grant`), `denied`, `auto_approved` (with the grant ID, or the ramp reason), and `auto_denied`.
+Each decision is recorded as `types.ApprovalPart` in the tool result message of its call: `approved`, `granted` (with the `types.Grant`), `denied`, `auto_approved` (with the grant ID, or the ramp reason), and `auto_denied`.
 Records are metadata, stripped before the provider call, and persisted with the tree.
 At the start of each run the policy rebuilds its grants and counts from the records on the branch, so a restored conversation decides the same way. `agent.Grants(messages)` lists them.
 

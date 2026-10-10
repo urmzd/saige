@@ -182,11 +182,14 @@ func (MyFlow) Run(ctx context.Context, c *harness.Client, script harness.Script,
     return harness.FlowResult{Artifact: artifact, Extra: map[string]any{"parse_rate": 1.0}}, nil
 }
 
-runner := &harness.Runner{
+runner, err := harness.New(harness.Config{
     Client: harness.NewClient(apiBase, apiKey, model),
     Flows:  []harness.Flow{harness.BaseFlow{}, MyFlow{}},
+})
+if err != nil {
+    return err
 }
-err := runner.Run(ctx, scripts)
+err = runner.Run(ctx, scripts)
 ```
 
 Custom flows build their turn records with `NewTurnMetrics`, `NewTurnResult`, and `NewFailedTurnResult`, so they match the built-in flows. A turn that takes several calls sums them with `ChatResult.Add`.

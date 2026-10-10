@@ -69,7 +69,7 @@ Dials resolve field by field, lowest first:
 4. The entry's `dials`. The entry's `unset` removes an inherited dial with `"dials.<name>"`.
 5. The agent: `agent.WithDials`.
 6. A sub-agent inherits its parent's dials unless its `Options` set `WithDials`. A handoff member with its own `HandoffDef.Dials` uses them instead of the entry agent's.
-7. The conversation: `ConfigContent{Dials: ...}`, sticky and saved in the tree. Blocks merge field by field in order.
+7. The conversation: `ConfigPart{Dials: ...}`, sticky and saved in the tree. Blocks merge field by field in order.
 8. One request: `RequestOptions.Dials`.
 
 Layers 1 to 4 are configured on the adapter (`WithDials` on each adapter package). Layers 5 to 8 travel with the request as `RequestOptions.DialLayers` and `RequestOptions.Dials`. A raw option at any layer that sets the same parameter wins over every dial, is recorded as `raw_override`, and is validated strictly.
@@ -82,7 +82,7 @@ A tool-free call that carries a native response schema does not carry the agent'
 
 ## Changes during a run
 
-- `ConfigContent{Dials}` takes effect at the next safe point (D-25).
+- `ConfigPart{Dials}` takes effect at the next safe point (D-25).
 - While a tool loop with signed reasoning is open, a reasoning mode change waits for the next user turn: providers reject a thinking change in the middle of such a loop. A depth change waits too, unless the row declares `"depth_change": "per_request"`. The report records the change as `deferred`, with the value that was kept.
 - When the row declares `"change_resets_cache": true`, a reasoning change against the previous call reports `cache_reset_expected`. The Anthropic thinking rows declare it.
 - `types.Switch` carries `Dials`, so an `OutcomePolicy` can raise reasoning depth on the same model before it switches models. A switch that changes neither the model nor the dials is ignored (D-26).
@@ -100,7 +100,7 @@ A tool-free call that carries a native response schema does not carry the agent'
 | `Decisions` | one per dial: `applied`, `mapped`, `dropped`, `rejected`, `raw_override` or `deferred`, with what was sent, why, the scope that set it, and `cache_reset_expected` |
 | `Policy` | `default`, `strict`, or the overrides |
 
-- Each router attempt's `types.RouteDelta` carries the compiled `Options` and the `Dials` report. The agent saves the committed attempt's route on the turn as `types.RouteContent`, report included. A single adapter reports no route, so for a call with dials the agent compiles them the same way the adapter does and emits the route itself, with the report, whatever the decisions were.
+- Each router attempt's `types.RouteDelta` carries the compiled `Options` and the `Dials` report. The agent saves the committed attempt's route on the turn as `types.RoutePart`, report included. A single adapter reports no route, so for a call with dials the agent compiles them the same way the adapter does and emits the route itself, with the report, whatever the decisions were.
 - `saige catalog explain <preset|provider/model> --dials '{"creativity":"focused"}'` prints, for every chain entry, each dial decision with its reason and the raw options the entry would send. `--tools` compiles for a request with tools, `--surface chat|responses` picks the OpenAI API, `--strict` and `--policy name=handling` set the policy, and `--format json` prints the same as JSON.
 - Traces add `saige.dials.requested`, `saige.dials.mapped`, `saige.dials.dropped` and `saige.dials.policy` to the call span. `gen_ai.request.*` keeps reporting the effective raw options.
 - `agent/eval.AgentRun.Routes` records each call's effective options and decisions. `eval.WithDialPolicy` runs subjects under a policy, and a comparison warns when a held dial was sent as different raw parameters on the two arms.
@@ -147,7 +147,7 @@ Mapped values are options objects. A declared level, depth or surface overrides 
 | c | Depth high across vendors | `reasoning: {depth: high}` | claude-haiku-5-5: effort high. gpt-6.1-sol: effort high. gemini-3.8-flash: thinking level HIGH. Ollama qwen3: think on. | `applied`, `applied`, `applied`, `mapped` ("depth collapsed to toggle") |
 | c | Depth max, or reasoning off | `depth: max`, `mode: off` | Gemini 3 maps max to its highest level, high. gpt-6.1-sol requires reasoning, so off maps to effort low; Gemini 3 maps off to its lowest level. | `mapped` |
 | d | Tools on gpt-6-luna | `depth: high` with tools | Chat Completions maps reasoning to effort none and records the remedy. The Responses API keeps effort high, and creativity is then dropped by the conflict rule. `provider.Build` picks the Responses API for this row when the reasoning dial is on. A raw effort with tools on Chat Completions stays rejected. | `mapped` on chat, `applied` on responses |
-| e | A policy raises depth mid-conversation | `ConfigContent{Dials: depth high, Reason: "policy"}` | Resolved at the next safe point. A mode change waits while a signed tool loop is open. The next route shows a new effective hash and `cache_reset_expected` on rows that declare it. | `deferred`, then `applied` |
+| e | A policy raises depth mid-conversation | `ConfigPart{Dials: depth high, Reason: "policy"}` | Resolved at the next safe point. A mode change waits while a signed tool loop is open. The next route shows a new effective hash and `cache_reset_expected` on rows that declare it. | `deferred`, then `applied` |
 | f | Structured output on a model without native support | an output schema | D-21 applies unchanged: tool or prompt mode is chosen, and an explicit `native` is rejected. The SDK never falls back to extracting JSON from text. | not a dial |
 | g | An eval that holds settings constant | `eval.WithDialPolicy(types.StrictDials)` | Any map or drop fails the attempt. Each call records the effective options and decisions, and a comparison warns when a held dial was sent differently. | `rejected` |
 | h | A user catalog overrides a mapping | an overlay patching `models[].dials.creativity.levels.focused` | Merged as a JSON merge patch. Every mapped value must pass the row's validation and be expressible by its adapter, or the catalog fails to load. The configuration hash covers the compiled mapping. A repository layer may not set `dials`. | load-time `invalid_dial` |
