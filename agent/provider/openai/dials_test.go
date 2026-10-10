@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func highDepth() types.DialLayer {
@@ -22,9 +23,9 @@ func highDepth() types.DialLayer {
 // configured depth otherwise.
 func TestDialsCompileForChatSurface(t *testing.T) {
 	server, bodies := captureServer(t)
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL), WithDials(highDepth()))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL), WithDials(highDepth())))
 	for _, tools := range [][]types.ToolDef{testTools, nil} {
-		ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, tools)
+		ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: tools})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,10 +50,13 @@ func TestDialsCompileForResponsesSurface(t *testing.T) {
 		_, _ = w.Write([]byte(textDelta("ok") + completed))
 	}))
 	t.Cleanup(server.Close)
-	a := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
+	a := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
 	focused := types.CreativityFocused
-	ch, err := a.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, testTools,
-		types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}, Creativity: &focused}})
+	ch, err := a.Stream(context.Background(), types.Request{
+		Messages: []types.Message{types.UserMsg(types.Text("hi"))},
+		Tools:    testTools,
+		Options:  &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}, Creativity: &focused}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +76,12 @@ func TestDialsCompileForResponsesSurface(t *testing.T) {
 // fails before the request, dials or not.
 func TestRawOptionStaysStrictBesideDials(t *testing.T) {
 	server, bodies := captureServer(t)
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
 	temp := 0.2
-	_, err := a.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil,
-		types.RequestOptions{Temperature: &temp, Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}})
+	_, err := a.Stream(context.Background(), types.Request{
+		Messages: []types.Message{types.UserMsg(types.Text("hi"))},
+		Options:  &types.RequestOptions{Temperature: &temp, Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}},
+	})
 	if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 		t.Fatalf("err = %v, requests = %d", err, len(*bodies))
 	}

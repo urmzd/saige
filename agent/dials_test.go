@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // dialModel is a scripted provider that declares a catalog model, so dials
@@ -25,7 +26,7 @@ func (p dialModel) Capabilities() types.ModelCapabilities  { return p.caps }
 func (p dialModel) EffectiveOptions() types.RequestOptions { return types.RequestOptions{} }
 
 func newDialModel(provider, model string, responses ...[]types.Delta) dialModel {
-	return dialModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: responses}, caps: catalog.MustLookup(provider, model)}
+	return dialModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: responses}, caps: catalog.MustLookup(types.ProviderName(provider), model)}
 }
 
 func routed(t *testing.T, p types.Provider) types.Provider {
@@ -38,7 +39,7 @@ func routed(t *testing.T, p types.Provider) types.Provider {
 }
 
 func dialConfig(d types.Dials) types.UserMessage {
-	return types.UserMessage{Content: []types.UserContent{types.ConfigContent{Dials: &d, Reason: "policy"}}}
+	return types.UserMessage{Parts: []types.UserPart{types.ConfigPart{Dials: &d, Reason: "policy"}}}
 }
 
 func depthDial(d types.Depth) types.Dials {
@@ -67,8 +68,8 @@ func routesOf(ds []types.Delta) []types.RouteDelta {
 func TestAgentSendsDialScopes(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}
 	focused := types.CreativityFocused
-	a := NewAgent(AgentConfig{Provider: p}, WithDials(types.Dials{Creativity: &focused}))
-	input := types.UserMessage{Content: []types.UserContent{types.ConfigContent{Dials: &types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}, types.TextContent{Text: "hi"}}}
+	a := must.Get(New(Config{Provider: p}, WithDials(types.Dials{Creativity: &focused})))
+	input := types.UserMessage{Parts: []types.UserPart{types.ConfigPart{Dials: &types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}, types.TextPart{Text: "hi"}}}
 	agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{input}).Deltas())
 	calls := p.Requests()
 	if len(calls) != 1 || calls[0].Options == nil {
@@ -85,12 +86,12 @@ func TestAgentSendsDialScopes(t *testing.T) {
 
 func TestSubAgentInheritsDialsUnlessOverridden(t *testing.T) {
 	focused, creative := types.CreativityFocused, types.CreativityCreative
-	parent := AgentConfig{Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}, DialPolicy: &types.StrictDials}
+	parent := Config{Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}, DialPolicy: &types.StrictDials}
 	child := childConfig(t, parent, SubAgentDef{Name: "worker"})
 	if child.Dials.Creativity == nil || *child.Dials.Creativity != focused || child.DialPolicy == nil || !child.DialPolicy.Strict {
 		t.Fatalf("inherited: %+v %+v", child.Dials, child.DialPolicy)
 	}
-	child = childConfig(t, parent, SubAgentDef{Name: "worker", Options: []AgentOption{WithDials(types.Dials{Creativity: &creative})}})
+	child = childConfig(t, parent, SubAgentDef{Name: "worker", Options: []Option{WithDials(types.Dials{Creativity: &creative})}})
 	if *child.Dials.Creativity != creative {
 		t.Fatalf("override: %+v", child.Dials)
 	}
@@ -98,8 +99,8 @@ func TestSubAgentInheritsDialsUnlessOverridden(t *testing.T) {
 
 func TestHandoffMemberUsesItsOwnDials(t *testing.T) {
 	focused, creative := types.CreativityFocused, types.CreativityCreative
-	a := NewAgent(AgentConfig{Name: "front", Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}},
-		WithHandoffs(HandoffDef{Name: "writer", Dials: &types.Dials{Creativity: &creative}}, HandoffDef{Name: "triage"}))
+	a := must.Get(New(Config{Name: "front", Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}},
+		WithHandoffs(HandoffDef{Name: "writer", Dials: &types.Dials{Creativity: &creative}}, HandoffDef{Name: "triage"})))
 	for _, tc := range []struct {
 		member, scope string
 		want          types.Creativity
@@ -114,9 +115,9 @@ func TestHandoffMemberUsesItsOwnDials(t *testing.T) {
 // signedToolTurn is an assistant turn with signed reasoning and a tool call,
 // which opens a loop that must keep its reasoning.
 func signedToolTurn(id string) types.AssistantMessage {
-	return types.AssistantMessage{Content: []types.AssistantContent{
-		types.ThinkingContent{Thinking: "plan", Signature: "sig"},
-		types.ToolUseContent{ID: id, Name: "lookup", Arguments: map[string]any{}},
+	return types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ThinkingPart{Text: "plan", Signature: "sig"},
+		types.ToolCallPart{ID: id, Name: "lookup", Arguments: map[string]any{}},
 	}}
 }
 
@@ -124,16 +125,16 @@ func signedToolTurn(id string) types.AssistantMessage {
 // that started with reasoning depth low.
 func openLoopTree(t *testing.T) *tree.Tree {
 	t.Helper()
-	tr, err := tree.New(types.NewSystemMessage("sys"))
+	tr, err := tree.New(types.SystemMsg(types.Text("sys")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	low := depthDial(types.DepthLow)
 	cur := tr.Root().ID
 	for _, m := range []types.Message{
-		types.UserMessage{Content: []types.UserContent{types.ConfigContent{Dials: &low}, types.TextContent{Text: "go"}}},
+		types.UserMessage{Parts: []types.UserPart{types.ConfigPart{Dials: &low}, types.TextPart{Text: "go"}}},
 		signedToolTurn("t1"),
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "t1", Text: "found"}),
+		types.ToolResults(types.ToolResultPart{CallID: "t1", Parts: []types.ToolOutputPart{types.Text("found")}}),
 	} {
 		n, err := tr.AddChild(context.Background(), cur, m)
 		if err != nil {
@@ -151,7 +152,7 @@ func openLoopTree(t *testing.T) *tree.Tree {
 func TestReasoningChangeDeferredInSignedLoop(t *testing.T) {
 	model := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("done"), agenttest.TextResponse("again"))
 	tr := openLoopTree(t)
-	a := NewAgent(AgentConfig{Provider: routed(t, model), Tree: tr})
+	a := must.Get(New(Config{Provider: routed(t, model), Tree: tr}))
 
 	adaptive := types.Dials{Reasoning: &types.ReasoningDial{Mode: types.ReasoningAdaptive}}
 	first := routesOf(agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{dialConfig(adaptive)}).Deltas()))
@@ -166,7 +167,7 @@ func TestReasoningChangeDeferredInSignedLoop(t *testing.T) {
 		t.Fatalf("the turn layer does not hold the loop's reasoning: %+v", model.Requests()[0].Options.DialLayers)
 	}
 
-	second := routesOf(agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("next")}).Deltas()))
+	second := routesOf(agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("next"))}).Deltas()))
 	d, _ = second[0].Dials.Decision(types.DialReasoning)
 	if d.Action != types.DialApplied || !d.CacheResetExpected {
 		t.Fatalf("at the next user turn: %+v", d)
@@ -177,7 +178,7 @@ func TestReasoningChangeDeferredInSignedLoop(t *testing.T) {
 }
 
 // An OutcomePolicy can raise reasoning depth on the same model. The switch
-// is recorded as ConfigContent and reaches the next call; the same switch
+// is recorded as ConfigPart and reaches the next call; the same switch
 // again changes nothing and is ignored.
 func TestOutcomePolicyRaisesDepthOnSameModel(t *testing.T) {
 	high := depthDial(types.DepthHigh)
@@ -185,7 +186,7 @@ func TestOutcomePolicyRaisesDepthOnSameModel(t *testing.T) {
 		return &types.Switch{Dials: &high, Reason: "escalate"}, nil
 	})
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}
-	a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithOutcomePolicy(policy))
+	a := must.Get(New(Config{Provider: p, SystemPrompt: "s"}, WithOutcomePolicy(policy)))
 	tr, branch := a.Tree(), a.Tree().Active()
 	var routes []types.RouteDelta
 	emit := func(d types.Delta) {
@@ -204,7 +205,7 @@ func TestOutcomePolicyRaisesDepthOnSameModel(t *testing.T) {
 	if again, err := a.observeOutcome(context.Background(), emit, tr, branch, p, o); err != nil || again != nil {
 		t.Fatalf("an unchanged switch must be ignored: %+v %v", again, err)
 	}
-	agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")}).Deltas())
+	agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}).Deltas())
 	layers := p.Requests()[0].Options.DialLayers
 	if len(layers) != 1 || layers[0].Scope != types.DialScopeTurn || layers[0].Dials.Reasoning.Depth != types.DepthHigh {
 		t.Fatalf("the switch did not reach the call: %+v", layers)
@@ -217,13 +218,13 @@ func TestDurableReplayKeepsDialDecisions(t *testing.T) {
 	focused := types.CreativityFocused
 	runner := newRecordingRunner()
 	live := newDialModel("openai", "gpt-6-luna", agenttest.TextResponse("live"))
-	a := NewAgent(AgentConfig{Provider: routed(t, live), SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused}))
-	first, err := a.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("hi")}, "")
+	a := must.Get(New(Config{Provider: routed(t, live), SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused})))
+	first, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := NewAgent(AgentConfig{Provider: panicProvider{}, SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused}))
-	replayed, err := b.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("hi")}, "")
+	b := must.Get(New(Config{Provider: panicProvider{}, SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused})))
+	replayed, err := b.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,19 +237,19 @@ func TestDurableReplayKeepsDialDecisions(t *testing.T) {
 	}
 }
 
-func routeOf(m *types.AssistantMessage) *types.RouteContent {
+func routeOf(m *types.AssistantMessage) *types.RoutePart {
 	if m == nil {
 		return nil
 	}
-	for _, c := range m.Content {
-		if r, ok := c.(types.RouteContent); ok {
+	for _, c := range m.Parts {
+		if r, ok := c.(types.RoutePart); ok {
 			return &r
 		}
 	}
 	return nil
 }
 
-// Dials written as ConfigContent survive a save and reload of the tree, so
+// Dials written as ConfigPart survive a save and reload of the tree, so
 // a restored conversation keeps them.
 func TestReloadRestoresDials(t *testing.T) {
 	high := depthDial(types.DepthHigh)
@@ -260,7 +261,7 @@ func TestReloadRestoresDials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, _ := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}}).prepareMessages([]types.Message{msg})
+	rc, _ := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}})).prepareMessages([]types.Message{msg})
 	if rc.dials.Reasoning == nil || rc.dials.Reasoning.Depth != types.DepthHigh {
 		t.Fatalf("restored dials: %+v (%s)", rc.dials, data)
 	}
@@ -282,8 +283,8 @@ func TestSingleAdapterReportsDials(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
-			a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithDials(tc.dials))
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+			a := must.Get(New(Config{Provider: p, SystemPrompt: "s"}, WithDials(tc.dials)))
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 			routes := routesOf(agenttest.CollectDeltas(stream.Deltas()))
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)
@@ -303,7 +304,7 @@ func TestSingleAdapterReportsDials(t *testing.T) {
 	}
 	// Without dials nothing is reported, as before.
 	p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
-	stream := NewAgent(AgentConfig{Provider: p}).Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := must.Get(New(Config{Provider: p})).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	if routes := routesOf(agenttest.CollectDeltas(stream.Deltas())); len(routes) != 0 {
 		t.Fatalf("routes without dials: %+v", routes)
 	}

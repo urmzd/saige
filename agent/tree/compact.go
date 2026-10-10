@@ -118,7 +118,7 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	requestNode := &types.Node{
 		ID:        types.NodeID(types.NewID()),
 		ParentID:  first.node.ParentID,
-		Message:   types.NewUserMessage(types.SummaryRequestText),
+		Message:   types.UserMsg(types.Text(types.SummaryRequestText)),
 		State:     types.NodeCompacted,
 		Version:   1,
 		Depth:     first.node.Depth,
@@ -129,7 +129,7 @@ func (t *Tree) Compact(ctx context.Context, branch types.BranchID, provider type
 	summaryNode := &types.Node{
 		ID:        types.NodeID(types.NewID()),
 		ParentID:  requestNode.ID,
-		Message:   types.NewAssistantMessage(summary),
+		Message:   types.AssistantMsg(types.Text(summary)),
 		State:     types.NodeCompacted,
 		Version:   1,
 		Depth:     first.node.Depth + 1,
@@ -249,14 +249,14 @@ func CompactCount(candidates []types.Message) int {
 func hasToolResult(msg types.Message) bool {
 	switch v := msg.(type) {
 	case types.SystemMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(types.ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(types.ToolResultPart); ok {
 				return true
 			}
 		}
 	case types.UserMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(types.ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(types.ToolResultPart); ok {
 				return true
 			}
 		}
@@ -287,11 +287,11 @@ func (t *Tree) sharedNodesUnlocked(branch types.BranchID) map[types.NodeID]bool 
 // summary text, failing on stream errors or an empty result.
 func summarizeMessages(ctx context.Context, provider types.Provider, msgs []types.Message) (string, error) {
 	summaryReq := []types.Message{
-		types.NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		types.NewUserMessage(types.MessagesToText(msgs)),
+		types.SystemMsg(types.Text("Summarize the following conversation concisely, preserving key facts and decisions.")),
+		types.UserMsg(types.Text(types.MessagesToText(msgs))),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	rx, err := provider.Stream(ctx, types.Request{Messages: summaryReq})
 	if err != nil {
 		return "", fmt.Errorf("summarization: %w", err)
 	}
@@ -300,11 +300,11 @@ func summarizeMessages(ctx context.Context, provider types.Provider, msgs []type
 	var streamErr error
 	for delta := range rx {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			summaryBuf.WriteString(d.Content)
+		case types.PartDelta:
+			summaryBuf.WriteString(d.Text)
 		case types.ErrorDelta:
 			// Mid-stream failures (e.g. rate limits after the stream opened)
-			// arrive as ErrorDelta, not as the ChatStream return error.
+			// arrive as ErrorDelta, not as the Stream return error.
 			streamErr = d.Error
 		}
 	}

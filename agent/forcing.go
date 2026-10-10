@@ -48,38 +48,38 @@ var (
 )
 
 // WithOnMaxIter sets what happens when a run reaches a step limit.
-func WithOnMaxIter(p MaxIterPolicy) AgentOption {
-	return func(c *AgentConfig) { c.OnMaxIter = p }
+func WithOnMaxIter(p MaxIterPolicy) Option {
+	return func(c *Config) { c.OnMaxIter = p }
 }
 
 // WithStopAtTools ends the run as soon as one of the named tools succeeds.
 // The tool's result becomes the run's output.
-func WithStopAtTools(names ...string) AgentOption {
-	return func(c *AgentConfig) { c.StopAtTools = append(c.StopAtTools, names...) }
+func WithStopAtTools(names ...string) Option {
+	return func(c *Config) { c.StopAtTools = append(c.StopAtTools, names...) }
 }
 
 // WithMaxConsecutiveErrors stops a run after n consecutive turns in which
 // every tool call failed. A negative n disables the check.
-func WithMaxConsecutiveErrors(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxConsecutiveErrors = n }
+func WithMaxConsecutiveErrors(n int) Option {
+	return func(c *Config) { c.MaxConsecutiveErrors = n }
 }
 
 // WithMaxRepeatIterations stops a run when the model requests the same tool
 // calls with the same arguments more than n turns in a row. 0 disables it.
-func WithMaxRepeatIterations(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxRepeatIterations = n }
+func WithMaxRepeatIterations(n int) Option {
+	return func(c *Config) { c.MaxRepeatIterations = n }
 }
 
 // WithToolChoice sets the tool choice for the agent's turns. A required or
 // named choice applies to the first turn of each run; auto and none apply to
-// every turn. A ConfigContent.ToolChoice in the conversation takes precedence.
-func WithToolChoice(choice types.ToolChoice) AgentOption {
-	return func(c *AgentConfig) { c.ToolChoice = &choice }
+// every turn. A ConfigPart.ToolChoice in the conversation takes precedence.
+func WithToolChoice(choice types.ToolChoice) Option {
+	return func(c *Config) { c.ToolChoice = &choice }
 }
 
 // WithTokenizer sets the tokenizer used for CompactConfig.MaxInputTokens.
-func WithTokenizer(t types.Tokenizer) AgentOption {
-	return func(c *AgentConfig) { c.Tokenizer = t }
+func WithTokenizer(t types.Tokenizer) Option {
+	return func(c *Config) { c.Tokenizer = t }
 }
 
 // ── Tool choice ──────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ func toolChoiceRequest(provider types.Provider, choice *types.ToolChoice, tools 
 		return tools, nil, nil
 	}
 	caps, known := types.ProviderCapabilities(provider)
-	_, accepts := provider.(types.OptionsProvider)
+	accepts := types.AcceptsOptions(provider)
 	opts := &types.RequestOptions{ToolChoice: choice}
 	if choice.Mode == types.ToolChoiceNone {
 		if err := choice.Validate(tools); err != nil {
@@ -136,7 +136,7 @@ func toolChoiceRequest(provider types.Provider, choice *types.ToolChoice, tools 
 	}
 	if !accepts {
 		return nil, nil, fmt.Errorf("%w: tool_choice %q: provider %q does not accept request options",
-			types.ErrInvalidModelConfig, choice.Mode, types.ProviderName(provider))
+			types.ErrInvalidModelConfig, choice.Mode, types.NameOf(provider))
 	}
 	return tools, opts, nil
 }
@@ -146,7 +146,7 @@ func toolChoiceRequest(provider types.Provider, choice *types.ToolChoice, tools 
 // stopToolCall returns the ID of the first call, in request order, to a tool
 // listed in StopAtTools that succeeded. A failed call does not stop the run,
 // so the model can recover from it.
-func (a *Agent) stopToolCall(calls []types.ToolUseContent, results []toolResult, out runOutput) string {
+func (a *Agent) stopToolCall(calls []types.ToolCallPart, results []toolResult, out runOutput) string {
 	if len(a.cfg.StopAtTools) == 0 && !out.tool() {
 		return ""
 	}
@@ -172,7 +172,7 @@ type loopGuards struct {
 
 // repeated records a turn's tool calls and reports whether they exceed limit
 // identical turns in a row. limit 0 disables the check.
-func (g *loopGuards) repeated(calls []types.ToolUseContent, limit int) bool {
+func (g *loopGuards) repeated(calls []types.ToolCallPart, limit int) bool {
 	sig := callSignature(calls)
 	if sig == g.lastCalls {
 		g.repeats++
@@ -218,7 +218,7 @@ func (g *loopGuards) recordResults(results []toolResult, limit int) {
 
 // callSignature identifies a turn's tool calls by name and arguments.
 // encoding/json sorts map keys, so equal arguments encode equally.
-func callSignature(calls []types.ToolUseContent) string {
+func callSignature(calls []types.ToolCallPart) string {
 	var b strings.Builder
 	for _, c := range calls {
 		args, _ := json.Marshal(c.Arguments)
@@ -232,7 +232,7 @@ func callSignature(calls []types.ToolUseContent) string {
 
 // skipToolCalls answers every call with an error result without running it,
 // so the turn's tool calls stay paired with results.
-func skipToolCalls(stream *EventStream, calls []types.ToolUseContent, reason string) []toolResult {
+func skipToolCalls(stream *EventStream, calls []types.ToolCallPart, reason string) []toolResult {
 	results := make([]toolResult, len(calls))
 	for i, c := range calls {
 		stream.send(types.ToolExecStartDelta{ToolCallID: c.ID, Name: c.Name})
@@ -258,7 +258,7 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if prompt == "" {
 		prompt = DefaultForceFinalPrompt
 	}
-	messages := append(slices.Clone(active.messages), types.NewUserMessage(prompt))
+	messages := append(slices.Clone(active.messages), types.UserMsg(types.Text(prompt)))
 
 	// A response schema is applied by the tool-free request path, so the
 	// tools are withheld rather than disabled by option.
@@ -274,7 +274,7 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if err != nil {
 		return err
 	}
-	msg, usage, err := a.getAssistantMessage(ctx, stream, active.provider, messages, tools, opts, fmt.Sprintf("llm-%s-final", branch))
+	msg, usage, err := a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, messages, tools, opts, fmt.Sprintf("llm-%s-final", branch))
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	// The model was told not to call tools. A call it makes anyway is not
 	// run, and is dropped so the recorded answer has no unanswered call.
 	final := withoutToolCalls(*msg)
-	if len(final.Content) == 0 {
+	if len(final.Parts) == 0 {
 		return limitErr
 	}
 	if _, err := a.appendNode(ctx, tr, branch, final); err != nil {
@@ -305,13 +305,13 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 
 // withoutToolCalls returns msg without its tool-use blocks.
 func withoutToolCalls(msg types.AssistantMessage) types.AssistantMessage {
-	content := make([]types.AssistantContent, 0, len(msg.Content))
-	for _, c := range msg.Content {
-		if _, ok := c.(types.ToolUseContent); !ok {
+	content := make([]types.AssistantPart, 0, len(msg.Parts))
+	for _, c := range msg.Parts {
+		if _, ok := c.(types.ToolCallPart); !ok {
 			content = append(content, c)
 		}
 	}
-	return types.AssistantMessage{Content: content}
+	return types.AssistantMessage{Parts: content}
 }
 
 // ── Output truncation ────────────────────────────────────────────────
@@ -341,7 +341,7 @@ const errTruncatedToolCall = "arguments cut off by the output token limit"
 // *types.ResponseTruncatedError; a text-only turn ends the run cleanly. done
 // reports whether the turn was truncated.
 //
-// The committed node carries a TruncationContent marker with the reason. The
+// The committed node carries a TruncationPart marker with the reason. The
 // marker is stripped before the next provider call.
 func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, msg *types.AssistantMessage, usage *types.UsageDelta) (bool, error) {
 	reason := truncationReason(usage)
@@ -352,10 +352,10 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 	dropped := 0
 	if msg != nil {
 		partial = withoutToolCalls(*msg)
-		dropped = len(msg.Content) - len(partial.Content)
+		dropped = len(msg.Parts) - len(partial.Parts)
 	}
 	nodeID := ""
-	if len(partial.Content) > 0 {
+	if len(partial.Parts) > 0 {
 		node, err := a.appendNode(ctx, tr, branch, withTruncationMarker(partial, reason))
 		if err != nil {
 			return true, err

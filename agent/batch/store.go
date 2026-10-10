@@ -15,18 +15,18 @@ import (
 type JobState string
 
 const (
-	// JobSubmitting: the record is saved and the vendor submit is in flight,
+	// JobSubmitting means the record is saved and the vendor submit is in flight,
 	// or the process stopped before the batch ID was saved.
 	JobSubmitting JobState = "submitting"
-	// JobSubmitted: the vendor accepted the batch; Handle is set.
+	// JobSubmitted means the vendor accepted the batch; Handle is set.
 	JobSubmitted JobState = "submitted"
-	// JobEnded: the batch reached a terminal vendor state; Status holds it.
+	// JobEnded means the batch reached a terminal vendor state; Status holds it.
 	JobEnded JobState = "ended"
-	// JobCollected: every result was read and its budget settled.
+	// JobCollected means every result was read and its budget settled.
 	JobCollected JobState = "collected"
-	// JobFailed: the submit was rejected or the batch failed as a whole.
+	// JobFailed means the submit was rejected or the batch failed as a whole.
 	JobFailed JobState = "failed"
-	// JobIndeterminate: a submit was interrupted and the vendor lookup could
+	// JobIndeterminate means a submit was interrupted and the vendor lookup could
 	// not tell whether the batch exists. Reconcile resolves it.
 	JobIndeterminate JobState = "indeterminate"
 )

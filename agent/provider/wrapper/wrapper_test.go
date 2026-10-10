@@ -9,7 +9,7 @@ import (
 
 type leaf struct{ name string }
 
-func (leaf) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (leaf) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return nil, nil
 }
 

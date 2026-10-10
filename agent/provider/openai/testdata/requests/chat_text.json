@@ -1,0 +1,30 @@
+{
+  "messages": [
+    {
+      "content": "Be brief.",
+      "role": "system"
+    },
+    {
+      "content": "hi",
+      "role": "user"
+    },
+    {
+      "content": "hello",
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "again",
+          "type": "text"
+        },
+        {
+          "text": " please",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

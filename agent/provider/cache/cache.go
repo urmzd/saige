@@ -1,5 +1,5 @@
 // Package cache provides a response-caching decorator for types.Provider. It
-// memoizes ChatStream responses keyed by a deterministic hash of
+// memoizes Stream responses keyed by a deterministic hash of
 // (model, messages, tools, schema), mirroring the decorator pattern of
 // agent/provider/retry and agent/provider/fallback. Only fully-completed,
 // error-free streams are cached; cache hits replay recorded deltas and report a
@@ -9,12 +9,12 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
-	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -50,17 +50,17 @@ type Config struct {
 	Metrics types.Metrics
 }
 
-// Provider memoizes ChatStream responses. Only fully-completed, error-free
+// Provider memoizes Stream responses. Only fully-completed, error-free
 // streams are cached.
 type Provider struct {
-	inner    types.Provider
+	wrapper.Base
 	cfg      Config
 	identity string
 	flights  *flights
 }
 
 // flights tracks in-progress leader calls by key. It is shared by every copy
-// of a Provider (WithModel, NewSession), since copies share the store.
+// of a Provider (WithTarget, NewSession), since copies share the store.
 type flights struct {
 	mu       sync.Mutex
 	inflight map[string]*flight
@@ -77,16 +77,37 @@ var (
 	_ types.StructuredOutputProvider = (*Provider)(nil)
 	_ types.NamedProvider            = (*Provider)(nil)
 	_ types.ModelProvider            = (*Provider)(nil)
-	_ types.ModelSwitcher            = (*Provider)(nil)
+	_ types.TargetSwitcher           = (*Provider)(nil)
 	_ types.CapabilityReporter       = (*Provider)(nil)
-	_ types.ContentNegotiator        = (*Provider)(nil)
 	_ types.OptionsProvider          = (*Provider)(nil)
 	_ types.SessionProvider          = (*Provider)(nil)
 	_ types.Closer                   = (*Provider)(nil)
 )
 
-// New wraps a provider with response caching. cfg.Cache is required.
-func New(inner types.Provider, cfg Config) *Provider {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithTTL sets Config.TTL.
+func WithTTL(d time.Duration) Option { return func(c *Config) { c.TTL = d } }
+
+// WithSingleFlight sets Config.SingleFlight.
+func WithSingleFlight() Option { return func(c *Config) { c.SingleFlight = true } }
+
+// New wraps inner with response caching. A nil inner or cfg.Cache is an
+// error wrapping types.ErrInvalidConfig.
+func New(inner types.Provider, cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: cache: no provider to wrap", types.ErrInvalidConfig)
+	}
+	if cfg.Cache == nil {
+		return nil, fmt.Errorf("%w: cache: Config.Cache is required", types.ErrInvalidConfig)
+	}
+	if cfg.TTL < 0 {
+		return nil, fmt.Errorf("%w: cache: negative TTL", types.ErrInvalidConfig)
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -95,85 +116,90 @@ func New(inner types.Provider, cfg Config) *Provider {
 	}
 	identity := types.NewID()
 	if cfg.ScopeKey != "" && cfg.ConfigKey != "" {
-		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.ProviderName(inner)})
+		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.NameOf(inner)})
 		identity = string(raw)
 	}
-	return &Provider{inner: inner, cfg: cfg, identity: identity, flights: &flights{inflight: map[string]*flight{}}}
+	p := &Provider{cfg: cfg, identity: identity, flights: &flights{inflight: map[string]*flight{}}}
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
+}
+
+// rewrap keeps the cache config, store identity and flights around another
+// inner provider. A model switch therefore keys on the new model, and never
+// replays the old model's entries.
+func (p *Provider) rewrap(inner types.Provider) types.Provider {
+	c := *p
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
 }
 
 // Name implements types.NamedProvider.
 func (p *Provider) Name() string {
-	return "cache(" + types.ProviderName(p.inner) + ")"
+	return "cache(" + types.NameOf(p.Inner) + ")"
 }
 
-// Model implements types.ModelProvider by delegating to the inner provider.
-func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
-
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// and keeps the same cache config. Without it a ConfigContent model switch was
-// silently dropped under a cache decorator, and every switched request was
-// answered from the original model's cache entries.
-func (p *Provider) WithModel(model string) types.Provider {
-	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg, identity: p.identity, flights: p.flights}
-}
-
-// ContentSupport implements types.ContentNegotiator by delegating to the inner
-// provider, so caching an adapter does not hide its native media support.
-func (p *Provider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(p.inner)
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. A cache changes latency, not what the model accepts. Capabilities
-// that need request options are dropped when the inner provider cannot
-// receive them.
-func (p *Provider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(p.inner)
-	return optionscheck.Narrow(caps, p.inner)
-}
-
-// ChatStream implements types.Provider.
-func (p *Provider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.stream(ctx, msgs, tools, nil, nil, func() (<-chan types.Delta, error) {
-		return p.inner.ChatStream(ctx, msgs, tools)
-	})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. The options are part
-// of the cache key, so a forced tool choice never replays a response recorded
-// without one. When the inner provider cannot receive options the call fails
-// with types.ErrInvalidModelConfig instead of dropping them.
-func (p *Provider) ChatStreamWithOptions(ctx context.Context, msgs []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := p.inner.(types.OptionsProvider)
-	if !ok {
-		return nil, optionscheck.Unsupported(p.inner)
-	}
-	return p.stream(ctx, msgs, tools, nil, &opts, func() (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, msgs, tools, opts)
-	})
-}
-
-// Unwrap returns the inner provider. See package wrapper.
-func (p *Provider) Unwrap() types.Provider { return p.inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (p *Provider) Close() error { return types.CloseProvider(p.inner) }
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (p *Provider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	call := func() (<-chan types.Delta, error) {
-		if sp, ok := p.inner.(types.StructuredOutputProvider); ok {
-			return sp.ChatStreamWithSchema(ctx, msgs, tools, schema)
+// Stream implements types.Provider. The options and schema are part of the
+// cache key, so a forced tool choice never replays a response recorded
+// without one. Options the inner provider cannot receive fail the call with
+// types.ErrInvalidModelConfig instead of being dropped; a schema it cannot
+// enforce fails the call on a miss.
+func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		if err := p.Check(types.Request{Options: req.Options}); err != nil {
+			return nil, err
 		}
-		return nil, schemacheck.Unsupported(p.inner, "provider cannot enforce a response schema")
 	}
-	return p.stream(ctx, msgs, tools, schema, nil, call)
+	call := func() (<-chan types.Delta, error) {
+		if err := p.Check(req); err != nil {
+			return nil, err
+		}
+		return p.Inner.Stream(ctx, req)
+	}
+	view, ok := p.plannedView(ctx, req)
+	if !ok {
+		// The plan rejects the request: the inner provider reports why,
+		// and nothing is cached.
+		return call()
+	}
+	return p.stream(ctx, req.Messages, req.Tools, req.Schema, req.Options, view, call)
+}
+
+// view is the conversion plan a key covers: the planned report's hash and
+// whether the plan converts anything, so the recorder can check that the
+// attempt that served sent the view the key names.
+type view struct {
+	hash     string
+	converts bool
+}
+
+// plannedView plans req through the conversion decorator below the cache,
+// if there is one. A request with no media plans nothing and keys on its
+// parts alone. ok is false when the plan rejects the request.
+func (p *Provider) plannedView(ctx context.Context, req types.Request) (view, bool) {
+	planner, found := wrapper.As[types.ConversionPlanner](p.Inner)
+	if !found {
+		return view{}, true
+	}
+	rep, _, err := planner.PlanConversions(ctx, req)
+	if err != nil {
+		return view{}, false
+	}
+	if len(rep.Decisions) == 0 {
+		return view{}, true
+	}
+	v := view{hash: rep.Hash}
+	for _, d := range rep.Decisions {
+		if d.Action != types.DecisionNative && d.Action != types.DecisionLowered {
+			v.converts = true
+		}
+	}
+	return v, true
 }
 
 func (p *Provider) stream(
 	ctx context.Context,
 	msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema,
-	opts *types.RequestOptions, call func() (<-chan types.Delta, error),
+	opts *types.RequestOptions, planned view, call func() (<-chan types.Delta, error),
 ) (<-chan types.Delta, error) {
 	if p.cfg.Cache == nil {
 		return call() // no backing store: behave as a transparent passthrough
@@ -181,7 +207,7 @@ func (p *Provider) stream(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	parts := []string{p.identity, types.ProviderModel(p.inner)}
+	parts := []string{p.identity, types.ProviderModel(p.Inner)}
 	if opts != nil {
 		raw, err := json.Marshal(opts)
 		if err != nil {
@@ -190,16 +216,16 @@ func (p *Provider) stream(
 		parts = append(parts, string(raw))
 	}
 	identity, _ := json.Marshal(parts)
-	key := p.cfg.KeyNamespace + ":" + Key(string(identity), msgs, tools, schema)
+	key := p.cfg.KeyNamespace + ":" + KeyWithConversions(string(identity), msgs, tools, schema, planned.hash)
 
 	// HIT: replay recorded deltas, no upstream call.
 	if cr, found := p.lookup(ctx, key); found {
 		return replay(cr), nil
 	}
 	if !p.cfg.SingleFlight || p.flights == nil {
-		return p.miss(ctx, key, call, nil)
+		return p.miss(ctx, key, planned, call, nil)
 	}
-	return p.singleFlight(ctx, key, call)
+	return p.singleFlight(ctx, key, planned, call)
 }
 
 // lookup reads key from the store. A read error is logged, recorded as a
@@ -220,7 +246,7 @@ func (p *Provider) lookup(ctx context.Context, key string) (CachedResponse, bool
 
 // miss calls upstream and tees the stream into a recorder. done, when
 // non-nil, receives the outcome once the stream ends or the call fails.
-func (p *Provider) miss(ctx context.Context, key string, call func() (<-chan types.Delta, error), done func(stored, canceled bool)) (<-chan types.Delta, error) {
+func (p *Provider) miss(ctx context.Context, key string, planned view, call func() (<-chan types.Delta, error), done func(stored, canceled bool)) (<-chan types.Delta, error) {
 	in, err := call()
 	if err != nil {
 		if done != nil {
@@ -232,11 +258,11 @@ func (p *Provider) miss(ctx context.Context, key string, call func() (<-chan typ
 	if done != nil {
 		recorded = func(stored bool) { done(stored, ctx.Err() != nil) }
 	}
-	return p.recordAndTee(ctx, key, in, recorded), nil
+	return p.recordAndTee(ctx, key, planned, in, recorded), nil
 }
 
 // singleFlight leads the call for key or waits for the current leader.
-func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-chan types.Delta, error)) (<-chan types.Delta, error) {
+func (p *Provider) singleFlight(ctx context.Context, key string, planned view, call func() (<-chan types.Delta, error)) (<-chan types.Delta, error) {
 	f := p.flights
 	for {
 		f.mu.Lock()
@@ -261,7 +287,7 @@ func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-
 				return nil, err
 			}
 			// The leader's response was not shareable; call upstream alone.
-			return p.miss(ctx, key, call, nil)
+			return p.miss(ctx, key, planned, call, nil)
 		}
 		mine := &flight{done: make(chan struct{})}
 		f.inflight[key] = mine
@@ -273,7 +299,7 @@ func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-
 			p.finish(key, mine, true, false)
 			return replay(cr), nil
 		}
-		return p.miss(ctx, key, call, func(stored, canceled bool) {
+		return p.miss(ctx, key, planned, call, func(stored, canceled bool) {
 			p.finish(key, mine, stored, canceled)
 		})
 	}
@@ -289,20 +315,4 @@ func (p *Provider) finish(key string, fl *flight, stored, canceled bool) {
 	}
 	f.mu.Unlock()
 	close(fl.done)
-}
-
-// NewSession preserves cache configuration while isolating inner routing state.
-func (p *Provider) NewSession() types.Provider {
-	inner := p.inner
-	if sessions, ok := inner.(types.SessionProvider); ok {
-		inner = sessions.NewSession()
-	}
-	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity, flights: p.flights}
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the
-// inner provider.
-func (p *Provider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(p.inner)
-	return o
 }

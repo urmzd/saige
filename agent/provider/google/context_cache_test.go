@@ -17,16 +17,16 @@ import (
 
 func TestContextCacheBindsExactPrefixAndTools(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
-	prefix := []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reference")}
+	prefix := []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reference"))}
 	tools := []types.ToolDef{{Name: "read", Parameters: types.ParameterSchema{Type: "object"}}}
-	contents, config := a.buildRequest(prefix, tools)
+	contents, config, _ := a.buildRequest(prefix, 0, tools)
 	fingerprint, err := cacheFingerprint(contents, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cache := ContextCache{Name: "cachedContents/test", Model: a.model, PrefixCount: 2, Fingerprint: fingerprint, ExpiresAt: time.Now().Add(time.Hour)}
 	a.contextCache = &cache
-	request := append(append([]types.Message(nil), prefix...), types.NewUserMessage("question"))
+	request := append(append([]types.Message(nil), prefix...), types.UserMsg(types.Text("question")))
 	remainder, bound, err := a.cachedRequest(request, tools)
 	if err != nil || len(remainder) != 1 || bound.CachedContent != cache.Name || bound.SystemInstruction != nil || len(bound.Tools) != 0 {
 		t.Fatal("cache prefix duplicated or binding failed", err)
@@ -35,7 +35,7 @@ func TestContextCacheBindsExactPrefixAndTools(t *testing.T) {
 		t.Fatal("changed tools accepted")
 	}
 	changed := append([]types.Message(nil), request...)
-	changed[0] = types.NewSystemMessage("new rules")
+	changed[0] = types.SystemMsg(types.Text("new rules"))
 	if _, _, err = a.cachedRequest(changed, tools); err == nil {
 		t.Fatal("changed prefix accepted")
 	}
@@ -54,9 +54,9 @@ func TestContextCacheBindsExactPrefixAndTools(t *testing.T) {
 // three-field encoding, so existing handles stay valid.
 func TestContextCacheFingerprintWithoutToolConfig(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
-	prefix := []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reference")}
+	prefix := []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reference"))}
 	tools := []types.ToolDef{{Name: "read", Parameters: types.ParameterSchema{Type: "object"}}}
-	contents, config := a.buildRequest(prefix, tools)
+	contents, config, _ := a.buildRequest(prefix, 0, tools)
 	if config.ToolConfig != nil {
 		t.Fatalf("ToolConfig = %+v, want nil without a tool choice", config.ToolConfig)
 	}
@@ -79,9 +79,9 @@ func TestContextCacheFingerprintWithoutToolConfig(t *testing.T) {
 }
 
 func TestContextCacheToolChoice(t *testing.T) {
-	prefix := []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reference")}
+	prefix := []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reference"))}
 	tools := []types.ToolDef{{Name: "read", Parameters: types.ParameterSchema{Type: "object"}}}
-	request := append(append([]types.Message(nil), prefix...), types.NewUserMessage("question"))
+	request := append(append([]types.Message(nil), prefix...), types.UserMsg(types.Text("question")))
 	required := types.ToolChoice{Mode: types.ToolChoiceRequired}
 
 	var created map[string]any
@@ -93,7 +93,7 @@ func TestContextCacheToolChoice(t *testing.T) {
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body:   io.NopCloser(strings.NewReader(body))}, nil
 	})
-	a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash",
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
 		WithHTTPClient(&http.Client{Transport: transport}), WithToolChoice(required))
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestContextCacheToolChoice(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			b, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash", opts...)
+			b, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}

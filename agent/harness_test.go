@@ -12,6 +12,7 @@ import (
 
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/workspace"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/tools"
 	"github.com/urmzd/saige/tools/exec"
 )
@@ -19,19 +20,19 @@ import (
 // harnessAgent builds an agent with every harness group over root. Code
 // runs in a plain subprocess, so the test does not depend on a network
 // wrapper being present.
-func harnessAgent(t *testing.T, root string, p types.Provider, opts ...AgentOption) *Agent {
+func harnessAgent(t *testing.T, root string, p types.Provider, opts ...Option) *Agent {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a POSIX shell")
 	}
 	h := tools.HarnessOptions{Root: root, Groups: tools.AllGroups(), Network: exec.NetworkAllow, Languages: []exec.Language{exec.LanguageShell}}
-	return NewAgent(AgentConfig{Name: "harness", Provider: p}, append([]AgentOption{WithHarnessTools(h)}, opts...)...)
+	return must.Get(New(Config{Name: "harness", Provider: p}, append([]Option{WithHarnessTools(h)}, opts...)...))
 }
 
 func TestWithHarnessToolsRegistersToolset(t *testing.T) {
 	root := t.TempDir()
 	extra := &types.ToolFunc{Def: types.ToolDef{Name: "extra"}, Fn: func(context.Context, map[string]any) (string, error) { return "", nil }}
-	a := NewAgent(AgentConfig{Name: "h", Tools: types.NewToolRegistry(extra)}, WithHarnessTools(tools.HarnessOptions{Root: root}))
+	a := must.Get(New(Config{Name: "h", Tools: types.NewToolRegistry(extra)}, WithHarnessTools(tools.HarnessOptions{Root: root})))
 	var names []string
 	for _, d := range a.tools.Definitions() {
 		names = append(names, d.Name)
@@ -46,26 +47,26 @@ func TestWithHarnessToolsRegistersToolset(t *testing.T) {
 
 	// An explicit workspace wins, whatever the option order.
 	ws := workspace.NewMemory()
-	a = NewAgent(AgentConfig{Name: "h"}, WithHarnessTools(tools.HarnessOptions{Root: root}), WithWorkspace(ws))
+	a = must.Get(New(Config{Name: "h"}, WithHarnessTools(tools.HarnessOptions{Root: root}), WithWorkspace(ws)))
 	if a.cfg.Workspace != ws {
 		t.Error("WithWorkspace must win over the toolset's workspace")
 	}
 
 	// No tools unless asked for.
-	if n := len(NewAgent(AgentConfig{Name: "plain"}).tools.Definitions()); n != 0 {
+	if n := len(must.Get(New(Config{Name: "plain"})).tools.Definitions()); n != 0 {
 		t.Errorf("a plain agent has %d tools, want 0", n)
 	}
 }
 
 func TestWithHarnessToolsErrorFailsRuns(t *testing.T) {
-	a := NewAgent(AgentConfig{Name: "h", Provider: oneCallPerTurn()}, WithHarnessTools(tools.HarnessOptions{}))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	a := must.Get(New(Config{Name: "h", Provider: oneCallPerTurn()}, WithHarnessTools(tools.HarnessOptions{})))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); !errors.Is(err, tools.ErrNoRoot) {
 		t.Errorf("run err = %v, want ErrNoRoot", err)
 	}
-	if _, err := a.RunDurable(context.Background(), nil, []types.Message{types.NewUserMessage("hi")}, a.Tree().Active()); !errors.Is(err, tools.ErrNoRoot) {
+	if _, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("hi"))}, a.Tree().Active()); !errors.Is(err, tools.ErrNoRoot) {
 		t.Errorf("durable run err = %v, want ErrNoRoot", err)
 	}
 }
@@ -155,7 +156,7 @@ func TestHarnessGrantCoversConfinedExec(t *testing.T) {
 		call("x2", "execute_code", map[string]any{"language": "shell", "code": "make test"}),
 	)
 	h := tools.HarnessOptions{Root: t.TempDir(), Groups: []tools.Group{tools.GroupExec}, Sandbox: sb}
-	a := NewAgent(AgentConfig{Name: "h", Provider: p}, WithHarnessTools(h), WithApprovalPolicy(ApprovalPolicy{}))
+	a := must.Get(New(Config{Name: "h", Provider: p}, WithHarnessTools(h), WithApprovalPolicy(ApprovalPolicy{})))
 	asked, _ := drive(t, a, approveWith(&types.GrantRequest{Scope: types.GrantTool}))
 	if !slices.Equal(asked, []string{"x1"}) || sb.runs != 2 {
 		t.Errorf("asked about %v with %d runs; a tool grant must cover execute_code on a confining sandbox", asked, sb.runs)

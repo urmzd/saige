@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // detachedRunner runs each step under a context that does not descend from
@@ -22,10 +23,10 @@ func (detachedRunner) RunStep(_ context.Context, _ string, fn func(context.Conte
 
 func TestStructuredNativeUnderDetachedStepRunner(t *testing.T) {
 	answer := []types.Delta{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: `{"city": "Tok`},
-		types.TextContentDelta{Content: `yo"}`},
-		types.TextEndDelta{},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: `{"city": "Tok`},
+		types.PartDelta{Index: 0, Text: `yo"}`},
+		types.PartEnd{Index: 0},
 	}
 	tests := []struct {
 		name      string
@@ -47,16 +48,16 @@ func TestStructuredNativeUnderDetachedStepRunner(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &schemaProvider{plain: tt.plain, schema: [][]types.Delta{answer}}
-			cfg := AgentConfig{Provider: p, StepRunner: detachedRunner{}}
+			cfg := Config{Provider: p, StepRunner: detachedRunner{}}
 			if tt.withTools {
 				cfg.Tools = types.NewToolRegistry(&types.ToolFunc{
 					Def: types.ToolDef{Name: "lookup", Parameters: types.ParameterSchema{Type: "object"}},
 					Fn:  func(context.Context, map[string]any) (string, error) { return "", nil },
 				})
 			}
-			a := NewAgent(cfg)
+			a := must.Get(New(cfg))
 			var partials int
-			got, _, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+			got, _, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 				Mode: OutputNative,
 				OnDelta: func(d types.Delta) {
 					if _, ok := d.(types.PartialJSONDelta); ok {
@@ -101,8 +102,8 @@ func TestConfiguredSchemaChecksTextAnswer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &agenttest.ScriptedProvider{Responses: tt.responses}
-			a := NewAgent(AgentConfig{Provider: p}, WithResponseSchema(cityPopulationSchema), WithOutputMode(tt.mode))
-			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("Where?")}), nil)
+			a := must.Get(New(Config{Provider: p}, WithResponseSchema(cityPopulationSchema), WithOutputMode(tt.mode)))
+			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Where?"))}), nil)
 			if tt.wantErr != errors.Is(err, ErrSchemaInvalid) {
 				t.Fatalf("err = %v, want ErrSchemaInvalid: %v", err, tt.wantErr)
 			}
@@ -123,18 +124,18 @@ func TestConfiguredSchemaChecksTextAnswer(t *testing.T) {
 func TestSubAgentOutputModeFollowsFinalProvider(t *testing.T) {
 	tests := []struct {
 		name    string
-		options []AgentOption
+		options []Option
 		want    OutputMode
 	}{
 		{"native provider keeps the native path", nil, OutputAuto},
 		{
 			name:    "an option that swaps in a provider without native support",
-			options: []AgentOption{func(c *AgentConfig) { c.Provider = &agenttest.ScriptedProvider{} }},
+			options: []Option{func(c *Config) { c.Provider = &agenttest.ScriptedProvider{} }},
 			want:    OutputTool,
 		},
 		{
 			name: "an explicit mode from an option is kept",
-			options: []AgentOption{func(c *AgentConfig) {
+			options: []Option{func(c *Config) {
 				c.Provider = &agenttest.ScriptedProvider{}
 				c.OutputMode = OutputPrompt
 			}},
@@ -144,7 +145,7 @@ func TestSubAgentOutputModeFollowsFinalProvider(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			def := SubAgentDef{Name: "geo", Provider: &schemaProvider{}, ResponseSchema: cityPopulationSchema, Options: tt.options}
-			child := NewAgent(inheritConfig(AgentConfig{}, def, nil), append(slices.Clone(def.Options), resolveChildOutputMode)...)
+			child := must.Get(New(inheritConfig(Config{}, def, nil), append(slices.Clone(def.Options), resolveChildOutputMode)...))
 			if child.cfg.OutputMode != tt.want {
 				t.Fatalf("OutputMode = %q, want %q", child.cfg.OutputMode, tt.want)
 			}
@@ -155,11 +156,11 @@ func TestSubAgentOutputModeFollowsFinalProvider(t *testing.T) {
 	swapped := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.ToolCallResponse("f1", FinalAnswerToolName, map[string]any{"city": "Tokyo"}),
 	}}
-	parent := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}},
+	parent := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}},
 		WithSubAgents(SubAgentDef{
 			Name: "geo", Provider: &schemaProvider{}, ResponseSchema: cityPopulationSchema,
-			Options: []AgentOption{func(c *AgentConfig) { c.Provider = swapped }},
-		}))
+			Options: []Option{func(c *Config) { c.Provider = swapped }},
+		})))
 	s, err := parent.InvokeSubAgent(context.Background(), "geo", "Where?")
 	if err != nil {
 		t.Fatal(err)

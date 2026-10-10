@@ -45,8 +45,8 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-pipe, err := rag.NewPipeline(
-    rag.WithStore(pgstore.NewStore(pool, nil)),
+store, _ := pgstore.New(pgstore.Config{Pool: pool})
+pipe, err := rag.New(rag.Config{Store: store},
     rag.WithContentExtractor(myExtractor),
     rag.WithEmbedders(myEmbedderRegistry),
     rag.WithRecursiveChunker(512, 50),
@@ -75,8 +75,7 @@ fmt.Println(results.Context.Prompt) // context with citations
 ### With knowledge graph integration
 
 ```go
-pipe, err := rag.NewPipeline(
-    rag.WithStore(store),
+pipe, err := rag.New(rag.Config{Store: store},
     rag.WithContentExtractor(extractor),
     rag.WithGraph(kgGraph),  // enables entity extraction + graph retrieval
 )
@@ -96,13 +95,13 @@ pipe, err := rag.NewPipeline(
 
 | Option | Purpose |
 |--------|---------|
-| `WithStore(s)` | Set the document store (required) |
+| `WithStore(s)` | Set the document store, or set `rag.Config.Store` (required) |
 | `WithContentExtractor(ext)` | Set the content extractor (required) |
 | `WithRecursiveChunker(max, overlap)` | Recursive text chunking |
 | `WithSemanticChunker(thresh, min, max)` | Semantic similarity chunking |
 | `WithEmbedders(reg)` | Set the embedder registry (optional, needed for search) |
 | `WithGraph(g)` | Enable knowledge graph entity extraction (optional) |
-| `WithBM25(cfg)` | Enable BM25 lexical retrieval. The index is in memory: over a store that already holds documents (such as pgstore), call `rag.RebuildIndex(ctx, pipe)` once after `NewPipeline` |
+| `WithBM25(cfg)` | Enable BM25 lexical retrieval. Over pgstore it searches the store's pg_search index; over a store without keyword search the index is in memory, so call `rag.RebuildIndex(ctx, pipe)` once after `rag.New` when the store already holds documents |
 | `WithParentContext()` | Expand hits to parent section context |
 | `WithMMR(lambda)` | MMR diversity reranking |
 | `WithCrossEncoder(scorer)` | Cross-encoder reranking |

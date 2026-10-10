@@ -10,6 +10,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestThinkingValidation(t *testing.T) {
@@ -32,14 +33,14 @@ func TestThinkingValidation(t *testing.T) {
 		{"two modes", "claude-opus-4-6", []Option{WithThinking(1024), WithReasoningEffort("high")}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", tc.model, tc.opts...)
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(tc.model)}, tc.opts...))
 			err := a.Validate()
 			if (err == nil) != tc.valid {
 				t.Fatalf("Validate=%v, valid=%v", err, tc.valid)
 			}
 			if !tc.valid {
 				for _, schema := range []*types.ParameterSchema{nil, {Type: "object"}} {
-					ch, err := a.ChatStreamWithSchema(context.Background(), nil, nil, schema)
+					ch, err := a.Stream(context.Background(), types.Request{Schema: schema})
 					if ch != nil || !errors.Is(err, types.ErrInvalidModelConfig) {
 						t.Fatalf("channel=%v error=%v", ch, err)
 					}
@@ -50,18 +51,18 @@ func TestThinkingValidation(t *testing.T) {
 }
 
 func TestAdaptiveThinkingEncodingAndManualSchemaConflict(t *testing.T) {
-	a := NewAdapter("test", "claude-opus-4-6", WithReasoningEffort("high"))
+	a := must.Get(New(Config{APIKey: "test", Model: "claude-opus-4-6"}, WithReasoningEffort("high")))
 	var params sdk.MessageNewParams
 	a.applyParams(&params)
 	if params.Thinking.OfAdaptive == nil || string(params.OutputConfig.Effort) != "high" {
 		t.Fatalf("bad adaptive config: %+v", params)
 	}
-	manual := NewAdapter("test", "claude-sonnet-4-5", WithThinking(1024))
-	_, err := manual.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+	manual := must.Get(New(Config{APIKey: "test", Model: "claude-sonnet-4-5"}, WithThinking(1024)))
+	_, err := manual.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("forced schema while thinking: %v", err)
 	}
-	if err := a.WithModel("claude-3-5-sonnet").(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if err := must.Get(a.WithTarget(types.ModelTarget("claude-3-5-sonnet"))).(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("model switch: %v", err)
 	}
 }
@@ -78,8 +79,9 @@ func TestAdaptivePromptCache(t *testing.T) {
 				_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 			}))
 			defer server.Close()
-			a := NewAdapter("test", model, WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h"))
-			stream, err := a.ChatStream(context.Background(), []types.Message{types.NewSystemMessage("rules"), types.NewUserMessage("reply")}, nil)
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(model)},
+				WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h")))
+			stream, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reply"))}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,14 +133,14 @@ func TestSchemaWithThinkingIsRejected(t *testing.T) {
 				_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 			}))
 			defer server.Close()
-			a := NewAdapter("test", tc.model, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(tc.model)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
 			if got := a.Capabilities().Supports(types.CapStructuredOutput); got == tc.reject {
 				t.Errorf("structured output capability = %v, want %v", got, !tc.reject)
 			}
 			if got := a.Capabilities().StructuredOutput != types.StructuredOutputNone; got == tc.reject {
 				t.Errorf("structured output mode declared = %v, want %v", got, !tc.reject)
 			}
-			stream, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("reply")}, nil, &types.ParameterSchema{Type: "object"})
+			stream, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("reply"))}, Schema: &types.ParameterSchema{Type: "object"}})
 			if tc.reject {
 				if stream != nil || !errors.Is(err, types.ErrSchemaUnsupported) || !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("stream = %v, err = %v; want a schema-unsupported error", stream, err)

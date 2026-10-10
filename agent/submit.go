@@ -23,7 +23,7 @@ const (
 	// model sees it on its next call.
 	SubmitSteer
 	// SubmitInterruptReplace stops the in-flight provider call. The completed
-	// text of that turn is committed with a TruncationContent marker, its tool
+	// text of that turn is committed with a TruncationPart marker, its tool
 	// calls are dropped, and the message is appended in its place. Tools that
 	// are already running finish first; their results are kept.
 	SubmitInterruptReplace
@@ -192,11 +192,11 @@ func validateSubmission(msg types.UserMessage, mode SubmitMode) error {
 	if mode < SubmitQueue || mode > SubmitSide {
 		return fmt.Errorf("%w: unknown mode %d", ErrInvalidSubmission, int(mode))
 	}
-	if len(msg.Content) == 0 {
+	if len(msg.Parts) == 0 {
 		return fmt.Errorf("%w: empty message", ErrInvalidSubmission)
 	}
-	for _, c := range msg.Content {
-		if _, ok := c.(types.ToolResultContent); ok {
+	for _, c := range msg.Parts {
+		if _, ok := c.(types.ToolResultPart); ok {
 			// A tool result outside the turn that requested it would break
 			// tool_use and tool_result pairing.
 			return fmt.Errorf("%w: tool results cannot be submitted", ErrInvalidSubmission)
@@ -309,7 +309,7 @@ func (a *Agent) injectSubmissions(ctx context.Context, stream *EventStream, tr *
 			return err
 		}
 		if sub.Mode == SubmitSteer && treeStoresSteerMarker() {
-			msg.Content = append(append([]types.UserContent(nil), msg.Content...), types.SteerContent{ID: string(sub.ID)})
+			msg.Parts = append(append([]types.UserPart(nil), msg.Parts...), types.SteerPart{ID: string(sub.ID)})
 		}
 		node, err := a.appendNode(ctx, tr, branch, msg)
 		if err != nil {
@@ -380,7 +380,7 @@ func (a *Agent) resumeAtFinish(ctx context.Context, stream *EventStream, tr *tre
 
 // commitInterrupted records a provider call stopped by
 // SubmitInterruptReplace. The completed text is committed with a
-// TruncationContent marker; open and completed tool calls are dropped, so no
+// TruncationPart marker; open and completed tool calls are dropped, so no
 // tool_use is left without a result. The replacing message is appended at
 // the next safe point.
 func (a *Agent) commitInterrupted(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, partial *types.AssistantMessage, by SubmissionID) error {
@@ -388,8 +388,8 @@ func (a *Agent) commitInterrupted(ctx context.Context, stream *EventStream, tr *
 	nodeID := ""
 	if partial != nil {
 		committed := withoutToolCalls(*partial)
-		committed.Content = withoutTruncationMarker(committed.Content)
-		if len(committed.Content) > 0 {
+		committed.Parts = withoutTruncationMarker(committed.Parts)
+		if len(committed.Parts) > 0 {
 			committed = withTruncationMarker(committed, truncationInterrupted)
 			node, err := a.appendNode(ctx, tr, branch, committed)
 			if err != nil {
@@ -402,20 +402,20 @@ func (a *Agent) commitInterrupted(ctx context.Context, stream *EventStream, tr *
 	return nil
 }
 
-// truncationInterrupted is the TruncationContent reason for a stopped call.
+// truncationInterrupted is the TruncationPart reason for a stopped call.
 const truncationInterrupted = "interrupted"
 
 // interruptedPartial builds the partial turn a stopped provider call
 // returns: completed text only, marked as truncated. The marker lets a
 // durable runner recognize the step as finished rather than uncertain.
 func interruptedPartial(agg *DefaultAggregator) *types.AssistantMessage {
-	agg.Flush()
-	m, _ := agg.Message().(types.AssistantMessage)
+	msg, _, dropped := agg.FlushDropped()
+	m, _ := msg.(types.AssistantMessage)
 	m = withoutToolCalls(m)
-	if len(m.Content) == 0 {
+	if len(m.Parts) == 0 {
 		return nil
 	}
-	m.Content = append(m.Content, types.TruncationContent{Reason: truncationInterrupted})
+	m.Parts = append(m.Parts, types.TruncationPart{Reason: truncationInterrupted, Dropped: dropped})
 	return &m
 }
 
@@ -425,28 +425,28 @@ func interruptedTurn(msg *types.AssistantMessage) bool {
 	if msg == nil {
 		return false
 	}
-	for _, c := range msg.Content {
-		if tc, ok := c.(types.TruncationContent); ok && tc.Reason == truncationInterrupted {
+	for _, c := range msg.Parts {
+		if tc, ok := c.(types.TruncationPart); ok && tc.Reason == truncationInterrupted {
 			return true
 		}
 	}
 	return false
 }
 
-// withTruncationMarker adds a TruncationContent marker to msg when the
+// withTruncationMarker adds a TruncationPart marker to msg when the
 // tree's encoding can store it, so a stored conversation always reloads.
 func withTruncationMarker(msg types.AssistantMessage, reason string) types.AssistantMessage {
 	if !treeStoresTruncationMarker() {
 		return msg
 	}
-	msg.Content = append(append([]types.AssistantContent(nil), msg.Content...), types.TruncationContent{Reason: reason})
+	msg.Parts = append(append([]types.AssistantPart(nil), msg.Parts...), types.TruncationPart{Reason: reason})
 	return msg
 }
 
-func withoutTruncationMarker(content []types.AssistantContent) []types.AssistantContent {
-	out := make([]types.AssistantContent, 0, len(content))
+func withoutTruncationMarker(content []types.AssistantPart) []types.AssistantPart {
+	out := make([]types.AssistantPart, 0, len(content))
 	for _, c := range content {
-		if _, ok := c.(types.TruncationContent); !ok {
+		if _, ok := c.(types.TruncationPart); !ok {
 			out = append(out, c)
 		}
 	}
@@ -458,13 +458,13 @@ func withoutTruncationMarker(content []types.AssistantContent) []types.Assistant
 // would make the stored conversation fail to reload, so it is left out.
 var (
 	treeStoresTruncationMarker = sync.OnceValue(func() bool {
-		return treeRoundTrips(types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "x"}, types.TruncationContent{Reason: truncationInterrupted},
+		return treeRoundTrips(types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "x"}, types.TruncationPart{Reason: truncationInterrupted},
 		}})
 	})
 	treeStoresSteerMarker = sync.OnceValue(func() bool {
-		return treeRoundTrips(types.UserMessage{Content: []types.UserContent{
-			types.TextContent{Text: "x"}, types.SteerContent{ID: "probe"},
+		return treeRoundTrips(types.UserMessage{Parts: []types.UserPart{
+			types.TextPart{Text: "x"}, types.SteerPart{ID: "probe"},
 		}})
 	})
 )
@@ -483,8 +483,8 @@ func treeRoundTrips(msg types.Message) bool {
 // WithAutoContinue lets a run resume up to n times when the output token
 // limit cuts a text-only turn short. A truncated turn with a tool call still
 // fails with ResponseTruncatedError; the cut-off call never runs.
-func WithAutoContinue(n int) AgentOption {
-	return func(c *AgentConfig) { c.AutoContinue = n }
+func WithAutoContinue(n int) Option {
+	return func(c *Config) { c.AutoContinue = n }
 }
 
 // Continue resumes the last assistant turn on branch, typically one cut short
@@ -512,7 +512,7 @@ func (a *Agent) Continue(ctx context.Context, branch types.BranchID) (*EventStre
 	}
 	var input []types.Message
 	if !supportsPrefill(a.cfg.Provider) {
-		input = []types.Message{types.NewUserMessage(DefaultContinuePrompt)}
+		input = []types.Message{types.UserMsg(types.Text(DefaultContinuePrompt))}
 	}
 	return a.start(ctx, input, branch)
 }
@@ -531,7 +531,7 @@ func (a *Agent) appendContinuation(ctx context.Context, tr *tree.Tree, branch ty
 	if supportsPrefill(provider) {
 		return nil
 	}
-	return a.appendToBranch(ctx, tr, branch, types.NewUserMessage(DefaultContinuePrompt))
+	return a.appendToBranch(ctx, tr, branch, types.UserMsg(types.Text(DefaultContinuePrompt)))
 }
 
 // ── Agent.Submit ────────────────────────────────────────────────────

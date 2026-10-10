@@ -66,7 +66,10 @@ type streamCollector struct {
 
 func (c *streamCollector) observe(now time.Time, delta types.Delta) {
 	switch v := delta.(type) {
-	case types.TextContentDelta:
+	case types.PartDelta:
+		if v.Text == "" {
+			return
+		}
 		if c.firstTokenAt.IsZero() {
 			c.firstTokenAt = now
 		}
@@ -76,7 +79,7 @@ func (c *streamCollector) observe(now time.Time, delta types.Delta) {
 		c.prevChunkAt = now
 		c.lastTokenAt = now
 		c.st.ChunkCount++
-		c.text.WriteString(v.Content)
+		c.text.WriteString(v.Text)
 
 	case types.UsageDelta:
 		// A response-cache replay carries the original counts but makes

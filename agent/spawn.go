@@ -53,6 +53,7 @@ var ErrUnknownHandle = errors.New("unknown sub-agent handle")
 // HandleStatus is the state of a spawned or recorded sub-agent run.
 type HandleStatus string
 
+// Sub-agent handle states.
 const (
 	HandleRunning   HandleStatus = "running"
 	HandleCompleted HandleStatus = "completed"
@@ -399,7 +400,7 @@ type spawnReceipt struct {
 // returns its handle at once. The child runs under the run's context, not
 // the tool call's, so it outlives the call; the run cancels it when the run
 // ends.
-func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types.ToolUseContent, t *spawnTool) toolResult {
+func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types.ToolCallPart, t *spawnTool) toolResult {
 	reg := stream.spawns
 	if _, inline := a.cfg.StepRunner.(types.NoopStepRunner); reg == nil || !inline {
 		return failedTool(stream, tc.ID, tc.Name, ErrSpawnUnsupported.Error())
@@ -445,9 +446,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types
 				a.forwardChildMarker(childCtx, stream, tc.ID, child, marker, clock, &pending)
 				continue
 			}
-			if citation, ok := d.(types.CitationDelta); ok {
-				a.citations.Add(citation.Citation)
-			}
+			a.registerChildCitation(d)
 			stream.send(types.ToolExecDelta{ToolCallID: tc.ID, Inner: d})
 		}
 		pending.Wait()
@@ -501,7 +500,7 @@ func spawnResultMessage(h *SubAgentHandle) types.UserMessage {
 		attrs += ` forced="true"`
 	}
 	text := fmt.Sprintf("<subagent_result %s>\n%s\n</subagent_result>", attrs, body)
-	return types.NewUserMessage(text)
+	return types.UserMsg(types.Text(text))
 }
 
 // awaitSpawnedAtFinish runs where a run with background children would

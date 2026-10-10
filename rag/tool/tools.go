@@ -57,10 +57,23 @@ const (
 )
 
 // SearchTool searches the pipeline and returns provenance-only hits.
+//
+// As a RichTool it also returns a retrieval citation per hit, anchored to
+// the hit's chunk (document, section and variant, with the byte offsets of
+// any highlighted terms), and the media of image, audio, video and document
+// hits as parts, within the media cap (see WithMediaLimits). Execute returns
+// the same text without the media.
 type SearchTool struct {
 	pipeline ragtypes.Pipeline
+	media    mediaLimits
 }
 
+var (
+	_ agenttypes.RichTool = (*SearchTool)(nil)
+	_ agenttypes.RichTool = (*LookupTool)(nil)
+)
+
+// Definition implements agenttypes.Tool.
 func (t *SearchTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_search",
@@ -70,10 +83,21 @@ func (t *SearchTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	r, err := t.ExecuteRich(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	return textOnly(r), nil
+}
+
+// ExecuteRich implements agenttypes.RichTool: the hits as JSON text, the
+// media of media hits, and one citation per hit.
+func (t *SearchTool) ExecuteRich(ctx context.Context, args map[string]any) (agenttypes.ToolResult, error) {
 	query, _ := args["query"].(string)
 	if query == "" {
-		return "", fmt.Errorf("query is required")
+		return agenttypes.ToolResult{}, fmt.Errorf("query is required")
 	}
 
 	var opts []ragtypes.SearchOption
@@ -99,7 +123,7 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 	// A partial failure still returns usable hits; report it alongside them.
 	degraded := err != nil && errors.Is(err, ragtypes.ErrPartialSearch) && result != nil
 	if err != nil && !degraded {
-		return "", err
+		return agenttypes.ToolResult{}, err
 	}
 
 	// Return provenance-only hits (no full content to keep agent context lean).
@@ -130,19 +154,140 @@ func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal results: %w", err)
+		return agenttypes.ToolResult{}, fmt.Errorf("marshal results: %w", err)
 	}
-	return string(data), nil
+	out := agenttypes.ToolResult{Parts: []agenttypes.ToolOutputPart{agenttypes.Text(string(data))}}
+	budget := t.media.withDefaults()
+	for _, h := range result.Hits {
+		out.Citations = append(out.Citations, hitCitation("rag_search", h, ""))
+		out.Parts = budget.attach(out.Parts, h.Variant)
+	}
+	return out, nil
+}
+
+// textOnly is the text Execute returns: the JSON text part, without the
+// labels of attached media.
+func textOnly(r agenttypes.ToolResult) string {
+	if len(r.Parts) == 0 {
+		return ""
+	}
+	if t, ok := r.Parts[0].(agenttypes.TextPart); ok {
+		return t.Text
+	}
+	return r.Text()
+}
+
+// hitCitation is the retrieval citation of a hit: its document as the
+// source, and its chunk as the anchor in Meta (document_uuid,
+// section_uuid, section_index, variant_uuid, score, and, when set, the
+// widened section window and the highlighted term spans as byte offsets
+// into the variant text). quote, when not empty, is the cited text, whose
+// offsets in the variant text are Meta's start and end.
+func hitCitation(producer string, h ragtypes.SearchHit, quote string) agenttypes.Citation {
+	pv := h.Provenance
+	title := pv.DocumentTitle
+	if title == "" {
+		title = pv.SectionHeading
+	}
+	if title == "" && pv.SourceURI == "" {
+		title = "document " + pv.DocumentUUID
+	}
+	c := agenttypes.NewCitation(agenttypes.CitationRetrieval, pv.SourceURI, title)
+	c.Producer = producer
+	c.Meta = map[string]any{
+		"document_uuid": pv.DocumentUUID,
+		"section_uuid":  pv.SectionUUID,
+		"section_index": pv.SectionIndex,
+		"variant_uuid":  h.Variant.UUID,
+	}
+	if h.Score != 0 {
+		c.Meta["score"] = h.Score
+	}
+	if pv.SectionHeading != "" {
+		c.Meta["section_heading"] = pv.SectionHeading
+	}
+	if pv.Window != nil {
+		c.Meta["window"] = map[string]int{"first": pv.Window.First, "last": pv.Window.Last}
+	}
+	if h.Highlight != nil && len(h.Highlight.Spans) > 0 {
+		spans := make([][2]int, len(h.Highlight.Spans))
+		for i, sp := range h.Highlight.Spans {
+			spans[i] = [2]int{sp.Start, sp.End}
+		}
+		c.Meta["spans"] = spans
+	}
+	if quote != "" {
+		c.Quote = quote
+		c.Meta["start"], c.Meta["end"] = 0, len(quote)
+	}
+	return c
+}
+
+// maxQuoteBytes bounds the quote a lookup citation carries.
+const maxQuoteBytes = 1 << 10
+
+// Default media caps for one rag_search or rag_lookup call.
+const (
+	defaultMaxMediaBytes = 4 << 20
+	defaultMaxMediaParts = 4
+)
+
+// mediaLimits bounds the media parts one call returns: total bytes and
+// part count. A negative bytes value returns none.
+type mediaLimits struct {
+	bytes int
+	parts int
+}
+
+func (m mediaLimits) withDefaults() *mediaLimits {
+	if m.bytes == 0 {
+		m.bytes = defaultMaxMediaBytes
+	}
+	if m.parts <= 0 {
+		m.parts = defaultMaxMediaParts
+	}
+	return &m
+}
+
+// attach appends v's media part to parts when v is a media variant with
+// bytes that fit in what remains of the caps.
+func (m *mediaLimits) attach(parts []agenttypes.ToolOutputPart, v ragtypes.ContentVariant) []agenttypes.ToolOutputPart {
+	if len(v.Data) == 0 || m.bytes <= 0 || m.parts <= 0 || len(v.Data) > m.bytes {
+		return parts
+	}
+	switch v.ContentType {
+	case ragtypes.ContentImage, ragtypes.ContentAudio, ragtypes.ContentVideo, ragtypes.ContentDocument:
+	default:
+		return parts
+	}
+	part, err := v.Part()
+	if err != nil {
+		return parts
+	}
+	out, ok := part.(agenttypes.ToolOutputPart)
+	if !ok || !agenttypes.IsMedia(part) {
+		return parts
+	}
+	m.bytes -= len(v.Data)
+	m.parts--
+	return append(parts, agenttypes.Text("[media of variant "+v.UUID+"]"), out)
 }
 
 // --- LookupTool ---
 
 // LookupTool retrieves full content for a specific variant by UUID.
+//
+// As a RichTool it also returns a retrieval citation anchored to the
+// variant, quoting the start of its text, and the variant's media as a part
+// when it is an image, audio, video or document variant within the media
+// cap.
 type LookupTool struct {
 	pipeline ragtypes.Pipeline
 	limits   outputLimits
+	media    mediaLimits
 }
 
+// Definition implements agenttypes.Tool.
 func (t *LookupTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_lookup",
@@ -152,21 +297,32 @@ func (t *LookupTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *LookupTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	r, err := t.ExecuteRich(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	return textOnly(r), nil
+}
+
+// ExecuteRich implements agenttypes.RichTool: the variant as JSON text, its
+// media, and its citation.
+func (t *LookupTool) ExecuteRich(ctx context.Context, args map[string]any) (agenttypes.ToolResult, error) {
 	uuid, _ := args["variant_uuid"].(string)
 	if uuid == "" {
-		return "", fmt.Errorf("variant_uuid is required")
+		return agenttypes.ToolResult{}, fmt.Errorf("variant_uuid is required")
 	}
 
 	hit, err := t.pipeline.Lookup(ctx, uuid)
 	if err != nil {
-		return "", err
+		return agenttypes.ToolResult{}, err
 	}
 
 	if section, _ := args["section"].(bool); section {
 		doc, err := t.pipeline.Reconstruct(ctx, hit.Provenance.DocumentUUID)
 		if err != nil {
-			return "", fmt.Errorf("load parent section: %w", err)
+			return agenttypes.ToolResult{}, fmt.Errorf("load parent section: %w", err)
 		}
 		if text, ok := sectionText(doc, hit.Provenance.SectionUUID); ok {
 			hit.Variant.Text = text
@@ -181,9 +337,15 @@ func (t *LookupTool) Execute(ctx context.Context, args map[string]any) (string, 
 
 	data, err := json.Marshal(out)
 	if err != nil {
-		return "", fmt.Errorf("marshal hit: %w", err)
+		return agenttypes.ToolResult{}, fmt.Errorf("marshal hit: %w", err)
 	}
-	return string(data), nil
+	quote, _ := truncateUTF8(vo.Text, maxQuoteBytes)
+	res := agenttypes.ToolResult{
+		Parts:     []agenttypes.ToolOutputPart{agenttypes.Text(string(data))},
+		Citations: []agenttypes.Citation{hitCitation("rag_lookup", *hit, quote)},
+	}
+	res.Parts = t.media.withDefaults().attach(res.Parts, hit.Variant)
+	return res, nil
 }
 
 // sectionText joins the text of every variant in the named section.
@@ -368,6 +530,7 @@ type UpdateTool struct {
 	pipeline ragtypes.Pipeline
 }
 
+// Definition implements agenttypes.Tool.
 func (t *UpdateTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_update",
@@ -377,6 +540,7 @@ func (t *UpdateTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *UpdateTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {
@@ -409,6 +573,7 @@ type DeleteTool struct {
 	pipeline ragtypes.Pipeline
 }
 
+// Definition implements agenttypes.Tool.
 func (t *DeleteTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_delete",
@@ -418,6 +583,7 @@ func (t *DeleteTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *DeleteTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {
@@ -438,6 +604,7 @@ type ReconstructTool struct {
 	limits   outputLimits
 }
 
+// Definition implements agenttypes.Tool.
 func (t *ReconstructTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_reconstruct",
@@ -467,6 +634,7 @@ type documentOutput struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+// Execute implements agenttypes.Tool.
 func (t *ReconstructTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {
@@ -537,6 +705,7 @@ func (l outputLimits) document(doc *ragtypes.Document) documentOutput {
 type config struct {
 	readOnly bool
 	limits   outputLimits
+	media    mediaLimits
 }
 
 // Option configures NewTools.
@@ -558,6 +727,17 @@ func ReadOnly() Option {
 // truncated.
 func WithOutputLimits(perVariant, total int) Option {
 	return func(c *config) { c.limits = outputLimits{perVariant: perVariant, total: total} }
+}
+
+// WithMediaLimits caps the media rag_search and rag_lookup return as parts
+// beside their text: at most maxBytes bytes and maxParts parts in one call.
+// A variant larger than what remains is described in the text only (its
+// mime_type and data_bytes), as before. Zero keeps the defaults of 4 MiB and
+// 4 parts; a negative maxBytes returns no media. Media a serving model
+// cannot take natively is handled by the agent's conversion policy, which
+// rejects it by default.
+func WithMediaLimits(maxBytes, maxParts int) Option {
+	return func(c *config) { c.media = mediaLimits{bytes: maxBytes, parts: maxParts} }
 }
 
 // mutatingMarker is the human-approval gate attached to mutating RAG tools.
@@ -584,8 +764,8 @@ func NewTools(pipeline ragtypes.Pipeline, opts ...Option) []agenttypes.Tool {
 	}
 
 	tools := []agenttypes.Tool{
-		&SearchTool{pipeline: pipeline},
-		&LookupTool{pipeline: pipeline, limits: cfg.limits},
+		&SearchTool{pipeline: pipeline, media: cfg.media},
+		&LookupTool{pipeline: pipeline, limits: cfg.limits, media: cfg.media},
 	}
 
 	if !cfg.readOnly {

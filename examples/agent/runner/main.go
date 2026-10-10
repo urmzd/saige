@@ -24,8 +24,10 @@ import (
 func main() {
 	verbose := len(os.Args) > 1 && os.Args[1] == "-verbose"
 
-	client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	addTool := &types.ToolFunc{
 		Def: types.ToolDef{
@@ -47,12 +49,15 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "calculator",
 		SystemPrompt: "You are a helpful calculator. Use the add tool when asked to add numbers.",
 		Provider:     adapter,
 		Tools:        types.NewToolRegistry(addTool),
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

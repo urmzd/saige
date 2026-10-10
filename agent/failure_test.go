@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // ===================================================================
@@ -18,12 +19,12 @@ import (
 func TestStreamWaitReturnsProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("connection refused")}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 
 	err := stream.Wait()
@@ -48,14 +49,14 @@ func TestStreamWaitReturnsMaxIterationsError(t *testing.T) {
 	registry := types.NewToolRegistry()
 	registry.Register(&staticTool{name: "noop", result: "ok"})
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        registry,
 		MaxIter:      2,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	collectDeltas(stream)
 
 	if err := stream.Wait(); !errors.Is(err, types.ErrMaxIterations) {
@@ -64,12 +65,12 @@ func TestStreamWaitReturnsMaxIterationsError(t *testing.T) {
 }
 
 func TestStreamWaitNilOnCleanFinish(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "done"},
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	collectDeltas(stream)
 
 	if err := stream.Wait(); err != nil {
@@ -103,15 +104,15 @@ func TestSubAgentFailureFailsParentToolResult(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helper", SystemPrompt: "child sys", Provider: childProvider},
 		},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("delegate")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -144,8 +145,8 @@ func TestSubAgentFailureFailsParentToolResult(t *testing.T) {
 		if !ok {
 			continue
 		}
-		for _, c := range sm.Content {
-			if trc, ok := c.(types.ToolResultContent); ok && trc.ToolCallID == "call-1" {
+		for _, c := range sm.Parts {
+			if trc, ok := c.(types.ToolResultPart); ok && trc.CallID == "call-1" {
 				found = true
 				if !trc.IsError {
 					t.Error("persisted tool result IsError = false, want true")
@@ -176,16 +177,16 @@ func TestSubAgentInheritsStepRunner(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		StepRunner:   runner,
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helper", SystemPrompt: "child sys", Provider: childProvider},
 		},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("delegate")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)
@@ -205,10 +206,10 @@ func TestSubAgentInheritsStepRunner(t *testing.T) {
 // A child invoked outside any durable run (NoopStepRunner parent) keeps inline
 // execution: nothing is recorded because there is no runner to thread.
 func TestSubAgentNoopRunnerNotWrapped(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 	if r := agent.childStepRunner("call-1"); r != nil {
 		t.Errorf("childStepRunner under NoopStepRunner = %T, want nil", r)
 	}

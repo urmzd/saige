@@ -2,8 +2,11 @@ package types
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Compactor reduces message history to fit context windows.
@@ -16,6 +19,7 @@ type Compactor interface {
 // CompactStrategy names a compaction algorithm.
 type CompactStrategy string
 
+// Compaction strategy names.
 const (
 	CompactNone          CompactStrategy = "none"
 	CompactSlidingWindow CompactStrategy = "sliding_window"
@@ -71,7 +75,7 @@ type CompactConfig struct {
 	// SummaryModel names the model that writes summaries, switched on the
 	// active provider (for example a cheaper model of the same vendor, or
 	// a catalog preset served by a router). Empty uses the active model.
-	// AgentConfig.CompactProvider, when set, writes them instead.
+	// Config.CompactProvider, when set, writes them instead.
 	SummaryModel string `json:",omitempty"`
 	// Chain lists the strategies a chain applies, in order.
 	Chain []CompactConfig `json:",omitempty"`
@@ -147,6 +151,7 @@ func (cc CompactConfig) ToCompactor() Compactor {
 // NoopCompactor passes messages through unchanged.
 type NoopCompactor struct{}
 
+// Compact implements Compactor.
 func (NoopCompactor) Compact(_ context.Context, messages []Message, _ Provider) ([]Message, error) {
 	return messages, nil
 }
@@ -156,10 +161,13 @@ type SlidingWindowCompactor struct {
 	WindowSize int
 }
 
+// NewSlidingWindowCompactor returns a compactor that keeps the last n
+// messages.
 func NewSlidingWindowCompactor(n int) *SlidingWindowCompactor {
 	return &SlidingWindowCompactor{WindowSize: n}
 }
 
+// Compact implements Compactor.
 func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, _ Provider) ([]Message, error) {
 	if len(messages) <= c.WindowSize+1 {
 		return messages, nil
@@ -178,18 +186,18 @@ func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, 
 	return result, nil
 }
 
-// hasToolResult reports whether a message contains a ToolResultContent block.
+// hasToolResult reports whether a message contains a ToolResultPart block.
 func hasToolResult(msg Message) bool {
 	switch v := msg.(type) {
 	case SystemMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(ToolResultPart); ok {
 				return true
 			}
 		}
 	case UserMessage:
-		for _, c := range v.Content {
-			if _, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if _, ok := c.(ToolResultPart); ok {
 				return true
 			}
 		}
@@ -209,6 +217,8 @@ type SummarizeCompactor struct {
 	KeepLast  int
 }
 
+// NewSummarizeCompactor returns a compactor that summarizes older messages
+// once there are more than threshold, keeping the last keepLast.
 func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
 	if keepLast <= 0 {
 		keepLast = 4
@@ -216,6 +226,7 @@ func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
 	return &SummarizeCompactor{Threshold: threshold, KeepLast: keepLast}
 }
 
+// Compact implements Compactor.
 func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	// A previous compaction's summary pair doesn't count toward the threshold:
 	// otherwise a compacted history (1 + 2 + KeepLast messages) sits just below
@@ -245,11 +256,11 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 
 	// Build summary prompt
 	summaryReq := []Message{
-		NewSystemMessage("Summarize the following conversation concisely, preserving key facts and decisions."),
-		NewUserMessage(MessagesToText(toSummarize)),
+		SystemMsg(Text("Summarize the following conversation concisely, preserving key facts and decisions.")),
+		UserMsg(Text(MessagesToText(toSummarize))),
 	}
 
-	rx, err := provider.ChatStream(ctx, summaryReq, nil)
+	rx, err := provider.Stream(ctx, Request{Messages: summaryReq})
 	if err != nil {
 		return messages, nil // fallback: no compaction
 	}
@@ -258,11 +269,11 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 	var streamErr error
 	for delta := range rx {
 		switch d := delta.(type) {
-		case TextContentDelta:
-			sb.WriteString(d.Content)
+		case PartDelta:
+			sb.WriteString(d.Text)
 		case ErrorDelta:
 			// Providers surface mid-stream failures (e.g. rate limits after the
-			// stream opened) as ErrorDelta, not as the ChatStream return error.
+			// stream opened) as ErrorDelta, not as the Stream return error.
 			streamErr = d.Error
 		}
 	}
@@ -274,8 +285,8 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 
 	result := make([]Message, 0, keepLast+3)
 	result = append(result, messages[0]) // system
-	result = append(result, NewUserMessage(SummaryRequestText))
-	result = append(result, NewAssistantMessage(summary))
+	result = append(result, UserMsg(Text(SummaryRequestText)))
+	result = append(result, AssistantMsg(Text(summary)))
 	result = append(result, messages[len(messages)-keepLast:]...)
 	return result, nil
 }
@@ -284,10 +295,10 @@ func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, pr
 // turn and assistant summary produced by a previous compaction.
 func isSummaryPair(a, b Message) bool {
 	um, ok := a.(UserMessage)
-	if !ok || len(um.Content) != 1 {
+	if !ok || len(um.Parts) != 1 {
 		return false
 	}
-	tc, ok := um.Content[0].(TextContent)
+	tc, ok := um.Parts[0].(TextPart)
 	if !ok || tc.Text != SummaryRequestText {
 		return false
 	}
@@ -295,63 +306,152 @@ func isSummaryPair(a, b Message) bool {
 	return ok
 }
 
-// MessagesToText converts messages to a plain-text representation.
+// MessagesToText converts messages to a plain-text representation, the
+// form a summarizer reads. Media never contributes its bytes: each media
+// part, in a message or a tool result, is a reference line (see
+// MediaReference), so a summary can name what the conversation held and
+// where to find it again. Thinking, citations and run metadata are left
+// out.
 func MessagesToText(msgs []Message) string {
 	var b strings.Builder
+	line := func(label, text string) {
+		b.WriteString(label)
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
 	for _, m := range msgs {
-		switch v := m.(type) {
+		label := "User: "
+		switch m.(type) {
 		case SystemMessage:
-			for _, c := range v.Content {
-				switch bc := c.(type) {
-				case TextContent:
-					b.WriteString("System: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolResultContent:
-					b.WriteString("Tool Result [")
-					b.WriteString(bc.ToolCallID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				}
-			}
-		case UserMessage:
-			for _, c := range v.Content {
-				switch bc := c.(type) {
-				case TextContent:
-					b.WriteString("User: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolResultContent:
-					b.WriteString("Tool Result [")
-					b.WriteString(bc.ToolCallID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case FileContent:
-					b.WriteString("User: [file: ")
-					b.WriteString(bc.Filename)
-					b.WriteString(" (")
-					b.WriteString(string(bc.MediaType))
-					b.WriteString(")]\n")
-				}
-			}
+			label = "System: "
 		case AssistantMessage:
-			for _, c := range v.Content {
-				switch bc := c.(type) {
-				case TextContent:
-					b.WriteString("Assistant: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolUseContent:
-					b.WriteString("Tool Call [")
-					b.WriteString(bc.ID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Name)
-					b.WriteByte('\n')
+			label = "Assistant: "
+		}
+		for _, p := range PartsOf(m) {
+			switch v := p.(type) {
+			case TextPart:
+				line(label, v.Text)
+			case ToolResultPart:
+				text := v.Text()
+				for _, o := range v.Parts {
+					if IsMedia(o) {
+						if text != "" {
+							text += " "
+						}
+						text += MediaReference(o)
+					}
+				}
+				line("Tool Result ["+v.CallID+"]: ", text)
+			case ToolCallPart:
+				line("Tool Call ["+v.ID+"]: ", v.Name)
+			case ServerToolCallPart:
+				name := v.Name
+				if name == "" {
+					name = string(v.ToolKind)
+				}
+				line("Server Tool Call ["+v.ID+"]: ", name)
+			case ServerToolResultPart:
+				text := v.Text
+				for _, o := range v.Outputs {
+					if IsMedia(o) {
+						if text != "" {
+							text += " "
+						}
+						text += MediaReference(o)
+					}
+				}
+				line("Server Tool Result ["+v.CallID+"]: ", text)
+			case RefusalPart:
+				line(label, "[refused] "+v.Text)
+			case AudioOutPart:
+				ref := MediaReference(v)
+				if v.Transcript != "" {
+					ref += " " + v.Transcript
+				}
+				line(label, ref)
+			default:
+				if IsMedia(p) {
+					line(label, MediaReference(p))
 				}
 			}
 		}
 	}
 	return b.String()
+}
+
+// mediaDigestChars is how much of a digest a reference line shows: enough
+// to tell media apart, short enough to keep the line readable.
+const mediaDigestChars = 12
+
+// MediaReference renders a media part as one bracketed line with no bytes:
+// its kind and subtype, its size (dimensions, pages or duration), its file
+// name, a short digest and its workspace reference or URI, for example
+//
+//	[image png 1024x768 sha256:9f1c2b7a4e01… saige-artifact://9f1c…]
+//
+// Inline bytes and vendor file IDs are never included. It returns "" for a
+// part that is not media.
+func MediaReference(p Part) string {
+	src, ok := SourceOf(p)
+	if !ok {
+		return ""
+	}
+	fields := []string{string(p.Kind())}
+	if mt := string(src.MediaType); mt != "" {
+		base, _, _ := strings.Cut(mt, ";")
+		if _, sub, found := strings.Cut(base, "/"); found && sub != "" {
+			fields = append(fields, strings.TrimSpace(sub))
+		} else {
+			fields = append(fields, strings.TrimSpace(base))
+		}
+	}
+	dims := func(w, h int) {
+		if w > 0 && h > 0 {
+			fields = append(fields, fmt.Sprintf("%dx%d", w, h))
+		}
+	}
+	dur := func(d time.Duration) {
+		if d > 0 {
+			fields = append(fields, d.Round(time.Second/10).String())
+		}
+	}
+	switch v := p.(type) {
+	case ImagePart:
+		dims(v.Width, v.Height)
+	case ImageOutPart:
+		dims(v.Width, v.Height)
+	case DocumentPart:
+		if v.Pages > 0 {
+			fields = append(fields, fmt.Sprintf("%d pages", v.Pages))
+		}
+		if v.Title != "" {
+			fields = append(fields, strconv.Quote(v.Title))
+		}
+	case AudioPart:
+		dur(v.Duration)
+	case AudioOutPart:
+		dur(v.Duration)
+	case VideoPart:
+		dims(v.Width, v.Height)
+		dur(v.Duration)
+	case VideoOutPart:
+		dims(v.Width, v.Height)
+		dur(v.Duration)
+	}
+	if src.Filename != "" {
+		fields = append(fields, strconv.Quote(src.Filename))
+	}
+	if d := src.Digest; d != "" {
+		if len(d) > mediaDigestChars {
+			d = d[:mediaDigestChars] + "…"
+		}
+		fields = append(fields, "sha256:"+d)
+	}
+	switch {
+	case src.Ref != "":
+		fields = append(fields, src.Ref)
+	case src.URI != "" && !strings.HasPrefix(src.URI, "data:"):
+		fields = append(fields, src.URI)
+	}
+	return "[" + strings.Join(fields, " ") + "]"
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type city struct {
@@ -31,17 +32,20 @@ func newSwitchingProvider(model string, schema [][]types.Delta) *switchingProvid
 
 func (p *switchingProvider) Name() string  { return "switching" }
 func (p *switchingProvider) Model() string { return p.model }
-func (p *switchingProvider) WithModel(m string) types.Provider {
+func (p *switchingProvider) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
 	c := *p
 	c.model = m
-	return &c
+	return &c, nil
 }
 
-func (p *switchingProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, s *types.ParameterSchema) (<-chan types.Delta, error) {
-	p.mu.Lock()
-	*p.models = append(*p.models, p.model)
-	p.mu.Unlock()
-	return p.schemaProvider.ChatStreamWithSchema(ctx, msgs, tools, s)
+func (p *switchingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil {
+		p.mu.Lock()
+		*p.models = append(*p.models, p.model)
+		p.mu.Unlock()
+	}
+	return p.schemaProvider.Stream(ctx, req)
 }
 
 func lastRequestText(msgs []types.Message) string {
@@ -49,14 +53,14 @@ func lastRequestText(msgs []types.Message) string {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range v.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					sb.WriteString(tc.Text)
 				}
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range v.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					sb.WriteString(tc.Text)
 				}
 			}
@@ -67,14 +71,14 @@ func lastRequestText(msgs []types.Message) string {
 
 func TestStructuredNative(t *testing.T) {
 	p := &schemaProvider{schema: [][]types.Delta{{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: `{"city": "Tok`},
-		types.TextContentDelta{Content: `yo"}`},
-		types.TextEndDelta{},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: `{"city": "Tok`},
+		types.PartDelta{Index: 0, Text: `yo"}`},
+		types.PartEnd{Index: 0},
 	}}}
-	a := NewAgent(AgentConfig{Provider: p})
+	a := must.Get(New(Config{Provider: p}))
 	var partials []string
-	got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+	got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 		OnDelta: func(d types.Delta) {
 			if pj, ok := d.(types.PartialJSONDelta); ok {
 				partials = append(partials, string(pj.JSON))
@@ -135,8 +139,8 @@ func TestStructuredFinalAnswerTool(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			lookup := &agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "Tokyo"}
 			p := &agenttest.ScriptedProvider{Responses: tt.responses}
-			a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(lookup)})
-			got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+			a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(lookup)}))
+			got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 				Validate: func(c city) error {
 					if c.City == "Atlantis" {
 						return errors.New("not a real city")
@@ -169,8 +173,8 @@ func TestStructuredRepairsToolErrorLimit(t *testing.T) {
 		agenttest.ToolCallResponse("c2", FinalAnswerToolName, bad),
 		agenttest.ToolCallResponse("c3", FinalAnswerToolName, map[string]any{"city": "Tokyo"}),
 	}}
-	a := NewAgent(AgentConfig{Provider: p})
-	got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{Mode: OutputTool, Repair: 1})
+	a := must.Get(New(Config{Provider: p}))
+	got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{Mode: OutputTool, Repair: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +187,8 @@ func TestStructuredPrompt(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("<think>{\"city\":\"Paris\"}</think>Here:\n```json\n{\"city\":\"Tokyo\"}\n```"),
 	}}
-	a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "base"})
-	got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{Mode: OutputPrompt})
+	a := must.Get(New(Config{Provider: p, SystemPrompt: "base"}))
+	got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{Mode: OutputPrompt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +200,7 @@ func TestStructuredPrompt(t *testing.T) {
 		t.Fatalf("request does not carry the schema instruction: %q", req)
 	}
 	root := a.Tree().Root().Message.(types.SystemMessage)
-	if len(root.Content) != 1 {
+	if len(root.Parts) != 1 {
 		t.Fatal("the instruction was written into the tree")
 	}
 }
@@ -223,8 +227,8 @@ func TestStructuredRepair(t *testing.T) {
 				script = append(script, agenttest.TextResponse(r))
 			}
 			p := &schemaProvider{schema: script}
-			a := NewAgent(AgentConfig{Provider: p})
-			got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+			a := must.Get(New(Config{Provider: p}))
+			got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 				Repair: tt.repair,
 				Validate: func(c city) error {
 					if c.City == "Atlantis" {
@@ -257,9 +261,9 @@ func TestStructuredOutcomeSwitch(t *testing.T) {
 		seen = append(seen, o)
 		return ladder.Observe(ctx, o)
 	})
-	a := NewAgent(AgentConfig{Provider: p, Name: "worker"}, WithOutcomePolicy(policy))
+	a := must.Get(New(Config{Provider: p, Name: "worker"}, WithOutcomePolicy(policy)))
 	var routes []types.RouteDelta
-	got, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+	got, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 		OnDelta: func(d types.Delta) {
 			if r, ok := d.(types.RouteDelta); ok {
 				routes = append(routes, r)
@@ -285,8 +289,8 @@ func TestStructuredOutcomeSwitch(t *testing.T) {
 	found := false
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if cc, ok := c.(types.ConfigContent); ok && cc.Model == "large" && cc.Reason == string(types.OutcomeSchemaInvalid) {
+			for _, c := range sm.Parts {
+				if cc, ok := c.(types.ConfigPart); ok && cc.Target.Model == "large" && cc.Reason == string(types.OutcomeSchemaInvalid) {
 					found = true
 				}
 			}
@@ -299,8 +303,8 @@ func TestStructuredOutcomeSwitch(t *testing.T) {
 
 func TestStructuredOutcomeSwitchStopsAtTop(t *testing.T) {
 	p := newSwitchingProvider("large", [][]types.Delta{agenttest.TextResponse("no")})
-	a := NewAgent(AgentConfig{Provider: p}, WithOutcomePolicy(types.EscalationLadder{Models: []string{"small", "large"}}))
-	_, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{})
+	a := must.Get(New(Config{Provider: p}, WithOutcomePolicy(types.EscalationLadder{Models: []string{"small", "large"}})))
+	_, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{})
 	if !errors.Is(err, ErrSchemaInvalid) || len(res.Switches) != 0 {
 		t.Fatalf("err = %v, switches = %v", err, res.Switches)
 	}
@@ -332,7 +336,7 @@ func TestStructuredModeSelection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: tt.provider, Tools: types.NewToolRegistry(tt.tools...)})
+			a := must.Get(New(Config{Provider: tt.provider, Tools: types.NewToolRegistry(tt.tools...)}))
 			schema := tt.schema
 			if schema == nil {
 				schema = cityPopulationSchema
@@ -356,8 +360,8 @@ func TestStructuredModeSelection(t *testing.T) {
 
 func TestStructuredSchemaRequiredForNonStruct(t *testing.T) {
 	p := &schemaProvider{schema: [][]types.Delta{agenttest.TextResponse(`{"city":"Tokyo"}`)}}
-	a := NewAgent(AgentConfig{Provider: p})
-	in := []types.Message{types.NewUserMessage("Where?")}
+	a := must.Get(New(Config{Provider: p}))
+	in := []types.Message{types.UserMsg(types.Text("Where?"))}
 	if _, _, err := Structured(context.Background(), a, in, OutputSpec[map[string]any]{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("err = %v, want ErrInvalidModelConfig", err)
 	}
@@ -369,8 +373,8 @@ func TestStructuredSchemaRequiredForNonStruct(t *testing.T) {
 
 func TestStructuredRunError(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Errors: []error{errors.New("boom")}}
-	a := NewAgent(AgentConfig{Provider: p})
-	_, res, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{Repair: 3})
+	a := must.Get(New(Config{Provider: p}))
+	_, res, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{Repair: 3})
 	if err == nil || errors.Is(err, ErrSchemaInvalid) || res.Attempts != 1 {
 		t.Fatalf("err = %v after %d attempts; a run error must not be repaired", err, res.Attempts)
 	}

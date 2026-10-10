@@ -16,6 +16,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -47,7 +48,7 @@ func requireOllama(t *testing.T) *ollama.Client {
 			t.Fatalf("model %q not available on %s: run `ollama pull %s`", m, host, m)
 		}
 	}
-	return ollama.NewClient(host, model, embedModel)
+	return must.Get(ollama.NewClient(ollama.Config{Host: host, Model: types.ModelID(model), EmbeddingModel: types.ModelID(embedModel)}))
 }
 
 // ollamaTags fetches /api/tags and returns a lookup that matches both exact
@@ -153,10 +154,12 @@ func drainStream(stream *agentsdk.EventStream) (string, []string, error) {
 	var toolCalls []string
 	for d := range stream.Deltas() {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			sb.WriteString(v.Content)
-		case types.ToolCallStartDelta:
-			toolCalls = append(toolCalls, v.Name)
+		case types.PartDelta:
+			sb.WriteString(v.Text)
+		case types.PartStart:
+			if v.Kind == types.KindToolCall {
+				toolCalls = append(toolCalls, v.Name)
+			}
 		}
 	}
 	return sb.String(), toolCalls, stream.Wait()
@@ -168,8 +171,8 @@ func assistantText(msg *types.AssistantMessage) string {
 		return ""
 	}
 	var sb strings.Builder
-	for _, c := range msg.Content {
-		if tc, ok := c.(types.TextContent); ok {
+	for _, c := range msg.Parts {
+		if tc, ok := c.(types.TextPart); ok {
 			sb.WriteString(tc.Text)
 		}
 	}

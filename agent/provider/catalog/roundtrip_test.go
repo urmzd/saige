@@ -29,14 +29,21 @@ func canonical(t *testing.T, c *Catalog) []byte {
 // two spellings of the same catalog.
 func stripRaw(c *Catalog) *Catalog {
 	c = c.clone()
-	for i := range c.Models {
-		c.Models[i].raw = nil
+	c.upgraded = false
+	for i := range c.Offerings {
+		c.Offerings[i].raw = nil
 	}
-	for _, m := range []map[string]ModelSpec{c.Templates, c.Baselines} {
-		for name, spec := range m {
-			spec.raw = nil
-			m[name] = spec
-		}
+	for name, m := range c.Models {
+		c.Models[name] = m.withRaw(nil)
+	}
+	for name, m := range c.ModelTemplates {
+		c.ModelTemplates[name] = m.withRaw(nil)
+	}
+	for name, o := range c.OfferingTemplates {
+		c.OfferingTemplates[name] = o.withRaw(nil)
+	}
+	for name, e := range c.Endpoints {
+		c.Endpoints[name] = e.withRaw(nil)
 	}
 	return c
 }

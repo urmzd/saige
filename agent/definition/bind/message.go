@@ -13,18 +13,18 @@ import (
 // userText joins the text of a user message.
 func userText(m types.UserMessage) string {
 	var parts []string
-	for _, c := range m.Content {
-		if t, ok := c.(types.TextContent); ok {
+	for _, c := range m.Parts {
+		if t, ok := c.(types.TextPart); ok {
 			parts = append(parts, t.Text)
 		}
 	}
 	return strings.Join(parts, "\n")
 }
 
-// withPrefix returns m with the content of prefix before its own.
+// withPrefix returns m with the parts of prefix before its own.
 func withPrefix(m, prefix types.UserMessage) types.UserMessage {
-	content := make([]types.UserContent, 0, len(prefix.Content)+len(m.Content))
-	content = append(content, prefix.Content...)
-	content = append(content, m.Content...)
-	return types.UserMessage{Content: content}
+	parts := make([]types.UserPart, 0, len(prefix.Parts)+len(m.Parts))
+	parts = append(parts, prefix.Parts...)
+	parts = append(parts, m.Parts...)
+	return types.UserMessage{Parts: parts}
 }

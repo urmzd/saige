@@ -109,5 +109,5 @@ func Innermost(p types.Provider) types.Provider {
 // Route events and traces report it, since it names the vendor that served.
 // A multi-provider decorator reports its own name.
 func InnermostName(p types.Provider) string {
-	return types.ProviderName(Innermost(p))
+	return types.NameOf(Innermost(p))
 }

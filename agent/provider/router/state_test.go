@@ -11,6 +11,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // scripted answers each call from fail: a nil error streams "ok" from the
@@ -32,14 +33,14 @@ func newScripted(id, vendor string, window int, fail func(int) error) scripted {
 	}
 }
 
-func (p scripted) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p scripted) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	n := int(p.calls.Add(1))
 	if p.fail != nil {
 		if err := p.fail(n); err != nil {
 			return deltas(types.ErrorDelta{Error: err}), nil
 		}
 	}
-	out := []types.Delta{types.TextContentDelta{Content: p.id}}
+	out := []types.Delta{types.PartDelta{Index: 0, Text: p.id}}
 	if p.usage != nil {
 		out = append(out, *p.usage)
 	}
@@ -74,17 +75,17 @@ type turn struct {
 func run(t *testing.T, p types.Provider, msgs ...types.Message) turn {
 	t.Helper()
 	if len(msgs) == 0 {
-		msgs = []types.Message{types.NewUserMessage("hello")}
+		msgs = []types.Message{types.UserMsg(types.Text("hello"))}
 	}
-	ch, err := p.ChatStream(context.Background(), msgs, nil)
+	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 	if err != nil {
 		return turn{err: err}
 	}
 	var out turn
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			out.text += v.Content
+		case types.PartDelta:
+			out.text += v.Text
 		case types.RouteDelta:
 			out.routes = append(out.routes, v)
 		case types.ErrorDelta:
@@ -97,7 +98,7 @@ func run(t *testing.T, p types.Provider, msgs ...types.Message) turn {
 func profiles(ps ...scripted) []Profile {
 	out := make([]Profile, len(ps))
 	for i, p := range ps {
-		out[i] = Profile{ID: p.id, Provider: p}
+		out[i] = Profile{ID: types.ProfileID(p.id), Provider: p}
 	}
 	return out
 }
@@ -111,8 +112,16 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 	}
 	s := r.Session()
 
-	// Each turn re-applies the pin, as the agent loop does with ConfigContent.Model.
-	got := run(t, types.ProviderWithModel(s, "b"))
+	pin := func() types.Provider {
+		p, err := types.ProviderWithTarget(s, types.ProfileTarget("b"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// Each turn re-applies the pin, as the agent loop does with a ConfigPart
+	// target.
+	got := run(t, pin())
 	if got.err != nil || got.text != "a" {
 		t.Fatalf("pinned profile failure did not fail over: %+v", got)
 	}
@@ -120,7 +129,7 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 		t.Fatalf("routes = %+v", got.routes)
 	}
 	for range 2 {
-		if got := run(t, types.ProviderWithModel(s, "b")); got.text != "b" {
+		if got := run(t, pin()); got.text != "b" {
 			t.Fatalf("pin lost: %+v", got)
 		}
 	}
@@ -136,10 +145,10 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 	if st := s.RouteState(); st.Pin != "" {
 		t.Fatalf("unpin kept %q", st.Pin)
 	}
-	if w := s.WithModel("missing"); !errors.Is(run(t, w).err, ErrUnknownProfile) {
+	if _, err := s.WithTarget(types.ProfileTarget("missing")); !errors.Is(err, ErrUnknownProfile) {
 		t.Fatal("unknown profile accepted")
 	}
-	if s.WithModel("b").(*Session).shared != s.shared {
+	if pin().(*Session).shared != s.shared {
 		t.Fatal("pinned view does not share session state")
 	}
 }
@@ -151,7 +160,7 @@ func TestAffinitySustainedFailureThreshold(t *testing.T) {
 		threshold   int
 		primaryFail func(int) error
 		wantTexts   []string
-		wantProfile string
+		wantProfile types.ProfileID
 		wantPrimary int32
 	}{
 		{"one blip stays", 2, failCalls(transient, 1), []string{"b", "a", "a"}, "a", 3},
@@ -242,12 +251,12 @@ func TestFailedReprobeKeepsStickyProfile(t *testing.T) {
 
 func TestRouteLocks(t *testing.T) {
 	transient := kindErr(types.ErrorKindTransient)
-	toolResult := types.NewUserToolResultMessage(types.ToolResultContent{ToolCallID: "1", Text: "done"})
-	signed := types.AssistantMessage{Content: []types.AssistantContent{
-		types.ThinkingContent{Thinking: "plan", Signature: "sig"},
-		types.ToolUseContent{ID: "1", Name: "lookup"},
+	toolResult := types.UserToolResults(types.ToolResultPart{CallID: "1", Parts: []types.ToolOutputPart{types.Text("done")}})
+	signed := types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ThinkingPart{Text: "plan", Signature: "sig"},
+		types.ToolCallPart{ID: "1", Name: "lookup"},
 	}}
-	plain := types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "1", Name: "lookup"}}}
+	plain := types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "1", Name: "lookup"}}}
 	for _, tc := range []struct {
 		name       string
 		history    []types.Message
@@ -257,10 +266,10 @@ func TestRouteLocks(t *testing.T) {
 		wantLocks  []string
 		wantReason string
 	}{
-		{"tool loop blocks reprobe", []types.Message{types.NewUserMessage("q"), plain, toolResult}, false, "b", false, []string{LockToolLoop}, ""},
-		{"tool loop still fails over", []types.Message{types.NewUserMessage("q"), plain, toolResult}, true, "a", false, []string{LockToolLoop}, ""},
-		{"signed reasoning blocks failover", []types.Message{types.NewUserMessage("q"), signed, toolResult}, true, "", true, []string{LockToolLoop, LockSignedReasoning}, ReasonLocked},
-		{"new user turn releases locks", []types.Message{types.NewUserMessage("q"), signed, toolResult, types.NewAssistantMessage("a"), types.NewUserMessage("next")}, false, "a", false, nil, ReasonReprobe},
+		{"tool loop blocks reprobe", []types.Message{types.UserMsg(types.Text("q")), plain, toolResult}, false, "b", false, []string{LockToolLoop}, ""},
+		{"tool loop still fails over", []types.Message{types.UserMsg(types.Text("q")), plain, toolResult}, true, "a", false, []string{LockToolLoop}, ""},
+		{"signed reasoning blocks failover", []types.Message{types.UserMsg(types.Text("q")), signed, toolResult}, true, "", true, []string{LockToolLoop, LockSignedReasoning}, ReasonLocked},
+		{"new user turn releases locks", []types.Message{types.UserMsg(types.Text("q")), signed, toolResult, types.AssistantMsg(types.Text("a")), types.UserMsg(types.Text("next"))}, false, "a", false, nil, ReasonReprobe},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newScripted("a", "x", 0, failCalls(transient, 1))
@@ -295,8 +304,8 @@ func (cacheBound) RouteLocks() []string { return []string{LockContextCache} }
 
 func TestLockReporterFoundThroughDecorators(t *testing.T) {
 	inner := cacheBound{newScripted("g", "google", 0, nil)}
-	wrapped := retry.New(inner, retry.DefaultConfig())
-	locks := detectLocks([]types.Message{types.NewUserMessage("q")}, wrapped)
+	wrapped := must.Get(retry.New(inner, retry.DefaultConfig()))
+	locks := detectLocks([]types.Message{types.UserMsg(types.Text("q"))}, wrapped)
 	if !reflect.DeepEqual(locks, []string{LockContextCache}) {
 		t.Fatalf("locks = %v", locks)
 	}
@@ -350,7 +359,7 @@ func TestAffinityMovesWhenRequestDoesNotFit(t *testing.T) {
 	if got := run(t, s); got.text != "small" {
 		t.Fatalf("short prompt = %+v", got)
 	}
-	long := types.NewUserMessage(string(make([]byte, 4_000)))
+	long := types.UserMsg(types.Text(string(make([]byte, 4_000))))
 	got := run(t, s, long)
 	if got.text != "big" || got.routes[0].Reason != ReasonContextWindow {
 		t.Fatalf("long prompt = %+v", got)
@@ -434,10 +443,10 @@ func TestRouteContextCarriesRequestFacts(t *testing.T) {
 		Budget:   budget,
 		SessionPolicy: SessionPolicyFunc(func(_ context.Context, rc RouteContext, _ RouteState) (RouteDecision, error) {
 			seen = rc
-			return RouteDecision{Order: []string{"a"}}, nil
+			return RouteDecision{Order: []types.ProfileID{"a"}}, nil
 		}),
 	})
-	msgs := []types.Message{types.NewSystemMessage("sys"), types.NewUserMessage("hello there")}
+	msgs := []types.Message{types.SystemMsg(types.Text("sys")), types.UserMsg(types.Text("hello there"))}
 	run(t, r.Session(), msgs...)
 	if len(seen.Messages) != 2 || seen.EstimatedTokens != types.EstimateTokens(msgs) {
 		t.Fatalf("route context = %+v", seen)
@@ -451,19 +460,21 @@ func TestSessionPolicyValidation(t *testing.T) {
 	r, _ := New(Config{
 		Profiles: profiles(newScripted("a", "x", 0, nil), newScripted("b", "y", 0, nil)),
 		SessionPolicy: SessionPolicyFunc(func(context.Context, RouteContext, RouteState) (RouteDecision, error) {
-			return RouteDecision{Order: []string{"a"}, Profile: "b"}, nil
+			return RouteDecision{Order: []types.ProfileID{"a"}, Profile: "b"}, nil
 		}),
 	})
-	if _, err := r.Session().ChatStream(context.Background(), nil, nil); err == nil {
+	if _, err := r.Session().Stream(context.Background(), types.Request{}); err == nil {
 		t.Fatal("a sticky profile outside the order was accepted")
 	}
 }
 
 type optionsScripted struct{ scripted }
 
-func (p optionsScripted) ChatStreamWithOptions(ctx context.Context, m []types.Message, tools []types.ToolDef, _ types.RequestOptions) (<-chan types.Delta, error) {
-	return p.ChatStream(ctx, m, tools)
+func (p optionsScripted) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return p.scripted.Stream(ctx, req)
 }
+
+func (p optionsScripted) SupportsOptions() bool { return true }
 
 func TestOptionsOnlyReachProfilesThatAcceptThem(t *testing.T) {
 	plain := newScripted("plain", "x", 0, nil)
@@ -471,14 +482,14 @@ func TestOptionsOnlyReachProfilesThatAcceptThem(t *testing.T) {
 	accepting.caps.Caps[types.CapToolChoice] = true
 	r, _ := New(Config{Profiles: []Profile{{ID: "plain", Provider: plain}, {ID: "accepting", Provider: accepting}}})
 	choice := types.ToolChoice{Mode: types.ToolChoiceRequired}
-	ch, err := r.Session().ChatStreamWithOptions(context.Background(), nil, []types.ToolDef{{Name: "t"}}, types.RequestOptions{ToolChoice: &choice})
+	ch, err := r.Session().Stream(context.Background(), types.Request{Tools: []types.ToolDef{{Name: "t"}}, Options: &types.RequestOptions{ToolChoice: &choice}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var text string
 	for d := range ch {
-		if v, ok := d.(types.TextContentDelta); ok {
-			text += v.Content
+		if v, ok := d.(types.PartDelta); ok {
+			text += v.Text
 		}
 	}
 	if text != "accepting" || plain.calls.Load() != 0 {
@@ -489,16 +500,16 @@ func TestOptionsOnlyReachProfilesThatAcceptThem(t *testing.T) {
 func TestHardLockOutranksPin(t *testing.T) {
 	transient := kindErr(types.ErrorKindTransient)
 	signed := []types.Message{
-		types.NewUserMessage("q"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ThinkingContent{Thinking: "plan", Signature: "sig"},
-			types.ToolUseContent{ID: "1", Name: "lookup"},
+		types.UserMsg(types.Text("q")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ThinkingPart{Text: "plan", Signature: "sig"},
+			types.ToolCallPart{ID: "1", Name: "lookup"},
 		}},
-		types.NewUserToolResultMessage(types.ToolResultContent{ToolCallID: "1", Text: "done"}),
+		types.UserToolResults(types.ToolResultPart{CallID: "1", Parts: []types.ToolOutputPart{types.Text("done")}}),
 	}
 	for _, tc := range []struct {
 		name string
-		// pin is the profile ConfigContent.Model selects on the locked turn.
+		// pin is the profile a ConfigPart target selects on the locked turn.
 		pin      string
 		aFails   bool
 		wantText string
@@ -521,11 +532,18 @@ func TestHardLockOutranksPin(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := r.Session()
-			if got := run(t, types.ProviderWithModel(s, "a")); got.text != "a" {
+			pin := func(id string) types.Provider {
+				p, err := s.WithTarget(types.ProfileTarget(types.ProfileID(id)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return p
+			}
+			if got := run(t, pin("a")); got.text != "a" {
 				t.Fatalf("first turn = %+v", got)
 			}
 
-			got := run(t, types.ProviderWithModel(s, tc.pin), signed...)
+			got := run(t, pin(tc.pin), signed...)
 			if (got.err != nil) != tc.wantErr || got.text != tc.wantText {
 				t.Fatalf("locked turn = %+v", got)
 			}
@@ -540,7 +558,7 @@ func TestHardLockOutranksPin(t *testing.T) {
 			}
 
 			// The next unlocked turn applies the pin.
-			got = run(t, s, append(signed, types.NewAssistantMessage("done"), types.NewUserMessage("next"))...)
+			got = run(t, s, append(signed, types.AssistantMsg(types.Text("done")), types.UserMsg(types.Text("next")))...)
 			if got.err != nil || got.text != tc.pin || got.routes[0].Reason != ReasonPinned {
 				t.Fatalf("unlocked turn = %+v", got)
 			}
@@ -561,14 +579,14 @@ func TestAffinityKeepsStickyProfileForIneligibleRequest(t *testing.T) {
 	}
 	s := r.Session()
 	toolsTurn := func() string {
-		ch, err := s.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, []types.ToolDef{{Name: "t"}})
+		ch, err := s.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: []types.ToolDef{{Name: "t"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var text string
 		for d := range ch {
-			if v, ok := d.(types.TextContentDelta); ok {
-				text += v.Content
+			if v, ok := d.(types.PartDelta); ok {
+				text += v.Text
 			}
 		}
 		return text
@@ -589,5 +607,44 @@ func TestAffinityKeepsStickyProfileForIneligibleRequest(t *testing.T) {
 		if st := s.RouteState(); st.Profile != "plain" || st.Switches != 0 {
 			t.Fatalf("%s: state = %+v, want sticky profile plain with no switches", step.name, st)
 		}
+	}
+}
+
+// withImageRule gives p an offering that takes PNG images at perImage
+// tokens each.
+func withImageRule(p scripted, perImage int) scripted {
+	o := types.OfferingFromCapabilities(p.caps)
+	o.Modalities.In = map[types.Modality]types.ModalityLimit{
+		types.ModalityImage: {Media: []types.MediaType{types.MediaPNG}, Tokens: types.TokenRule{PerImage: perImage}},
+	}
+	p.caps.Offering = &o
+	return p
+}
+
+// TestRouteEstimatesPriceMediaByEachOffering checks that each candidate's
+// estimate prices media by its own offering's token rules, that the route
+// context carries the largest, and that Affinity fits each candidate by
+// its own estimate.
+func TestRouteEstimatesPriceMediaByEachOffering(t *testing.T) {
+	dear := withImageRule(newScripted("dear", "x", 4_000, nil), 5_000)
+	cheap := withImageRule(newScripted("cheap", "y", 4_000, nil), 100)
+	var seen RouteContext
+	r, _ := New(Config{Profiles: profiles(dear, cheap), SessionPolicy: SessionPolicyFunc(func(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
+		seen = rc
+		return Affinity{}.Select(ctx, rc, st)
+	})})
+	msgs := []types.Message{types.UserMsg(types.Text("what is this?"), types.Image(types.Bytes(types.MediaPNG, []byte("png"))))}
+	got := run(t, r.Session(), msgs...)
+	if len(seen.Candidates) != 2 {
+		t.Fatalf("candidates = %+v", seen.Candidates)
+	}
+	if d, c := seen.Candidates[0].EstimatedTokens, seen.Candidates[1].EstimatedTokens; d-c != 4_900 || c <= 100 {
+		t.Fatalf("estimates = dear %d, cheap %d, want the image at 5000 and 100 tokens", d, c)
+	}
+	if seen.EstimatedTokens != seen.Candidates[0].EstimatedTokens {
+		t.Fatalf("route estimate = %d, want the largest (%d)", seen.EstimatedTokens, seen.Candidates[0].EstimatedTokens)
+	}
+	if got.text != "cheap" {
+		t.Fatalf("turn = %+v, want the profile the image fits", got)
 	}
 }

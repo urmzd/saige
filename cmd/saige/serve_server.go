@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +20,7 @@ import (
 	"github.com/urmzd/saige/agent/agui"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 )
 
 // serveOptions configures the HTTP server behind saige serve.
@@ -31,6 +30,10 @@ const keyTurnID = "turn_id"
 // formatAGUI is the events query value that selects AG-UI events.
 const formatAGUI = "agui"
 
+// defaultMaxUpload caps one artifact upload unless --max-upload says
+// otherwise.
+const defaultMaxUpload = 32 << 20
+
 type serveOptions struct {
 	// newAgent builds the agent for a new session. Each session owns its
 	// agent and conversation tree.
@@ -38,7 +41,7 @@ type serveOptions struct {
 	// newSessionAgent, when set, replaces newAgent: it also returns what
 	// the session releases when it ends, its grant limit, and a description
 	// of the agent for the session's creation response.
-	newSessionAgent func() (sessionAgent, error)
+	newSessionAgent func() (agenthost.Agent, error)
 	// token, when set, must arrive as "Authorization: Bearer <token>".
 	token string
 	// approvalTimeout denies a pending approval nobody answered in time.
@@ -52,6 +55,14 @@ type serveOptions struct {
 	bufferEvents int
 	// heartbeat is the interval between SSE keep-alive comments.
 	heartbeat time.Duration
+	// maxUpload caps one artifact upload, in bytes.
+	maxUpload int64
+	// artifactBudget caps the bytes each session's artifacts hold.
+	artifactBudget int64
+	// maxInline caps the inline media bytes of one part, in a turn's
+	// request and in the events it streams; larger media goes through the
+	// session's artifacts.
+	maxInline int
 	logger    *slog.Logger
 }
 
@@ -60,44 +71,25 @@ type serveOptions struct {
 type server struct {
 	opts     serveOptions
 	ctx      context.Context
-	mu       sync.Mutex
-	sessions map[string]*session
-	// reserved counts session slots held by creates that are still
-	// building their agent, so concurrent creates cannot pass the cap.
-	reserved int
+	sessions *agenthost.Manager[*turns]
 }
 
-// sessionAgent is an agent built for one session, with what goes with it.
-type sessionAgent struct {
-	agent *agentsdk.Agent
-	// release frees what the agent holds, such as MCP connections.
-	release func()
-	// checkGrant rejects a grant the agent's definition does not allow.
-	checkGrant func(*types.GrantRequest) error
-	// info is reported as "agent" when the session is created, such as the
-	// pinned definition the session runs.
-	info any
-}
+// session is one serve session: the shared session with serve's turns.
+type session = agenthost.Session[*turns]
 
-type session struct {
-	id    string
-	agent *agentsdk.Agent
-	// release and checkGrant come from sessionAgent; either may be nil.
-	release    func()
-	checkGrant func(*types.GrantRequest) error
-	mu         sync.Mutex
-	turns      map[string]*turn
-	last       *turn
-	// idleSince is when the session was created or its last turn
-	// finished. It is guarded by mu.
-	idleSince time.Time
+// turns are the turns a session ran, kept for replay.
+type turns struct {
+	mu   sync.Mutex
+	byID map[string]*turn
+	last *turn
 }
 
 // turn records one agent run as encoded wire envelopes for SSE replay.
 type turn struct {
-	id     string
-	stream *agentsdk.EventStream
-	limit  int
+	id        string
+	stream    *agentsdk.EventStream
+	limit     int
+	artifacts *agenthost.Artifacts
 
 	mu      sync.Mutex
 	events  []sseEvent // the most recent limit events, in seq order
@@ -110,13 +102,17 @@ type turn struct {
 	finishedAt time.Time
 }
 
+// sseEvent is one recorded delta: the delta itself, flattened with the
+// tool call path it came through, and its wire v2 envelope.
 type sseEvent struct {
-	seq  uint64
-	kind string
-	data []byte
+	seq   uint64
+	path  []string
+	delta types.Delta
+	kind  string
+	data  []byte
 }
 
-func newServer(ctx context.Context, opts serveOptions) *server {
+func newServer(ctx context.Context, opts serveOptions) (*server, error) {
 	if opts.approvalTimeout <= 0 {
 		opts.approvalTimeout = 10 * time.Minute
 	}
@@ -132,70 +128,29 @@ func newServer(ctx context.Context, opts serveOptions) *server {
 	if opts.heartbeat <= 0 {
 		opts.heartbeat = 15 * time.Second
 	}
+	if opts.maxUpload <= 0 {
+		opts.maxUpload = defaultMaxUpload
+	}
+	if opts.maxInline <= 0 {
+		opts.maxInline = types.DefaultMaxInlineBytes
+	}
 	if opts.logger == nil {
 		opts.logger = slog.Default()
 	}
-	s := &server{opts: opts, ctx: ctx, sessions: map[string]*session{}}
-	go s.sweepIdle()
-	return s
-}
-
-// sweepIdle drops idle sessions until the server's context ends.
-func (s *server) sweepIdle() {
-	tick := time.NewTicker(min(s.opts.idleTTL/4, time.Minute))
-	defer tick.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case now := <-tick.C:
-			s.evictIdle(now)
-		}
+	sessions, err := agenthost.New[*turns](agenthost.Config{
+		Max: opts.maxSessions, IdleTTL: opts.idleTTL, Prefix: "s_", ArtifactBudget: opts.artifactBudget,
+	})
+	if err != nil {
+		return nil, err
 	}
+	s := &server{opts: opts, ctx: ctx, sessions: sessions}
+	go s.sessions.Sweep(ctx)
+	return s, nil
 }
 
 // evictIdle drops every session with no running turn that has been idle
-// for at least idleTTL. A running turn keeps its session alive however
-// long it takes.
-func (s *server) evictIdle(now time.Time) {
-	s.mu.Lock()
-	var dropped []*session
-	for id, sess := range s.sessions {
-		if sess.idleFor(now) >= s.opts.idleTTL {
-			delete(s.sessions, id)
-			dropped = append(dropped, sess)
-		}
-	}
-	s.mu.Unlock()
-	for _, sess := range dropped {
-		sess.end()
-	}
-}
-
-// end releases what the session's agent holds.
-func (sess *session) end() {
-	if sess.release != nil {
-		sess.release()
-	}
-}
-
-// idleFor reports how long the session has had no running turn, or zero
-// while a turn runs.
-func (sess *session) idleFor(now time.Time) time.Duration {
-	sess.mu.Lock()
-	last, since := sess.last, sess.idleSince
-	sess.mu.Unlock()
-	if last != nil {
-		last.mu.Lock()
-		done, finished := last.done, last.finishedAt
-		last.mu.Unlock()
-		if !done {
-			return 0
-		}
-		since = finished
-	}
-	return now.Sub(since)
-}
+// for at least idleTTL.
+func (s *server) evictIdle(now time.Time) { s.sessions.Evict(now) }
 
 // handler routes the API. Every request passes the host and token checks;
 // every POST must declare a JSON body, which a cross-site form cannot send
@@ -203,11 +158,13 @@ func (sess *session) idleFor(now time.Time) time.Duration {
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wire_version": types.WireVersion})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wire_version": types.WireVersion, "wire_versions": []int{1, 2}})
 	})
 	mux.HandleFunc("POST /v1/sessions", s.createSession)
 	mux.HandleFunc("DELETE /v1/sessions/{sid}", s.deleteSession)
 	mux.HandleFunc("GET /v1/sessions/{sid}/tree", s.getTree)
+	mux.HandleFunc("POST /v1/sessions/{sid}/artifacts", s.uploadArtifact)
+	mux.HandleFunc("GET /v1/sessions/{sid}/artifacts/{id}", s.getArtifact)
 	mux.HandleFunc("POST /v1/sessions/{sid}/turns", s.createTurn)
 	mux.HandleFunc("GET /v1/sessions/{sid}/turns/{tid}", s.getTurn)
 	mux.HandleFunc("GET /v1/sessions/{sid}/turns/{tid}/events", s.streamEvents)
@@ -233,14 +190,42 @@ func (s *server) guard(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodPost {
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if mt != "application/json" {
+			switch {
+			case isUploadPath(r.URL.Path):
+				// An upload declares the media's own type, but never one a
+				// cross-site form can send without a preflight.
+				if mt == "" || corsSimpleTypes[mt] {
+					writeError(w, http.StatusUnsupportedMediaType, "uploads must declare the media type in Content-Type (use ?media_type= for text/plain)")
+					return
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, s.opts.maxUpload)
+			case mt != "application/json":
 				writeError(w, http.StatusUnsupportedMediaType, "POST requests must use Content-Type: application/json")
 				return
+			default:
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// corsSimpleTypes are the request content types a cross-site page can send
+// without a CORS preflight.
+var corsSimpleTypes = map[string]bool{
+	"application/x-www-form-urlencoded": true,
+	"multipart/form-data":               true,
+	"text/plain":                        true,
+}
+
+// isUploadPath reports whether path is a session's artifact upload route.
+func isUploadPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/v1/sessions/")
+	if !ok {
+		return false
+	}
+	sid, tail, _ := strings.Cut(rest, "/")
+	return sid != "" && tail == "artifacts"
 }
 
 // isLoopbackHost reports whether a Host header names this machine.
@@ -258,37 +243,24 @@ func isLoopbackHost(hostport string) bool {
 }
 
 func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
-	// The slot is reserved before the agent is built, so the cap holds
-	// however many creates run at once.
-	s.mu.Lock()
-	if len(s.sessions)+s.reserved >= s.opts.maxSessions {
-		s.mu.Unlock()
-		writeError(w, http.StatusTooManyRequests, "session limit reached")
+	sess, err := s.sessions.Create("", &turns{byID: map[string]*turn{}}, func() (agenthost.Agent, error) {
+		if s.opts.newSessionAgent != nil {
+			return s.opts.newSessionAgent()
+		}
+		a, err := s.opts.newAgent()
+		return agenthost.Agent{Agent: a}, err
+	})
+	switch {
+	case errors.Is(err, agenthost.ErrLimit):
+		writeError(w, http.StatusTooManyRequests, err.Error())
 		return
-	}
-	s.reserved++
-	s.mu.Unlock()
-
-	var sa sessionAgent
-	var err error
-	if s.opts.newSessionAgent != nil {
-		sa, err = s.opts.newSessionAgent()
-	} else {
-		sa.agent, err = s.opts.newAgent()
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reserved--
-	if err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sess := &session{id: "s_" + randomID(), agent: sa.agent, release: sa.release, checkGrant: sa.checkGrant,
-		turns: map[string]*turn{}, idleSince: time.Now()}
-	s.sessions[sess.id] = sess
-	resp := map[string]any{"session_id": sess.id}
-	if sa.info != nil {
-		resp["agent"] = sa.info
+	resp := map[string]any{"session_id": sess.ID}
+	if info := sess.Agent().Info; info != nil {
+		resp["agent"] = info
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -297,28 +269,15 @@ func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
 // streams for its turns end with the turn.
 func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("sid")
-	s.mu.Lock()
-	sess := s.sessions[id]
-	delete(s.sessions, id)
-	s.mu.Unlock()
-	if sess == nil {
+	if s.sessions.Remove(id) == nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	sess.mu.Lock()
-	last := sess.last
-	sess.mu.Unlock()
-	if last != nil {
-		last.stream.Cancel()
-	}
-	sess.end()
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": id})
 }
 
 func (s *server) lookup(r *http.Request) *session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sessions[r.PathValue("sid")]
+	return s.sessions.Get(r.PathValue("sid"))
 }
 
 func (s *server) session(w http.ResponseWriter, r *http.Request) *session {
@@ -334,9 +293,9 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) *turn {
 	if sess == nil {
 		return nil
 	}
-	sess.mu.Lock()
-	t := sess.turns[r.PathValue("tid")]
-	sess.mu.Unlock()
+	sess.Host.mu.Lock()
+	t := sess.Host.byID[r.PathValue("tid")]
+	sess.Host.mu.Unlock()
 	if t == nil {
 		writeError(w, http.StatusNotFound, "turn not found")
 	}
@@ -349,7 +308,7 @@ func (s *server) getTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := tree.Print(w, sess.agent.Tree()); err != nil {
+	if err := tree.Print(w, sess.Agent().Agent.Tree()); err != nil {
 		s.opts.logger.Warn("serve: print tree", "error", err)
 	}
 }
@@ -359,49 +318,57 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	var body struct {
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
-		writeError(w, http.StatusBadRequest, `body must be {"message": "<non-empty text>"}`)
+	msg, status, code, err := s.turnMessage(r.Body, sess.Artifacts)
+	if err != nil {
+		writeCodedError(w, status, code, err.Error())
 		return
 	}
 
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	if sess.last != nil && !sess.last.finished() {
-		// One run per branch: a new turn waits for the current one.
-		writeError(w, http.StatusConflict, "a turn is already running in this session: "+sess.last.id)
+	sess.Host.mu.Lock()
+	defer sess.Host.mu.Unlock()
+	stream, err := sess.Start(s.ctx, msg)
+	if err != nil {
+		msg := err.Error()
+		if errors.Is(err, agenthost.ErrBusy) && sess.Host.last != nil {
+			// One run per branch: a new turn waits for the current one.
+			msg += ": " + sess.Host.last.id
+		}
+		writeError(w, http.StatusConflict, msg)
 		return
 	}
 	t := &turn{
-		id:      "t_" + randomID(),
-		limit:   s.opts.bufferEvents,
-		changed: make(chan struct{}),
-		timers:  map[string]*time.Timer{},
+		id:        "t_" + randomID(),
+		stream:    stream,
+		limit:     s.opts.bufferEvents,
+		artifacts: sess.Artifacts,
+		changed:   make(chan struct{}),
+		timers:    map[string]*time.Timer{},
 	}
-	t.stream = sess.agent.Invoke(s.ctx, []types.Message{types.NewUserMessage(body.Message)})
-	sess.turns[t.id] = t
-	sess.last = t
+	sess.Host.byID[t.id] = t
+	sess.Host.last = t
 	go s.record(t)
 	writeJSON(w, http.StatusAccepted, map[string]string{keyTurnID: t.id})
 }
 
 // record drains the turn's stream into its event buffer. Each delta is
 // flattened so sub-agent output carries its tool call path in the envelope
-// instead of nested frames.
+// instead of nested frames, and media over the inline limit is moved to the
+// session's artifacts, so every client reads it by ref.
 func (s *server) record(t *turn) {
+	enc, _ := types.NewEncoder(types.EncodeOptions{MaxInlineBytes: s.opts.maxInline})
 	for d := range t.stream.Deltas() {
 		path, inner := types.FlattenDelta(d)
-		env, err := types.NewDeltaEnvelope(inner)
-		if err != nil {
-			s.opts.logger.Warn("serve: encode delta", "turn", t.id, "error", err)
-			continue
-		}
 		if m, ok := inner.(types.MarkerDelta); ok {
 			t.armApprovalTimeout(m.ToolCallID, s.opts.approvalTimeout)
 		}
-		t.append(env, path)
+		for _, x := range agenthost.Externalize(inner, t.artifacts, s.opts.maxInline) {
+			envs, err := enc.Encode(x)
+			if err != nil || len(envs) != 1 {
+				s.opts.logger.Warn("serve: encode delta", "turn", t.id, "error", err)
+				continue
+			}
+			t.append(x, envs[0], path)
+		}
 	}
 	err := t.stream.Wait()
 	t.mu.Lock()
@@ -415,20 +382,13 @@ func (s *server) record(t *turn) {
 	t.mu.Unlock()
 }
 
-// writeAGUIEvent writes one recorded envelope as AG-UI events. A delta from
-// a sub-agent is rewrapped in its tool calls, so the mapper reports it with
+// writeAGUIEvent writes one recorded delta as AG-UI events. A delta from a
+// sub-agent is rewrapped in its tool calls, so the mapper reports it with
 // its path.
 func writeAGUIEvent(w io.Writer, m *agui.Mapper, ev sseEvent) error {
-	env, err := types.UnmarshalEnvelope(ev.data)
-	if err != nil {
-		return err
-	}
-	d, err := env.Delta()
-	if err != nil {
-		return err
-	}
-	for i := len(env.Path) - 1; i >= 0; i-- {
-		d = types.ToolExecDelta{ToolCallID: env.Path[i], Inner: d}
+	d := ev.delta
+	for i := len(ev.path) - 1; i >= 0; i-- {
+		d = types.ToolExecDelta{ToolCallID: ev.path[i], Inner: d}
 	}
 	events, err := m.Map(d)
 	if err != nil {
@@ -453,7 +413,7 @@ func finishAGUI(w io.Writer, m *agui.Mapper, turnErr error) error {
 	if turnErr != nil && !m.Finished() {
 		events, _ = m.Map(types.ErrorDelta{Error: turnErr})
 	}
-	events = append(events, m.Close()...)
+	events = append(events, m.Flush()...)
 	for _, e := range events {
 		if err := agui.WriteSSE(w, e); err != nil {
 			return err
@@ -462,7 +422,7 @@ func finishAGUI(w io.Writer, m *agui.Mapper, turnErr error) error {
 	return nil
 }
 
-func (t *turn) append(env types.Envelope, path []string) {
+func (t *turn) append(d types.Delta, env types.Envelope, path []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.seq++
@@ -473,7 +433,7 @@ func (t *turn) append(env types.Envelope, path []string) {
 	if err != nil {
 		return
 	}
-	t.events = append(t.events, sseEvent{seq: t.seq, kind: env.Kind, data: data})
+	t.events = append(t.events, sseEvent{seq: t.seq, path: path, delta: d, kind: env.Kind, data: data})
 	if over := len(t.events) - t.limit; over > 0 {
 		t.events = append(t.events[:0:0], t.events[over:]...)
 	}
@@ -540,9 +500,21 @@ func (s *server) getTurn(w http.ResponseWriter, r *http.Request) {
 // needs is no longer kept, the request fails with 410 Gone before the stream
 // starts, or a "gap" event ends a stream that fell behind. Either way the
 // client must refetch the turn and tree, then resume from oldest_seq - 1.
+//
+// The client picks the wire version with ?wire=1|2 or with
+// "Accept: application/vnd.saige.events+json;v=1"; the default is 2. A
+// version 1 stream downgrades part deltas to version 1 kinds, reports
+// output with no version 1 form as an error envelope, and names stored
+// media by its saige-artifact:// URI. One recorded event can become
+// several version 1 envelopes, which share its seq.
 func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	t := s.turn(w, r)
 	if t == nil {
+		return
+	}
+	version, status, err := negotiateWire(r)
+	if err != nil {
+		writeError(w, status, err.Error())
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -573,11 +545,18 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 	// format=agui streams AG-UI events instead of wire envelopes.
 	var mapper *agui.Mapper
+	sid := r.PathValue("sid")
 	if r.URL.Query().Get("format") == formatAGUI {
-		mapper = agui.NewMapper(r.PathValue("sid"), t.id)
+		mapper = agui.NewMapper(sid, t.id, agui.WithMediaLink(func(src types.Source) string {
+			return artifactURL(sid, src)
+		}))
 	}
+	wire := newWireWriter(version, s.opts.maxInline)
 
 	h := w.Header()
+	if mapper == nil {
+		h.Set(headerWireVersion, strconv.Itoa(version))
+	}
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
@@ -594,9 +573,12 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		t.mu.Lock()
 		oldest, gap := t.missingLocked(last)
+		// A version 1 stream feeds every event through its downgrader,
+		// including those the client already has, so a resumed stream
+		// pairs each part's deltas as the first one did.
 		var batch []sseEvent
 		for _, ev := range t.events {
-			if ev.seq > last {
+			if ev.seq > wire.fed(last) {
 				batch = append(batch, ev)
 			}
 		}
@@ -612,15 +594,16 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 		for _, ev := range batch {
 			var err error
-			if mapper != nil {
+			switch {
+			case mapper != nil:
 				err = writeAGUIEvent(w, mapper, ev)
-			} else {
-				_, err = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.seq, ev.kind, ev.data)
+			default:
+				err = wire.write(w, ev, t.id, ev.seq > last)
 			}
 			if err != nil {
 				return
 			}
-			last = ev.seq
+			last = max(last, ev.seq)
 		}
 		if len(batch) > 0 {
 			flusher.Flush()
@@ -680,23 +663,24 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `body must include "approved": true or false`)
 		return
 	}
-	if err := checkGrant(body.Grant, *body.Approved, time.Now()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if sess := s.lookup(r); sess != nil && sess.checkGrant != nil {
-		if err := sess.checkGrant(body.Grant); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	id := r.PathValue("toolCallID")
-	err := t.stream.ResolveMarkerErr(id, agentsdk.Resolution{
+	res := agentsdk.Resolution{
 		Approved:     *body.Approved,
 		ModifiedArgs: body.ModifiedArgs,
 		Message:      body.Message,
 		Grant:        body.Grant,
-	})
+	}
+	check := func(r agentsdk.Resolution, now time.Time) error {
+		return agenthost.ValidateGrant(r.Grant, r.Approved, now)
+	}
+	if sess := s.lookup(r); sess != nil {
+		check = sess.CheckDecision
+	}
+	if err := check(res, time.Now()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := r.PathValue("toolCallID")
+	err := t.stream.ResolveMarkerErr(id, res)
 	switch {
 	case errors.Is(err, agentsdk.ErrUnknownMarker):
 		writeError(w, http.StatusNotFound, err.Error())
@@ -708,25 +692,6 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		t.disarm(id)
 		writeJSON(w, http.StatusOK, map[string]any{"tool_call_id": id, "approved": *body.Approved})
 	}
-}
-
-// checkGrant validates the grant a client attached to a decision: only an
-// approval can carry one, its scope and matchers must be well formed, and
-// its expiry must lie in the future.
-func checkGrant(g *types.GrantRequest, approved bool, now time.Time) error {
-	if g == nil {
-		return nil
-	}
-	if !approved {
-		return errors.New(`"grant" requires "approved": true`)
-	}
-	if err := g.Validate(); err != nil {
-		return err
-	}
-	if !g.ExpiresAt.IsZero() && !g.ExpiresAt.After(now) {
-		return fmt.Errorf("%w: expires_at %s is not in the future", types.ErrInvalidGrant, g.ExpiresAt.Format(time.RFC3339))
-	}
-	return nil
 }
 
 func (s *server) cancelTurn(w http.ResponseWriter, r *http.Request) {
@@ -748,8 +713,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func randomID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
+func randomID() string { return agenthost.RandomID() }

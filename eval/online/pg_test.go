@@ -72,25 +72,25 @@ func freshPool(t *testing.T) *pgxpool.Pool {
 // agent/pgstore store.
 func storedConversation(t *testing.T, pool *pgxpool.Pool, scope, conv string) []types.NodeID {
 	t.Helper()
-	st, err := agentpg.NewScopedStore(pool, scope, conv, nil)
+	st, err := agentpg.New(agentpg.Config{Pool: pool, Scope: scope, ConversationID: conv})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := tree.New(types.NewSystemMessage("You are a support agent."), tree.WithStore(st))
+	tr, err := tree.New(types.SystemMsg(types.Text("You are a support agent.")), tree.WithStore(st))
 	if err != nil {
 		t.Fatal(err)
 	}
 	parent := tr.Root().ID
 	var ids []types.NodeID
 	for _, msg := range []types.Message{
-		types.NewUserMessage("What is the refund policy?"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.RouteContent{Model: "gpt-6-luna"},
-			types.ToolUseContent{ID: "c1", Name: "lookup_policy", Arguments: map[string]any{}},
+		types.UserMsg(types.Text("What is the refund policy?")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.RoutePart{Model: "gpt-6-luna"},
+			types.ToolCallPart{ID: "c1", Name: "lookup_policy", Arguments: map[string]any{}},
 		}},
-		types.SystemMessage{Content: []types.SystemContent{types.ToolResultContent{ToolCallID: "c1", Text: "30 days"}}},
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.RouteContent{Model: "gpt-6-luna"}, types.TextContent{Text: "Refunds within 30 days."},
+		types.SystemMessage{Parts: []types.SystemPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("30 days")}}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.RoutePart{Model: "gpt-6-luna"}, types.TextPart{Text: "Refunds within 30 days."},
 		}},
 	} {
 		n, err := tr.AddChild(context.Background(), parent, msg)
@@ -133,6 +133,15 @@ func TestPGSourceIsScopedAndFindsFinishedRuns(t *testing.T) {
 	if _, err := src.Lookup(ctx, online.Ref{Conversation: "conv-1", Node: string(ids[1])}); err == nil {
 		t.Fatal("Lookup of a tool-calling node succeeded")
 	}
+	// A tool-calling turn stored by an earlier release, in the version 1
+	// message format, is not a finished run either.
+	if _, err := pool.Exec(ctx, `INSERT INTO agent_node (uuid, parent_uuid, role, message, branch_id, conversation_id)
+		VALUES ('v1-call', '', 'assistant', '{"content":[{"type":"tool_use","data":{"ID":"c","Name":"f"}}]}'::jsonb, 'main', 'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := (online.PGSource{Pool: pool}).Records(ctx, online.Window{}); len(all) != 2 {
+		t.Fatalf("Records with a version 1 tool call = %d, want 2", len(all))
+	}
 }
 
 // TestWatchWithPostgresNotifier runs the long-running mode across real
@@ -140,12 +149,12 @@ func TestPGSourceIsScopedAndFindsFinishedRuns(t *testing.T) {
 func TestWatchWithPostgresNotifier(t *testing.T) {
 	pool := freshPool(t)
 	ids := storedConversation(t, pool, "acme", "conv-1")
-	results, err := pgstore.New(context.Background(), pool, "acme")
+	results, err := pgstore.New(context.Background(), pgstore.Config{Pool: pool, Tenant: "acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
-	defer n.Close()
+	defer n.Close(context.Background())
 
 	s := &online.Sampler{Store: results, Scorers: []eval.Scorer{eval.ContainsScorer("30 days")}}
 	ctx, cancel := context.WithCancel(context.Background())

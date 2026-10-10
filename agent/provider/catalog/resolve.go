@@ -37,10 +37,17 @@ const (
 // materialized. It carries no secrets: APIKeyEnv names a variable.
 type ResolvedEntry struct {
 	// ProfileID is "<preset>/<entry id>", the router profile ID.
-	ProfileID string
+	ProfileID types.ProfileID
 	// ID is the entry ID within its preset.
-	ID              string
-	Provider, Model string
+	ID       string
+	Provider types.ProviderName
+	Model    types.ModelID
+	// Endpoint names the endpoint that serves the entry: a catalog
+	// endpoint, or "<preset>/<id>" for an entry that sets its own base_url
+	// or api_key_env. Offering is the offering ID the capabilities come
+	// from, empty when only a baseline applies.
+	Endpoint string
+	Offering string
 	// Caps are the catalog capabilities of this exact model.
 	Caps types.ModelCapabilities
 	// Options are the effective options the adapter is built with.
@@ -66,11 +73,15 @@ type ResolvedEntry struct {
 	// ConfigHash is the first 16 hex digits of a SHA-256 over the entry's
 	// canonical configuration. Equal hashes mean identical requests.
 	ConfigHash string
+
+	// hashEndpoint is the endpoint ConfigHash covers: empty on the
+	// vendor's primary endpoint.
+	hashEndpoint string
 }
 
 // ResolvedPreset is a preset with every entry resolved and validated.
 type ResolvedPreset struct {
-	Name            string
+	Name            types.PresetName
 	CatalogRevision string
 	Description     string
 	Chain           []ResolvedEntry
@@ -84,14 +95,14 @@ type ResolvedPreset struct {
 }
 
 // PresetNames returns the preset names, sorted.
-func (c *Catalog) PresetNames() []string { return sortedKeys(c.Presets) }
+func (c *Catalog) PresetNames() []types.PresetName { return sortedKeys(c.Presets) }
 
 // Resolve materializes a preset: it applies the precedence rules to every
 // chain entry and validates each entry against its own model. An option an
 // entry cannot honor is an error, never dropped; fix it in the file with
 // unset, an entry override, or inherit "none". Errors are a
 // *ValidationError; warnings are returned on the preset.
-func (c *Catalog) Resolve(name string) (ResolvedPreset, error) {
+func (c *Catalog) Resolve(name types.PresetName) (ResolvedPreset, error) {
 	rp, found := c.resolve(name)
 	if err := found.asError(""); err != nil {
 		return ResolvedPreset{}, err
@@ -102,19 +113,19 @@ func (c *Catalog) Resolve(name string) (ResolvedPreset, error) {
 // ResolveModel builds a one-entry preset from a model row's defaults, for a
 // caller that names a model rather than a preset. An empty provider is
 // inferred from the catalog.
-func (c *Catalog) ResolveModel(provider, model string) (ResolvedPreset, error) {
+func (c *Catalog) ResolveModel(provider types.ProviderName, model types.ModelID) (ResolvedPreset, error) {
 	v := c.view()
 	if provider == "" {
-		p, ok := v.inferProvider(model)
+		p, ok := v.inferProvider(string(model))
 		if !ok {
 			return ResolvedPreset{}, &ValidationError{Issues: []Issue{{Path: "model", Code: CodeBadValue,
 				Message: fmt.Sprintf("cannot infer a provider for model %q", model), Severity: SeverityError}}}
 		}
 		provider = p
 	}
-	id := provider + "/" + model
+	id := modelKey(provider, model)
 	spec := PresetSpec{Chain: []EntrySpec{{ID: id, Provider: provider, Model: model}}}
-	rp, found := c.resolveSpec2(id, "models."+id, spec, v)
+	rp, found := c.resolveSpec2(types.PresetName(id), "models."+id, spec, v)
 	if err := found.asError(""); err != nil {
 		return ResolvedPreset{}, err
 	}
@@ -122,21 +133,22 @@ func (c *Catalog) ResolveModel(provider, model string) (ResolvedPreset, error) {
 }
 
 // inferProvider is InferProvider over this view.
-func (v view) inferProvider(model string) (string, bool) {
+func (v view) inferProvider(model string) (types.ProviderName, bool) {
 	if p, rest, found := strings.Cut(model, "/"); found && rest != "" {
 		for _, e := range v.entries {
-			if strings.EqualFold(e.Provider, p) {
+			if strings.EqualFold(string(e.Provider), p) {
 				return e.Provider, true
 			}
 		}
 	}
-	provider, bestLen := "", -1
+	var provider types.ProviderName
+	bestLen := -1
 	want := normalize(model)
 	for _, e := range v.entries {
-		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(string(e.Prefix))) {
 			return e.Provider, true
 		}
-		p := normalize(e.Prefix)
+		p := normalize(string(e.Prefix))
 		if strings.HasPrefix(want, p) && (len(p) > bestLen || (len(p) == bestLen && e.Provider < provider)) {
 			provider, bestLen = e.Provider, len(p)
 		}
@@ -146,15 +158,15 @@ func (v view) inferProvider(model string) (string, bool) {
 
 // flatten follows a preset's extends chain: the child copies its parent and
 // replaces each top-level key it sets.
-func (c *Catalog) flatten(name string, found *issues) (PresetSpec, bool) {
-	path := "presets." + name
+func (c *Catalog) flattenPreset(name types.PresetName, found *issues) (PresetSpec, bool) {
+	path := "presets." + string(name)
 	p, ok := c.Presets[name]
 	if !ok {
 		found.errorf(path, CodeUnknownPreset, "unknown preset %q", name)
 		return PresetSpec{}, false
 	}
 	stack := []PresetSpec{p}
-	seen := map[string]bool{name: true}
+	seen := map[types.PresetName]bool{name: true}
 	for cur := p; cur.Extends != ""; {
 		if seen[cur.Extends] {
 			found.errorf(path+".extends", CodePresetCycle, "preset chain loops at %q", cur.Extends)
@@ -209,18 +221,18 @@ func (c *Catalog) flatten(name string, found *issues) (PresetSpec, bool) {
 	return out, true
 }
 
-func (c *Catalog) resolve(name string) (ResolvedPreset, issues) {
+func (c *Catalog) resolve(name types.PresetName) (ResolvedPreset, issues) {
 	var found issues
-	spec, ok := c.flatten(name, &found)
+	spec, ok := c.flattenPreset(name, &found)
 	if !ok {
 		return ResolvedPreset{}, found
 	}
-	rp, more := c.resolveSpec2(name, "presets."+name, spec, c.view())
+	rp, more := c.resolveSpec2(name, "presets."+string(name), spec, c.view())
 	return rp, append(found, more...)
 }
 
 // resolveSpec2 resolves a flattened preset against a view.
-func (c *Catalog) resolveSpec2(name, path string, spec PresetSpec, v view) (ResolvedPreset, issues) {
+func (c *Catalog) resolveSpec2(name types.PresetName, path string, spec PresetSpec, v view) (ResolvedPreset, issues) {
 	var found issues
 	rp := ResolvedPreset{Name: name, CatalogRevision: c.Revision, Description: spec.Description,
 		OutputMode: spec.OutputMode, LLMTimeout: time.Duration(spec.LLMTimeout)}
@@ -282,29 +294,31 @@ type layered struct {
 }
 
 // resolveEntry applies the precedence rules to one chain entry.
-func (c *Catalog) resolveEntry(preset, path string, spec PresetSpec, es EntrySpec, v view, found *issues) ResolvedEntry {
+func (c *Catalog) resolveEntry(preset types.PresetName, path string, spec PresetSpec, es EntrySpec, v view, found *issues) ResolvedEntry {
 	e := ResolvedEntry{ID: es.ID, Provider: es.Provider, Model: es.Model, BaseURL: es.BaseURL,
 		APIKeyEnv: es.APIKeyEnv, Optional: es.Optional, LocalFallback: es.LocalFallback,
 		AttemptTimeout: time.Duration(es.AttemptTimeout), Origin: map[string]Layer{}}
-	if es.LocalFallback && es.Provider != "ollama" {
+	c.entryTarget(preset, path, es, &e, v, found)
+	if es.LocalFallback && e.Provider != providerOllama {
 		found.errorf(path+".local_fallback", CodeBadValue, "local_fallback applies only to ollama entries")
 	}
 	if es.Vertex != nil {
 		vs := *es.Vertex
 		e.Vertex = &vs
-		if es.Provider != "google" {
+		if e.Provider != providerGoogle {
 			found.errorf(path+".vertex", CodeBadValue, "vertex applies only to google entries")
 		}
 	}
 	if e.ID == "" {
-		e.ID = es.Provider + "/" + es.Model
+		e.ID = modelKey(e.Provider, e.Model)
 	}
-	e.ProfileID = preset + "/" + e.ID
-	if preset == e.ID {
-		e.ProfileID = e.ID
+	e.ProfileID = types.ProfileID(string(preset) + "/" + e.ID)
+	if string(preset) == e.ID {
+		e.ProfileID = types.ProfileID(e.ID)
 	}
-	e.Caps, _ = v.lookup(es.Provider, es.Model)
-	row, hasRow := v.match(es.Provider, es.Model)
+	e.Caps, e.Offering = v.entryCaps(e.Endpoint, e.Provider, string(e.Model))
+	c.applyEndpoint(&e, v)
+	row, hasRow := v.match(e.Provider, string(e.Model))
 
 	var layers []layered
 	if hasRow && row.Defaults != nil {
@@ -404,12 +418,12 @@ func origin(l Layer) string {
 
 // checkEntry validates one resolved entry against its own model.
 func (c *Catalog) checkEntry(path string, spec PresetSpec, rp ResolvedPreset, e ResolvedEntry, found *issues) {
-	model := e.Provider + "/" + e.Model
+	model := modelKey(e.Provider, e.Model)
 	optPath := func(name string) string { return path + ".options." + name }
 	fail := func(name, code, reason string) {
 		found.errorf(optPath(name), code, "%s for %s (%s)", reason, model, origin(e.Origin[name]))
 	}
-	if strings.TrimSpace(e.Model) == "" || e.Provider == "" {
+	if strings.TrimSpace(string(e.Model)) == "" || e.Provider == "" {
 		return
 	}
 	if !e.Caps.Known {
@@ -443,8 +457,10 @@ func (c *Catalog) checkEntry(path string, spec PresetSpec, rp ResolvedPreset, e 
 
 // checkEntryExtras validates an entry's prompt cache, server tools, the
 // preset-level tool choice and output mode, limits, and routing needs.
+//
+//nolint:gocyclo // one check per entry setting
 func (c *Catalog) checkEntryExtras(path string, rp ResolvedPreset, e ResolvedEntry, fail func(name, code, reason string), found *issues) {
-	model := e.Provider + "/" + e.Model
+	model := modelKey(e.Provider, e.Model)
 	if pc := e.PromptCache; pc != nil && pc.Mode != PromptCacheOff {
 		var err error
 		switch {
@@ -454,6 +470,11 @@ func (c *Catalog) checkEntryExtras(path string, rp ResolvedPreset, e ResolvedEnt
 			err = errors.New("prompt cache markers are not declared supported")
 		case pc.Mode == PromptCacheAutomatic && !e.Caps.Supports(types.CapAutomaticPromptCache):
 			err = errors.New("automatic prompt caching is not declared supported")
+		case pc.Mode == PromptCacheAutomatic && pc.Retention != "" && e.Caps.Offering != nil:
+			if rerr := e.Caps.Offering.AcceptsValue(types.ParamPromptCacheRetention, NormalizeRetention(pc.Retention)); rerr != nil {
+				err = fmt.Errorf("retention %q is not accepted; the model takes %v", pc.Retention,
+					e.Caps.Offering.Params.Params[types.ParamPromptCacheRetention].Values)
+			}
 		}
 		if err != nil {
 			fail(optionPromptCache, CodePromptCache, err.Error())
@@ -462,7 +483,7 @@ func (c *Catalog) checkEntryExtras(path string, rp ResolvedPreset, e ResolvedEnt
 	for _, st := range e.ServerTools {
 		switch {
 		case ExpressibleServerTools(e.Provider) != nil:
-			fail(optionServerTools, CodeNotExpressible, "server tools are not sent by the "+e.Provider+" adapter")
+			fail(optionServerTools, CodeNotExpressible, "server tools are not sent by the "+string(e.Provider)+" adapter")
 		case !e.Caps.SupportsServerTool(st.Kind) || !e.Caps.Supports(st.Capability()):
 			fail(optionServerTools, CodeServerTool, fmt.Sprintf("server tool %q is not declared supported", st.Kind))
 		}
@@ -495,9 +516,9 @@ func (c *Catalog) checkEntryExtras(path string, rp ResolvedPreset, e ResolvedEnt
 }
 
 // successor follows superseded_by within this catalog.
-func (c *Catalog) successor(provider, model string) (string, bool) {
+func (c *Catalog) successor(provider types.ProviderName, model types.ModelID) (types.ModelID, bool) {
 	v := c.view()
-	e, ok := v.match(provider, model)
+	e, ok := v.match(provider, string(model))
 	if !ok || e.SupersededBy == "" {
 		return "", false
 	}
@@ -534,8 +555,11 @@ func optionReason(err error) string {
 // hashedEntry is the canonical configuration ConfigHash covers. It holds no
 // credentials.
 type hashedEntry struct {
-	Provider       string       `json:"provider"`
-	Model          string       `json:"model"`
+	Provider types.ProviderName `json:"provider"`
+	Model    types.ModelID      `json:"model"`
+	// Endpoint is set only for an entry on another endpoint than its
+	// vendor's primary one, so the hash of a primary entry is unchanged.
+	Endpoint       string       `json:"endpoint,omitempty"`
 	Options        *OptionsSpec `json:"options"`
 	BaseURL        string       `json:"base_url,omitempty"`
 	APIKeyEnv      string       `json:"api_key_env,omitempty"`
@@ -555,7 +579,7 @@ func configHash(e ResolvedEntry) string {
 	for _, st := range e.ServerTools {
 		o.ServerTools = append(o.ServerTools, serverToolSpec(st))
 	}
-	h := hashedEntry{Provider: e.Provider, Model: e.Model, Options: o, BaseURL: e.BaseURL,
+	h := hashedEntry{Provider: e.Provider, Model: e.Model, Endpoint: e.hashEndpoint, Options: o, BaseURL: e.BaseURL,
 		APIKeyEnv: e.APIKeyEnv, Vertex: e.Vertex, Retry: e.Retry, AttemptTimeout: Duration(e.AttemptTimeout)}
 	if len(e.Dials) > 0 {
 		h.Dials = e.Dials
@@ -584,8 +608,8 @@ func (e ResolvedEntry) OptionNames() []string {
 }
 
 // ProfileIDs returns the chain's profile IDs in failover order.
-func (p ResolvedPreset) ProfileIDs() []string {
-	out := make([]string, len(p.Chain))
+func (p ResolvedPreset) ProfileIDs() []types.ProfileID {
+	out := make([]types.ProfileID, len(p.Chain))
 	for i, e := range p.Chain {
 		out[i] = e.ProfileID
 	}
@@ -593,7 +617,7 @@ func (p ResolvedPreset) ProfileIDs() []string {
 }
 
 // Entry returns the chain entry with a profile ID.
-func (p ResolvedPreset) Entry(profileID string) (ResolvedEntry, bool) {
+func (p ResolvedPreset) Entry(profileID types.ProfileID) (ResolvedEntry, bool) {
 	i := slices.IndexFunc(p.Chain, func(e ResolvedEntry) bool { return e.ProfileID == profileID })
 	if i < 0 {
 		return ResolvedEntry{}, false

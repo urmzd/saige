@@ -26,9 +26,9 @@ const DefaultWrapUpPrompt = "Stop starting new work and return your result now. 
 	"Put everything your caller needs in your final message."
 
 // WithWrapUpAt adds a wrap-up note after n model turns of a user turn (see
-// AgentConfig.WrapUpAt). 0 turns it off.
-func WithWrapUpAt(n int) AgentOption {
-	return func(c *AgentConfig) { c.WrapUpAt = n }
+// Config.WrapUpAt). 0 turns it off.
+func WithWrapUpAt(n int) Option {
+	return func(c *Config) { c.WrapUpAt = n }
 }
 
 // childIterBudget returns a sub-agent's iteration cap and wrap-up point.
@@ -71,7 +71,7 @@ func wrapUpDue(wrapUpAt, used, maxIter int) bool {
 // injectWrapUp appends the wrap-up note at a safe point and reports it as an
 // InjectedDelta with Mode "wrap_up".
 func (a *Agent) injectWrapUp(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, used, maxIter int, out runOutput) error {
-	node, err := a.appendNode(ctx, tr, branch, types.NewSystemMessage(wrapUpNote(a.cfg.WrapUpPrompt, used, maxIter, out)))
+	node, err := a.appendNode(ctx, tr, branch, types.SystemMsg(types.Text(wrapUpNote(a.cfg.WrapUpPrompt, used, maxIter, out))))
 	if err != nil {
 		return err
 	}

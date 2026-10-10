@@ -1,0 +1,12 @@
+start 0 text
+delta 0 text="Checking."
+end 0
+start 1 thinking
+delta 1 signature="Y2FsbC1zaWc="
+end 1 {"type":"thinking","text":"","signature":"Y2FsbC1zaWc="}
+start 2 tool_call id=fc1 name=get_weather
+delta 2 args="{\"city\":\"Oslo\"}"
+end 2 {"type":"tool_call","id":"fc1","name":"get_weather","arguments":{"city":"Oslo"}}
+start 3 tool_call id=fc2 name=get_weather
+delta 3 args="{\"city\":\"Rome\"}"
+end 3 {"type":"tool_call","id":"fc2","name":"get_weather","arguments":{"city":"Rome"}}

@@ -215,7 +215,7 @@ func (p *Pool) Evict(c *Client) error {
 		}
 	}
 	p.mu.Unlock()
-	if err := c.Close(); err != nil {
+	if err := c.Close(context.Background()); err != nil {
 		return fmt.Errorf("mcp: close %q: %w", c.spec.Name, err)
 	}
 	return nil
@@ -496,7 +496,7 @@ func (p *Pool) Preflight(ctx context.Context) error {
 
 // Close closes every client, joining the failures. Local servers are child
 // processes, so this is required for cleanup, not merely polite.
-func (p *Pool) Close() error {
+func (p *Pool) Close(ctx context.Context) error {
 	p.mu.Lock()
 	clients := p.clients
 	p.clients = nil
@@ -508,7 +508,7 @@ func (p *Pool) Close() error {
 
 	var errs []error
 	for _, c := range clients {
-		if err := c.Close(); err != nil {
+		if err := c.Close(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("mcp: close %q: %w", c.spec.Name, err))
 		}
 	}

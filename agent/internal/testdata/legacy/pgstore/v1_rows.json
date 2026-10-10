@@ -1,0 +1,534 @@
+{
+  "agent_branch": [
+    {
+      "tip_uuid": "1ad6f009-6086-4759-ad63-1f107d939924",
+      "branch_id": "main",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "tip_uuid": "4e4cda28-e0f6-40ce-995b-06d3270ea000",
+      "branch_id": "feedback-cf70241c",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "tip_uuid": "f2c395e0-2d33-4a49-82b7-64985792a91d",
+      "branch_id": "alt",
+      "conversation_id": "conv-golden-v1"
+    }
+  ],
+  "agent_checkpoint": [
+    {
+      "name": "after-tools",
+      "uuid": "51d314a2-2450-4c28-8007-9646708b8bd7",
+      "branch_id": "main",
+      "node_uuid": "1ad6f009-6086-4759-ad63-1f107d939924",
+      "created_at": "2026-10-10T09:37:59.251958+00:00",
+      "conversation_id": "conv-golden-v1"
+    }
+  ],
+  "agent_conversation": [],
+  "agent_node": [
+    {
+      "role": "system",
+      "uuid": "0677ab82-a479-4fdf-8283-f65bb6a394b9",
+      "depth": 0,
+      "state": 0,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "Text": "You are terse."
+            },
+            "type": "text"
+          },
+          {
+            "data": {
+              "Dials": {
+                "creativity": "focused",
+                "max_output": 512
+              },
+              "Model": "gpt-x",
+              "Reason": "fixture",
+              "Compact": {
+                "KeepLast": 2,
+                "Strategy": "summarize",
+                "Threshold": 10,
+                "WindowSize": 0,
+                "ExcludeTools": null,
+                "MaxInputTokens": 0,
+                "KeepToolResults": 0
+              },
+              "MaxIter": 3,
+              "CompactNow": false,
+              "ToolChoice": {
+                "mode": "auto"
+              }
+            },
+            "type": "config"
+          },
+          {
+            "data": {
+              "to": "b",
+              "from": "a",
+              "reason": "r",
+              "context": "c",
+              "message": "m"
+            },
+            "type": "handoff"
+          },
+          {
+            "data": {
+              "model": "gpt-x",
+              "preset": "p",
+              "reason": "primary",
+              "options": {
+                "temperature": 0.2,
+                "max_output_tokens": 100
+              },
+              "profile": "fast",
+              "provider": "openai",
+              "config_hash": "h",
+              "catalog_revision": "rev"
+            },
+            "type": "route"
+          },
+          {
+            "data": {
+              "tool": "write",
+              "event": "granted",
+              "grant": {
+                "id": "g1",
+                "scope": "session",
+                "tool_call_id": ""
+              },
+              "reason": "ok",
+              "approver": "ops",
+              "tool_call_id": "call_w"
+            },
+            "type": "approval"
+          },
+          {
+            "data": {
+              "phase": "input",
+              "action": "block",
+              "reason": "ssn",
+              "guardrail": "pii"
+            },
+            "type": "guardrail"
+          },
+          {
+            "data": {
+              "kept": [
+                "k"
+              ],
+              "steps": [
+                "summary"
+              ],
+              "trigger": "rule",
+              "strategy": "summary",
+              "from_branch": "main",
+              "summary_node": "s",
+              "tokens_after": 10,
+              "tokens_before": 100
+            },
+            "type": "compaction"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T09:37:59.24057+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.24057+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 0,
+      "parent_uuid": "",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "user",
+      "uuid": "ff5345d9-b5ce-4b3f-8b7b-71855b3e2451",
+      "depth": 1,
+      "state": 0,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "Text": "Describe these."
+            },
+            "type": "text"
+          },
+          {
+            "data": {
+              "uri": "https://example.com/a.png",
+              "filename": "a.png",
+              "media_type": "image/png"
+            },
+            "type": "file"
+          },
+          {
+            "data": {
+              "uri": "",
+              "filename": "inline.pdf",
+              "media_type": "application/pdf"
+            },
+            "type": "file"
+          },
+          {
+            "data": {
+              "uri": "gs://bucket/clip.mp4",
+              "media_type": "video/mp4"
+            },
+            "type": "file"
+          },
+          {
+            "data": {
+              "id": "sub-1"
+            },
+            "type": "steer"
+          },
+          {
+            "data": {
+              "phase": "input",
+              "action": "rewrite",
+              "guardrail": "pii"
+            },
+            "type": "guardrail"
+          },
+          {
+            "data": {
+              "Model": "",
+              "Compact": null,
+              "MaxIter": 2,
+              "CompactNow": false
+            },
+            "type": "config"
+          },
+          {
+            "data": {
+              "to": "a"
+            },
+            "type": "handoff"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T09:37:59.244014+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.244014+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 0,
+      "parent_uuid": "0677ab82-a479-4fdf-8283-f65bb6a394b9",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "assistant",
+      "uuid": "09a31fa7-97bc-4668-b5c2-66c9870f1188",
+      "depth": 2,
+      "state": 0,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "thinking": "plan",
+              "signature": "sig-1"
+            },
+            "type": "thinking"
+          },
+          {
+            "data": {
+              "Text": "Looking."
+            },
+            "type": "text"
+          },
+          {
+            "data": {
+              "id": "srv_1",
+              "kind": "web_search",
+              "name": "web_search",
+              "text": "results",
+              "files": [
+                {
+                  "uri": "https://example.com/chart.png",
+                  "media_type": "image/png"
+                }
+              ],
+              "input": {
+                "max": 3,
+                "query": "go"
+              },
+              "result": {
+                "hits": [
+                  {
+                    "url": "https://go.dev"
+                  }
+                ]
+              }
+            },
+            "type": "server_tool"
+          },
+          {
+            "data": {
+              "id": "srv_2",
+              "kind": "code_execution",
+              "name": "code_execution",
+              "input": {
+                "code": "1+1"
+              }
+            },
+            "type": "server_tool"
+          },
+          {
+            "data": {
+              "ID": "call_rich",
+              "Name": "snapshot",
+              "Arguments": {
+                "f": 1.5,
+                "n": 3,
+                "big": 12345678901234,
+                "list": [
+                  1,
+                  {
+                    "k": "v"
+                  }
+                ]
+              },
+              "ArgumentsError": ""
+            },
+            "type": "tool_use"
+          },
+          {
+            "data": {
+              "ID": "call_bad",
+              "Name": "snapshot",
+              "Arguments": null,
+              "ArgumentsError": "unexpected end of JSON input"
+            },
+            "type": "tool_use"
+          },
+          {
+            "data": {
+              "model": "claude-x",
+              "provider": "anthropic"
+            },
+            "type": "route"
+          },
+          {
+            "data": {
+              "phase": "output",
+              "action": "pass",
+              "guardrail": "tone"
+            },
+            "type": "guardrail"
+          },
+          {
+            "data": {
+              "reason": "max_tokens"
+            },
+            "type": "truncation"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T09:37:59.245574+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.245574+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 0,
+      "parent_uuid": "ff5345d9-b5ce-4b3f-8b7b-71855b3e2451",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "system",
+      "uuid": "0f3207ef-660d-45b2-84d1-3ff092a12098",
+      "depth": 3,
+      "state": 0,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "Text": "plain result",
+              "IsError": false,
+              "ToolCallID": "call_plain"
+            },
+            "type": "tool_result"
+          },
+          {
+            "data": {
+              "Text": "boom",
+              "IsError": true,
+              "ToolCallID": "call_err"
+            },
+            "type": "tool_result"
+          },
+          {
+            "data": {
+              "Text": "chart attached",
+              "blocks": [
+                {
+                  "kind": "text",
+                  "text": "chart attached"
+                },
+                {
+                  "kind": "image",
+                  "media_type": "image/png"
+                },
+                {
+                  "uri": "https://example.com/chart.png",
+                  "kind": "image",
+                  "filename": "chart.png",
+                  "media_type": "image/png"
+                },
+                {
+                  "uri": "s3://bucket/report.pdf",
+                  "kind": "file",
+                  "filename": "report.pdf",
+                  "media_type": "application/pdf"
+                },
+                {
+                  "json": {
+                    "rows": 2
+                  },
+                  "kind": "json"
+                }
+              ],
+              "IsError": false,
+              "ToolCallID": "call_rich"
+            },
+            "type": "tool_result"
+          },
+          {
+            "data": {
+              "Text": "see image",
+              "blocks": [
+                {
+                  "kind": "image",
+                  "media_type": "image/png"
+                }
+              ],
+              "IsError": false,
+              "ToolCallID": "call_media_only"
+            },
+            "type": "tool_result"
+          },
+          {
+            "data": {
+              "Text": "sourced",
+              "IsError": false,
+              "citations": [
+                {
+                  "end": -1,
+                  "uri": "https://example.com",
+                  "kind": "web",
+                  "start": -1,
+                  "title": "Example"
+                }
+              ],
+              "ToolCallID": "call_cited",
+              "tool_version": "2"
+            },
+            "type": "tool_result"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T09:37:59.247242+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.247242+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 0,
+      "parent_uuid": "09a31fa7-97bc-4668-b5c2-66c9870f1188",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "user",
+      "uuid": "1ad6f009-6086-4759-ad63-1f107d939924",
+      "depth": 4,
+      "state": 0,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "Text": "human answer",
+              "IsError": false,
+              "ToolCallID": "call_human"
+            },
+            "type": "tool_result"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "main",
+      "created_at": "2026-10-10T09:37:59.248843+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.248843+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 0,
+      "parent_uuid": "0f3207ef-660d-45b2-84d1-3ff092a12098",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "user",
+      "uuid": "4e4cda28-e0f6-40ce-995b-06d3270ea000",
+      "depth": 3,
+      "state": 3,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "rating": 1,
+              "comment": "good",
+              "target_node_id": "09a31fa7-97bc-4668-b5c2-66c9870f1188"
+            },
+            "type": "feedback"
+          }
+        ]
+      },
+      "version": 1,
+      "branch_id": "feedback-cf70241c",
+      "created_at": "2026-10-10T09:37:59.250396+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.250396+00:00",
+      "archived_at": null,
+      "archived_by": "",
+      "child_index": 1,
+      "parent_uuid": "09a31fa7-97bc-4668-b5c2-66c9870f1188",
+      "conversation_id": "conv-golden-v1"
+    },
+    {
+      "role": "assistant",
+      "uuid": "f2c395e0-2d33-4a49-82b7-64985792a91d",
+      "depth": 2,
+      "state": 1,
+      "message": {
+        "content": [
+          {
+            "data": {
+              "Text": "alternative"
+            },
+            "type": "text"
+          }
+        ]
+      },
+      "version": 2,
+      "branch_id": "alt",
+      "created_at": "2026-10-10T09:37:59.253228+00:00",
+      "summary_of": [],
+      "updated_at": "2026-10-10T09:37:59.254763+00:00",
+      "archived_at": "2026-10-10T09:37:59.254763+00:00",
+      "archived_by": "fixture",
+      "child_index": 1,
+      "parent_uuid": "ff5345d9-b5ce-4b3f-8b7b-71855b3e2451",
+      "conversation_id": "conv-golden-v1"
+    }
+  ],
+  "root_id": "0677ab82-a479-4fdf-8283-f65bb6a394b9"
+}

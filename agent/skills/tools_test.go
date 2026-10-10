@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/selector"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func testCatalog(t *testing.T) *Catalog {
@@ -60,8 +61,8 @@ func systemText(call agenttest.ScriptedCall) string {
 	for _, m := range call.Messages {
 		if sm, ok := m.(types.SystemMessage); ok {
 			var b strings.Builder
-			for _, c := range sm.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range sm.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					b.WriteString(tc.Text)
 				}
 			}
@@ -81,13 +82,13 @@ func TestWithSkillsLoadNarrowsAndReads(t *testing.T) {
 		agenttest.TextResponse("done"),
 	}}
 	write := mock("write_file")
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:         "worker",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tools:        types.NewToolRegistry(mock("read_file"), write),
-	}, WithSkills(cat, nil), agent.WithMaxIter(8), func(c *agent.AgentConfig) { c.MaxConsecutiveErrors = -1 })
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("read the pdf")})
+	}, WithSkills(cat, nil), agent.WithMaxIter(8), func(c *agent.Config) { c.MaxConsecutiveErrors = -1 }))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("read the pdf"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -281,7 +282,7 @@ func TestToolsetPolicy(t *testing.T) {
 
 func TestWithSkillsKeepsCallerRegistry(t *testing.T) {
 	shared := types.NewToolRegistry(mock("read_file"))
-	agent.NewAgent(agent.AgentConfig{Provider: &agenttest.ScriptedProvider{}, Tools: shared}, WithSkills(testCatalog(t), nil))
+	must.Get(agent.New(agent.Config{Provider: &agenttest.ScriptedProvider{}, Tools: shared}, WithSkills(testCatalog(t), nil)))
 	if _, ok := shared.Get(LoadSkillName); ok {
 		t.Fatal("WithSkills must not modify the caller's registry")
 	}
@@ -320,12 +321,12 @@ func TestWithSkillsOverDeferredTools(t *testing.T) {
 		agenttest.ToolCallResponse("c3", "get_weather", map[string]any{}),
 		agenttest.TextResponse("sunny"),
 	}}
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:     "worker",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(deferred.Tool(), mock("read_file"), mock("write_file"), weather),
-	}, agent.WithToolPolicy(deferred), WithSkills(cat, nil), agent.WithMaxIter(6))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("weather?")})
+	}, agent.WithToolPolicy(deferred), WithSkills(cat, nil), agent.WithMaxIter(6)))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -378,7 +379,7 @@ func TestActiveSkillStaysInItsDelegation(t *testing.T) {
 		agenttest.TextResponse("second"),
 	}}
 	childTools := append(ts.Tools(), mock("read_file"), mock("write_file"))
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:     "parent",
 		Provider: parent,
 		SubAgents: []agent.SubAgentDef{{
@@ -387,8 +388,8 @@ func TestActiveSkillStaysInItsDelegation(t *testing.T) {
 			// about skill tools only.
 			Scratch: agent.SubAgentScratch{Off: true},
 		}},
-	}, agent.WithToolPolicy(ts.Policy(nil)))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	}, agent.WithToolPolicy(ts.Policy(nil))))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

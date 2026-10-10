@@ -15,6 +15,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/preset"
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 )
 
 // defaultAgentTool is the agent tool's name unless --agent-tool sets one.
@@ -35,14 +36,38 @@ type agentTool struct {
 	// matches it, returned as the tool's structured content.
 	schema *agenttypes.ParameterSchema
 	// newAgent builds the agent for one call.
-	newAgent func() *agentsdk.Agent
+	newAgent func() (*agentsdk.Agent, error)
 	// newBound, when set, replaces newAgent: it binds a definition for one
 	// call, and release frees what the binding opened.
 	newBound func(context.Context) (a *agentsdk.Agent, release func(), err error)
+	// newSession, when set, replaces both: it binds a definition for one
+	// call with its grant cap.
+	newSession func(context.Context) (agenthost.Agent, error)
 	// gated reports whether any of the agent's tools needs approval, which
 	// publishes the agent tool as destructive.
 	gated   bool
 	timeout time.Duration
+}
+
+// build makes the agent for one call. An agent built without a definition
+// gets an empty approval policy, so a grant a person attaches to a held
+// approval takes effect for the rest of the call.
+func (at agentTool) build(ctx context.Context) (agenthost.Agent, error) {
+	if at.newSession != nil {
+		return at.newSession(ctx)
+	}
+	if at.newBound != nil {
+		a, release, err := at.newBound(ctx)
+		if err != nil {
+			return agenthost.Agent{}, err
+		}
+		return agenthost.Agent{Agent: a, Release: release}, nil
+	}
+	a, err := at.newAgent()
+	if err != nil {
+		return agenthost.Agent{}, err
+	}
+	return agenthost.Agent{Agent: a}, nil
 }
 
 // newAgentTool builds the agent tool from the flags. The agent runs the
@@ -59,7 +84,7 @@ func newAgentTool(ctx context.Context, f agentFlags, tools *agenttypes.ToolRegis
 			return agentTool{}, err
 		}
 	}
-	bundle, err := preset.Build(ctx, cat, f.ref, nil, preset.Options{})
+	bundle, err := preset.Build(ctx, cat, agenttypes.PresetName(f.ref), nil, preset.Options{})
 	if err != nil {
 		return agentTool{}, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}
@@ -72,16 +97,16 @@ func newAgentTool(ctx context.Context, f agentFlags, tools *agenttypes.ToolRegis
 	at := agentTool{
 		name: f.name, description: f.description, schema: schema, timeout: f.timeout,
 		gated: anyGated(tools),
-		newAgent: func() *agentsdk.Agent {
-			cfg := agentsdk.AgentConfig{Name: f.name, SystemPrompt: f.system, MaxIter: f.maxIter}
+		newAgent: func() (*agentsdk.Agent, error) {
+			cfg := agentsdk.Config{Name: f.name, SystemPrompt: f.system, MaxIter: f.maxIter}
 			if len(tools.Definitions()) > 0 {
 				cfg.Tools = tools
 			}
-			opts := []agentsdk.AgentOption{agentsdk.WithPreset(bundle)}
+			opts := []agentsdk.Option{agentsdk.WithPreset(bundle), agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
 			if schema != nil {
 				opts = append(opts, agentsdk.WithResponseSchema(schema))
 			}
-			return agentsdk.NewAgent(cfg, opts...)
+			return agentsdk.New(cfg, opts...)
 		},
 	}
 	if at.description == "" {
@@ -121,7 +146,9 @@ func anyGated(r *agenttypes.ToolRegistry) bool {
 
 // registerAgent publishes the agent tool. Its input is {"task": "..."}; its
 // output is the agent's final answer, or with a schema the structured result
-// as both JSON text and structured content.
+// as both JSON text and structured content. When the bridge can hold
+// approvals and the agent may ask for one, it also publishes the resume
+// tool that continues a held run.
 func (b bridge) registerAgent(server *mcp.Server, at agentTool) {
 	t := true
 	tool := &mcp.Tool{
@@ -157,53 +184,116 @@ func (b bridge) registerAgent(server *mcp.Server, at agentTool) {
 		if in.Task == "" {
 			return errorResult("task is required"), nil
 		}
-		if at.timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, at.timeout)
-			defer cancel()
-		}
-		answer, err := b.runAgent(ctx, req.Session, at, in.Task)
+		run, err := b.startAgent(ctx, at, in.Task)
 		if err != nil {
 			return errorResult(at.name + " failed: " + err.Error()), nil
 		}
-		if at.schema == nil {
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: answer}}}, nil
-		}
-		return structuredResult(at.name, answer)
+		return b.drive(ctx, req.Session, at, run), nil
 	})
+	if at.gated && b.approval == approvalElicit && b.held != nil {
+		b.registerResume(server, at)
+	}
 }
 
-// runAgent runs one agent on task and returns its final text. Every marker
-// the agent raises is decided as a direct call to the tool would be, so the
-// agent cannot run a tool the client could not run itself.
-func (b bridge) runAgent(ctx context.Context, session *mcp.ServerSession, at agentTool, task string) (string, error) {
-	var a *agentsdk.Agent
-	if at.newBound != nil {
-		var release func()
-		var err error
-		if a, release, err = at.newBound(ctx); err != nil {
-			return "", err
-		}
-		defer release()
-	} else {
-		a = at.newAgent()
+// startAgent builds the agent for one call and starts it on task. The run
+// lives on the bridge's context, bounded by the agent timeout, so a held
+// approval can outlast the call that raised it.
+func (b bridge) startAgent(ctx context.Context, at agentTool, task string) (*agentRun, error) {
+	base := context.WithoutCancel(ctx)
+	if b.held != nil {
+		base = b.held.ctx
 	}
-	stream := a.Invoke(ctx, []agenttypes.Message{agenttypes.NewUserMessage(task)})
-	transcript, err := agentsdk.Collect(stream, func(d agenttypes.Delta) {
-		m, ok := d.(agenttypes.MarkerDelta)
-		if !ok {
-			return
+	runCtx, cancel := context.WithCancel(base)
+	if at.timeout > 0 {
+		runCtx, cancel = context.WithTimeout(base, at.timeout)
+	}
+	ag, err := at.build(ctx)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	run := newAgentRun(cancel)
+	release := ag.Release
+	ag.Release = func() {
+		run.stop()
+		if release != nil {
+			release()
+		}
+	}
+	sess, err := b.runs().Create("", run, func() (agenthost.Agent, error) { return ag, nil })
+	if err != nil {
+		ag.Release()
+		return nil, err
+	}
+	run.sess = sess
+	stream, err := sess.Start(runCtx, agenttypes.UserMsg(agenttypes.Text(task)))
+	if err != nil {
+		b.runs().Remove(sess.ID)
+		return nil, err
+	}
+	go run.collect(stream)
+	return run, nil
+}
+
+// runs returns the sessions of running agent calls.
+func (b bridge) runs() *agenthost.Manager[*agentRun] {
+	if b.held != nil {
+		return b.held.runs
+	}
+	return directRuns
+}
+
+// directRuns holds the runs of a bridge that cannot hold approvals: each
+// lasts one call.
+var directRuns = func() *agenthost.Manager[*agentRun] {
+	m, err := agenthost.New[*agentRun](agenthost.Config{Max: 1 << 20, Prefix: "run_"})
+	if err != nil {
+		panic(err) // a constant, valid configuration
+	}
+	return m
+}()
+
+// drive waits for the run's next event: its end, or a marker to decide.
+// Every marker the agent raises is decided as a direct call to the tool
+// would be, so the agent cannot run a tool the client could not run itself.
+// A marker the client cannot be asked about is held, when the bridge can
+// hold approvals, and the call returns an approval-required result.
+func (b bridge) drive(ctx context.Context, session *mcp.ServerSession, at agentTool, run *agentRun) *mcp.CallToolResult {
+	for {
+		var ev runEvent
+		select {
+		case ev = <-run.events:
+		case <-ctx.Done():
+			// The client gave up on the call; nothing can resume it.
+			b.runs().Remove(run.sess.ID)
+			return errorResult(at.name + " failed: " + ctx.Err().Error())
+		}
+		if ev.marker == nil {
+			b.runs().Remove(run.sess.ID)
+			if ev.err != nil {
+				return errorResult(at.name + " failed: " + ev.err.Error())
+			}
+			if at.schema == nil {
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: ev.text}}}
+			}
+			res, _ := structuredResult(at.name, ev.text)
+			return res
+		}
+		m := *ev.marker
+		if b.approval == approvalElicit && b.held != nil && (session == nil || !supportsElicitation(session)) {
+			res, err := b.held.hold(at, run, m)
+			if err != nil {
+				run.stream().ResolveMarkerWithMessage(m.ToolCallID, false, nil, m.ToolName+" requires human approval, and it could not be held: "+err.Error())
+				continue
+			}
+			return res
 		}
 		if refusal := b.approveInner(ctx, session, m); refusal != "" {
-			stream.ResolveMarkerWithMessage(m.ToolCallID, false, nil, refusal)
-			return
+			run.stream().ResolveMarkerWithMessage(m.ToolCallID, false, nil, refusal)
+			continue
 		}
-		stream.ResolveMarker(m.ToolCallID, true, nil)
-	})
-	if err != nil {
-		return "", err
+		run.stream().ResolveMarker(m.ToolCallID, true, nil)
 	}
-	return transcript.Text, nil
 }
 
 // approveInner decides a marker raised inside the agent. elicit and deny

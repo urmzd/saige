@@ -1,5 +1,5 @@
 // Package main demonstrates the response-cache provider decorator. Wrapping any
-// types.Provider with cache.New memoizes ChatStream responses keyed by a
+// types.Provider with cache.New memoizes Stream responses keyed by a
 // deterministic hash of (model, messages, tools, schema). The first call streams
 // live and is recorded; an identical second call replays the recorded deltas
 // without touching the upstream provider, and reports UsageDelta{CacheHit: true}.
@@ -21,28 +21,34 @@ import (
 )
 
 func main() {
-	base := ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", ""))
+	base, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	cached := cache.New(base, cache.Config{
+	cached, err := cache.New(base, cache.Config{
 		Cache:        memcache.New[cache.CachedResponse](),
 		KeyNamespace: "demo",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	request := []types.Message{
-		types.NewSystemMessage("You are concise."),
-		types.NewUserMessage("Name three primary colors."),
+		types.SystemMsg(types.Text("You are concise.")),
+		types.UserMsg(types.Text("Name three primary colors.")),
 	}
 
 	call := func(label string) {
-		ch, err := cached.ChatStream(context.Background(), request, nil)
+		ch, err := cached.Stream(context.Background(), types.Request{Messages: request})
 		if err != nil {
 			log.Fatal(err)
 		}
 		fmt.Printf("%s: ", label)
 		for d := range ch {
 			switch v := d.(type) {
-			case types.TextContentDelta:
-				fmt.Print(v.Content)
+			case types.PartDelta:
+				fmt.Print(v.Text)
 			case types.UsageDelta:
 				if v.CacheHit {
 					fmt.Print("  [served from cache]")

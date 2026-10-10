@@ -14,7 +14,7 @@ func TestManifestAndWireIDs(t *testing.T) {
 	b, _ := Manifest("p", "m", requests("x", "y"))
 	c, _ := Manifest("p", "other", requests("x", "y"))
 	reqs := requests("x", "y")
-	reqs[1].Messages = []types.Message{types.NewSystemMessage("q-y")}
+	reqs[1].Messages = []types.Message{types.SystemMsg(types.Text("q-y"))}
 	d, _ := Manifest("p", "m", reqs)
 	if a != b || a == c || a == d {
 		t.Fatalf("manifests: %s %s %s %s", a, b, c, d)

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
   workflow_call:
 
 permissions:
@@ -162,9 +162,10 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
 
-  # The README embeds the programs under examples/quickstart with fsrc
-  # markers. The build job compiles those programs; this job fails when the
-  # README no longer matches them. Fix with `fsrc run README.md`.
+  # The README and the parts guide embed the programs under
+  # examples/quickstart and examples/parts with fsrc markers. The build job
+  # compiles those programs; this job fails when a document no longer
+  # matches them. Fix with `fsrc run README.md docs/parts.md`.
   embed:
     name: Embedded examples
     runs-on: ubuntu-latest
@@ -172,8 +173,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: urmzd/fsrc@v4
         with:
-          files: README.md
+          files: README.md docs/parts.md
           commit-dry: "true"
           commit-push: "false"
-      # The action stages README.md, so compare against HEAD, not the index.
-      - run: git diff --exit-code HEAD -- README.md
+      # The action stages the files, so compare against HEAD, not the index.
+      - run: git diff --exit-code HEAD -- README.md docs/parts.md

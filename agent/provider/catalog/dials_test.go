@@ -18,12 +18,13 @@ func dialMode(m types.ReasoningMode) *types.ReasoningDial {
 func TestDialsOverDefaultCatalog(t *testing.T) {
 	focused := types.Dials{Creativity: dialCreativity(types.CreativityFocused)}
 	for _, tc := range []struct {
-		provider, model string
-		dials           types.Dials
-		ctx             types.DialContext
-		dial            types.DialName
-		action          types.DialAction
-		sent            string
+		provider types.ProviderName
+		model    string
+		dials    types.Dials
+		ctx      types.DialContext
+		dial     types.DialName
+		action   types.DialAction
+		sent     string
 	}{
 		// Scenario (a): creativity on a failover chain.
 		{"openai", "gpt-6-luna", focused, types.DialContext{}, types.DialCreativity, types.DialDropped, ""},
@@ -51,7 +52,7 @@ func TestDialsOverDefaultCatalog(t *testing.T) {
 			types.DialCreativity, types.DialApplied, "temperature=0"},
 		{"openai", "gpt-4.1", types.Dials{Seed: new(int64)}, types.DialContext{}, types.DialReproducible, types.DialApplied, "seed=0"},
 	} {
-		t.Run(tc.provider+"/"+tc.model+"/"+string(tc.dial), func(t *testing.T) {
+		t.Run(string(tc.provider)+"/"+tc.model+"/"+string(tc.dial), func(t *testing.T) {
 			mc := MustLookup(tc.provider, tc.model)
 			eff, rep, err := types.ResolveDials(mc, types.RequestOptions{}, tc.ctx, types.DialPolicy{}, types.DialLayer{Scope: types.DialScopeAgent, Dials: tc.dials})
 			if err != nil {
@@ -102,8 +103,8 @@ func allDialValues() []types.Dials {
 // the error matches ErrInvalidModelConfig.
 func checkCompiled(t *testing.T, e Entry, d types.Dials, ctx types.DialContext) {
 	t.Helper()
-	mc := e.Caps.ForModel(e.Prefix)
-	mc.Provider = e.Provider
+	mc := e.Caps.ForModel(string(e.Prefix))
+	mc.Provider = string(e.Provider)
 	eff, rep, err := types.ResolveDials(mc, types.RequestOptions{}, ctx, types.DialPolicy{}, types.DialLayer{Scope: types.DialScopeEntry, Dials: d})
 	if err != nil {
 		if !errors.Is(err, types.ErrInvalidModelConfig) {

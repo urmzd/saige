@@ -2,29 +2,27 @@ package fallback
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
-// stubProvider reports a fixed identity, capability set and media support.
+// stubProvider reports a fixed identity and capability set.
 type stubProvider struct {
 	name  string
 	model string
 	caps  *types.ModelCapabilities // nil = does not report
-	media map[types.MediaType]bool
 }
 
-func (s *stubProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (s *stubProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
 }
 func (s *stubProvider) Name() string  { return s.name }
 func (s *stubProvider) Model() string { return s.model }
-func (s *stubProvider) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{NativeTypes: s.media}
-}
 func (s *stubProvider) Capabilities() types.ModelCapabilities {
 	if s.caps == nil {
 		return types.ModelCapabilities{}
@@ -46,15 +44,12 @@ func mk(caps ...types.Capability) *types.ModelCapabilities {
 }
 
 func TestModelReportsThePrimary(t *testing.T) {
-	f := New(
-		&stubProvider{name: "a", model: "primary-model"},
-		&stubProvider{name: "b", model: "secondary-model"},
-	)
+	f := must.Get(Of(&stubProvider{name: "a", model: "primary-model"}, &stubProvider{name: "b", model: "secondary-model"}))
 	if got := types.ProviderModel(f); got != "primary-model" {
 		t.Errorf("Model() = %q, want the primary's model", got)
 	}
-	if got := types.ProviderModel(New()); got != "" {
-		t.Errorf("Model() on an empty chain = %q, want empty", got)
+	if _, err := Of(); !errors.Is(err, types.ErrInvalidConfig) {
+		t.Errorf("an empty chain: %v", err)
 	}
 }
 
@@ -62,10 +57,10 @@ func TestCapabilitiesAreTheIntersection(t *testing.T) {
 	// The primary reasons, the secondary does not. A caller that trusted the
 	// primary's declaration would enable thinking and get a 400 the moment the
 	// chain fell through.
-	f := New(
+	f := must.Get(Of(
 		&stubProvider{name: "a", caps: mk(types.CapTools, types.CapReasoning, types.CapTemperature)},
 		&stubProvider{name: "b", caps: mk(types.CapTools, types.CapTemperature)},
-	)
+	))
 	caps, ok := types.ProviderCapabilities(f)
 	if !ok {
 		t.Fatal("fallback must report capabilities")
@@ -79,10 +74,7 @@ func TestCapabilitiesAreTheIntersection(t *testing.T) {
 }
 
 func TestCapabilitiesCollapseWhenAMemberDoesNotReport(t *testing.T) {
-	f := New(
-		&stubProvider{name: "a", caps: mk(types.CapTools, types.CapStructuredOutput)},
-		&bareStub{},
-	)
+	f := must.Get(Of(&stubProvider{name: "a", caps: mk(types.CapTools, types.CapStructuredOutput)}, &bareStub{}))
 	caps, _ := types.ProviderCapabilities(f)
 	if len(caps.List()) != 0 {
 		t.Errorf("caps = %v, want nothing: an unreporting member makes the chain unknown", caps.List())
@@ -92,24 +84,8 @@ func TestCapabilitiesCollapseWhenAMemberDoesNotReport(t *testing.T) {
 	}
 }
 
-func TestContentSupportIsTheIntersection(t *testing.T) {
-	// A PDF the primary reads natively must still be extracted to text, because
-	// the secondary cannot read it.
-	f := New(
-		&stubProvider{name: "a", media: map[types.MediaType]bool{types.MediaPNG: true, types.MediaPDF: true}},
-		&stubProvider{name: "b", media: map[types.MediaType]bool{types.MediaPNG: true}},
-	)
-	got := types.ProviderContentSupport(f)
-	if got.Supports(types.MediaPDF) {
-		t.Error("media only the primary handles must not be advertised by the chain")
-	}
-	if !got.Supports(types.MediaPNG) {
-		t.Error("shared media must survive")
-	}
-}
-
 func TestSingleMemberChainPassesCapabilitiesThrough(t *testing.T) {
-	f := New(&stubProvider{name: "a", caps: mk(types.CapTools, types.CapReasoning)})
+	f := must.Get(Of(&stubProvider{name: "a", caps: mk(types.CapTools, types.CapReasoning)}))
 	caps, _ := types.ProviderCapabilities(f)
 	if !caps.SupportsAll(types.CapTools, types.CapReasoning) {
 		t.Errorf("a one-member chain must report exactly that member, got %v", caps.List())

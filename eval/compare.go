@@ -167,11 +167,6 @@ type Comparison struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// ExperimentResult is the former name of [Comparison].
-//
-// Deprecated: Use [Comparison].
-type ExperimentResult = Comparison
-
 // Regressions returns the cases whose status is [CaseRegressed].
 func (c *Comparison) Regressions() []CaseDiff {
 	var out []CaseDiff
@@ -224,13 +219,6 @@ func Compare(ctx context.Context, inputs []Observation, base, exp Subject, score
 	}
 
 	return result, errors.Join(baseErr, expErr)
-}
-
-// RunExperiment runs both subjects on the same inputs and compares them.
-//
-// Deprecated: Use [Compare], which takes the same arguments.
-func RunExperiment(ctx context.Context, inputs []Observation, base, exp Subject, scorers []Scorer, opts ...ExperimentOption) (*ExperimentResult, error) {
-	return Compare(ctx, inputs, base, exp, scorers, append([]Option{WithName("experiment")}, opts...)...)
 }
 
 // CompareSuites compares two finished suites, such as a baseline saved with

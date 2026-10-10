@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/provider/ollama"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -23,8 +24,10 @@ func ptr[T any](v T) *T { return &v }
 
 func TestInfer(t *testing.T) {
 	for _, tt := range []struct {
-		model, provider, bare string
-		err                   bool
+		model    string
+		provider types.ProviderName
+		bare     string
+		err      bool
 	}{
 		{"claude-sonnet-4-5", Anthropic, "claude-sonnet-4-5", false},
 		{"gpt-4o-mini", OpenAI, "gpt-4o-mini", false},
@@ -56,7 +59,7 @@ func TestBuildSelectsAdapterAndCredentials(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		cfg      Config
-		provider string
+		provider types.ProviderName
 		model    string
 		check    func(error) bool // nil means success
 	}{
@@ -83,7 +86,7 @@ func TestBuildSelectsAdapterAndCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := p.(types.NamedProvider).Name(); got != tt.provider {
+			if got := p.(types.NamedProvider).Name(); got != string(tt.provider) {
 				t.Errorf("provider = %s, want %s", got, tt.provider)
 			}
 			if got := p.(types.ModelProvider).Model(); got != tt.model {
@@ -161,11 +164,11 @@ func TestBuildAppliesOptions(t *testing.T) {
 			if tt.name == "ollama" {
 				key = "" // the ollama adapter sends no key, so Build rejects one
 			}
-			p, err := Build(context.Background(), Config{Model: tt.model, APIKey: key, BaseURL: server.URL, Options: opts})
+			p, err := Build(context.Background(), Config{Model: types.ModelID(tt.model), APIKey: key, BaseURL: server.URL, Options: opts})
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, tools)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: tools})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,9 +200,19 @@ func TestOllamaHostResolution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if host := p.(*ollama.Adapter).Client.Host; !strings.EqualFold(host, tt.want) {
+			if host := mustAs[*ollama.Adapter](t, p).Client.Host; !strings.EqualFold(host, tt.want) {
 				t.Errorf("host = %s, want %s", host, tt.want)
 			}
 		})
 	}
+}
+
+// mustAs finds T in p's decorator chain.
+func mustAs[T any](t *testing.T, p types.Provider) T {
+	t.Helper()
+	v, ok := wrapper.As[T](p)
+	if !ok {
+		t.Fatalf("%T has no %T in its chain", p, v)
+	}
+	return v
 }

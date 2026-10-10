@@ -8,40 +8,52 @@ import (
 
 // Ollama API wire types.
 
+// ChatMessage is one message of an Ollama chat request or response.
 type ChatMessage struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
 	Thinking  string     `json:"thinking,omitempty"`
 	Images    []string   `json:"images,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID and ToolName tie a tool message to the call it answers.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
 }
 
+// ToolCall is a tool call in an Ollama chat message.
 type ToolCall struct {
+	// ID is the call ID the server assigns; it is echoed on replay.
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
+// ToolCallFunction names the function a ToolCall calls and its arguments.
 type ToolCallFunction struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
 }
 
+// Tool is a tool definition in an Ollama chat request.
 type Tool struct {
 	Type     string       `json:"type"`
 	Function ToolFunction `json:"function"`
 }
 
+// ToolFunction describes a function tool.
 type ToolFunction struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Parameters  ToolFunctionParams `json:"parameters"`
 }
 
+// ToolFunctionParams is a function tool's parameter schema.
 type ToolFunctionParams struct {
 	Type       string                  `json:"type"`
 	Required   []string                `json:"required"`
 	Properties map[string]ToolProperty `json:"properties"`
 }
 
+// ToolProperty is one property of a ToolFunctionParams schema.
 type ToolProperty struct {
 	Nullable    bool                    `json:"-"`
 	Type        string                  `json:"type"`
@@ -53,6 +65,7 @@ type ToolProperty struct {
 	Default     any                     `json:"default,omitempty"`
 }
 
+// ChatRequest is the body of POST /api/chat.
 type ChatRequest struct {
 	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
@@ -67,6 +80,7 @@ type ChatRequest struct {
 	Think *bool `json:"think,omitempty"`
 }
 
+// ChatChunk is one line of a streamed /api/chat response.
 type ChatChunk struct {
 	Model              string      `json:"model,omitempty"`
 	Message            ChatMessage `json:"message"`
@@ -86,6 +100,7 @@ type ChatChunk struct {
 	Err error `json:"-"`
 }
 
+// GenerateRequest is the body of POST /api/generate.
 type GenerateRequest struct {
 	Model   string `json:"model"`
 	Prompt  string `json:"prompt"`
@@ -95,6 +110,7 @@ type GenerateRequest struct {
 	Think   *bool  `json:"think,omitempty"`
 }
 
+// GenerateResponse is a /api/generate response.
 type GenerateResponse struct {
 	Response string `json:"response"`
 	Thinking string `json:"thinking,omitempty"`
@@ -105,11 +121,13 @@ type GenerateResponse struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// EmbedRequest is the body of POST /api/embed.
 type EmbedRequest struct {
 	Model string `json:"model"`
 	Input string `json:"input"`
 }
 
+// EmbedResponse is a /api/embed response.
 type EmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }

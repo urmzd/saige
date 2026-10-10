@@ -57,7 +57,7 @@ type AIFunction[In, Out any] struct {
 // input and output schemas, the output mode and the serving configuration
 // hash, so a change to any of them is a new version. The tool from Tool
 // reports it, so the agent loop records it next to each result in the tree
-// (types.ToolResultContent.ToolVersion) and eval provenance lists it
+// (types.ToolResultPart.ToolVersion) and eval provenance lists it
 // (eval.Provenance.Tools).
 func AIFunc[In, Out any](name, description string, cfg AIConfig) (*AIFunction[In, Out], error) {
 	if name == "" {
@@ -111,12 +111,15 @@ func (f *AIFunction[In, Out]) Call(ctx context.Context, in In) (Out, error) {
 	if err != nil {
 		return zero, err
 	}
-	var opts []AgentOption
+	var opts []Option
 	if f.cfg.Preset != nil {
 		opts = append(opts, WithPreset(f.cfg.Preset))
 	}
-	a := NewAgent(AgentConfig{Name: f.name, SystemPrompt: f.cfg.System, Provider: f.cfg.Provider}, opts...)
-	out, _, err := Structured[Out](ctx, a, []types.Message{types.NewUserMessage(prompt)}, OutputSpec[Out]{
+	a, err := New(Config{Name: f.name, SystemPrompt: f.cfg.System, Provider: f.cfg.Provider}, opts...)
+	if err != nil {
+		return zero, err
+	}
+	out, _, err := Structured[Out](ctx, a, []types.Message{types.UserMsg(types.Text(prompt))}, OutputSpec[Out]{
 		Mode:   f.cfg.Mode,
 		Repair: f.cfg.Repair,
 	})
@@ -166,5 +169,5 @@ func aiConfigHash(cfg AIConfig) string {
 		}
 		return "preset:" + d.Name + "@" + d.CatalogRevision
 	}
-	return "provider:" + types.ProviderName(cfg.Provider) + "/" + types.ProviderModel(cfg.Provider)
+	return "provider:" + types.NameOf(cfg.Provider) + "/" + types.ProviderModel(cfg.Provider)
 }

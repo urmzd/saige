@@ -133,7 +133,6 @@ func TestPresetExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	strict := c.clone()
-	strict.Models = append(strict.Models[:0:0], strict.Models...)
 	_, err := strict.Resolve("deterministic-extract-strict")
 	if err != nil {
 		t.Fatalf("both models are exact rows: %v", err)
@@ -315,7 +314,7 @@ func TestPresetCompaction(t *testing.T) {
 			{"strategy":"relevant_plus_summary","keep_turns":3,"select_k":2,"summary_model":"claude-haiku-5-5"}]},
 		"chain":[{"provider":"anthropic","model":"claude-haiku-5-5"}]},
 		"child":{"extends":"base"}}}`)
-	for _, name := range []string{"base", "child"} {
+	for _, name := range []types.PresetName{"base", "child"} {
 		rp, err := c.Resolve(name)
 		if err != nil {
 			t.Fatal(err)

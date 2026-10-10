@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
@@ -25,6 +25,13 @@ import (
 // when the run would finish, Ctrl-J (what most terminals send for Ctrl-Enter)
 // or Alt-Enter steers the run at its next safe point, and Esc stops the run
 // without leaving the session. /continue resumes a stopped or cut-off turn.
+//
+// The transcript scrolls with PgUp/PgDn (a page), Shift-Up/Shift-Down (half
+// a page), Up/Down (a line), Ctrl-Home/Ctrl-End (top and bottom) and the
+// mouse wheel; with an empty input, Home/End and Ctrl-U/Ctrl-D work too. It
+// follows new output until scrolled up, and again once back at the bottom.
+// Ctrl-F filters the transcript by kind and text, and Ctrl-T expands
+// reasoning.
 type Runner struct {
 	Title    string   // header title; empty uses the agent name
 	Verbose  bool     // use plain text streaming instead of bubbletea
@@ -37,6 +44,11 @@ type Runner struct {
 	// and os.Stdout. Approval prompts are written to Out and answered on In.
 	In  io.Reader
 	Out io.Writer
+
+	// NoAnimation turns off the spinner, fade-in and smooth scrolling. They
+	// are also off when NO_COLOR or SAIGE_REDUCED_MOTION is set (see
+	// MotionEnabled).
+	NoAnimation bool
 }
 
 func (r *Runner) in() io.Reader {
@@ -128,7 +140,7 @@ func (r *Runner) runVerbose(ctx context.Context, agent *agentsdk.Agent) error {
 				continue
 			}
 		} else {
-			stream = agent.Invoke(ctx, []types.Message{types.NewUserMessage(input)})
+			stream = agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(input))})
 		}
 
 		// Markers are resolved inline by the renderer: Deltas() has a single
@@ -160,11 +172,11 @@ func (r *Runner) runInteractive(ctx context.Context, agent *agentsdk.Agent) erro
 	if r.Template.RenderMarkdown {
 		markdownStyle() // detect the terminal background before the program owns input
 	}
-	m := newRunnerModel(agent, ctx, r.Template)
+	m := newRunnerModel(agent, ctx, r.Template).withMotion(MotionEnabled(r.NoAnimation))
 	if r.Title != "" {
 		m.header.Name = r.Title
 	}
-	p := tea.NewProgram(m, tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithContext(ctx), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if rm, ok := finalModel.(runnerModel); ok && rm.stream != nil {
 		// The program can end without a quit key (a cancelled context or a
@@ -237,7 +249,7 @@ type runnerModel struct {
 	phase     runnerPhase
 	textInput textinput.Model
 	spinner   spinner.Model
-	viewport  viewport.Model
+	scroll    scroller
 	stream    *agentsdk.EventStream
 	deltaCh   <-chan types.Delta
 	gen       int // generation of the stream being read
@@ -257,6 +269,18 @@ type runnerModel struct {
 	runFailed bool   // the active run ended with an error
 	quitArmed bool   // one ctrl+c seen; a second one quits
 	notice    string // one-line hint shown above the input
+
+	// filter narrows the transcript; while filtering, keys edit it in
+	// filterInput instead of the message input.
+	filter      transcriptFilter
+	filterInput textinput.Model
+	filtering   bool
+	// expandThinking shows reasoning in full.
+	expandThinking bool
+	// animate turns on the spinner, fade-in and smooth scrolling; clock
+	// times the fade.
+	animate bool
+	clock   func() time.Time
 }
 
 const (
@@ -270,6 +294,10 @@ const (
 
 	// keyCtrlC is the key name bubbletea reports for Ctrl-C.
 	keyCtrlC = "ctrl+c"
+	// keyFilter opens the transcript filter.
+	keyFilter = "ctrl+f"
+	keyEsc    = "esc"
+	keyEnter  = "enter"
 )
 
 func newRunnerModel(agent *agentsdk.Agent, ctx context.Context, tmpl Template) runnerModel {
@@ -291,17 +319,34 @@ func newRunnerModel(agent *agentsdk.Agent, ctx context.Context, tmpl Template) r
 	}
 
 	return runnerModel{
-		header:    header,
-		template:  tmpl,
-		ctx:       ctx,
-		agent:     agent,
-		phase:     phaseInput,
-		textInput: ti,
-		spinner:   newSpinner(),
-		viewport:  viewport.New(80, 20),
-		act:       newActivity(info.SubAgents),
-		injected:  make(map[string]bool),
+		header:      header,
+		template:    tmpl,
+		ctx:         ctx,
+		agent:       agent,
+		phase:       phaseInput,
+		textInput:   ti,
+		spinner:     newSpinner(),
+		scroll:      newScroller(false),
+		act:         newActivity(info.SubAgents),
+		injected:    make(map[string]bool),
+		filterInput: newFilterInput(),
+		clock:       time.Now,
 	}
+}
+
+// withMotion returns m with animation on or off.
+func (m runnerModel) withMotion(on bool) runnerModel {
+	m.animate = on
+	m.scroll.animate = on
+	return m
+}
+
+// spin is the spinner frame for work in progress.
+func (m runnerModel) spin() string {
+	if !m.animate {
+		return staticSpinner
+	}
+	return m.spinner.View()
 }
 
 func (m runnerModel) running() bool { return m.stream != nil }
@@ -317,6 +362,9 @@ func (m runnerModel) marker() *markerPending {
 }
 
 func (m runnerModel) Init() tea.Cmd {
+	if !m.animate {
+		return textinput.Blink
+	}
 	return tea.Batch(textinput.Blink, m.spinner.Tick)
 }
 
@@ -325,19 +373,21 @@ func (m runnerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
+		m.scroll.wheel(msg)
+		return m, nil
+	case scrollTickMsg:
+		return m, m.scroll.tick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.textInput.Width = max(msg.Width-4, 10)
+		m.filterInput.Width = max(msg.Width-4, 10)
 		m.ready = true
 		m.refresh()
 		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		if m.running() {
+		if m.running() || m.fading() {
 			m.refresh()
 		}
 		return m, cmd
@@ -370,7 +420,26 @@ func (m runnerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.filtering && key != keyCtrlC {
+		return m.handleFilterKey(msg)
+	}
+	if a := m.scrollKey(key); a != scrollNone {
+		return m, m.scroll.do(a)
+	}
+
 	switch key {
+	case keyFilter:
+		m.filtering = true
+		m.filterInput.SetValue(m.filter.raw)
+		m.filterInput.CursorEnd()
+		m.filterInput.Focus()
+		m.textInput.Blur()
+		m.refresh()
+		return m, textinput.Blink
+	case "ctrl+t":
+		m.expandThinking = !m.expandThinking
+		m.refresh()
+		return m, nil
 	case keyCtrlC:
 		if m.quitArmed {
 			m.cancelStream()
@@ -387,14 +456,18 @@ func (m runnerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
-	case "esc":
-		if m.running() && !m.stopping {
+	case keyEsc:
+		switch {
+		case m.running() && !m.stopping:
 			m.stop()
+			m.refresh()
+		case !m.running() && m.filter.active():
+			m.filter = transcriptFilter{}
 			m.refresh()
 		}
 		return m, nil
 
-	case "enter":
+	case keyEnter:
 		if m.phase == phaseMarker && m.marker() != nil {
 			return m.answerMarker()
 		}
@@ -406,23 +479,97 @@ func (m runnerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.submit(agentsdk.SubmitSteer)
 
-	case "pgup":
-		m.viewport.PageUp()
-		return m, nil
-	case "pgdown":
-		m.viewport.PageDown()
-		return m, nil
-	case "up":
-		m.viewport.ScrollUp(1)
-		return m, nil
-	case "down":
-		m.viewport.ScrollDown(1)
-		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.textInput, cmd = m.textInput.Update(msg)
 	return m, cmd
+}
+
+// scrollKey maps a key to a transcript scroll. Keys the input also uses
+// (Home, End, Ctrl-U, Ctrl-D) scroll only while the input is empty, where
+// they would do nothing.
+func (m runnerModel) scrollKey(key string) scrollAction {
+	switch key {
+	case "pgup":
+		return scrollPageUp
+	case "pgdown":
+		return scrollPageDown
+	case "shift+up":
+		return scrollHalfUp
+	case "shift+down":
+		return scrollHalfDown
+	case "up":
+		return scrollLineUp
+	case "down":
+		return scrollLineDown
+	case "ctrl+home":
+		return scrollTop
+	case "ctrl+end":
+		return scrollBottom
+	}
+	input := m.textInput.Value()
+	if m.filtering {
+		input = m.filterInput.Value()
+	}
+	if input != "" {
+		return scrollNone
+	}
+	switch key {
+	case "home":
+		return scrollTop
+	case "end":
+		return scrollBottom
+	case "ctrl+u":
+		return scrollHalfUp
+	case "ctrl+d":
+		return scrollHalfDown
+	}
+	return scrollNone
+}
+
+// handleFilterKey edits the transcript filter. Enter or Ctrl-F keeps it and
+// returns to the message input; Esc clears it.
+func (m runnerModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case keyEnter, keyFilter:
+		m.endFilter()
+		return m, nil
+	case keyEsc:
+		m.filter = transcriptFilter{}
+		m.endFilter()
+		return m, nil
+	default:
+		if a := m.scrollKey(key); a != scrollNone {
+			return m, m.scroll.do(a)
+		}
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.filter = parseFilter(m.filterInput.Value())
+	m.refresh()
+	return m, cmd
+}
+
+func (m *runnerModel) endFilter() {
+	m.filtering = false
+	m.filterInput.Blur()
+	m.textInput.Focus()
+	m.refresh()
+}
+
+// fading reports whether an entry is still fading in.
+func (m runnerModel) fading() bool {
+	if !m.animate {
+		return false
+	}
+	now := m.clock()
+	for i := len(m.act.entries) - 1; i >= 0; i-- {
+		if age := now.Sub(m.act.entries[i].born); age >= 0 && age < fadeFor {
+			return true
+		}
+	}
+	return false
 }
 
 // answerMarker resolves the oldest pending marker from the input. Only y/yes
@@ -493,7 +640,7 @@ func (m runnerModel) submit(mode agentsdk.SubmitMode) (tea.Model, tea.Cmd) {
 
 func submitCmd(stream *agentsdk.EventStream, gen, local int, text string, mode agentsdk.SubmitMode) tea.Cmd {
 	return func() tea.Msg {
-		id, err := stream.Submit(types.NewUserMessage(text), mode)
+		id, err := stream.Submit(types.UserMsg(types.Text(text)), mode)
 		return submitResultMsg{gen: gen, local: local, id: id, err: err}
 	}
 }
@@ -570,7 +717,7 @@ func (m *runnerModel) injectPending(i int) {
 // startRun records text and starts a new run with it.
 func (m runnerModel) startRun(text string) (tea.Model, tea.Cmd) {
 	m.act.addUser(text, false)
-	stream := m.agent.Invoke(m.ctx, []types.Message{types.NewUserMessage(text)})
+	stream := m.agent.Invoke(m.ctx, []types.Message{types.UserMsg(types.Text(text))})
 	return m.attach(stream)
 }
 
@@ -764,26 +911,28 @@ func (m *runnerModel) refresh() {
 		m.act.renderMarkdown(max(width-2, 20))
 	}
 	if m.ready {
-		m.viewport.Width = width
-		m.viewport.Height = viewportHeight(m.height, m.headerView(), m.footerView())
+		m.scroll.resize(width, viewportHeight(m.height, m.headerView(), m.footerView()))
 	}
-	follow := m.viewport.AtBottom()
-	m.viewport.SetContent(m.logView())
-	if follow {
-		m.viewport.GotoBottom()
-	}
+	shown := m.filter.apply(m.act.entries)
+	m.scroll.setContent(m.render(shown), len(shown))
 }
 
 func (m runnerModel) logView() string {
-	lr := logRenderer{entries: m.act.entries, spinner: m.spinner, template: m.template}
+	return m.render(m.filter.apply(m.act.entries))
+}
+
+func (m runnerModel) render(entries []activityEntry) string {
+	lr := logRenderer{entries: entries, spin: m.spin(), template: m.template,
+		expandThinking: m.expandThinking, animate: m.animate, now: m.clock()}
 	return lr.renderLog()
 }
 
 func (m runnerModel) headerView() string {
-	if !m.template.ShowHeader {
-		return ""
-	}
-	return renderHeader(m.header, m.width)
+	// Count what is drawn: an entry the template hides is neither shown
+	// nor part of the total.
+	lr := logRenderer{template: m.template}
+	badge := m.filter.badge(lr.visible(m.filter.apply(m.act.entries)), lr.visible(m.act.entries), m.filtering)
+	return topView(m.template.ShowHeader, m.header, m.width, badge)
 }
 
 // markerArgLines caps the arguments shown in an approval prompt.
@@ -828,13 +977,20 @@ func (m runnerModel) footerView() string {
 		if m.stopping {
 			status = stoppingNotice
 		}
-		lines = append(lines, fmt.Sprintf("  %s %s", m.spinner.View(), thinkingStyle.Render(status)))
+		lines = append(lines, fmt.Sprintf("  %s %s", m.spin(), thinkingStyle.Render(status)))
 	}
 
+	if ind := m.scroll.indicator("ctrl+end"); ind != "" {
+		lines = append(lines, indicatorStyle.Render("  "+ind))
+	}
 	if m.notice != "" {
 		lines = append(lines, usageStyle.Render("  "+m.notice))
 	}
-	lines = append(lines, m.textInput.View())
+	if m.filtering {
+		lines = append(lines, m.filterInput.View())
+	} else {
+		lines = append(lines, m.textInput.View())
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -845,7 +1001,7 @@ func (m runnerModel) View() string {
 		b.WriteString("\n")
 	}
 	if m.ready {
-		b.WriteString(m.viewport.View())
+		b.WriteString(m.scroll.vp.View())
 	} else {
 		b.WriteString(m.logView())
 	}

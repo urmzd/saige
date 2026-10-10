@@ -1,0 +1,49 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "snap",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": "Taking it.",
+      "role": "assistant"
+    },
+    {
+      "arguments": "{\"q\":\"x\"}",
+      "call_id": "call_1",
+      "name": "snapshot",
+      "type": "function_call"
+    },
+    {
+      "output": "done\n{\"ok\":true}",
+      "call_id": "call_1",
+      "type": "function_call_output"
+    },
+    {
+      "output": "[TOOL ERROR] boom",
+      "call_id": "call_2",
+      "type": "function_call_output"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "tools": [
+    {
+      "strict": false,
+      "parameters": {
+        "type": "object"
+      },
+      "name": "snapshot",
+      "description": "Takes a snapshot",
+      "type": "function"
+    }
+  ]
+}

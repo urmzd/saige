@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"google.golang.org/genai"
 )
 
@@ -44,11 +45,11 @@ func TestReasoningValidation(t *testing.T) {
 				t.Fatalf("Validate=%v valid=%v", err, tc.valid)
 			}
 			if !tc.valid {
-				_, err := a.ChatStream(context.Background(), nil, nil)
+				_, err := a.Stream(context.Background(), types.Request{})
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("plain path: %v", err)
 				}
-				_, err = a.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+				_, err = a.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("schema path: %v", err)
 				}
@@ -60,12 +61,12 @@ func TestReasoningValidation(t *testing.T) {
 func TestDynamicThinkingAndModelSwitch(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
 	WithThinkingBudget(-1)(a)
-	_, config := a.buildRequest(nil, nil)
+	_, config, _ := a.buildRequest(nil, 0, nil)
 	if !config.ThinkingConfig.IncludeThoughts || *config.ThinkingConfig.ThinkingBudget != -1 {
 		t.Fatal("dynamic thinking lost")
 	}
 	WithoutThinking()(a)
-	if err := a.WithModel("gemini-2.5-pro").(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if err := must.Get(a.WithTarget(types.ModelTarget("gemini-2.5-pro"))).(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("model switch: %v", err)
 	}
 	if err := a.Validate(); err != nil {
@@ -76,16 +77,16 @@ func TestDynamicThinkingAndModelSwitch(t *testing.T) {
 func TestValidationPreservesContextCacheBinding(t *testing.T) {
 	a := &Adapter{model: "gemini-2.5-flash"}
 	WithThinkingBudget(128)(a)
-	messages := []types.Message{types.NewUserMessage("cached reference"), types.NewUserMessage("question")}
+	messages := []types.Message{types.UserMsg(types.Text("cached reference")), types.UserMsg(types.Text("question"))}
 	WithContextCache(ContextCache{Name: "cachedContents/test", Model: a.model, PrefixCount: 1, ExpiresAt: time.Now().Add(-time.Hour)})(a)
 	for _, schema := range []*types.ParameterSchema{nil, {Type: "object"}} {
 		// A nil client proves both entry points reject expiry before SDK use.
-		stream, err := a.ChatStreamWithSchema(context.Background(), messages, nil, schema)
+		stream, err := a.Stream(context.Background(), types.Request{Messages: messages, Schema: schema})
 		if stream != nil || err == nil || !strings.Contains(err.Error(), "expired") {
 			t.Fatalf("stream=%v err=%v", stream, err)
 		}
 	}
-	stream, err := a.ChatStream(context.Background(), messages, nil)
+	stream, err := a.Stream(context.Background(), types.Request{Messages: messages})
 	if stream != nil || err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("plain stream=%v err=%v", stream, err)
 	}

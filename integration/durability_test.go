@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/store/filewal"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestAgentDurabilityRoundTrip proves the durability layers compose end to
@@ -31,32 +32,32 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	walPath := filepath.Join(t.TempDir(), "tree.wal")
 
 	// ── Process 1: run a conversation, checkpoint it ──────────────────
-	wal1, err := filewal.New(walPath)
+	wal1, err := filewal.New(filewal.Config{Path: walPath})
 	if err != nil {
 		t.Fatalf("open wal: %v", err)
 	}
-	tr, err := tree.New(types.NewSystemMessage("You are a durable test agent."), tree.WithWAL(wal1))
+	tr, err := tree.New(types.SystemMsg(types.Text("You are a durable test agent.")), tree.WithWAL(wal1))
 	if err != nil {
 		t.Fatalf("new tree: %v", err)
 	}
 	rootID := tr.Root().ID
 	convID := string(rootID)
-	store1 := agentpgstore.NewStore(pool, convID, nil)
+	store1 := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: convID}))
 
 	tool, calls := addTool()
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.ToolCallResponse("call-1", "add", map[string]any{"a": float64(2), "b": float64(3)}),
 		agenttest.TextResponse("first-turn answer: 5"),
 	}}
-	ag := agentsdk.NewAgent(agentsdk.AgentConfig{
+	ag := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "durable",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(tool),
 		Tree:     tr,
 		Store:    store1,
-	})
+	}))
 
-	text, _, err := drainStream(ag.Invoke(ctx, []types.Message{types.NewUserMessage("What is 2 + 3?")}))
+	text, _, err := drainStream(ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is 2 + 3?"))}))
 	if err != nil {
 		t.Fatalf("first invoke: %v", err)
 	}
@@ -71,17 +72,17 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
-	if err := wal1.Close(); err != nil {
+	if err := wal1.Close(ctx); err != nil {
 		t.Fatalf("close wal: %v", err)
 	}
 
 	// ── Process 2 (simulated fresh process): recover + rehydrate ──────
-	wal2, err := filewal.New(walPath)
+	wal2, err := filewal.New(filewal.Config{Path: walPath})
 	if err != nil {
 		t.Fatalf("reopen wal: %v", err)
 	}
-	t.Cleanup(func() { _ = wal2.Close() })
-	store2 := agentpgstore.NewStore(pool, convID, nil)
+	t.Cleanup(func() { _ = wal2.Close(ctx) })
+	store2 := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: convID}))
 
 	recovered, err := agentsdk.RecoverAndLoadTree(ctx, wal2, store2, rootID, "")
 	if err != nil {
@@ -150,13 +151,13 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	provider2 := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("second-turn answer: continuation-ok"),
 	}}
-	ag2 := agentsdk.NewAgent(agentsdk.AgentConfig{
+	ag2 := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "durable",
 		Provider: provider2,
 		Tree:     recovered,
 		Store:    store2,
-	})
-	text2, _, err := drainStream(ag2.Invoke(ctx, []types.Message{types.NewUserMessage("And what did you just compute?")}))
+	}))
+	text2, _, err := drainStream(ag2.Invoke(ctx, []types.Message{types.UserMsg(types.Text("And what did you just compute?"))}))
 	if err != nil {
 		t.Fatalf("second invoke on recovered tree: %v", err)
 	}

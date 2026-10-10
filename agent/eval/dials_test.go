@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/types"
 	topeval "github.com/urmzd/saige/eval"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // catalogModel is a scripted provider that declares a catalog model.
@@ -31,14 +32,14 @@ func (p catalogModel) EffectiveOptions() types.RequestOptions {
 func dialSubject(t *testing.T, vendor, model string, prov *topeval.Provenance, mu *sync.Mutex) topeval.Subject {
 	return func(ctx context.Context, obs *topeval.Observation) error {
 		p := catalogModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}},
-			caps: catalog.MustLookup(vendor, model)}
-		r, err := router.New(router.Config{Profiles: []router.Profile{{ID: vendor + "/" + model, Provider: p}}})
+			caps: catalog.MustLookup(types.ProviderName(vendor), model)}
+		r, err := router.New(router.Config{Profiles: []router.Profile{{ID: types.ProfileID(vendor + "/" + model), Provider: p}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		focused := types.CreativityFocused
-		a := agent.NewAgent(agent.AgentConfig{Provider: r.Session(), SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
-		stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+		a := must.Get(agent.New(agent.Config{Provider: r.Session(), SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused})))
+		stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 		run := CollectAgentRun(stream.Deltas())
 		mu.Lock()
 		run.AddProvenance(prov)
@@ -99,8 +100,8 @@ func TestSingleProviderSubjectRecordsDials(t *testing.T) {
 	p := catalogModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}},
 		caps: catalog.MustLookup("anthropic", "claude-haiku-5-5")}
 	focused := types.CreativityFocused
-	a := agent.NewAgent(agent.AgentConfig{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	a := must.Get(agent.New(agent.Config{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused})))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	run := CollectAgentRun(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

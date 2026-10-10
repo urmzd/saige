@@ -16,6 +16,8 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // agentsSandbox isolates discovery from the developer's own definitions
@@ -193,25 +195,25 @@ func TestBindCLIAgent(t *testing.T) {
 func TestServeSessionAgent(t *testing.T) {
 	calls, released := &atomic.Int32{}, &atomic.Int32{}
 	opts := serveOptions{approvalTimeout: 2 * time.Second}
-	opts.newSessionAgent = func() (sessionAgent, error) {
-		a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	opts.newSessionAgent = func() (agenthost.Agent, error) {
+		a := must.Get(agentsdk.New(agentsdk.Config{
 			Name: "pinned",
 			Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 				agenttest.ToolCallResponse("call_1", "danger", map[string]any{}),
 				agenttest.TextResponse("finished"),
 			}},
 			Tools: types.NewToolRegistry(countedDanger(calls)),
-		}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{}))
-		return sessionAgent{
-			agent:   a,
-			release: func() { released.Add(1) },
-			checkGrant: func(g *types.GrantRequest) error {
+		}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})))
+		return agenthost.Agent{
+			Agent:   a,
+			Release: func() { released.Add(1) },
+			CheckGrant: func(g *types.GrantRequest) error {
 				if g != nil && g.Scope == types.GrantSession {
 					return errors.New("session grants are not allowed")
 				}
 				return nil
 			},
-			info: map[string]string{"name": "pinned", "digest": "sha256:abc"},
+			Info: map[string]string{"name": "pinned", "digest": "sha256:abc"},
 		}, nil
 	}
 	f := newServeFixtureWith(t, opts, calls)

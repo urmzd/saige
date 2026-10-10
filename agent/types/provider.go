@@ -5,13 +5,32 @@ import (
 	"strings"
 )
 
-// Provider is the narrow LLM interface the agent loop needs.
-// Model selection is handled via ConfigContent in the message tree,
-// not as a parameter: providers that implement ModelSwitcher are
-// re-targeted by the agent loop when a ConfigContent sets a model;
-// others use their own configured default.
+// Request is one model call: the conversation as typed parts, the tools on
+// offer, and the optional response schema and per-request controls.
+type Request struct {
+	Messages []Message
+	Tools    []ToolDef
+	// Schema constrains the answer to JSON matching it. Nil leaves the
+	// answer free text. A provider that cannot enforce a schema rejects a
+	// request that carries one (see StructuredOutputProvider).
+	Schema *ParameterSchema
+	// Options are per-request controls and dials applied over the
+	// provider's configured ones. Nil sends none. A provider that cannot
+	// receive them rejects a request that carries them (see
+	// OptionsProvider).
+	Options *RequestOptions
+}
+
+// Provider is the narrow LLM interface the agent loop needs. Stream sends
+// one request and returns its deltas: part deltas for the model's output,
+// then usage, then DoneDelta or an ErrorDelta.
+//
+// Model selection is handled via ConfigPart in the message tree, not as a
+// parameter: providers that implement TargetSwitcher are re-targeted by the
+// agent loop when a ConfigPart sets a target; others use their own
+// configured default.
 type Provider interface {
-	ChatStream(ctx context.Context, messages []Message, tools []ToolDef) (<-chan Delta, error)
+	Stream(ctx context.Context, req Request) (<-chan Delta, error)
 }
 
 // NamedProvider is an optional interface providers can implement
@@ -21,11 +40,21 @@ type NamedProvider interface {
 	Name() string
 }
 
-// StructuredOutputProvider is an optional interface for providers that support
-// constraining LLM output to a JSON schema.
+// StructuredOutputProvider is an optional interface for providers whose
+// Stream applies Request.Schema. A provider without it, or whose
+// SupportsSchema reports false, cannot enforce a schema, and the agent loop
+// rejects a request that needs one rather than drop it. A decorator reports
+// true and rejects a schema its inner provider cannot take when the request
+// arrives.
 type StructuredOutputProvider interface {
 	Provider
-	ChatStreamWithSchema(ctx context.Context, messages []Message, tools []ToolDef, schema *ParameterSchema) (<-chan Delta, error)
+	SupportsSchema() bool
+}
+
+// AcceptsSchema reports whether p applies Request.Schema.
+func AcceptsSchema(p Provider) bool {
+	sp, ok := p.(StructuredOutputProvider)
+	return ok && sp.SupportsSchema()
 }
 
 // ModelProvider is an optional interface providers can implement
@@ -35,22 +64,16 @@ type ModelProvider interface {
 	Model() string
 }
 
-// ModelSwitcher is an optional interface providers can implement to produce
-// a variant of themselves targeting a different model. The agent loop uses it
-// to honor ConfigContent.Model at runtime.
-type ModelSwitcher interface {
-	Provider
-	WithModel(model string) Provider
-}
-
-// Closer is an optional interface providers can implement for graceful shutdown.
+// Closer is an optional interface for providers that own resources, such as
+// a connection pool or a background worker. A decorator owns the provider
+// it wraps and closes it too.
 type Closer interface {
-	Close() error
+	Close(ctx context.Context) error
 }
 
-// ProviderName returns the name of a provider if it implements NamedProvider,
+// NameOf returns the name of a provider if it implements NamedProvider,
 // otherwise returns "unknown".
-func ProviderName(p Provider) string {
+func NameOf(p Provider) string {
 	if np, ok := p.(NamedProvider); ok {
 		return np.Name()
 	}
@@ -66,23 +89,10 @@ func ProviderModel(p Provider) string {
 	return ""
 }
 
-// ProviderWithModel returns a variant of p targeting the given model. It
-// returns p unchanged when model is empty, already p's configured model, or
-// p does not implement ModelSwitcher.
-func ProviderWithModel(p Provider, model string) Provider {
-	if model == "" || ProviderModel(p) == model {
-		return p
-	}
-	if ms, ok := p.(ModelSwitcher); ok {
-		return ms.WithModel(model)
-	}
-	return p
-}
-
 // CloseProvider closes a provider if it implements Closer, otherwise returns nil.
-func CloseProvider(p Provider) error {
+func CloseProvider(ctx context.Context, p Provider) error {
 	if c, ok := p.(Closer); ok {
-		return c.Close()
+		return c.Close(ctx)
 	}
 	return nil
 }
@@ -93,7 +103,7 @@ func CloseProvider(p Provider) error {
 // context compression, and KG extraction. The stream is always drained fully
 // (so the producing goroutine never blocks); the first ErrorDelta wins.
 func GenerateText(ctx context.Context, p Provider, prompt string) (string, error) {
-	ch, err := p.ChatStream(ctx, []Message{NewUserMessage(prompt)}, nil)
+	ch, err := p.Stream(ctx, Request{Messages: []Message{UserMsg(Text(prompt))}})
 	if err != nil {
 		return "", err
 	}
@@ -101,8 +111,8 @@ func GenerateText(ctx context.Context, p Provider, prompt string) (string, error
 	var genErr error
 	for d := range ch {
 		switch v := d.(type) {
-		case TextContentDelta:
-			sb.WriteString(v.Content)
+		case PartDelta:
+			sb.WriteString(v.Text)
 		case ErrorDelta:
 			if genErr == nil {
 				genErr = v.Error

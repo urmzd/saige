@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "analyze",
+          "type": "text"
+        },
+        {
+          "file_id": "file_csv",
+          "type": "container_upload"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

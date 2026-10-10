@@ -46,12 +46,12 @@ func scriptedAgent(p agenttypes.Provider, tools ...agenttypes.Tool) agentTool {
 	reg := agenttypes.NewToolRegistry(tools...)
 	return agentTool{
 		name: defaultAgentTool, description: "test agent", gated: anyGated(reg),
-		newAgent: func() *agentsdk.Agent {
-			cfg := agentsdk.AgentConfig{Name: "test", Provider: p, MaxIter: 5}
+		newAgent: func() (*agentsdk.Agent, error) {
+			cfg := agentsdk.Config{Name: "test", Provider: p, MaxIter: 5}
 			if len(tools) > 0 {
 				cfg.Tools = reg
 			}
-			return agentsdk.NewAgent(cfg)
+			return agentsdk.New(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{}))
 		},
 	}
 }
@@ -170,8 +170,8 @@ func TestAgentToolReturnsAStructuredResult(t *testing.T) {
 		sawSchema.Store(req.Schema != nil)
 		return agenttest.Response{Text: `{"city": "Paris"}`}, nil
 	}}
-	at := agentTool{name: defaultAgentTool, schema: schema, newAgent: func() *agentsdk.Agent {
-		return agentsdk.NewAgent(agentsdk.AgentConfig{Provider: model}, agentsdk.WithResponseSchema(schema))
+	at := agentTool{name: defaultAgentTool, schema: schema, newAgent: func() (*agentsdk.Agent, error) {
+		return agentsdk.New(agentsdk.Config{Provider: model}, agentsdk.WithResponseSchema(schema))
 	}}
 	cs := agentSession(t, bridge{approval: approvalElicit}, at, nil)
 
@@ -228,8 +228,8 @@ func lastRequestText(msgs []agenttypes.Message) string {
 	var sb strings.Builder
 	for _, m := range msgs {
 		if um, ok := m.(agenttypes.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(agenttypes.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(agenttypes.TextPart); ok {
 					sb.WriteString(tc.Text)
 				}
 			}
@@ -241,18 +241,18 @@ func lastRequestText(msgs []agenttypes.Message) string {
 func toolResultText(msgs []agenttypes.Message) string {
 	var sb strings.Builder
 	add := func(c any) {
-		if r, ok := c.(agenttypes.ToolResultContent); ok {
-			sb.WriteString(r.Text)
+		if r, ok := c.(agenttypes.ToolResultPart); ok {
+			sb.WriteString(r.Text())
 		}
 	}
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case agenttypes.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case agenttypes.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		}

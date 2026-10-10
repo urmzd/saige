@@ -212,7 +212,7 @@ func Snapshot(fsys fs.FS, dir string, opts SnapshotOptions) (Skill, error) {
 		}
 		info, err := fs.Stat(fsys, p) // follows a link, within fsys
 		if err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrOutsideSkillRoot, rel, err)
+			return fmt.Errorf("%w: %s: %w", ErrOutsideSkillRoot, rel, err)
 		}
 		if info.IsDir() || !info.Mode().IsRegular() {
 			return nil

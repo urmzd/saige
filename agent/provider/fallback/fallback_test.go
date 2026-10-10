@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // mockProvider returns a fixed text response.
@@ -15,11 +16,11 @@ type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (m *mockProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: m.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: m.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -29,7 +30,7 @@ type errorProviderSimple struct {
 	err error
 }
 
-func (p *errorProviderSimple) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *errorProviderSimple) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return nil, p.err
 }
 
@@ -37,16 +38,16 @@ func TestFallbackProvider_FirstSucceeds(t *testing.T) {
 	p1 := &mockProvider{response: "from-primary"}
 	p2 := &mockProvider{response: "from-backup"}
 
-	fb := New(p1, p2)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(p1, p2))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text += tc.Content
+		if tc, ok := d.(types.PartDelta); ok {
+			text += tc.Text
 		}
 	}
 	if text != "from-primary" {
@@ -62,16 +63,16 @@ func TestFallbackProvider_FallsBackOnError(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(failing, good))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text += tc.Content
+		if tc, ok := d.(types.PartDelta); ok {
+			text += tc.Text
 		}
 	}
 	if text != "from-backup" {
@@ -83,8 +84,8 @@ func TestFallbackProvider_AllFail(t *testing.T) {
 	p1 := &errorProviderSimple{err: &types.ProviderError{Provider: "a", Kind: types.ErrorKindTransient, Err: errors.New("fail-a")}}
 	p2 := &errorProviderSimple{err: &types.ProviderError{Provider: "b", Kind: types.ErrorKindTransient, Err: errors.New("fail-b")}}
 
-	fb := New(p1, p2)
-	_, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(p1, p2))
+	_, err := fb.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -105,12 +106,12 @@ func TestFallbackProvider_StopsOnPermanentWhenConfigured(t *testing.T) {
 	perm := &errorProviderSimple{err: &types.ProviderError{Provider: "auth-fail", Kind: types.ErrorKindPermanent, Err: errors.New("unauthorized")}}
 	good := &mockProvider{response: "should not reach"}
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{perm, good},
 		FallbackOn: types.IsTransient, // only fallback on transient
-	}
+	}))
 
-	_, err := fb.ChatStream(context.Background(), nil, nil)
+	_, err := fb.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -131,8 +132,8 @@ func TestFallbackProvider_ContextCancelled(t *testing.T) {
 	p1 := &errorProviderSimple{err: &types.ProviderError{Provider: "a", Kind: types.ErrorKindTransient, Err: errors.New("fail")}}
 	p2 := &mockProvider{response: "should not reach"}
 
-	fb := New(p1, p2)
-	_, err := fb.ChatStream(ctx, nil, nil)
+	fb := must.Get(Of(p1, p2))
+	_, err := fb.Stream(ctx, types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -153,7 +154,7 @@ type scriptProvider struct {
 	calls  int32
 }
 
-func (p *scriptProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *scriptProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	atomic.AddInt32(&p.calls, 1)
 	ch := make(chan types.Delta, len(p.deltas)+1)
 	for _, d := range p.deltas {
@@ -168,8 +169,8 @@ func (p *scriptProvider) callCount() int32 { return atomic.LoadInt32(&p.calls) }
 func collect(ch <-chan types.Delta) (text string, errDeltas []types.ErrorDelta) {
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text += v.Content
+		case types.PartDelta:
+			text += v.Text
 		case types.ErrorDelta:
 			errDeltas = append(errDeltas, v)
 		}
@@ -183,8 +184,8 @@ func TestFallbackProvider_MidStreamErrorBeforeContent(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(failing, good))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,8 +209,8 @@ func TestFallbackProvider_MidStreamErrorAfterUsageStillFallsBack(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(failing, good))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,8 +219,8 @@ func TestFallbackProvider_MidStreamErrorAfterUsageStillFallsBack(t *testing.T) {
 	var errDeltas, usageDeltas int
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text += v.Content
+		case types.PartDelta:
+			text += v.Text
 		case types.ErrorDelta:
 			errDeltas++
 		case types.UsageDelta:
@@ -242,14 +243,14 @@ func TestFallbackProvider_MidStreamErrorAfterUsageStillFallsBack(t *testing.T) {
 func TestFallbackProvider_MidStreamErrorAfterContent(t *testing.T) {
 	streamErr := &types.ProviderError{Provider: "flaky", Kind: types.ErrorKindTransient, Err: errors.New("dropped")}
 	flaky := &scriptProvider{deltas: []types.Delta{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: "partial"},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: "partial"},
 		types.ErrorDelta{Error: streamErr},
 	}}
-	backup := &scriptProvider{deltas: []types.Delta{types.TextContentDelta{Content: "from-backup"}}}
+	backup := &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "from-backup"}}}
 
-	fb := New(flaky, backup)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(flaky, backup))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -272,13 +273,13 @@ func TestFallbackProvider_MidStreamErrorAfterContent(t *testing.T) {
 func TestFallbackProvider_MidStreamErrorNotFallbackable(t *testing.T) {
 	permErr := &types.ProviderError{Provider: "auth-fail", Kind: types.ErrorKindPermanent, Err: errors.New("unauthorized")}
 	failing := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: permErr}}}
-	backup := &scriptProvider{deltas: []types.Delta{types.TextContentDelta{Content: "should not reach"}}}
+	backup := &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "should not reach"}}}
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{failing, backup},
 		FallbackOn: types.IsTransient, // permanent errors must not fall back
-	}
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	}))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,8 +305,8 @@ func TestFallbackProvider_MidStreamAllFail(t *testing.T) {
 	p1 := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: err1}}}
 	p2 := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: err2}}}
 
-	fb := New(p1, p2)
-	ch, err := fb.ChatStream(context.Background(), nil, nil)
+	fb := must.Get(Of(p1, p2))
+	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -329,8 +330,8 @@ func TestFallbackProvider_WithSchemaMidStreamErrorBeforeContent(t *testing.T) {
 	}}
 	good := &schemaProvider{mockProvider{response: "from-backup"}}
 
-	fb := New(&schemaScriptProvider{failing}, good)
-	ch, err := fb.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+	fb := must.Get(Of(&schemaScriptProvider{failing}, good))
+	ch, err := fb.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -350,8 +351,8 @@ func TestFallbackProvider_MidStreamContextCancelled(t *testing.T) {
 	blocked := make(chan types.Delta)
 	blocking := &funcProvider{fn: func() (<-chan types.Delta, error) { return blocked, nil }}
 
-	fb := New(blocking)
-	ch, err := fb.ChatStream(ctx, nil, nil)
+	fb := must.Get(Of(blocking))
+	ch, err := fb.Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -363,12 +364,12 @@ func TestFallbackProvider_MidStreamContextCancelled(t *testing.T) {
 	}
 }
 
-// funcProvider delegates ChatStream to a closure.
+// funcProvider delegates Stream to a closure.
 type funcProvider struct {
 	fn func() (<-chan types.Delta, error)
 }
 
-func (p *funcProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *funcProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return p.fn()
 }
 
@@ -386,16 +387,16 @@ func TestFallbackProvider_CancelDrainsBlockedProducer(t *testing.T) {
 		go func() {
 			defer close(producerDone)
 			defer close(src)
-			src <- types.TextStartDelta{}
+			src <- types.PartStart{Index: 0, Kind: types.KindText}
 			close(producing)
-			src <- types.TextContentDelta{Content: "in-flight"}
-			src <- types.TextEndDelta{}
+			src <- types.PartDelta{Index: 0, Text: "in-flight"}
+			src <- types.PartEnd{Index: 0}
 		}()
 		return src, nil
 	}}
 
-	fb := New(p)
-	ch, err := fb.ChatStream(ctx, nil, nil)
+	fb := must.Get(Of(p))
+	ch, err := fb.Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -416,12 +417,12 @@ func TestFallbackProvider_CancelDrainsBlockedProducer(t *testing.T) {
 	}
 }
 
-// switchableProvider implements types.ModelSwitcher for WithModel tests.
+// switchableProvider implements types.TargetSwitcher for WithTarget tests.
 type switchableProvider struct {
 	model string
 }
 
-func (p *switchableProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *switchableProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
@@ -429,8 +430,9 @@ func (p *switchableProvider) ChatStream(_ context.Context, _ []types.Message, _ 
 
 func (p *switchableProvider) Model() string { return p.model }
 
-func (p *switchableProvider) WithModel(model string) types.Provider {
-	return &switchableProvider{model: model}
+func (p *switchableProvider) WithTarget(t types.Target) (types.Provider, error) {
+	model := string(t.Model)
+	return &switchableProvider{model: model}, nil
 }
 
 func TestFallbackProvider_WithModel(t *testing.T) {
@@ -438,14 +440,14 @@ func TestFallbackProvider_WithModel(t *testing.T) {
 	s2 := &switchableProvider{model: "model-a"}
 	plain := &mockProvider{response: "no-switch"} // does not implement ModelSwitcher
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{s1, s2, plain},
 		FallbackOn: types.IsTransient,
-	}
+	}))
 
-	switched, ok := fb.WithModel("model-b").(*Provider)
+	switched, ok := must.Get(fb.WithTarget(types.ModelTarget("model-b"))).(*Provider)
 	if !ok {
-		t.Fatalf("WithModel returned %T, want *Provider", fb.WithModel("model-b"))
+		t.Fatalf("WithModel returned %T, want *Provider", must.Get(fb.WithTarget(types.ModelTarget("model-b"))))
 	}
 	if len(switched.Providers) != 3 {
 		t.Fatalf("Providers = %d, want 3", len(switched.Providers))
@@ -466,12 +468,11 @@ func TestFallbackProvider_WithModel(t *testing.T) {
 		t.Errorf("original providers mutated: %q, %q", s1.model, s2.model)
 	}
 
-	// Compile-time-style assertion that *Provider satisfies ModelSwitcher.
-	var _ types.ModelSwitcher = fb
+	var _ types.TargetSwitcher = fb
 }
 
 func TestFallbackProvider_Name(t *testing.T) {
-	fb := New()
+	fb := must.Get(Of(&mockProvider{}))
 	if fb.Name() != "fallback" {
 		t.Errorf("Name() = %q, want %q", fb.Name(), "fallback")
 	}
@@ -480,16 +481,20 @@ func TestFallbackProvider_Name(t *testing.T) {
 // schemaProvider is a mockProvider that can enforce a response schema.
 type schemaProvider struct{ mockProvider }
 
-func (p *schemaProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
-	return p.ChatStream(ctx, msgs, tools)
+func (p *schemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return p.mockProvider.Stream(ctx, req)
 }
+
+func (p *schemaProvider) SupportsSchema() bool { return true }
 
 // schemaScriptProvider is a scriptProvider that can enforce a response schema.
 type schemaScriptProvider struct{ *scriptProvider }
 
-func (p *schemaScriptProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
-	return p.ChatStream(ctx, msgs, tools)
+func (p *schemaScriptProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return p.scriptProvider.Stream(ctx, req)
 }
+
+func (p *schemaScriptProvider) SupportsSchema() bool { return true }
 
 // A RouteDelta before content (routers and splits send one per attempt) must
 // not latch the no-fallback gate, alone or together with a usage preamble.
@@ -506,9 +511,9 @@ func TestFallbackProvider_RoutePreambleStillFallsBack(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			failing := &scriptProvider{deltas: append(append([]types.Delta{}, tt.preamble...), fail)}
 			good := &scriptProvider{deltas: []types.Delta{
-				types.TextStartDelta{}, types.TextContentDelta{Content: "from-backup"}, types.TextEndDelta{},
+				types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "from-backup"}, types.PartEnd{Index: 0},
 			}}
-			ch, err := New(failing, good).ChatStream(context.Background(), nil, nil)
+			ch, err := must.Get(Of(failing, good)).Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatal(err)
 			}

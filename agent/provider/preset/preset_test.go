@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/split"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // call is one request a fake adapter received, with the options it would
@@ -36,18 +37,29 @@ type fake struct {
 	n     *int
 }
 
-func (f *fake) Name() string                          { return f.cfg.Provider }
-func (f *fake) Model() string                         { return f.cfg.Model }
+func (f *fake) Name() string                          { return string(f.cfg.Provider) }
+func (f *fake) Model() string                         { return string(f.cfg.Model) }
 func (f *fake) Capabilities() types.ModelCapabilities { return f.caps }
 func (f *fake) EffectiveOptions() types.RequestOptions {
 	return f.cfg.Options.Clone()
 }
-func (f *fake) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
-	return f.ChatStreamWithOptions(ctx, m, t, types.RequestOptions{})
+func (f *fake) chatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
+	return f.Stream(ctx, types.Request{Messages: m, Tools: t, Options: &types.RequestOptions{}})
 }
-func (f *fake) ChatStreamWithOptions(_ context.Context, _ []types.Message, _ []types.ToolDef, o types.RequestOptions) (<-chan types.Delta, error) {
+
+// Stream implements types.Provider.
+func (f *fake) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		return f.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
+	}
+	return f.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsOptions implements types.OptionsProvider.
+func (f *fake) SupportsOptions() bool { return true }
+func (f *fake) chatStreamWithOptions(_ context.Context, _ []types.Message, _ []types.ToolDef, o types.RequestOptions) (<-chan types.Delta, error) {
 	f.mu.Lock()
-	*f.calls = append(*f.calls, call{model: f.cfg.Model, opts: f.cfg.Options.Merge(o)})
+	*f.calls = append(*f.calls, call{model: string(f.cfg.Model), opts: f.cfg.Options.Merge(o)})
 	n := *f.n
 	*f.n++
 	f.mu.Unlock()
@@ -69,10 +81,10 @@ func newRecorder() *recorder {
 func (r *recorder) factory(_ context.Context, cfg provider.Config) (types.Provider, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.configs[cfg.Model] = cfg
-	script := r.scripts[cfg.Model]
+	r.configs[string(cfg.Model)] = cfg
+	script := r.scripts[string(cfg.Model)]
 	if script == nil {
-		script = func(int) (<-chan types.Delta, error) { return text("ok " + cfg.Model), nil }
+		script = func(int) (<-chan types.Delta, error) { return text("ok " + string(cfg.Model)), nil }
 	}
 	caps, _ := catalog.Lookup(cfg.Provider, cfg.Model)
 	return &fake{cfg: cfg, caps: caps, script: script, mu: &r.mu, calls: &r.calls, n: new(int)}, nil
@@ -133,8 +145,8 @@ func read(t *testing.T, ch <-chan types.Delta, err error) ([]types.RouteDelta, s
 		switch v := d.(type) {
 		case types.RouteDelta:
 			routes = append(routes, v)
-		case types.TextContentDelta:
-			out += v.Content
+		case types.PartDelta:
+			out += v.Text
 		case types.ErrorDelta:
 			t.Fatal(v.Error)
 		}
@@ -151,15 +163,15 @@ func TestFallbackConsistencyRecording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	rp, _ := b.Resolved("p")
 	for _, e := range rp.Chain {
-		if got := rec.configs[e.Model].Options; !reflect.DeepEqual(got, e.Options) {
+		if got := rec.configs[string(e.Model)].Options; !reflect.DeepEqual(got, e.Options) {
 			t.Fatalf("%s built with %+v, resolved %+v", e.ID, got, e.Options)
 		}
 	}
 	none := types.RequestOptions{ToolChoice: &types.ToolChoice{Mode: types.ToolChoiceNone}}
-	routes, out := drain(t)(b.Session().(types.OptionsProvider).ChatStreamWithOptions(context.Background(), nil, nil, none))
+	routes, out := drain(t)(b.Session().(types.OptionsProvider).Stream(context.Background(), types.Request{Options: &none}))
 	if out != "ok gemini-2.5-flash" {
 		t.Fatalf("served %q", out)
 	}
@@ -187,14 +199,16 @@ func TestFallbackConsistencyRecording(t *testing.T) {
 	if perModel["gpt-4.1"] != 3 || perModel["gpt-4o"] != 1 || perModel["gemini-2.5-flash"] != 1 {
 		t.Fatalf("attempts %v", perModel)
 	}
-	if b.ConfigKey("p") == "" || b.ConfigKey("p") == b.ConfigKey("p/a") || b.ConfigKey("nope") != "" {
+	group, profile := b.ConfigKey(types.PresetTarget("p")), b.ConfigKey(types.ProfileTarget(rp.Chain[0].ProfileID))
+	if group == "" || profile == "" || group == profile || b.ConfigKey(types.PresetTarget("nope")) != "" ||
+		b.ConfigKey(types.ProfileTarget("nope")) != "" || b.ConfigKey(types.ModelTarget("gpt-4.1")) != "" {
 		t.Fatal("config keys")
 	}
 }
 
 func entryFor(rp catalog.ResolvedPreset, model string) catalog.ResolvedEntry {
 	for _, e := range rp.Chain {
-		if e.Model == model {
+		if string(e.Model) == model {
 			return e
 		}
 	}
@@ -238,7 +252,7 @@ func TestModelReferenceBuildsOneEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, out := drain(t)(b.Session().ChatStream(context.Background(), nil, nil))
+	routes, out := drain(t)(b.Session().Stream(context.Background(), types.Request{}))
 	if out != "ok gpt-4o" || routes[0].Profile != "openai/gpt-4o" {
 		t.Fatalf("%q %+v", out, routes)
 	}
@@ -246,11 +260,11 @@ func TestModelReferenceBuildsOneEntry(t *testing.T) {
 
 func TestGroupPinViaConfigContent(t *testing.T) {
 	cat := overlay(t, chainDoc)
-	b, err := preset.Build(context.Background(), cat, "p", []string{"q"}, preset.Options{Getenv: everyone, Factory: newRecorder().factory})
+	b, err := preset.Build(context.Background(), cat, "p", []types.PresetName{"q"}, preset.Options{Getenv: everyone, Factory: newRecorder().factory})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ag := agent.NewAgent(agent.AgentConfig{SystemPrompt: "sys"}, agent.WithPreset(b))
+	ag := must.Get(agent.New(agent.Config{SystemPrompt: "sys"}, agent.WithPreset(b)))
 	run := func(msg types.Message) []types.RouteDelta {
 		t.Helper()
 		stream := ag.Invoke(context.Background(), []types.Message{msg})
@@ -265,10 +279,10 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 		}
 		return routes
 	}
-	if r := run(types.NewUserMessage("hi")); r[len(r)-1].Preset != "p" {
+	if r := run(types.UserMsg(types.Text("hi"))); r[len(r)-1].Preset != "p" {
 		t.Fatalf("first turn %+v", r)
 	}
-	r := run(types.UserMessage{Content: []types.UserContent{types.TextContent{Text: "extract"}, types.ConfigContent{Model: "q"}}})
+	r := run(types.UserMessage{Parts: []types.UserPart{types.TextPart{Text: "extract"}, types.ConfigPart{Target: types.PresetTarget("q")}}})
 	last := r[len(r)-1]
 	if last.Preset != "q" || last.Profile != "q/x" || last.Reason != "pinned" {
 		t.Fatalf("group pin %+v", last)
@@ -278,11 +292,11 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rc *types.RouteContent
+	var rc *types.RoutePart
 	for _, m := range msgs {
 		if am, ok := m.(types.AssistantMessage); ok {
-			for _, c := range am.Content {
-				if v, ok := c.(types.RouteContent); ok {
+			for _, c := range am.Parts {
+				if v, ok := c.(types.RoutePart); ok {
 					rc = &v
 				}
 			}
@@ -291,31 +305,35 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if rc == nil || rc.Preset != "q" || rc.ConfigHash != last.ConfigHash || rc.Options == nil {
 		t.Fatalf("route content %+v", rc)
 	}
-	raw, err := tree.MarshalMessage(types.AssistantMessage{Content: []types.AssistantContent{*rc}})
+	raw, err := tree.MarshalMessage(types.AssistantMessage{Parts: []types.AssistantPart{*rc}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	back, err := tree.UnmarshalMessage(types.RoleAssistant, raw)
-	if err != nil || !reflect.DeepEqual(back.(types.AssistantMessage).Content[0], *rc) {
+	if err != nil || !reflect.DeepEqual(back.(types.AssistantMessage).Parts[0], *rc) {
 		t.Fatalf("tree round trip: %v %#v", err, back)
 	}
 }
 
 func TestHardLockOutranksGroupPin(t *testing.T) {
 	cat := overlay(t, chainDoc)
-	b, err := preset.Build(context.Background(), cat, "p", []string{"q"}, preset.Options{Getenv: everyone, Factory: newRecorder().factory})
+	b, err := preset.Build(context.Background(), cat, "p", []types.PresetName{"q"}, preset.Options{Getenv: everyone, Factory: newRecorder().factory})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := b.Session()
-	routes, _ := drain(t)(s.ChatStream(context.Background(), nil, nil))
+	routes, _ := drain(t)(s.Stream(context.Background(), types.Request{}))
 	first := routes[0].Profile
 	loop := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ThinkingContent{Thinking: "t", Signature: "sig"}, types.ToolUseContent{ID: "c1", Name: "f"}}},
-		types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "c1", Text: "r"}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ThinkingPart{Text: "t", Signature: "sig"}, types.ToolCallPart{ID: "c1", Name: "f"}}},
+		types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("r")}}}},
 	}
-	routes, _ = drain(t)(s.(types.ModelSwitcher).WithModel("q").ChatStream(context.Background(), loop, nil))
+	pinned, err := s.(types.TargetSwitcher).WithTarget(types.PresetTarget("q"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes, _ = drain(t)(pinned.Stream(context.Background(), types.Request{Messages: loop}))
 	if routes[0].Profile != first || routes[0].Reason != "locked" {
 		t.Fatalf("hard lock lost: %+v", routes)
 	}
@@ -339,7 +357,7 @@ func TestSplitArmsArePresets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, _ := drain(t)(sp.ChatStream(context.Background(), nil, nil))
+	routes, _ := drain(t)(sp.Stream(context.Background(), types.Request{}))
 	rp, _ := arm.Resolved("q")
 	last := routes[len(routes)-1]
 	if last.Variant != "q" || last.Preset != "q" || last.ConfigHash != rp.Chain[0].ConfigHash {
@@ -354,7 +372,7 @@ func TestDefaultsCarryCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	cc := b.Defaults().Compaction
 	if cc == nil || cc.Strategy != types.CompactKeepRecent || cc.KeepTurns != 6 {
 		t.Fatalf("compaction = %+v", cc)

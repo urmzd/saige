@@ -19,38 +19,46 @@ import (
 // absent: see ModelCapabilities.Known for telling the two apart.
 type Capability string
 
+// Sampling penalties.
 const (
 	// ── Features ────────────────────────────────────────────────────
 
-	// CapTools: the model can be given tool/function definitions and call them.
+	// CapTools means the model can be given tool/function definitions and call them.
 	CapTools Capability = "tools"
-	// CapParallelTools: the model can emit more than one tool call per turn.
+	// CapParallelTools means the model can emit more than one tool call per turn.
 	CapParallelTools Capability = "parallel_tools"
-	// CapToolChoice: the caller can force or forbid a specific tool.
+	// CapToolChoice means the caller can force or forbid a specific tool.
 	CapToolChoice Capability = "tool_choice"
-	// CapStructuredOutput: output can be constrained to a JSON schema. Whether
+	// CapStructuredOutput means output can be constrained to a JSON schema. Whether
 	// that is native or emulated is StructuredOutputMode.
 	CapStructuredOutput Capability = "structured_output"
-	// CapStreaming: responses can be streamed incrementally.
+	// CapStreaming means responses can be streamed incrementally.
 	CapStreaming Capability = "streaming"
-	// CapSystemPrompt: a system instruction is accepted separately from the turns.
+	// CapSystemPrompt means a system instruction is accepted separately from the turns.
 	CapSystemPrompt Capability = "system_prompt"
-	// CapPromptCaching: repeated prompt prefixes can be cached provider-side.
+	// CapPromptCaching means repeated prompt prefixes can be cached provider-side.
 	CapPromptCaching Capability = "prompt_caching"
-	// Cache modes are separate because their resource and billing contracts differ.
+	// Cache modes are separate because their resource and billing contracts
+	// differ.
+
+	// CapAutomaticPromptCache means the provider caches prompt prefixes
+	// without markers.
 	CapAutomaticPromptCache Capability = "automatic_prompt_cache"
-	CapPromptCacheMarkers   Capability = "prompt_cache_markers"
+	// CapPromptCacheMarkers means the request marks the prefixes to cache.
+	CapPromptCacheMarkers Capability = "prompt_cache_markers"
+	// CapExplicitContextCache means a cache is created and referenced by a
+	// handle.
 	CapExplicitContextCache Capability = "explicit_context_cache"
-	// CapReasoning: the model can reason internally. Visible thinking content
+	// CapReasoning means the model can reason internally. Visible thinking content
 	// depends on the provider and API; this flag does not promise its exposure.
 	CapReasoning Capability = "reasoning"
-	// CapReasoningSignature: reasoning blocks carry an opaque signature that must
+	// CapReasoningSignature means reasoning blocks carry an opaque signature that must
 	// be echoed back on the next turn. Anthropic and Gemini 3 both require this;
 	// dropping it corrupts multi-turn tool use.
 	CapReasoningSignature Capability = "reasoning_signature"
-	// CapEmbeddings: the model produces embedding vectors.
+	// CapEmbeddings means the model produces embedding vectors.
 	CapEmbeddings Capability = "embeddings"
-	// CapParallelToolControl: the caller can turn parallel tool calling on or
+	// CapParallelToolControl means the caller can turn parallel tool calling on or
 	// off. Distinct from CapParallelTools, which says only that the model can
 	// emit more than one call: a model may do so without letting you stop it,
 	// which matters when the tools are not safe to run concurrently.
@@ -61,48 +69,48 @@ const (
 	// These run inside the provider, not this process: no local execution, no
 	// ToolGate, no durable step. See ServerTool.
 
-	// CapServerTools: the provider executes at least one tool class itself.
+	// CapServerTools means the provider executes at least one tool class itself.
 	CapServerTools Capability = "server_tools"
-	// CapWebSearch: provider-native web search and grounding.
+	// CapWebSearch means provider-native web search and grounding.
 	CapWebSearch Capability = "web_search"
-	// CapCodeExecution: the provider runs generated code in its own sandbox.
+	// CapCodeExecution means the provider runs generated code in its own sandbox.
 	CapCodeExecution Capability = "code_execution"
-	// CapRemoteMCP: the provider connects to remote MCP servers on the caller's
+	// CapRemoteMCP means the provider connects to remote MCP servers on the caller's
 	// behalf. Supporting this is not the same as this SDK connecting to those
 	// servers locally, which every provider supports because it is just tools.
 	CapRemoteMCP Capability = "remote_mcp"
-	// CapCitations: the provider returns structured citation metadata rather
+	// CapCitations means the provider returns structured citation metadata rather
 	// than leaving attribution to the prompt. Without it, "cite your sources"
 	// is a request the model may ignore; with it, attribution is data.
 	CapCitations Capability = "citations"
 
 	// ── Request knobs ───────────────────────────────────────────────
 
-	// CapReasoningBudget: reasoning depth is set as a token budget.
+	// CapReasoningBudget means reasoning depth is set as a token budget.
 	CapReasoningBudget Capability = "reasoning_budget"
-	// CapReasoningEffort: reasoning depth is set as an enum (see ReasoningEfforts).
+	// CapReasoningEffort means reasoning depth is set as an enum (see ReasoningEfforts).
 	CapReasoningEffort Capability = "reasoning_effort"
-	// CapReasoningToggle: reasoning is only switchable on or off.
+	// CapReasoningToggle means reasoning is only switchable on or off.
 	CapReasoningToggle Capability = "reasoning_toggle"
-	// CapTemperature: sampling temperature is accepted. Notably absent on
+	// CapTemperature means sampling temperature is accepted. Notably absent on
 	// some reasoning models. Other models accept it only with reasoning off.
 	CapTemperature Capability = "temperature"
-	// CapTopP: nucleus sampling is accepted.
+	// CapTopP means nucleus sampling is accepted.
 	CapTopP Capability = "top_p"
-	// CapTopK: top-k sampling is accepted.
+	// CapTopK means top-k sampling is accepted.
 	CapTopK Capability = "top_k"
-	// CapSeed: a sampling seed is accepted.
+	// CapSeed means a sampling seed is accepted.
 	CapSeed Capability = "seed"
-	// CapStopSequences: caller-supplied stop sequences are accepted.
+	// CapStopSequences means caller-supplied stop sequences are accepted.
 	CapStopSequences Capability = "stop_sequences"
-	// CapMaxOutputTokens: an output token cap is accepted.
+	// CapMaxOutputTokens means an output token cap is accepted.
 	CapMaxOutputTokens Capability = "max_output_tokens"
 	// CapFrequencyPenalty / CapPresencePenalty: OpenAI-style repetition penalties.
 	CapFrequencyPenalty Capability = "frequency_penalty"
 	CapPresencePenalty  Capability = "presence_penalty"
-	// CapSafetySettings: per-request content safety thresholds are accepted.
+	// CapSafetySettings means per-request content safety thresholds are accepted.
 	CapSafetySettings Capability = "safety_settings"
-	// CapContextWindowOverride: the context window is a caller-set request
+	// CapContextWindowOverride means the context window is a caller-set request
 	// parameter rather than a fixed model property (ollama's num_ctx).
 	CapContextWindowOverride Capability = "context_window_override"
 )
@@ -114,12 +122,12 @@ const (
 type StructuredOutputMode string
 
 const (
-	// StructuredOutputNone: no schema constraint available.
+	// StructuredOutputNone means no schema constraint available.
 	StructuredOutputNone StructuredOutputMode = ""
-	// StructuredOutputNative: the provider enforces the schema (OpenAI strict
+	// StructuredOutputNative means the provider enforces the schema (OpenAI strict
 	// json_schema, Gemini responseSchema, ollama format).
 	StructuredOutputNative StructuredOutputMode = "native"
-	// StructuredOutputToolCall: emulated by forcing a hidden tool call whose
+	// StructuredOutputToolCall means emulated by forcing a hidden tool call whose
 	// input schema is the response schema (Anthropic).
 	StructuredOutputToolCall StructuredOutputMode = "tool_call"
 )
@@ -130,12 +138,12 @@ const (
 type ChatCompletionsTools string
 
 const (
-	// ChatToolsAny: tools are accepted with any reasoning setting.
+	// ChatToolsAny means tools are accepted with any reasoning setting.
 	ChatToolsAny ChatCompletionsTools = ""
-	// ChatToolsNoReasoning: tools are accepted only with reasoning effort
+	// ChatToolsNoReasoning means tools are accepted only with reasoning effort
 	// "none".
 	ChatToolsNoReasoning ChatCompletionsTools = "no_reasoning"
-	// ChatToolsResponsesOnly: tools need the Responses API.
+	// ChatToolsResponsesOnly means tools need the Responses API.
 	ChatToolsResponsesOnly ChatCompletionsTools = "responses_only"
 )
 
@@ -152,9 +160,9 @@ func stricterChatTools(a, b ChatCompletionsTools) ChatCompletionsTools {
 // pair: the flags it accepts, the features it supports, and its hard limits.
 //
 // It is the single answer to "can this model do X", replacing the scattered
-// optional-interface probes (StructuredOutputProvider, ContentNegotiator) that
+// optional-interface probes (such as StructuredOutputProvider) that
 // can only say what an *adapter* implements, never what the *model behind it*
-// accepts. An adapter can implement ChatStreamWithSchema and still be pointed
+// accepts. An adapter can implement Stream with a schema and still be pointed
 // at a model that ignores schemas.
 //
 // A zero value is the honest "nothing is known and nothing may be assumed":
@@ -222,9 +230,10 @@ type ModelCapabilities struct {
 	// answers "which", and a CLI listing wants the second.
 	ServerTools []ServerToolKind
 
-	// Media declares which media types reach the model natively. This is the
-	// model-level counterpart of ContentNegotiator, which only describes the
-	// adapter.
+	// Media declares which media types reach the model natively: the union
+	// of the offering's input modalities. Conversion planning reads the
+	// offering itself (Offering.Modalities), which also holds the limits and
+	// the locators each modality accepts.
 	Media ContentSupport
 
 	// Known means the exact model name is declared. False covers both provider
@@ -235,6 +244,11 @@ type ModelCapabilities struct {
 	// Notes carries caveats worth surfacing in logs, e.g. that a knob is
 	// accepted but silently ignored.
 	Notes []string
+
+	// Offering is the catalog offering this declaration projects, when it
+	// came from one: the precise parameter specification, modality limits,
+	// service tiers and endpoint. Nil for a declaration built by hand.
+	Offering *Offering `json:"-"`
 }
 
 // Supports reports whether c is declared supported.
@@ -321,6 +335,10 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 			out.Media.NativeTypes[mt] = true
 		}
 	}
+	if mc.Offering != nil {
+		o := mc.Offering.Clone()
+		out.Offering = &o
+	}
 	return out
 }
 
@@ -332,6 +350,8 @@ func (mc ModelCapabilities) clone() ModelCapabilities {
 //
 // Set membership intersects; declared limits take the smaller non-zero value;
 // Known is true only if both are known.
+//
+//nolint:gocyclo // one rule per field of the declaration
 func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities {
 	out := ModelCapabilities{
 		Provider:               mc.Provider,
@@ -414,6 +434,10 @@ func (mc ModelCapabilities) Intersect(other ModelCapabilities) ModelCapabilities
 	if reflect.DeepEqual(mc.DialMap, other.DialMap) {
 		out.DialMap = mc.DialMap.Clone()
 	}
+	if mc.Offering != nil && other.Offering != nil {
+		o := mc.Offering.Intersect(*other.Offering)
+		out.Offering = &o
+	}
 	return out
 }
 
@@ -459,7 +483,36 @@ func worsePricing(a, b Pricing) Pricing {
 		BatchCachedInputPerMTok: declaredMax(a.BatchCachedInputPerMTok, b.BatchCachedInputPerMTok),
 		AsOf:                    worseAsOf(a, b),
 		Source:                  joinSource(a, b),
+		Modal:                   worseModal(a.Modal, b.Modal),
 	}
+}
+
+// worseModal keeps the modalities both cards price, at the costlier rate
+// of each direction. A modality only one prices is left out, so its usage
+// reads as unpriced: the member that does not price it may serve the call.
+func worseModal(a, b map[Modality]ModalityRate) map[Modality]ModalityRate {
+	var out map[Modality]ModalityRate
+	for m, ra := range a {
+		rb, ok := b[m]
+		if !ok {
+			continue
+		}
+		r := ModalityRate{}
+		if ra.InputPerMTok > 0 && rb.InputPerMTok > 0 {
+			r.InputPerMTok = max(ra.InputPerMTok, rb.InputPerMTok)
+		}
+		if ra.OutputPerMTok > 0 && rb.OutputPerMTok > 0 {
+			r.OutputPerMTok = max(ra.OutputPerMTok, rb.OutputPerMTok)
+		}
+		if r == (ModalityRate{}) {
+			continue
+		}
+		if out == nil {
+			out = map[Modality]ModalityRate{}
+		}
+		out[m] = r
+	}
+	return out
 }
 
 // worseAsOf returns the less trustworthy of two recording dates: an unknown
@@ -591,18 +644,4 @@ func MissingCapabilities(p Provider, want ...Capability) []Capability {
 		return append([]Capability(nil), want...)
 	}
 	return mc.Missing(want...)
-}
-
-// ProviderContentSupport resolves the media types p handles natively,
-// preferring the model-level declaration over the adapter-level
-// ContentNegotiator. The adapter can only say what it knows how to encode; the
-// model decides what it can actually read.
-func ProviderContentSupport(p Provider) ContentSupport {
-	if mc, ok := ProviderCapabilities(p); ok && len(mc.Media.NativeTypes) > 0 {
-		return mc.Media
-	}
-	if cn, ok := p.(ContentNegotiator); ok {
-		return cn.ContentSupport()
-	}
-	return ContentSupport{}
 }

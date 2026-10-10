@@ -11,7 +11,7 @@ func TestCollectRecordsServingRoutes(t *testing.T) {
 	ch := make(chan types.Delta, 8)
 	ch <- types.RouteDelta{Profile: "p/a", Preset: "p", ConfigHash: "ha", CatalogRevision: "r"}
 	ch <- types.RouteDelta{Profile: "p/b", Preset: "p", ConfigHash: "hb", CatalogRevision: "r", Reason: "failover"}
-	ch <- types.TextContentDelta{Content: "x"}
+	ch <- types.PartDelta{Index: 0, Text: "x"}
 	ch <- types.UsageDelta{PromptTokens: 1}
 	ch <- types.RouteDelta{Profile: "q/x", Preset: "q", ConfigHash: "hx", CatalogRevision: "r"}
 	ch <- types.UsageDelta{PromptTokens: 1}

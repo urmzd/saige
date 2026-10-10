@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestSaveAndLoadSession(t *testing.T) {
@@ -17,15 +18,15 @@ func TestSaveAndLoadSession(t *testing.T) {
 		},
 	}
 
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:         "test-agent",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
-	})
+	}))
 
 	// Invoke to build some conversation history
 	stream := a.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hello"),
+		types.UserMsg(types.Text("Hello")),
 	})
 	for range stream.Deltas() {
 	}
@@ -44,11 +45,11 @@ func TestSaveAndLoadSession(t *testing.T) {
 	}
 
 	// Create new agent and load session
-	a2 := NewAgent(AgentConfig{
+	a2 := must.Get(New(Config{
 		Name:         "test-agent",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
-	})
+	}))
 
 	if err := a2.LoadSession(session); err != nil {
 		t.Fatalf("LoadSession: %v", err)
@@ -68,7 +69,7 @@ func TestSaveAndLoadSession(t *testing.T) {
 }
 
 func TestSessionFileRoundTrip(t *testing.T) {
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:         "test-agent",
 		SystemPrompt: "You are helpful.",
 		Provider: &agenttest.ScriptedProvider{
@@ -76,7 +77,7 @@ func TestSessionFileRoundTrip(t *testing.T) {
 				agenttest.TextResponse("Hi!"),
 			},
 		},
-	})
+	}))
 
 	session, err := a.SaveSession()
 	if err != nil {

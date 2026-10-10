@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // One Agent serves concurrent runs on distinct branches of one tree, and the
@@ -27,7 +28,7 @@ func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 		calls++
 		return "ok", nil
 	}}
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(count)})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(count)}))
 	tr := a.Tree()
 	root := tr.Root().ID
 
@@ -35,7 +36,7 @@ func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 	defer cancel()
 	branches := make([]types.BranchID, runs)
 	for i := range branches {
-		b, _, err := tr.Branch(ctx, root, fmt.Sprintf("b%d", i), types.NewUserMessage(fmt.Sprintf("task %d", i)))
+		b, _, err := tr.Branch(ctx, root, fmt.Sprintf("b%d", i), types.UserMsg(types.Text(fmt.Sprintf("task %d", i))))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +79,8 @@ func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 // it in.
 type branchScripted struct{}
 
-func (branchScripted) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (branchScripted) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	deltas := agenttest.TextResponse("done")
 	if !hasToolResult(messages) {
 		deltas = agenttest.ToolCallResponse(fmt.Sprintf("c%d", len(messages)), "count", nil)
@@ -95,14 +97,14 @@ func hasToolResult(messages []types.Message) bool {
 	for _, m := range messages {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
-				if _, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if _, ok := c.(types.ToolResultPart); ok {
 					return true
 				}
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if _, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if _, ok := c.(types.ToolResultPart); ok {
 					return true
 				}
 			}

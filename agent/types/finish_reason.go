@@ -3,7 +3,7 @@ package types
 // FinishReasonMaxTokens is the provider-neutral finish reason for a response
 // the output token limit cut short. Providers name it differently (OpenAI and
 // Ollama "length", Anthropic "max_tokens", Gemini "MAX_TOKENS", the Responses
-// API "max_output_tokens"); TruncatedDelta, TruncationContent and
+// API "max_output_tokens"); TruncatedDelta, TruncationPart and
 // ResponseTruncatedError carry this one value, so a caller checks a single
 // constant whichever provider served the turn.
 const FinishReasonMaxTokens = "max_tokens"

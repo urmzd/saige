@@ -20,22 +20,22 @@ import (
 func wireRoundTripCases() []Delta {
 	args := map[string]any{"q": "go", "n": json.Number("3"), "deep": map[string]any{"ok": true}}
 	return []Delta{
-		TextStartDelta{},
-		TextContentDelta{Content: "hello"},
-		TextEndDelta{},
-		ThinkingStartDelta{},
-		ThinkingContentDelta{Content: "hmm"},
-		ThinkingEndDelta{Signature: "sig"},
-		ToolCallStartDelta{ID: "c1", Name: "search"},
-		ToolCallArgumentDelta{ID: "c1", Content: `{"q":`},
-		ToolCallEndDelta{ID: "c1", Arguments: args},
+		v1TextStart{},
+		v1TextContent{Content: "hello"},
+		v1TextEnd{},
+		v1ThinkingStart{},
+		v1ThinkingContent{Content: "hmm"},
+		v1ThinkingEnd{Signature: "sig"},
+		v1ToolCallStart{ID: "c1", Name: "search"},
+		v1ToolCallArgument{ID: "c1", Content: `{"q":`},
+		v1ToolCallEnd{ID: "c1", Arguments: args},
 		ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
-		ToolExecDelta{ToolCallID: "c1", Inner: ToolExecDelta{ToolCallID: "c2", Inner: TextContentDelta{Content: "child"}}},
-		ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "ok", Error: "", Blocks: []ToolResultBlock{
-			{Kind: ToolResultBlockText, Text: "ok"},
-			{Kind: ToolResultBlockImage, MediaType: MediaPNG, URI: "file:///a.png", Filename: "a.png", Data: []byte{1, 2, 3}},
-			{Kind: ToolResultBlockJSON, JSON: json.RawMessage(`{"a":1}`)},
-		}},
+		ToolExecDelta{ToolCallID: "c1", Inner: ToolExecDelta{ToolCallID: "c2", Inner: v1TextContent{Content: "child"}}},
+		ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "ok", Error: "", Parts: []ToolOutputPart{
+			Text("ok"),
+			Image(Bytes(MediaPNG, []byte{1, 2, 3}).With(Source{URI: "file:///a.png", Filename: "a.png"}), ImageMeta{Width: 2}),
+			JSONPart{JSON: json.RawMessage(`{"a":1}`)},
+		}, Citations: []Citation{{Ordinal: 1, Kind: CitationTool, URI: "https://t", Start: -1, End: -1}}},
 		MarkerDelta{ToolCallID: "c1", ToolName: "rm", Arguments: args, Markers: []Marker{
 			{Kind: "human_approval", Message: "delete files", Meta: map[string]any{"risk": "high"}},
 		}},
@@ -47,18 +47,47 @@ func wireRoundTripCases() []Delta {
 		UsageDelta{AccountingID: "acc", Cumulative: true, PromptTokens: 10, CachedPromptTokens: 2, CacheWriteTokens: 1,
 			CompletionTokens: 5, TotalTokens: 15, Latency: 1234567891 * time.Nanosecond, ResponseModel: "m",
 			ResponseID: "r", FinishReasons: []string{"stop"}, CacheHit: true},
-		RouteDelta{Profile: "fast", Provider: "openai", Model: "gpt", Experiment: "exp", Variant: "b", Reason: "fallback"},
+		UsageDelta{PromptTokens: 30, CompletionTokens: 9, TotalTokens: 39, Requests: 2,
+			PromptByModality:     map[Modality]int{ModalityText: 10, ModalityAudio: 20},
+			CompletionByModality: map[Modality]int{ModalityAudio: 9}},
+		RouteDelta{Profile: "fast", Provider: "openai", Model: "gpt", Experiment: "exp", Variant: "b", Reason: "fallback",
+			Conversions: &ConversionReport{Offering: "openai/gpt@chat", Hash: "h", Decisions: []ConversionDecision{
+				{Path: PartPath{Message: 1, Part: 0, Nested: -1}, Kind: KindAudio, MediaType: MediaWAV, Action: DecisionTranscribed, Via: "t@1"},
+			}}},
 		TruncatedDelta{NodeID: "n2", Reason: "interrupted"},
 		QueuedDelta{SubmissionID: "s1", Mode: "queue", Position: 2},
 		InjectedDelta{SubmissionID: "s1", Mode: "steer", NodeID: "n3"},
 		InterruptedDelta{Reason: "user", SubmissionID: "s2"},
-		ServerToolCallDelta{ID: "st1", Kind: ServerToolWebSearch, Name: "web_search", Input: map[string]any{"query": "go"}},
-		ServerToolResultDelta{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
-			IsError: true, Files: []FileContent{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},
+		v1ServerToolCall{ID: "st1", Kind: ServerToolWebSearch, Name: "web_search", Input: map[string]any{"query": "go"}},
+		v1ServerToolResult{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
+			IsError: true, Files: []wireFile{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},
 		PartialJSONDelta{JSON: json.RawMessage(`{"title":"dra"}`)},
+		PartStart{Index: 0, Kind: KindText},
+		PartStart{Index: 4, Kind: KindToolCall, ID: "c9", Name: "search"},
+		PartStart{Index: 5, Kind: KindAudioOut, MediaType: MediaWAV},
+		PartDelta{Index: 0, Text: "hi"},
+		PartDelta{Index: 1, Thinking: "hmm"},
+		PartDelta{Index: 1, Signature: "sig"},
+		PartDelta{Index: 4, Args: `{"q":`},
+		PartDelta{Index: 6, Refusal: "no"},
+		PartDelta{Index: 5, Data: []byte("RIFF")},
+		PartDelta{Index: 5, Transcript: "hello"},
+		PartEnd{Index: 0},
+		PartEnd{Index: 4, Part: ToolCallPart{ID: "c9", Name: "search", Arguments: args}},
+		PartEnd{Index: 7, Part: ToolCallPart{ID: "c8", Name: "f", ArgumentsError: "bad"}},
+		PartEnd{Index: 1, Part: ThinkingPart{Text: "hmm", Signature: "sig", Redacted: true}},
+		PartEnd{Index: 2, Part: CitationPart{Citation: Citation{Ordinal: 1, Kind: CitationWeb, URI: "https://x", Start: -1, End: -1},
+			Anchor: &Anchor{PartIndex: 0, Start: 0, End: 2}}},
+		PartEnd{Index: 3, Part: ServerToolResultPart{CallID: "st1", ToolKind: ServerToolCodeExecution, Text: "42",
+			Outputs: []Part{Document(URL("file:///out.csv", MediaCSV))}}},
+		PartEnd{Index: 5, Part: AudioOutPart{Source: Bytes(MediaWAV, []byte("RIFF")), Transcript: "hello", VendorID: "aud_1"}},
+		PartEnd{Index: 6, Part: RefusalPart{Text: "no", Category: "safety"}},
+		ConversionDelta{Profile: "fast", Report: ConversionReport{Offering: "o", Decisions: []ConversionDecision{
+			{Path: PartPath{Message: 0, Part: 1, Nested: -1}, Kind: KindImage, Action: DecisionRejected, Reason: "no vision"},
+		}}},
 		GuardrailDelta{Guardrail: "pii", Phase: GuardrailPhaseOutput, Action: GuardrailActionRewrite, Reason: "email", Text: "[REDACTED:EMAIL]"},
 		GuardrailDelta{Guardrail: "policy", Phase: GuardrailPhaseInput, Action: GuardrailActionBlock, Reason: "off topic", Canceled: true},
-		CompactionDelta{Branch: "compact-1", NodeID: "n9", Record: CompactionContent{
+		CompactionDelta{Branch: "compact-1", NodeID: "n9", Record: CompactionPart{
 			Strategy: "chain(clear_tool_results,summary)", Steps: []string{"summary"}, Trigger: CompactionTriggerInputPressure,
 			TokensBefore: 900, TokensAfter: 300, FromBranch: "main", Kept: []NodeID{"a"}, Selected: []NodeID{"b"},
 			Cleared: []NodeID{"c"}, Summarized: []NodeID{"d"}, Dropped: []NodeID{"e"}, SummaryNode: "s",
@@ -126,7 +155,7 @@ func TestWireCoversEveryDelta(t *testing.T) {
 }
 
 func TestWireEnvelopeShape(t *testing.T) {
-	env, err := NewDeltaEnvelope(TextContentDelta{Content: "hi"})
+	env, err := NewDeltaEnvelope(v1TextContent{Content: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +174,55 @@ func TestWireEnvelopeShape(t *testing.T) {
 	}
 	if back.Seq != 42 || back.RunID != "r1" || !reflect.DeepEqual(back.Path, []string{"call_9"}) || !back.IsDelta() {
 		t.Errorf("envelope metadata lost: %+v", back)
+	}
+}
+
+func TestWireEnvelopeShapeV2(t *testing.T) {
+	tests := []struct {
+		d    Delta
+		want string
+	}{
+		{PartStart{Index: 1, Kind: KindToolCall, ID: "call_9", Name: "search"},
+			`{"v":2,"kind":"part.start","data":{"index":1,"kind":"tool_call","id":"call_9","name":"search"}}`},
+		{PartDelta{Index: 0, Text: "hi"}, `{"v":2,"kind":"part.delta","data":{"index":0,"text":"hi"}}`},
+		{PartEnd{Index: 1, Part: ToolCallPart{ID: "call_9", Name: "search", Arguments: map[string]any{"q": "go"}}},
+			`{"v":2,"kind":"part.end","data":{"index":1,"part":{"type":"tool_call","id":"call_9","name":"search","arguments":{"q":"go"}}}}`},
+		{PartEnd{Index: 0}, `{"v":2,"kind":"part.end","data":{"index":0}}`},
+		{DoneDelta{}, `{"v":2,"kind":"done","data":{}}`},
+	}
+	for _, tt := range tests {
+		b, err := MarshalDelta(tt.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != tt.want {
+			t.Errorf("envelope = %s\nwant      %s", b, tt.want)
+		}
+	}
+}
+
+func TestWireInlineLimit(t *testing.T) {
+	big := make([]byte, DefaultMaxInlineBytes+1)
+	if _, err := MarshalDelta(PartDelta{Index: 0, Data: big}); !errors.Is(err, ErrWireInlineTooLarge) {
+		t.Errorf("oversized chunk: err = %v", err)
+	}
+	end := PartEnd{Index: 0, Part: ImageOutPart{Source: Bytes(MediaPNG, big)}}
+	if _, err := MarshalDelta(end); !errors.Is(err, ErrWireInlineTooLarge) {
+		t.Errorf("oversized part: err = %v", err)
+	}
+	enc, err := NewEncoder(EncodeOptions{MaxInlineBytes: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enc.Encode(end); err != nil {
+		t.Errorf("unlimited encoder: %v", err)
+	}
+	small, _ := NewEncoder(EncodeOptions{MaxInlineBytes: 2})
+	if _, err := small.Encode(PartDelta{Index: 0, Data: []byte("abc")}); !errors.Is(err, ErrWireInlineTooLarge) {
+		t.Errorf("small limit: err = %v", err)
+	}
+	if _, err := NewEncoder(EncodeOptions{Version: 3}); !errors.Is(err, ErrWireVersion) {
+		t.Errorf("version 3 encoder: err = %v", err)
 	}
 }
 
@@ -301,7 +379,7 @@ func TestWireRejects(t *testing.T) {
 		in   string
 		want error
 	}{
-		{"future version", `{"v":2,"kind":"done"}`, ErrWireVersion},
+		{"future version", `{"v":3,"kind":"done"}`, ErrWireVersion},
 		{"missing version", `{"kind":"done"}`, ErrWireVersion},
 		{"unknown kind", `{"v":1,"kind":"telepathy"}`, ErrUnknownWireKind},
 	}
@@ -324,8 +402,8 @@ func TestWireRejects(t *testing.T) {
 }
 
 func TestFlattenDelta(t *testing.T) {
-	path, inner := FlattenDelta(TextEndDelta{})
-	if path != nil || inner != (TextEndDelta{}) {
+	path, inner := FlattenDelta(v1TextEnd{})
+	if path != nil || inner != (v1TextEnd{}) {
 		t.Errorf("flat delta: %v %v", path, inner)
 	}
 }

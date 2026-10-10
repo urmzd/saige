@@ -13,15 +13,15 @@ import (
 // with every call and compiled for the model that serves it, so a failover
 // re-targets them instead of failing on a vendor parameter. Sub-agents
 // inherit them unless their Options set WithDials.
-func WithDials(d types.Dials) AgentOption {
-	return func(c *AgentConfig) { c.Dials = d.Clone() }
+func WithDials(d types.Dials) Option {
+	return func(c *Config) { c.Dials = d.Clone() }
 }
 
 // WithDialPolicy sets how dials the serving model cannot honor are handled.
 // Use types.StrictDials to fail any call whose dials would be mapped or
 // dropped.
-func WithDialPolicy(p types.DialPolicy) AgentOption {
-	return func(c *AgentConfig) {
+func WithDialPolicy(p types.DialPolicy) Option {
+	return func(c *Config) {
 		p = p.Clone()
 		c.DialPolicy = &p
 	}
@@ -40,11 +40,11 @@ type signedLoop struct {
 // reasoning, and closes it on a turn without tool calls.
 func (l *signedLoop) observeAssistant(m types.AssistantMessage, turn types.Dials) {
 	calls, signed := false, false
-	for _, c := range m.Content {
+	for _, c := range m.Parts {
 		switch v := c.(type) {
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			calls = true
-		case types.ThinkingContent:
+		case types.ThinkingPart:
 			signed = signed || v.Signature != ""
 		}
 	}
@@ -62,9 +62,9 @@ func (l *signedLoop) observeAssistant(m types.AssistantMessage, turn types.Dials
 
 // observeUser closes the loop on a user turn that is more than tool
 // results.
-func (l *signedLoop) observeUser(content []types.UserContent) {
-	if slices.ContainsFunc(content, func(c types.UserContent) bool {
-		_, result := c.(types.ToolResultContent)
+func (l *signedLoop) observeUser(content []types.UserPart) {
+	if slices.ContainsFunc(content, func(c types.UserPart) bool {
+		_, result := c.(types.ToolResultPart)
 		return !result
 	}) {
 		*l = signedLoop{}
@@ -121,21 +121,21 @@ func (a *Agent) attachDials(ctx context.Context, ac activeContext, opts *types.R
 	if a.output(ctx).native() && len(tools) == 0 {
 		if len(ac.dialLayers) > 0 {
 			a.cfg.Logger.Warn("dials are not sent with a native response schema; set them on the provider",
-				"agent", a.cfg.Name, "provider", types.ProviderName(ac.provider))
+				"agent", a.cfg.Name, "provider", types.NameOf(ac.provider))
 		}
 		return opts, nil
 	}
-	if _, ok := ac.provider.(types.OptionsProvider); !ok {
+	if !types.AcceptsOptions(ac.provider) {
 		merged := mergeLayers(ac.dialLayers)
 		for _, n := range merged.Names() {
 			if n.Class(merged) == types.DialContractual {
 				return nil, fmt.Errorf("%w: dial %s: provider %q does not accept request options",
-					types.ErrInvalidModelConfig, n, types.ProviderName(ac.provider))
+					types.ErrInvalidModelConfig, n, types.NameOf(ac.provider))
 			}
 		}
 		if len(ac.dialLayers) > 0 {
 			a.cfg.Logger.Warn("dials are not sent: the provider does not accept request options",
-				"agent", a.cfg.Name, "provider", types.ProviderName(ac.provider))
+				"agent", a.cfg.Name, "provider", types.NameOf(ac.provider))
 		}
 		return opts, nil
 	}

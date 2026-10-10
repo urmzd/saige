@@ -13,6 +13,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestParseApproval(t *testing.T) {
@@ -90,7 +91,7 @@ func TestStreamDeltasResolvingCallsResolver(t *testing.T) {
 	for name, mk := range outputs {
 		t.Run(name, func(t *testing.T) {
 			ch := make(chan types.Delta, 4)
-			ch <- types.TextContentDelta{Content: "hi"}
+			ch <- types.PartDelta{Index: 0, Text: "hi"}
 			ch <- types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"}
 			ch <- types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"}
 			ch <- types.DoneDelta{}
@@ -127,11 +128,11 @@ func markedAgent() (*agentsdk.Agent, *atomic.Int32) {
 		agenttest.ToolCallResponse("c1", "danger", map[string]any{}),
 		agenttest.TextResponse("finished"),
 	}}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "test",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(types.WithMarkers(tool, types.Marker{Kind: "human_approval", Message: "needs approval"})),
-	})
+	}))
 	return a, &calls
 }
 
@@ -243,9 +244,9 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 		{
 			name: "one marker approved",
 			deltas: []types.Delta{
-				types.TextContentDelta{Content: "before"},
+				types.PartDelta{Index: 0, Text: "before"},
 				types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"},
-				types.TextContentDelta{Content: "after"},
+				types.PartDelta{Index: 0, Text: "after"},
 				types.DoneDelta{},
 			},
 			answers: "y\n",
@@ -255,7 +256,7 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 			name: "two markers",
 			deltas: []types.Delta{
 				types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"},
-				types.TextContentDelta{Content: "between"},
+				types.PartDelta{Index: 0, Text: "between"},
 				types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"},
 				types.DoneDelta{},
 			},
@@ -264,7 +265,7 @@ func TestStreamDeltasResolvingFallbackSharedWriter(t *testing.T) {
 		},
 		{
 			name:    "no markers",
-			deltas:  []types.Delta{types.TextContentDelta{Content: "plain"}, types.DoneDelta{}},
+			deltas:  []types.Delta{types.PartDelta{Index: 0, Text: "plain"}, types.DoneDelta{}},
 			answers: "",
 			want:    nil,
 		},
@@ -314,8 +315,8 @@ func (s stopEarlyOutput) StreamDeltas(_ AgentHeader, ch <-chan types.Delta) Verb
 
 func TestStreamDeltasResolvingFallbackRendererStopsEarly(t *testing.T) {
 	ch := make(chan types.Delta, 4)
-	ch <- types.TextContentDelta{Content: "hi"}
-	ch <- types.TextContentDelta{Content: "more"}
+	ch <- types.PartDelta{Index: 0, Text: "hi"}
+	ch <- types.PartDelta{Index: 0, Text: "more"}
 	ch <- types.MarkerDelta{ToolCallID: "c1", ToolName: "danger"}
 	ch <- types.MarkerDelta{ToolCallID: "c2", ToolName: "danger"}
 	close(ch)

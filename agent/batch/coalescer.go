@@ -14,7 +14,7 @@ import (
 )
 
 // Coalescer is a types.Provider that gathers concurrent calls into batches.
-// Each ChatStream call blocks until its batch ends and then replays the
+// Each Stream call blocks until its batch ends and then replays the
 // result as a stream, so code written for a streaming provider, such as an
 // eval subject or a judge, runs its calls through a vendor batch unchanged.
 //
@@ -154,25 +154,25 @@ func (c *Coalescer) Name() string { p, _ := c.runner.identity(); return p }
 // Model implements types.ModelProvider.
 func (c *Coalescer) Model() string { _, m := c.runner.identity(); return m }
 
-// ChatStream implements types.Provider.
-func (c *Coalescer) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return c.do(ctx, types.BatchRequest{Messages: messages, Tools: tools})
+// Stream implements types.Provider.
+func (c *Coalescer) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	br := types.BatchRequest{Messages: req.Messages, Tools: req.Tools, Schema: req.Schema}
+	if req.Options != nil {
+		br.Options = *req.Options
+	}
+	return c.do(ctx, br)
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (c *Coalescer) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return c.do(ctx, types.BatchRequest{Messages: messages, Tools: tools, Schema: schema})
-}
+// SupportsSchema implements types.StructuredOutputProvider.
+func (c *Coalescer) SupportsSchema() bool { return true }
 
-// ChatStreamWithOptions implements types.OptionsProvider.
-func (c *Coalescer) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return c.do(ctx, types.BatchRequest{Messages: messages, Tools: tools, Options: opts})
-}
+// SupportsOptions implements types.OptionsProvider.
+func (c *Coalescer) SupportsOptions() bool { return true }
 
 // Generate sends one user prompt and returns the answer text, the seam eval
 // judges use.
 func (c *Coalescer) Generate(ctx context.Context, prompt string) (string, error) {
-	return c.text(ctx, types.BatchRequest{Messages: []types.Message{types.NewUserMessage(prompt)}})
+	return c.text(ctx, types.BatchRequest{Messages: []types.Message{types.UserMsg(types.Text(prompt))}})
 }
 
 // GenerateStructured is Generate with the answer constrained to a JSON
@@ -182,7 +182,7 @@ func (c *Coalescer) GenerateStructured(ctx context.Context, prompt string, schem
 	if err := json.Unmarshal(schema, &ps); err != nil {
 		return "", fmt.Errorf("%w: schema: %w", types.ErrInvalidModelConfig, err)
 	}
-	return c.text(ctx, types.BatchRequest{Messages: []types.Message{types.NewUserMessage(prompt)}, Schema: &ps})
+	return c.text(ctx, types.BatchRequest{Messages: []types.Message{types.UserMsg(types.Text(prompt))}, Schema: &ps})
 }
 
 func (c *Coalescer) text(ctx context.Context, req types.BatchRequest) (string, error) {

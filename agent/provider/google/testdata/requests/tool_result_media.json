@@ -1,0 +1,69 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "take a photo"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "args": {
+              "zoom": 2
+            },
+            "name": "take_photo"
+          },
+          "thoughtSignature": "Y2FsbC1zaWc="
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "take_photo",
+            "parts": [
+              {
+                "inlineData": {
+                  "data": "iVBORyBmYWtl",
+                  "mimeType": "image/png"
+                }
+              },
+              {
+                "inlineData": {
+                  "data": "JVBERi0xLjQgZmFrZQ==",
+                  "mimeType": "application/pdf"
+                }
+              }
+            ],
+            "response": {
+              "data": {
+                "n": 1
+              },
+              "result": "done\n{\"n\":1}"
+            }
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {},
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "take_photo",
+          "parameters": {
+            "type": "OBJECT"
+          }
+        }
+      ]
+    }
+  ]
+}

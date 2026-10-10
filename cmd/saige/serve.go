@@ -15,6 +15,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/definition"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 	"github.com/urmzd/saige/tools"
 	"github.com/urmzd/saige/tools/exec"
 	"github.com/urmzd/saige/tools/fetch"
@@ -33,6 +34,8 @@ func newServeCmd(ctx context.Context) *cobra.Command {
 		denyAfter       int
 		agentRef        string
 		agentsReload    time.Duration
+		maxUpload       int64
+		artifactBudget  int64
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -42,13 +45,30 @@ streams its events as Server-Sent Events whose data is the versioned wire
 envelope. Approvals and cancellation are POST endpoints.
 
   POST /v1/sessions                                         -> {session_id}
-  POST /v1/sessions/{sid}/turns              {message}      -> 202 {turn_id}
+  POST /v1/sessions/{sid}/artifacts          <bytes>        -> 201 {ref, sha256, size, media_type, url}
+  GET  /v1/sessions/{sid}/artifacts/{sha256}                -> the bytes, as an attachment
+  POST /v1/sessions/{sid}/turns              {parts}        -> 202 {turn_id}
   GET  /v1/sessions/{sid}/turns/{tid}/events                -> SSE (Last-Event-ID resumes)
+  GET  /v1/sessions/{sid}/turns/{tid}/events?wire=1         -> SSE in wire version 1
   GET  /v1/sessions/{sid}/turns/{tid}/events?format=agui    -> SSE as AG-UI events
   POST /v1/sessions/{sid}/turns/{tid}/interrupts/{call_id}  {approved, message, modified_args, grant}
   POST /v1/sessions/{sid}/turns/{tid}/cancel
   GET  /v1/sessions/{sid}/turns/{tid}                       -> {done, last_seq, error}
   GET  /v1/sessions/{sid}/tree                              -> conversation tree JSON
+
+A turn's parts use the shared part codec, for example:
+
+  {"parts": [{"type": "text", "text": "What is in this image?"},
+             {"type": "image", "source": {"media_type": "image/png", "ref": "saige-artifact://<sha256>"}}]}
+
+Media is sent as inline data (up to 256 KiB per part), an https URI, or the
+ref of an upload to the session. Vendor file IDs are refused. The older
+{"message": "<text>"} body still works and is deprecated.
+
+Events use wire version 2 unless the client asks for version 1 with
+?wire=1 or "Accept: application/vnd.saige.events+json;v=1". Media over the
+inline limit in a run's output is stored in the session's artifacts and sent
+as its ref.
 
 The server binds to localhost by default. Binding to another address
 requires a bearer token (--token or SAIGE_SERVE_TOKEN). An approval nobody
@@ -74,7 +94,8 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			srvCtx, stop := context.WithCancel(ctx)
 			defer stop()
 
-			opts := serveOptions{token: token, approvalTimeout: approvalTimeout, idleTTL: idleTTL}
+			opts := serveOptions{token: token, approvalTimeout: approvalTimeout, idleTTL: idleTTL,
+				maxUpload: maxUpload, artifactBudget: artifactBudget}
 			if agentRef != "" {
 				h, err := newAgentHost(ctx, cmd, cf, tools.HarnessOptions{Root: workspace, Network: exec.NetworkPolicy(bashNetwork)}, false)
 				if err != nil {
@@ -88,7 +109,7 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 					return err
 				}
 				slog.Info("saige serve agent", "agent", first.Pin().String())
-				_ = first.Close()
+				_ = first.Close(ctx)
 				if agentsReload > 0 {
 					stopWatch, err := h.reg.Watch(srvCtx, definition.WatchOptions{Interval: agentsReload, OnReload: func(changed bool, err error) {
 						switch {
@@ -105,12 +126,12 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 				}
 				// Each session binds the definition the registry resolves
 				// when it starts and keeps it, pinned, until it ends.
-				opts.newSessionAgent = func() (sessionAgent, error) {
+				opts.newSessionAgent = func() (agenthost.Agent, error) {
 					b, err := h.bind(srvCtx, agentRef)
 					if err != nil {
-						return sessionAgent{}, err
+						return agenthost.Agent{}, err
 					}
-					return sessionAgent{agent: b.NewAgent(), release: func() { _ = b.Close() }, checkGrant: b.CheckGrant, info: b.Pin()}, nil
+					return agenthost.FromBound(b)
 				}
 				return listenAndServe(ctx, srvCtx, cmd, addr, opts, -1)
 			}
@@ -131,11 +152,11 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			tools = append(tools, packTools...)
 
 			opts.newAgent = func() (*agentsdk.Agent, error) {
-				cfg := agentsdk.AgentConfig{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
+				cfg := agentsdk.Config{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
 				if len(tools) > 0 {
 					cfg.Tools = types.NewToolRegistry(tools...)
 				}
-				return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter})), nil
+				return agentsdk.New(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter}))
 			}
 			return listenAndServe(ctx, srvCtx, cmd, addr, opts, len(tools))
 		},
@@ -149,6 +170,8 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 	f.StringVar(&workspace, "workspace", "", "Workspace root for the fs and bash packs")
 	f.IntVar(&denyAfter, "deny-after", 0, "Refuse a tool without asking after this many denials in a session (0 always asks)")
 	f.StringVar(&bashNetwork, "bash-network", string(exec.NetworkDeny), "Network policy for bash: deny (needs an isolating wrapper) or allow")
+	f.Int64Var(&maxUpload, "max-upload", defaultMaxUpload, "Largest artifact upload, in bytes")
+	f.Int64Var(&artifactBudget, "artifact-budget", 256<<20, "Bytes of artifacts one session may hold")
 	f.StringVar(&agentRef, "agent", "", "Serve an agent definition: NAME or NAME@RANGE; each session pins the version it starts with")
 	f.DurationVar(&agentsReload, "agents-reload", 0, "With --agent, reload the definitions this often so new sessions see changes (0 never reloads)")
 	return cmd
@@ -157,7 +180,10 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 // listenAndServe runs the HTTP server until ctx ends. tools is logged; a
 // negative count is not.
 func listenAndServe(ctx, srvCtx context.Context, cmd *cobra.Command, addr string, opts serveOptions, tools int) error {
-	s := newServer(srvCtx, opts)
+	s, err := newServer(srvCtx, opts)
+	if err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

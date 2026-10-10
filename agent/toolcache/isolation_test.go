@@ -15,12 +15,12 @@ import (
 type rich struct{ result types.ToolResult }
 
 func (r *rich) Definition() types.ToolDef                               { return types.ToolDef{Name: "rich"} }
-func (r *rich) Execute(context.Context, map[string]any) (string, error) { return r.result.Text, nil }
+func (r *rich) Execute(context.Context, map[string]any) (string, error) { return r.result.Text(), nil }
 func (r *rich) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
 	return r.result, nil
 }
 func TestResultCopiesAtEveryBoundary(t *testing.T) {
-	inner := &rich{result: types.ToolResult{Text: "ok", Blocks: []types.ToolResultBlock{{Data: []byte{1}, JSON: json.RawMessage(`{"x":1}`)}}, Citations: []types.Citation{{Meta: map[string]any{"nested": map[string]any{"value": "original"}}}}}}
+	inner := &rich{result: types.ToolResult{Parts: []types.ToolOutputPart{types.Image(types.Bytes(types.MediaPNG, []byte{1})), types.JSONPart{JSON: json.RawMessage(`{"x":1}`)}}, Citations: []types.Citation{{Meta: map[string]any{"nested": map[string]any{"value": "original"}}}}}}
 	policy := types.CachePolicy{Enabled: true, TTL: time.Hour, Scope: types.CacheScopeGlobal}
 	wrapped, err := New(inner, Config{Cache: newMemCache(), Policy: &policy})
 	if err != nil {
@@ -31,10 +31,10 @@ func TestResultCopiesAtEveryBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Blocks[0].Data[0] = 9
-	first.Blocks[0].JSON[0] = '!'
+	first.Parts[0].(types.ImagePart).Source.Inline[0] = 9
+	first.Parts[1].(types.JSONPart).JSON[0] = '!'
 	first.Citations[0].Meta["nested"].(map[string]any)["value"] = "changed"
-	inner.result.Blocks[0].Data[0] = 7
+	inner.result.Parts[0].(types.ImagePart).Source.Inline[0] = 7
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -45,10 +45,10 @@ func TestResultCopiesAtEveryBoundary(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if value.Blocks[0].Data[0] != 1 || value.Blocks[0].JSON[0] != '{' || value.Citations[0].Meta["nested"].(map[string]any)["value"] != "original" {
+			if value.Parts[0].(types.ImagePart).Source.Inline[0] != 1 || value.Parts[1].(types.JSONPart).JSON[0] != '{' || value.Citations[0].Meta["nested"].(map[string]any)["value"] != "original" {
 				t.Error("shared cached payload")
 			}
-			value.Blocks[0].Data[0] = 8
+			value.Parts[0].(types.ImagePart).Source.Inline[0] = 8
 		}()
 	}
 	wg.Wait()

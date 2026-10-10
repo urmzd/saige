@@ -19,6 +19,7 @@ type NamedRunner interface {
 // RunFunc adapts a plain function into a Runner.
 type RunFunc func(ctx context.Context, agent *Agent) error
 
+// Run calls f.
 func (f RunFunc) Run(ctx context.Context, agent *Agent) error { return f(ctx, agent) }
 
 // Run starts an agent with the given Runner.

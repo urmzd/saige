@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchStub stubs the Files and Batch APIs. Output and error lines come
@@ -114,10 +115,10 @@ func batchRequests() []types.BatchRequest {
 	tool := types.ToolDef{Name: "lookup", Description: "look up", Parameters: types.ParameterSchema{Type: "object",
 		Properties: map[string]types.PropertyDef{"q": {Type: "string"}}, Required: []string{"q"}}}
 	return []types.BatchRequest{
-		{CustomID: "capital", Messages: []types.Message{types.NewUserMessage("Capital of France?")}},
-		{CustomID: "tool", Messages: []types.Message{types.NewUserMessage("look up x")}, Tools: []types.ToolDef{tool}},
-		{CustomID: "bad", Messages: []types.Message{types.NewUserMessage("y")}},
-		{CustomID: "late", Messages: []types.Message{types.NewUserMessage("z")}},
+		{CustomID: "capital", Messages: []types.Message{types.UserMsg(types.Text("Capital of France?"))}},
+		{CustomID: "tool", Messages: []types.Message{types.UserMsg(types.Text("look up x"))}, Tools: []types.ToolDef{tool}},
+		{CustomID: "bad", Messages: []types.Message{types.UserMsg(types.Text("y"))}},
+		{CustomID: "late", Messages: []types.Message{types.UserMsg(types.Text("z"))}},
 	}
 }
 
@@ -127,8 +128,8 @@ func checkBatchResults(t *testing.T, got []types.BatchResult) {
 		t.Fatalf("result 0 = %+v", got[0])
 	}
 	calls := 0
-	for _, c := range got[1].Message.Content {
-		if tu, ok := c.(types.ToolUseContent); ok && tu.Name == "lookup" && tu.Arguments["q"] == "x" {
+	for _, c := range got[1].Message.Parts {
+		if tu, ok := c.(types.ToolCallPart); ok && tu.Name == "lookup" && tu.Arguments["q"] == "x" {
 			calls++
 		}
 	}
@@ -150,8 +151,8 @@ func TestBatchChatCompletions(t *testing.T) {
 	stub := &batchStub{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL), WithMaxTokens(64))
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL), WithMaxTokens(64)))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-openai", batchRequests())
 	if err != nil {
 		t.Fatal(err)
@@ -178,8 +179,8 @@ func TestBatchResponses(t *testing.T) {
 	stub := &batchStub{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	ra := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
-	r := batch.NewRunner(ra, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	ra := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: ra, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-responses", batchRequests())
 	if err != nil {
 		t.Fatal(err)
@@ -201,12 +202,14 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 	}))
 	defer server.Close()
 	topK := 5.0
-	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Options: types.RequestOptions{TopK: &topK}}}
-	if _, err := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{TopK: &topK}}}
+	chat := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
+	if _, err := chat.Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("chat err = %v", err)
 	}
-	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
-	if _, err := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
+	resp := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
+	if _, err := resp.Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("responses err = %v", err)
 	}
 }
@@ -215,7 +218,7 @@ func TestBatchFindAndCancel(t *testing.T) {
 	stub := &batchStub{endpoint: "/v1/responses"}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
 	ctx := context.Background()
 	since := time.Unix(1791547200, 0).Add(-time.Minute)
 	h, ok, err := a.FindBatch(ctx, types.BatchQuery{Tag: "tag-1", Since: since})

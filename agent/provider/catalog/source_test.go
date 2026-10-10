@@ -172,7 +172,7 @@ func checkNullsApplied(t *testing.T, label string, overlay *Catalog) {
 	if err != nil {
 		t.Fatalf("%s: %v", label, err)
 	}
-	if _, ok := merged.Templates["embedding"]; ok {
+	if _, ok := merged.OfferingTemplates["embedding"]; ok {
 		t.Fatalf("%s: the null template survived", label)
 	}
 	if e, _ := merged.Describe("openai", "gpt-4.1"); e.Tier != "" {

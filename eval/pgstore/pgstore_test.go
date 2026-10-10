@@ -55,7 +55,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 
 func newStore(t *testing.T, pool *pgxpool.Pool) *pgstore.Store {
 	t.Helper()
-	s, err := pgstore.New(context.Background(), pool, "test-"+rand.Text()[:10])
+	s, err := pgstore.New(context.Background(), pgstore.Config{Pool: pool, Tenant: "test-" + rand.Text()[:10]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestSchemaMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer empty.Close()
-	if _, err := pgstore.New(ctx, empty, ""); !errors.Is(err, pgstore.ErrSchemaMissing) {
+	if _, err := pgstore.New(ctx, pgstore.Config{Pool: empty, Tenant: ""}); !errors.Is(err, pgstore.ErrSchemaMissing) {
 		t.Fatalf("New without tables = %v, want ErrSchemaMissing", err)
 	}
 }
@@ -322,7 +322,7 @@ func TestMigrationKeepsOlderScoresReadable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `ALTER TABLE eval_score DROP COLUMN inconclusive`); err != nil {
 		t.Fatal(err)
 	}
-	s, err := pgstore.New(ctx, pool, "")
+	s, err := pgstore.New(ctx, pgstore.Config{Pool: pool, Tenant: ""})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,49 @@
+== .agents/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .agents/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
+== .opencode/agents/helper.md ==
+---
+description: Answers questions about the project and edits files.
+mode: all
+model: anthropic/claude-haiku-5-5
+steps: 8
+permission:
+  bash: deny
+  edit: ask
+  webfetch: deny
+---
+
+You are a careful helper.
+Answer briefly.
+== opencode.json ==
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "saige-helper": {
+      "type": "local",
+      "command": [
+        "saige-mcp",
+        "--agents-dir",
+        "$PROJECT/agents",
+        "--agent",
+        "helper",
+        "--root",
+        "$PROJECT",
+        "--tools",
+        "none"
+      ],
+      "enabled": true
+    }
+  }
+}

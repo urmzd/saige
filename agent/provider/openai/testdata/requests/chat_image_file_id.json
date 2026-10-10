@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgpmaXh0dXJl"
+          },
+          "type": "image_url"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

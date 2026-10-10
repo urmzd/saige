@@ -12,7 +12,7 @@ import (
 
 // mustGraph creates a knowledge graph backed by the given pool, or exits on error.
 func mustGraph(ctx context.Context, pool *pgxpool.Pool) kgtypes.Graph {
-	graph, err := knowledge.NewGraph(ctx, knowledge.WithPostgres(pool))
+	graph, err := knowledge.New(knowledge.Config{}, knowledge.WithPostgres(pool))
 	if err != nil {
 		log.Fatalf("create knowledge graph: %v", err)
 	}

@@ -1,0 +1,11 @@
+start 0 thinking
+delta 0 thinking="Let me "
+delta 0 thinking="think."
+delta 0 signature="dGhvdWdodC1zaWc="
+end 0
+start 1 text
+delta 1 text="391"
+end 1
+start 2 thinking
+delta 2 signature="dGV4dC1zaWc="
+end 2 {"type":"thinking","text":"","signature":"dGV4dC1zaWc="}

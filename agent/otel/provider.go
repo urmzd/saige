@@ -16,9 +16,9 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// TracedProvider wraps a Provider and emits OTel spans for ChatStream calls.
+// TracedProvider wraps a Provider and emits OTel spans for Stream calls.
 type TracedProvider struct {
-	Inner  types.Provider
+	wrapper.Base
 	tracer trace.Tracer
 	opts   providerOptions
 }
@@ -43,30 +43,26 @@ func WithProviderRedactor(redact func(string) string) ProviderOption {
 	return func(o *providerOptions) { o.redactor = redact }
 }
 
-// NewTracedProvider wraps a provider with tracing.
-func NewTracedProvider(inner types.Provider, tracer trace.Tracer, opts ...ProviderOption) *TracedProvider {
-	p := &TracedProvider{Inner: inner, tracer: tracer}
+// NewTracedProvider wraps a provider with tracing. A nil inner provider or
+// tracer is an error wrapping types.ErrInvalidConfig.
+func NewTracedProvider(inner types.Provider, tracer trace.Tracer, opts ...ProviderOption) (*TracedProvider, error) {
+	if inner == nil || tracer == nil {
+		return nil, fmt.Errorf("%w: otel: a traced provider needs a provider and a tracer", types.ErrInvalidConfig)
+	}
+	p := &TracedProvider{tracer: tracer}
 	for _, opt := range opts {
 		opt(&p.opts)
 	}
-	return p
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
 }
 
-// Unwrap returns the inner provider, so optional interfaces behind the tracing
-// layer stay discoverable through the provider wrapper chain.
-func (p *TracedProvider) Unwrap() types.Provider { return p.Inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (p *TracedProvider) Close() error { return types.CloseProvider(p.Inner) }
-
-// Name delegates to the inner provider.
-func (p *TracedProvider) Name() string {
-	return types.ProviderName(p.Inner)
-}
-
-// Model delegates to the inner provider.
-func (p *TracedProvider) Model() string {
-	return types.ProviderModel(p.Inner)
+// rewrap keeps tracing attached around another inner provider, so a model
+// switch or a new session stays traced.
+func (p *TracedProvider) rewrap(inner types.Provider) types.Provider {
+	c := *p
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
 }
 
 // vendor names the provider for gen_ai.provider.name and metrics: the
@@ -102,72 +98,41 @@ func (p *TracedProvider) startChat(ctx context.Context, extra ...attribute.KeyVa
 	)
 }
 
-// ChatStream starts a span around the provider call and wraps the delta channel.
-func (p *TracedProvider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream starts a span around the provider call and wraps the delta
+// channel. The controls that GenAI conventions name are recorded as request
+// attributes. A schema or options the inner provider cannot receive fail the
+// call with an error matching types.ErrSchemaUnsupported or
+// types.ErrOptionsUnsupported (and so ErrInvalidModelConfig) instead of
+// being dropped; a fallback chain then tries its next member.
+func (p *TracedProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil && !types.AcceptsSchema(p.Inner) {
+		return nil, p.unsupported(types.ErrSchemaUnsupported)
+	}
 	// The clock starts before the inner call so connection setup and response
 	// headers count toward the time to first chunk.
 	start := time.Now()
-	ctx, span := p.startChat(ctx, p.localDials(nil, tools)...)
-
-	ch, err := p.Inner.ChatStream(ctx, messages, tools)
-	if err != nil {
-		recordSpanError(span, err, p.opts.redactor)
-		span.End()
-		return nil, err
-	}
-
-	return p.wrapDeltaChannel(ctx, ch, span, start), nil
-}
-
-// ChatStreamWithSchema delegates structured output calls with tracing. When
-// the inner provider cannot enforce a schema, a call with one fails with an
-// error matching types.ErrSchemaUnsupported (and so ErrInvalidModelConfig)
-// instead of dropping it; a fallback chain then tries its next member.
-func (p *TracedProvider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	sop, ok := p.Inner.(types.StructuredOutputProvider)
-	if !ok {
-		if schema != nil {
-			return nil, p.unsupported(types.ErrSchemaUnsupported)
+	var attrs []attribute.KeyValue
+	if req.Options != nil {
+		attrs = p.localDials(req.Options, req.Tools)
+		if attrs == nil {
+			attrs = requestAttributes(*req.Options)
 		}
-		return p.ChatStream(ctx, messages, tools)
+	} else if req.Schema == nil {
+		attrs = p.localDials(nil, req.Tools)
 	}
-
-	start := time.Now()
-	ctx, span := p.startChat(ctx, attribute.String("gen_ai.output.type", "json"))
-
-	ch, err := sop.ChatStreamWithSchema(ctx, messages, tools, schema)
-	if err != nil {
-		recordSpanError(span, err, p.opts.redactor)
-		span.End()
-		return nil, err
-	}
-
-	return p.wrapDeltaChannel(ctx, ch, span, start), nil
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider, so per-request
-// controls such as a tool choice reach the inner provider through the tracing
-// layer. The controls that GenAI conventions name are recorded as request
-// attributes. When the inner provider cannot receive options the call fails
-// with an error matching types.ErrInvalidModelConfig rather than dropping
-// them.
-func (p *TracedProvider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	start := time.Now()
-	attrs := p.localDials(&opts, tools)
-	if attrs == nil {
-		attrs = requestAttributes(opts)
+	if req.Schema != nil {
+		attrs = append(attrs, attribute.String("gen_ai.output.type", "json"))
 	}
 	ctx, span := p.startChat(ctx, attrs...)
 
-	op, ok := p.Inner.(types.OptionsProvider)
-	if !ok {
+	if req.Options != nil && !types.AcceptsOptions(p.Inner) {
 		err := p.unsupported(types.ErrOptionsUnsupported)
 		recordSpanError(span, err, p.opts.redactor)
 		span.End()
 		return nil, err
 	}
 
-	ch, err := op.ChatStreamWithOptions(ctx, messages, tools, opts)
+	ch, err := p.Inner.Stream(ctx, req)
 	if err != nil {
 		recordSpanError(span, err, p.opts.redactor)
 		span.End()
@@ -221,49 +186,6 @@ func requestAttributes(o types.RequestOptions) []attribute.KeyValue {
 	return attrs
 }
 
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// and keeps tracing attached. Without it a ConfigContent model switch was
-// dropped whenever tracing was enabled, so traced runs silently ignored the
-// requested model.
-func (p *TracedProvider) WithModel(model string) types.Provider {
-	return &TracedProvider{Inner: types.ProviderWithModel(p.Inner, model), tracer: p.tracer, opts: p.opts}
-}
-
-// ContentSupport delegates to the inner provider, preferring its model-level
-// capability declaration over the adapter-level negotiator.
-func (p *TracedProvider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(p.Inner)
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. Tracing changes observability, not what the model accepts.
-//
-// TracedProvider always implements types.OptionsProvider, but it can only
-// forward options the inner provider accepts. When the inner provider takes
-// no options, the controls that travel only as options are removed, so the
-// agent loop falls back to what it does for the unwrapped provider (for
-// example withholding tools for ToolChoiceNone) instead of sending options
-// that ChatStreamWithOptions must reject.
-func (p *TracedProvider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(p.Inner)
-	if _, ok := p.Inner.(types.OptionsProvider); !ok {
-		caps = caps.Without(types.CapToolChoice, types.CapParallelToolControl)
-	}
-	return caps
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the inner
-// provider.
-func (p *TracedProvider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(p.Inner)
-	return o
-}
-
-// NewSession returns a traced session of the inner provider.
-func (p *TracedProvider) NewSession() types.Provider {
-	return &TracedProvider{Inner: types.NewProviderSession(p.Inner), tracer: p.tracer, opts: p.opts}
-}
-
 // wrapDeltaChannel forwards the inner channel and ends the span when it
 // closes.
 //
@@ -282,6 +204,7 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 			firstSeen bool
 			route     types.RouteDelta
 			sawRoute  bool
+			conv      *types.ConversionReport
 		)
 		defer func() {
 			if sawUsage {
@@ -307,13 +230,16 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 					span.SetAttributes(dialAttributes(*route.Dials)...)
 				}
 			}
+			if conv != nil {
+				span.SetAttributes(conversionAttributes(*conv)...)
+			}
 			span.End()
 		}()
 
 		for d := range in {
 			switch v := d.(type) {
-			case types.TextContentDelta:
-				if !firstSeen {
+			case types.PartDelta:
+				if !firstSeen && v.Text != "" {
 					firstSeen = true
 					ttft := time.Since(start)
 					span.SetAttributes(attribute.Float64("gen_ai.response.time_to_first_chunk", ttft.Seconds()))
@@ -337,6 +263,18 @@ func (p *TracedProvider) wrapDeltaChannel(ctx context.Context, in <-chan types.D
 					attrs = append(attrs, dialAttributes(*v.Dials)...)
 				}
 				span.AddEvent("saige.route.attempt", trace.WithAttributes(attrs...))
+				// A conversion belongs to the attempt it was made for.
+				conv = nil
+			case types.ConversionDelta:
+				// The last attempt's report is the serving one; every report
+				// is an event, since a failed attempt's conversion was paid.
+				r := v.Report
+				conv = &r
+				attrs := conversionAttributes(r)
+				if v.Profile != "" {
+					attrs = append(attrs, attribute.String("saige.route.profile", v.Profile))
+				}
+				span.AddEvent("saige.conversion", trace.WithAttributes(attrs...))
 			case types.ErrorDelta:
 				recordSpanError(span, v.Error, p.opts.redactor)
 			}
@@ -449,6 +387,25 @@ func routeAttributes(r types.RouteDelta) []attribute.KeyValue {
 	add("saige.route.config_hash", r.ConfigHash)
 	add("saige.catalog.revision", r.CatalogRevision)
 	return attrs
+}
+
+// conversionAttributes records how an attempt fitted its parts to the
+// offering: the offering, the report hash, and one "path:action[:via]" entry
+// per part that was not native.
+func conversionAttributes(r types.ConversionReport) []attribute.KeyValue {
+	var decisions []string
+	for _, d := range r.Decisions {
+		e := d.Path.String() + ":" + d.Action
+		if d.Via != "" {
+			e += ":" + d.Via
+		}
+		decisions = append(decisions, e)
+	}
+	return []attribute.KeyValue{
+		attribute.String("saige.conversion.offering", r.Offering),
+		attribute.String("saige.conversion.hash", r.Hash),
+		attribute.StringSlice("saige.conversion.decisions", decisions),
+	}
 }
 
 // recordSpanError marks span as failed and attaches the error classification.

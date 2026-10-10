@@ -232,9 +232,9 @@ func (r richEcho) Execute(context.Context, map[string]any) (string, error) {
 	return r.text, nil
 }
 func (r richEcho) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
-	return types.ToolResult{Text: r.text, Blocks: []types.ToolResultBlock{
-		{Kind: types.ToolResultBlockText, Text: r.text},
-		{Kind: types.ToolResultBlockImage, Data: []byte("img")},
+	return types.ToolResult{Parts: []types.ToolOutputPart{
+		types.Text(r.text),
+		types.Image(types.Bytes(types.MediaPNG, []byte("img"))),
 	}}, nil
 }
 
@@ -261,23 +261,23 @@ func TestSpill(t *testing.T) {
 			}
 			if !tc.spilled {
 				raw, _ := tc.tool.Execute(ctx, nil)
-				if res.Text != raw {
-					t.Fatalf("text changed: %q", res.Text)
+				if res.Text() != raw {
+					t.Fatalf("text changed: %q", res.Text())
 				}
 				return
 			}
-			if !strings.HasPrefix(res.Text, big[:20]+"\n\n[result truncated: showing 20 of 100 bytes") {
-				t.Fatalf("preview = %q", res.Text)
+			if !strings.HasPrefix(res.Text(), big[:20]+"\n\n[result truncated: showing 20 of 100 bytes") {
+				t.Fatalf("preview = %q", res.Text())
 			}
-			i := strings.Index(res.Text, URIScheme)
-			uri := strings.TrimSuffix(strings.Fields(res.Text[i:])[0], ".")
+			i := strings.Index(res.Text(), URIScheme)
+			uri := strings.TrimSuffix(strings.Fields(res.Text()[i:])[0], ".")
 			ref, _ := ParseRef(uri)
 			full, err := tc.ws.Read(ctx, ref, 0, 0)
 			if err != nil || string(full) != big {
 				t.Fatalf("stored = %q, %v", full, err)
 			}
-			if len(res.Blocks) > 0 && (res.Blocks[0].Text != res.Text || string(res.Blocks[1].Data) != "img") {
-				t.Fatalf("blocks = %+v", res.Blocks)
+			if len(res.Parts) > 1 && (res.Parts[0].(types.TextPart).Text != res.Text() || string(res.Parts[1].(types.ImagePart).Source.Inline) != "img") {
+				t.Fatalf("parts = %+v", res.Parts)
 			}
 		})
 	}
@@ -307,8 +307,8 @@ func TestSpillPreviewKeepsValuesWhole(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res := redactor.TokenizeResult(ctx, tool.Definition(), types.ToolResult{Text: out})
-			preview := res.Text[:strings.Index(res.Text, "\n\n[result truncated")]
+			res := redactor.TokenizeResult(ctx, tool.Definition(), types.ToolResult{Parts: []types.ToolOutputPart{types.Text(out)}})
+			preview := res.Text()[:strings.Index(res.Text(), "\n\n[result truncated")]
 			for _, frag := range []string{"ada", "lovelace", "example", "4111", "1111"} {
 				if strings.Contains(preview, frag) {
 					t.Fatalf("preview leaks %q: %q", frag, preview)

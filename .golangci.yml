@@ -30,12 +30,14 @@ linters:
     revive:
       rules:
         - name: exported
-          disabled: true
+          arguments:
+            - disableStutteringCheck
 
   exclusions:
     rules:
       - path: _test\.go
         linters:
+          - revive
           - errcheck
           - gosec
           - goconst

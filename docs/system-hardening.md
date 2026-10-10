@@ -26,7 +26,7 @@ Status values: **implemented** (done and covered by tests), **partial** (done wi
 | Concurrent tool calls keep call ID and result paired | implemented | `agent/agent.go`, `agent/aggregator.go` | `concurrency_test.go`, `aggregator_test.go`, `aggregator_args_test.go` |
 | Tool, gate, and handoff panics become error results | implemented | `agent/agent.go` | `run_panic_test.go`, `failure_test.go` |
 | Malformed or schema-mismatched arguments rejected before the gate | implemented | `agent/types/toolargs.go`, `agent/types/schema_validate.go` | `toolargs_test.go`, `schema_validate_test.go`, `tool_safety_test.go` |
-| Truncated turns committed with `TruncationContent`, their tool calls never run | partial | `agent/forcing.go`, `agent/types/delta.go` | `forcing_test.go`, `stream_test.go` |
+| Truncated turns committed with `TruncationPart`, their tool calls never run | partial | `agent/forcing.go`, `agent/types/delta.go` | `forcing_test.go`, `stream_test.go` |
 | One-turn forced tool choice, stop-at-tools, `MaxIterForceFinal` | implemented | `agent/forcing.go`, `agent/types/request_options.go` | `forcing_test.go`, `toolchoice_test.go`, `limits_test.go` |
 | Run guards: one run per branch, consecutive errors, repeated calls | implemented | `agent/runguard.go`, `agent/deadline.go` | `run_guard_test.go`, `limits_test.go` |
 | Submissions: queue, steer, interrupt-replace, side, continue | partial | `agent/submit.go`, `agent/stream.go` | `submit_test.go`, `submit_safety_test.go` |
@@ -161,7 +161,7 @@ Behavior changes are also listed in [upgrade notes](upgrade-notes.md).
 | Required and named tool choices apply to one turn, then revert to auto. | Set the choice again if a later turn must be forced. |
 | Malformed tool arguments return an "invalid tool arguments" result instead of reaching the tool. A truncated tool call fails the turn with `ErrResponseTruncated`. | Treat these as turn failures, not empty answers. |
 | A repeated decision for an answered marker returns `ErrMarkerResolved`; `saige serve` answers 409. | Prefer `ResolveMarkerErr` over `ResolveMarker` and treat 409 as already decided. |
-| `AgentConfig.Store` without a `Tree` builds a store-backed tree, and failed store writes fail the run. | Build caller-supplied trees with `tree.WithStore(store)`. |
+| `agent.Config.Store` without a `Tree` builds a store-backed tree, and failed store writes fail the run. | Build caller-supplied trees with `tree.WithStore(store)`. |
 | Compacted branch IDs no longer nest (`compact-main-<id>`). | Update code that parses branch names. |
 | `WithTracing` opens an `invoke_agent` span per run. | Remove a manual `StartAgent` around `Invoke` to avoid duplicate spans. |
 | pgstore reads are scoped to the conversation; `SaveNode` returns `ErrVersionConflict` and `ErrConversationMismatch`. | Handle the errors instead of relying on silent skips. |
@@ -204,7 +204,7 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | Handoff round trip | Ollama qwen3.5:4b | pass (2 of 3) | One run repeated handoffs until `MaxIter` stopped it cleanly; model behavior |
 | Queue mid-run | OpenAI | pass | Held until the first answer finished, then answered "BANANA" |
 | Steer between tool calls | OpenAI | pass | Landed after the tool result, pairing intact, model followed it |
-| Interrupt-replace | OpenAI | pass | Partial text committed with `TruncationContent`, new message answered |
+| Interrupt-replace | OpenAI | pass | Partial text committed with `TruncationPart`, new message answered |
 | Continue after output-limit truncation | OpenAI | pass | Continued without repeating text |
 | Token-based compaction | OpenAI | pass | Branch moved to `compact-main-*`, summarized fact recalled; input stayed above the limit after one pass |
 | Router: permanent error does not fail over | OpenAI to Ollama | pass | 404 invalid request, 0 fallback requests |
@@ -249,7 +249,7 @@ Scenarios were run against live providers on top of the unit and race tests. Whe
 | Continue after output-limit truncation | Anthropic claude-haiku-5-5 | pass | Continued through the continue-prompt path, since the model accepts no prefill |
 | Submit queue and `InterruptReplace` | Anthropic claude-haiku-5-5 | pass | Queued message answered after the run; replace committed the partial turn |
 | Prompt caching | Anthropic claude-haiku-5-5 | pass | First call wrote 2643 cache tokens, the second read 2643 |
-| `web_search` server tool deltas | Anthropic claude-haiku-5-5 | pass | `ServerToolCallDelta` and `ServerToolResultDelta` streamed |
+| `web_search` server tool deltas | Anthropic claude-haiku-5-5 | pass | server tool call and result parts streamed |
 | Preset failover on 529 | Anthropic to OpenAI | pass | Forced 529 failed over to OpenAI; route names named the vendor and model, not the decorators |
 | `ToolRedactor` | Anthropic claude-haiku-5-5 | pass | Request bodies held only placeholders |
 | `saige ask` and `--format json` | Anthropic claude-haiku-5-5 | pass | Text answer, and JSONL envelopes ending in `usage` and `done` |

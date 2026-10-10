@@ -15,7 +15,7 @@ type provider struct {
 	caps  types.ModelCapabilities
 }
 
-func (p provider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p provider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return p.call()
 }
 func (p provider) Model() string                         { return p.model }
@@ -42,7 +42,7 @@ func TestStickyIndependentProfilesAndSessions(t *testing.T) {
 		{ID: "first", Provider: provider{model: "same", call: func() (<-chan types.Delta, error) { primary.Add(1); return nil, transient() }}},
 		{ID: "second", Provider: provider{model: "same", call: func() (<-chan types.Delta, error) {
 			secondary.Add(1)
-			return deltas(types.TextContentDelta{Content: "second settings"}), nil
+			return deltas(types.PartDelta{Index: 0, Text: "second settings"}), nil
 		}}},
 	}})
 	if err != nil {
@@ -68,11 +68,11 @@ func TestPartialOutputDoesNotRetryButNextCallMoves(t *testing.T) {
 	var secondary atomic.Int32
 	r, _ := New(Config{Profiles: []Profile{
 		{ID: "first", Provider: provider{call: func() (<-chan types.Delta, error) {
-			return deltas(types.TextContentDelta{Content: "partial"}, types.ErrorDelta{Error: transient()}), nil
+			return deltas(types.PartDelta{Index: 0, Text: "partial"}, types.ErrorDelta{Error: transient()}), nil
 		}}},
 		{ID: "second", Provider: provider{call: func() (<-chan types.Delta, error) {
 			secondary.Add(1)
-			return deltas(types.TextContentDelta{Content: "done"}), nil
+			return deltas(types.PartDelta{Index: 0, Text: "done"}), nil
 		}}},
 	}})
 	s := r.Session()
@@ -90,20 +90,20 @@ func TestSessionBusyAndCapabilityGate(t *testing.T) {
 	release := make(chan types.Delta)
 	r, _ := New(Config{Profiles: []Profile{{ID: "a", Provider: provider{call: func() (<-chan types.Delta, error) { return release, nil }}}}})
 	s := r.Session()
-	ch, err := s.ChatStream(context.Background(), nil, nil)
+	ch, err := s.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ChatStream(context.Background(), nil, nil); !errors.Is(err, ErrSessionBusy) {
+	if _, err = s.Stream(context.Background(), types.Request{}); !errors.Is(err, ErrSessionBusy) {
 		t.Fatal(err)
 	}
 	close(release)
 	for range ch {
 	}
-	if _, err = s.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"}); err == nil {
+	if _, err = s.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}}); err == nil {
 		t.Fatal("schema silently dropped")
 	}
-	if _, err = s.WithModel("missing").ChatStream(context.Background(), nil, nil); err == nil {
+	if _, err = s.WithTarget(types.ProfileTarget("missing")); err == nil {
 		t.Fatal("unknown profile accepted")
 	}
 }
@@ -111,12 +111,12 @@ func TestSessionBusyAndCapabilityGate(t *testing.T) {
 func TestEarlyStreamFailureAndPolicyValidation(t *testing.T) {
 	r, _ := New(Config{Profiles: []Profile{
 		{ID: "a", Provider: provider{call: func() (<-chan types.Delta, error) { return deltas(types.ErrorDelta{Error: transient()}), nil }}},
-		{ID: "b", Provider: provider{call: func() (<-chan types.Delta, error) { return deltas(types.TextContentDelta{Content: "ok"}), nil }}},
+		{ID: "b", Provider: provider{call: func() (<-chan types.Delta, error) { return deltas(types.PartDelta{Index: 0, Text: "ok"}), nil }}},
 	}})
 	if got, err := consume(t, r.Session()); err != nil || got != "ok" {
 		t.Fatal(got, err)
 	}
-	r.cfg.Policy = PolicyFunc(func(context.Context, Request) ([]string, error) { return []string{"a", "a"}, nil })
+	r.cfg.Policy = PolicyFunc(func(context.Context, Request) ([]types.ProfileID, error) { return []types.ProfileID{"a", "a"}, nil })
 	if _, err := consume(t, r.Session()); err == nil {
 		t.Fatal("invalid policy accepted")
 	}
@@ -146,7 +146,7 @@ func TestUsageBeforeOutputDoesNotCommit(t *testing.T) {
 		},
 		{
 			name:       "usage then output is served",
-			a:          []types.Delta{types.UsageDelta{PromptTokens: 10}, types.TextContentDelta{Content: "from a"}},
+			a:          []types.Delta{types.UsageDelta{PromptTokens: 10}, types.PartDelta{Index: 0, Text: "from a"}},
 			wantText:   "from a",
 			wantPrompt: 10,
 		},
@@ -164,13 +164,13 @@ func TestUsageBeforeOutputDoesNotCommit(t *testing.T) {
 				{ID: "a", Provider: provider{call: func() (<-chan types.Delta, error) { return deltas(tt.a...), nil }}},
 				{ID: "b", Provider: provider{call: func() (<-chan types.Delta, error) {
 					bCalls.Add(1)
-					return deltas(types.UsageDelta{PromptTokens: 3}, types.TextContentDelta{Content: "from b"}), nil
+					return deltas(types.UsageDelta{PromptTokens: 3}, types.PartDelta{Index: 0, Text: "from b"}), nil
 				}}},
 			}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := r.Session().ChatStream(context.Background(), nil, nil)
+			ch, err := r.Session().Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -179,8 +179,8 @@ func TestUsageBeforeOutputDoesNotCommit(t *testing.T) {
 			var streamErr error
 			for d := range ch {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text += v.Content
+				case types.PartDelta:
+					text += v.Text
 				case types.UsageDelta:
 					prompt += v.PromptTokens
 				case types.ErrorDelta:

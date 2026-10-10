@@ -15,7 +15,7 @@ func node(id, parent string, depth int, branch types.BranchID) *types.Node {
 	return &types.Node{
 		ID:        types.NodeID(id),
 		ParentID:  types.NodeID(parent),
-		Message:   types.NewUserMessage(id),
+		Message:   types.UserMsg(types.Text(id)),
 		State:     types.NodeActive,
 		Version:   1,
 		Depth:     depth,
@@ -186,20 +186,20 @@ func TestCheckpointRewindRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := memstore.New()
 
-	tr, err := tree.New(types.NewSystemMessage("system"))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")))
 	if err != nil {
 		t.Fatalf("tree.New: %v", err)
 	}
 	root := tr.Root()
-	user, _ := tr.AddChild(ctx, root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(ctx, root.ID, types.UserMsg(types.Text("hello")))
 	asst, _ := tr.AddChild(ctx, user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "hi"}},
 	})
 	cpID, err := tr.Checkpoint("main", "after-turn-1")
 	if err != nil {
 		t.Fatalf("Checkpoint: %v", err)
 	}
-	tr.AddChild(ctx, asst.ID, types.NewUserMessage("more"))
+	tr.AddChild(ctx, asst.ID, types.UserMsg(types.Text("more")))
 
 	// Persist the full tree state.
 	for _, n := range []*types.Node{root, user, asst} {

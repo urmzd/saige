@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 const testModel = "claude-sonnet-4-5"
@@ -61,14 +64,14 @@ func sseServer(t *testing.T, hangUp bool, events ...sseEvent) *httptest.Server {
 
 type streamResult struct {
 	deltas []types.Delta
-	ends   []types.ToolCallEndDelta
+	ends   []types.ToolCallPart
 	errs   []error
 	usage  bool // a usage delta arrived before the first error
 }
 
 func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	t.Helper()
-	ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("go")}, nil, schema)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +79,10 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 	for d := range ch {
 		r.deltas = append(r.deltas, d)
 		switch v := d.(type) {
-		case types.ToolCallEndDelta:
-			r.ends = append(r.ends, v)
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok {
+				r.ends = append(r.ends, tc)
+			}
 		case types.UsageDelta:
 			if len(r.errs) == 0 {
 				r.usage = true
@@ -86,6 +91,7 @@ func run(t *testing.T, a *Adapter, schema *types.ParameterSchema) streamResult {
 			r.errs = append(r.errs, v.Error)
 		}
 	}
+	streamcheck.RunPartConformance(t, r.deltas)
 	return r
 }
 
@@ -123,7 +129,9 @@ func TestToolArgumentIntegrity(t *testing.T) {
 			name: "malformed call ends with an error before the next block starts",
 			events: []sseEvent{{"message_start", evStart}, {"content_block_start", evToolStart},
 				{"content_block_delta", evArgs(`{"path":}`)}, {"content_block_stop", evBlockStop},
-				{"content_block_start", evTextStart}, {"content_block_delta", evText("done")}, {"content_block_stop", evBlockStop},
+				{"content_block_start", strings.Replace(evTextStart, `"index":0`, `"index":1`, 1)},
+				{"content_block_delta", strings.Replace(evText("done"), `"index":0`, `"index":1`, 1)},
+				{"content_block_stop", strings.Replace(evBlockStop, `"index":0`, `"index":1`, 1)},
 				{"message_delta", evMessageDelta("end_turn", 20)}, {"message_stop", evStop}},
 			wantArgsErr: 1,
 		},
@@ -136,9 +144,9 @@ func TestToolArgumentIntegrity(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, tc.events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, tc.events...).URL)))
 			r := run(t, a, nil)
-			var ends []types.ToolCallEndDelta
+			var ends []types.ToolCallPart
 			argsErrs := 0
 			for _, end := range r.ends {
 				if end.ArgumentsError != "" {
@@ -154,16 +162,21 @@ func TestToolArgumentIntegrity(t *testing.T) {
 				t.Fatalf("argument errors = %d, want %d", argsErrs, tc.wantArgsErr)
 			}
 			// A held call closes before the next block starts.
-			open := ""
+			open, openIndex := "", -1
 			for _, d := range r.deltas {
 				switch v := d.(type) {
-				case types.ToolCallStartDelta:
-					open = v.ID
-				case types.ToolCallEndDelta:
-					open = ""
-				case types.TextStartDelta:
-					if open != "" {
-						t.Fatalf("text started while call %s was open", open)
+				case types.PartStart:
+					switch v.Kind {
+					case types.KindToolCall:
+						open, openIndex = v.ID, v.Index
+					case types.KindText:
+						if open != "" {
+							t.Fatalf("text started while call %s was open", open)
+						}
+					}
+				case types.PartEnd:
+					if v.Index == openIndex {
+						open, openIndex = "", -1
 					}
 				}
 			}
@@ -192,9 +205,15 @@ func TestToolArgumentIntegrity(t *testing.T) {
 					t.Fatal("usage must arrive before the error so tokens are accounted")
 				}
 			}
+			callIndex := map[int]string{}
 			for _, d := range r.deltas {
-				if arg, ok := d.(types.ToolCallArgumentDelta); ok && arg.ID != "toolu_1" {
-					t.Fatalf("argument delta without call ID: %+v", arg)
+				switch v := d.(type) {
+				case types.PartStart:
+					callIndex[v.Index] = v.ID
+				case types.PartDelta:
+					if v.Args != "" && callIndex[v.Index] != "toolu_1" {
+						t.Fatalf("argument delta outside the call: %+v", v)
+					}
 				}
 			}
 		})
@@ -206,7 +225,7 @@ func TestTruncatedStructuredOutput(t *testing.T) {
 		{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_s","name":"structured_output","input":{}}}`},
 		{"content_block_delta", evArgs(`{"answer":"par`)},
 		{"content_block_stop", evBlockStop}, {"message_delta", evMessageDelta("max_tokens", 4096)}, {"message_stop", evStop}}
-	a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, events...).URL))
+	a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, events...).URL)))
 	r := run(t, a, &types.ParameterSchema{Type: "object", Properties: map[string]types.PropertyDef{"answer": {Type: "string"}}})
 	if len(r.errs) != 1 || !types.IsTruncated(r.errs[0]) {
 		t.Fatalf("errors = %v, want one truncation", r.errs)
@@ -227,7 +246,7 @@ func TestStreamFailureClassification(t *testing.T) {
 		{"overloaded error event", false, []sseEvent{{"message_start", evStart}, {"error", `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`}}, true, types.ErrorKindUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, tc.hangUp, tc.events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, tc.hangUp, tc.events...).URL)))
 			r := run(t, a, nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v, want 1", r.errs)
@@ -267,7 +286,7 @@ func TestHTTPErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(server.URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL))), nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v", r.errs)
 			}
@@ -301,11 +320,11 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 				_, _ = w.Write([]byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`))
 			}))
 			defer server.Close()
-			var p types.Provider = NewAdapter("test", testModel, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			var p types.Provider = must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
 			if tc.outer > 0 {
-				p = retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+				p = must.Get(retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if err == nil {
 				for d := range ch {
 					if e, ok := d.(types.ErrorDelta); ok {
@@ -324,9 +343,9 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 }
 
 // TestStopReasonsThatAreNotAnswers checks that a refusal ends the stream with
-// a content-filter error, a paused server tool turn with a permanent error,
-// and a response cut off at the context window with a context-length error,
-// while a normal end of turn succeeds.
+// a content-filter error, a server tool turn that stays paused with a
+// permanent error, and a response cut off at the context window with a
+// context-length error, while a normal end of turn succeeds.
 func TestStopReasonsThatAreNotAnswers(t *testing.T) {
 	for _, tc := range []struct {
 		stop     string
@@ -342,7 +361,7 @@ func TestStopReasonsThatAreNotAnswers(t *testing.T) {
 			events := []sseEvent{{"message_start", evStart}, {"content_block_start", evTextStart},
 				{"content_block_delta", evText("partial")}, {"content_block_stop", evBlockStop},
 				{"message_delta", evMessageDelta(tc.stop, 5)}, {"message_stop", evStop}}
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, events...).URL)))
 			r := run(t, a, nil)
 			if !tc.wantErr {
 				if len(r.errs) != 0 {

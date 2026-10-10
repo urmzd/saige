@@ -50,18 +50,16 @@ func (a *Adapter) toolConfig() *genai.ToolConfig {
 }
 
 // serverToolState pairs Gemini's server tool parts into call and result
-// deltas over one stream.
+// parts over one response.
 type serverToolState struct {
 	// pendingCode holds the IDs of code calls still waiting for a result,
 	// oldest first. Gemini usually omits part IDs, and a result follows its
 	// code in order.
 	pendingCode []string
-	// grounding is the latest metadata that carried search queries.
-	grounding *genai.GroundingMetadata
 }
 
 // codeCall reports generated code as a server tool call.
-func (s *serverToolState) codeCall(c *genai.ExecutableCode) types.ServerToolCallDelta {
+func (s *serverToolState) codeCall(c *genai.ExecutableCode) types.ServerToolCallPart {
 	id := c.ID
 	if id == "" {
 		id = types.NewID()
@@ -71,11 +69,11 @@ func (s *serverToolState) codeCall(c *genai.ExecutableCode) types.ServerToolCall
 	if c.Language != "" {
 		input["language"] = string(c.Language)
 	}
-	return types.ServerToolCallDelta{ID: id, Kind: types.ServerToolCodeExecution, Name: "code_execution", Input: input}
+	return types.ServerToolCallPart{ID: id, ToolKind: types.ServerToolCodeExecution, Name: "code_execution", Input: input}
 }
 
 // codeResult reports a code execution outcome and pairs it with its call.
-func (s *serverToolState) codeResult(r *genai.CodeExecutionResult) types.ServerToolResultDelta {
+func (s *serverToolState) codeResult(r *genai.CodeExecutionResult) types.ServerToolResultPart {
 	id := r.ID
 	switch i := slices.Index(s.pendingCode, id); {
 	case id != "" && i >= 0:
@@ -86,29 +84,20 @@ func (s *serverToolState) codeResult(r *genai.CodeExecutionResult) types.ServerT
 		id = types.NewID()
 	}
 	raw, _ := json.Marshal(r)
-	return types.ServerToolResultDelta{
-		ID: id, Kind: types.ServerToolCodeExecution, Text: r.Output, Result: raw,
+	return types.ServerToolResultPart{
+		CallID: id, ToolKind: types.ServerToolCodeExecution, Text: r.Output, Result: raw,
 		IsError: r.Outcome != "" && r.Outcome != genai.OutcomeOK,
 	}
 }
 
-// observe keeps the latest grounding metadata that names search queries.
-// Gemini can repeat or extend it across chunks, so the search is reported
-// once, at the end of the stream.
-func (s *serverToolState) observe(md *genai.GroundingMetadata) {
-	if md != nil && len(md.WebSearchQueries) > 0 {
-		s.grounding = md
+// search reports the search grounding ran as a call with its queries and a
+// result listing the sources found. Gemini can repeat or extend the
+// metadata across chunks, so it is reported once, from the last metadata of
+// the response. ok is false when no search ran.
+func (s *serverToolState) search(md *genai.GroundingMetadata) (types.ServerToolCallPart, types.ServerToolResultPart, bool) {
+	if md == nil || len(md.WebSearchQueries) == 0 {
+		return types.ServerToolCallPart{}, types.ServerToolResultPart{}, false
 	}
-}
-
-// search reports the observed search as a call with its queries and a result
-// listing the sources found. It returns nothing when no search ran.
-func (s *serverToolState) search() []types.Delta {
-	md := s.grounding
-	if md == nil {
-		return nil
-	}
-	s.grounding = nil
 	id := types.NewID()
 	queries := make([]any, len(md.WebSearchQueries))
 	for i, q := range md.WebSearchQueries {
@@ -121,10 +110,8 @@ func (s *serverToolState) search() []types.Delta {
 		}
 	}
 	raw, _ := json.Marshal(md.GroundingChunks)
-	return []types.Delta{
-		types.ServerToolCallDelta{ID: id, Kind: types.ServerToolWebSearch, Name: "google_search", Input: map[string]any{"queries": queries}},
-		types.ServerToolResultDelta{ID: id, Kind: types.ServerToolWebSearch, Text: strings.Join(lines, "\n"), Result: raw},
-	}
+	return types.ServerToolCallPart{ID: id, ToolKind: types.ServerToolWebSearch, Name: "google_search", Input: map[string]any{"queries": queries}},
+		types.ServerToolResultPart{CallID: id, ToolKind: types.ServerToolWebSearch, Text: strings.Join(lines, "\n"), Result: raw}, true
 }
 
 // ListModels implements catalog.ModelLister. IDs drop the resource prefix

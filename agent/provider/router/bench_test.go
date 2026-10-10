@@ -13,7 +13,7 @@ import (
 // secondary.
 func BenchmarkRouterOverhead(b *testing.B) {
 	ok := func() (<-chan types.Delta, error) {
-		return deltas(types.TextStartDelta{}, types.TextContentDelta{Content: "ok"}, types.TextEndDelta{}), nil
+		return deltas(types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "ok"}, types.PartEnd{Index: 0}), nil
 	}
 	busy := func() (<-chan types.Delta, error) {
 		return nil, &types.ProviderError{Kind: types.ErrorKindTransient, Err: errors.New("busy")}
@@ -30,12 +30,12 @@ func BenchmarkRouterOverhead(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			msgs := []types.Message{types.NewUserMessage("hi")}
+			msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 			b.ReportAllocs()
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					ch, err := r.Session().ChatStream(context.Background(), msgs, nil)
+					ch, err := r.Session().Stream(context.Background(), types.Request{Messages: msgs})
 					if err != nil {
 						b.Fatal(err)
 					}

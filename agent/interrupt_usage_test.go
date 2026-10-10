@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestInterruptReportsUsageWithoutBudget checks that a call stopped by
@@ -19,9 +20,9 @@ func TestInterruptReportsUsageWithoutBudget(t *testing.T) {
 		wantPrompt int // exact count expected; 0 means any estimate above zero
 	}{
 		{name: "usage reported before the interrupt", before: []types.Delta{
-			types.UsageDelta{PromptTokens: 1000}, types.TextStartDelta{}, types.TextContentDelta{Content: "half"},
+			types.UsageDelta{PromptTokens: 1000}, types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "half"},
 		}, wantPrompt: 1000},
-		{name: "no usage reported yet", before: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "half"}}},
+		{name: "no usage reported yet", before: []types.Delta{types.PartStart{Index: 1, Kind: types.KindText}, types.PartDelta{Index: 1, Text: "half"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -29,17 +30,17 @@ func TestInterruptReportsUsageWithoutBudget(t *testing.T) {
 				stepCall{before: tt.before, hold: make(chan struct{})},
 				stepCall{before: agenttest.TextResponse("replaced")},
 			)
-			a := NewAgent(AgentConfig{Provider: provider})
+			a := must.Get(New(Config{Provider: provider}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			submitted, interrupted := false, false
 			var text string
 			var stopped *types.UsageDelta
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text += v.Content
+				case types.PartDelta:
+					text += v.Text
 				case types.InterruptedDelta:
 					interrupted = true
 				case types.UsageDelta:
@@ -52,7 +53,7 @@ func TestInterruptReportsUsageWithoutBudget(t *testing.T) {
 				}
 				if !submitted && text == "half" {
 					submitted = true
-					if _, err := stream.Submit(types.NewUserMessage("new direction"), SubmitInterruptReplace); err != nil {
+					if _, err := stream.Submit(types.UserMsg(types.Text("new direction")), SubmitInterruptReplace); err != nil {
 						t.Fatalf("Submit: %v", err)
 					}
 				}

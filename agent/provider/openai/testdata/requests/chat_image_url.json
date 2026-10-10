@@ -1,0 +1,21 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "what is it?",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "https://example.com/a.png",
+            "detail": "high"
+          },
+          "type": "image_url"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

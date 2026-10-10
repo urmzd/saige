@@ -21,8 +21,8 @@ import (
 // once more, attributed to the caller one level up with a fresh deadline,
 // and denies it when that also expires. A root run has no caller, so it
 // denies at once.
-func WithInterruptExpiry(ttl time.Duration, policy types.InterruptPolicy) AgentOption {
-	return func(c *AgentConfig) {
+func WithInterruptExpiry(ttl time.Duration, policy types.InterruptPolicy) Option {
+	return func(c *Config) {
 		c.InterruptTTL = ttl
 		c.InterruptPolicy = policy
 	}
@@ -48,7 +48,7 @@ type decision struct {
 type interruptRequest struct {
 	kind    types.InterruptKind
 	phase   string
-	call    types.ToolUseContent
+	call    types.ToolCallPart
 	markers []types.Marker
 	payload []byte
 }
@@ -178,7 +178,7 @@ func replyAnswer(r types.InterruptReply) string {
 }
 
 // interruptKind classifies an approval by what it is about.
-func interruptKind(call types.ToolUseContent, phase string) types.InterruptKind {
+func interruptKind(call types.ToolCallPart, phase string) types.InterruptKind {
 	if call.Name == budgetToolName || strings.HasPrefix(phase, budgetToolName) {
 		return types.InterruptBudget
 	}

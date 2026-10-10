@@ -1,21 +1,25 @@
 package types
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
-// OptionsProvider is an optional interface for providers that accept
-// per-request controls on top of their configured defaults. The agent loop
-// uses it to send a tool choice. A provider without it cannot receive a
-// required or named tool choice, and the loop rejects such a request rather
-// than drop the control (see ModelCapabilities.ValidateOptions).
+// OptionsProvider is an optional interface for providers whose Stream
+// applies Request.Options on top of their configured defaults. The agent
+// loop uses it to send a tool choice. A provider without it, or whose
+// SupportsOptions reports false, cannot receive a required or named tool
+// choice, and the loop rejects such a request rather than drop the control
+// (see ModelCapabilities.ValidateOptions).
 //
-// Decorators that wrap a provider should implement it by forwarding to the
-// inner provider when the inner provider implements it.
+// Decorators that wrap a provider implement it and reject options their
+// inner provider cannot receive when the request arrives.
 type OptionsProvider interface {
 	Provider
-	ChatStreamWithOptions(ctx context.Context, messages []Message, tools []ToolDef, opts RequestOptions) (<-chan Delta, error)
+	SupportsOptions() bool
+}
+
+// AcceptsOptions reports whether p applies Request.Options.
+func AcceptsOptions(p Provider) bool {
+	op, ok := p.(OptionsProvider)
+	return ok && op.SupportsOptions()
 }
 
 // Forced reports whether the choice obliges the model to call a tool. A forced

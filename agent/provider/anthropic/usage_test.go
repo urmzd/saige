@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestRepeatedUsageSnapshotsAreNotDoubleCounted(t *testing.T) {
@@ -23,8 +24,8 @@ func TestRepeatedUsageSnapshotsAreNotDoubleCounted(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	adapter := NewAdapter("test", "claude-sonnet-4-5", WithBaseURL(server.URL))
-	stream, err := adapter.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	adapter := must.Get(New(Config{APIKey: "test", Model: "claude-sonnet-4-5"}, WithBaseURL(server.URL)))
+	stream, err := adapter.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // ErrBudgetAdmission marks a rejection before the provider was called.
@@ -42,6 +44,15 @@ type BudgetReservation struct {
 // must bound the configured request for parallel monetary/token admission.
 // With no bound, the attempt reserves all remaining capacity for that limit.
 func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) {
+	return b.ReserveWith(id, pricing, ConversionEstimate{})
+}
+
+// ReserveWith is Reserve with an attempt's planned conversions added to the
+// per-call bounds, so a call that converts media before dispatch reserves
+// for both. The conversions draw on the reservation with Carve. An extra
+// estimate changes nothing when the matching per-call bound is zero, since
+// the attempt then reserves all remaining capacity.
+func (b *Budget) ReserveWith(id string, pricing Pricing, extra ConversionEstimate) (BudgetReservation, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if id == "" {
@@ -60,7 +71,7 @@ func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) 
 	if p.Limit > 0 && pricing.IsZero() && !p.AllowUnpriced {
 		return BudgetReservation{}, ErrUnpriced
 	}
-	r := BudgetReservation{ID: id, Requests: 1, Cost: p.PerCallCost, Tokens: p.PerCallTokens}
+	r := perCall(id, p, extra)
 	var held BudgetReservation
 	for _, v := range b.reservations {
 		held.Cost += v.Cost
@@ -94,6 +105,69 @@ func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) 
 	return r, nil
 }
 
+// perCall is the reservation one attempt starts from: the per-call bounds,
+// each raised by the attempt's conversion estimate when it is set.
+func perCall(id string, p BudgetPolicy, extra ConversionEstimate) BudgetReservation {
+	r := BudgetReservation{ID: id, Requests: 1, Cost: p.PerCallCost, Tokens: p.PerCallTokens}
+	if r.Cost > 0 {
+		r.Cost += max(0, extra.Cost)
+	}
+	if r.Tokens > 0 {
+		r.Tokens += max(0, extra.InputTokens+extra.OutputTokens)
+	}
+	return r
+}
+
+// Carve moves part of reservation from into a new reservation id, for a
+// call made on behalf of the attempt that holds from, such as a converter's
+// model call before dispatch. The new reservation takes cost and tokens
+// (bounded by what from holds; zero takes all of it) and counts one request.
+// Settle it like any other. When from is not held, Carve reserves id as
+// Reserve does.
+func (b *Budget) Carve(from, id string, pricing Pricing, cost Cost, tokens int) (BudgetReservation, error) {
+	b.mu.Lock()
+	parent, ok := b.reservations[from]
+	if !ok || from == "" {
+		b.mu.Unlock()
+		return b.Reserve(id, pricing)
+	}
+	defer b.mu.Unlock()
+	if id == "" {
+		return BudgetReservation{}, errors.New("budget reservation needs an ID")
+	}
+	if _, held := b.reservations[id]; held {
+		return BudgetReservation{}, ErrReservationActive
+	}
+	if _, done := b.settled[id]; done {
+		return BudgetReservation{}, errors.New("budget reservation ID already settled")
+	}
+	p := b.policy
+	if p.Limit > 0 && pricing.IsZero() && !p.AllowUnpriced {
+		return BudgetReservation{}, ErrUnpriced
+	}
+	if p.OnExceed != BudgetWarn && p.MaxRequests > 0 {
+		held := 0
+		for _, v := range b.reservations {
+			held += v.Requests
+		}
+		if b.usage.Requests+held+1 > p.MaxRequests {
+			return BudgetReservation{}, ErrBudgetExceeded
+		}
+	}
+	if cost <= 0 || cost > parent.Cost {
+		cost = parent.Cost
+	}
+	if tokens <= 0 || tokens > parent.Tokens {
+		tokens = parent.Tokens
+	}
+	parent.Cost -= cost
+	parent.Tokens -= tokens
+	b.reservations[from] = parent
+	r := BudgetReservation{ID: id, Requests: 1, Cost: cost, Tokens: tokens}
+	b.reservations[id] = r
+	return r, nil
+}
+
 // Settle releases a reservation and records known usage once. Unknown usage
 // consumes the reserved cost/tokens and one request; it never becomes free.
 // An underestimated bound is recorded honestly and reported as an error.
@@ -113,15 +187,23 @@ func (b *Budget) Settle(id, model string, pricing Pricing, usage TokenUsage, unk
 		usage.InputTokens += max(0, r.Tokens-usage.Total())
 	}
 	cost := pricing.Cost(usage)
+	// A modality the card has no rate for is billed at the text rates, a
+	// lower bound, so the settled cost is uncertain.
+	uncertain := unknown || (!pricing.IsZero() && pricing.Unpriced(usage))
 	if unknown {
 		cost = max(cost, r.Cost)
+	}
+	if uncertain {
 		b.uncertain++
 	}
 	b.recordLocked(model, pricing, usage, cost)
 	if b.settled == nil {
 		b.settled = map[string]BudgetReceipt{}
 	}
-	b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: cost, Uncertain: unknown, Granted: b.granted}
+	b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: cost, Uncertain: uncertain, Granted: b.granted}
+	if b.unpricedLocked(pricing, usage) {
+		return fmt.Errorf("%w: %s", ErrUnpriced, unpricedWhat(model, pricing, usage))
+	}
 	if !unknown && ((r.Cost > 0 && cost > r.Cost) || (r.Tokens > 0 && usage.Total() > r.Tokens)) {
 		return fmt.Errorf("%w: provider usage exceeded the per-call reservation", ErrBudgetExceeded)
 	}
@@ -139,10 +221,38 @@ func (b *Budget) RecordOnce(id, model string, pricing Pricing, usage TokenUsage)
 		b.recordLocked(model, pricing, usage, pricing.Cost(usage))
 		b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: pricing.Cost(usage)}
 	}
-	if pricing.IsZero() && usage.Total() > 0 && b.policy.Limit > 0 && !b.policy.AllowUnpriced {
-		return b.statusLocked(), ErrUnpriced
+	if b.unpricedLocked(pricing, usage) {
+		return b.statusLocked(), fmt.Errorf("%w: %s", ErrUnpriced, unpricedWhat(model, pricing, usage))
 	}
 	return b.statusLocked(), nil
+}
+
+// unpricedLocked reports whether usage cannot be costed at pricing under a
+// policy that enforces a cost limit (D-09: an unpriced call fails closed
+// unless AllowUnpriced).
+func (b *Budget) unpricedLocked(pricing Pricing, usage TokenUsage) bool {
+	return b.policy.Limit > 0 && !b.policy.AllowUnpriced && pricing.Unpriced(usage)
+}
+
+// unpricedWhat names what could not be costed: the model, and the
+// modalities its card has no rate for.
+func unpricedWhat(model string, pricing Pricing, usage TokenUsage) string {
+	if pricing.IsZero() {
+		return model
+	}
+	var ms []string
+	for m, n := range usage.InputByModality {
+		if n > 0 && m != ModalityText && pricing.Modal[m].InputPerMTok <= 0 {
+			ms = append(ms, string(m)+" input")
+		}
+	}
+	for m, n := range usage.OutputByModality {
+		if n > 0 && m != ModalityText && pricing.Modal[m].OutputPerMTok <= 0 {
+			ms = append(ms, string(m)+" output")
+		}
+	}
+	sort.Strings(ms)
+	return model + " has no rate for " + strings.Join(ms, ", ")
 }
 
 // Uncertain returns the count of attempts settled without authoritative usage.

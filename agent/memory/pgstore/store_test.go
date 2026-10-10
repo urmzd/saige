@@ -20,6 +20,7 @@ import (
 	"github.com/urmzd/saige/agent/memory/memorytest"
 	agentpg "github.com/urmzd/saige/agent/pgstore"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -179,7 +180,8 @@ func newStore(t *testing.T, cfg Config) (*Store, *conceptEmbedder) {
 	if cfg.MinSimilarity == 0 {
 		cfg.MinSimilarity = 0.3
 	}
-	s, err := New(pool, cfg)
+	cfg.Pool = pool
+	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +201,7 @@ func TestConformance(t *testing.T) {
 }
 
 func TestNewRequiresEmbedder(t *testing.T) {
-	if _, err := New(&pgxpool.Pool{}, Config{}); err == nil {
+	if _, err := New(Config{Pool: &pgxpool.Pool{}}); err == nil {
 		t.Fatal("New without an embedder succeeded")
 	}
 }
@@ -431,7 +433,7 @@ func TestSelectorMode(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
-	text := msg.Content[0].(types.TextContent).Text
+	text := msg.Parts[0].(types.TextPart).Text
 	if !memory.IsInjected(text) || !strings.Contains(text, "vim keybindings") || strings.Contains(text, "make") {
 		t.Fatalf("injected = %q", text)
 	}
@@ -439,7 +441,7 @@ func TestSelectorMode(t *testing.T) {
 
 func TestSearchRejectsDimensionMismatch(t *testing.T) {
 	pool := testPool(t)
-	s, err := New(pool, Config{Embedder: shortEmbedder{}})
+	s, err := New(Config{Pool: pool, Embedder: shortEmbedder{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +464,7 @@ func (shortEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 // saveTurns writes a conversation to agent/pgstore as a chain of nodes.
 func saveTurns(t *testing.T, pool *pgxpool.Pool, conversationID string, msgs ...types.Message) {
 	t.Helper()
-	store := agentpg.NewStore(pool, conversationID, nil)
+	store := must.Get(agentpg.New(agentpg.Config{Pool: pool, ConversationID: conversationID}))
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	parent := types.NodeID("")
 	for i, m := range msgs {
@@ -486,12 +488,12 @@ func TestConversationRecall(t *testing.T) {
 	}
 	saveTurns(t, pool, conv,
 		memory.InjectRecords([]memory.Record{{ID: "m", Kind: memory.KindSemantic, Content: "an injected note"}}),
-		types.NewUserMessage("How should we deploy the billing service? Mail me at ada@example.com."),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "Ship it behind a feature flag, then ramp to 10 percent. I noted <<PHONE_1>>."},
-			types.ToolUseContent{ID: "t1", Name: "noop", Arguments: map[string]any{}},
+		types.UserMsg(types.Text("How should we deploy the billing service? Mail me at ada@example.com.")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "Ship it behind a feature flag, then ramp to 10 percent. I noted <<PHONE_1>>."},
+			types.ToolCallPart{ID: "t1", Name: "noop", Arguments: map[string]any{}},
 		}},
-		types.NewUserMessage("Also, my favorite drink is coffee."),
+		types.UserMsg(types.Text("Also, my favorite drink is coffee.")),
 	)
 
 	n, err := s.IndexConversation(ctx, tenant, conv)
@@ -564,7 +566,7 @@ func TestConversationRecall(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
-	text := msg.Content[0].(types.TextContent).Text
+	text := msg.Parts[0].(types.TextPart).Text
 	if !memory.IsInjected(text) || !strings.Contains(text, "billing") || strings.Contains(text, "coffee") {
 		t.Fatalf("injected = %q", text)
 	}

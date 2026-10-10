@@ -17,6 +17,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -54,7 +55,15 @@ func main() {
 	}
 	// The SDK client makes one attempt per call; retry.Provider adds backoff.
 	newProvider := func() types.Provider {
-		return retry.New(openai.NewAdapter(apiKey, model()), retry.DefaultConfig())
+		adapter, err := openai.New(openai.Config{APIKey: apiKey, Model: types.ModelID(model())})
+		if err != nil {
+			log.Fatal(err)
+		}
+		p, err := retry.New(adapter, retry.DefaultConfig())
+		if err != nil {
+			log.Fatal(err)
+		}
+		return p
 	}
 
 	checks := []struct {
@@ -108,7 +117,10 @@ func main() {
 // ── Feature checks ──────────────────────────────────────────────────
 
 func checkBasicGeneration(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Answer in one short sentence."})
+	a, err := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Answer in one short sentence."})
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, _, err := run(a, "What is the capital of France?")
 	if err != nil {
 		return "", err
@@ -138,10 +150,13 @@ func checkToolCalling(p types.Provider) (string, error) {
 			return fmt.Sprintf("%g", a*b), nil
 		},
 	}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a, err := agentsdk.New(agentsdk.Config{
 		Provider: p, Tools: types.NewToolRegistry(mul),
 		SystemPrompt: "Use the multiply tool for arithmetic. Then state the result.",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, _, err := run(a, "What is 17 times 23? Use the tool.")
 	if err != nil {
 		return "", err
@@ -157,14 +172,17 @@ func checkToolCalling(p types.Provider) (string, error) {
 
 func checkResponseCaching(p types.Provider) (string, error) {
 	counter := &countingProvider{inner: p}
-	cached := cache.New(counter, cache.Config{Cache: memcache.New[cache.CachedResponse]()})
+	cached, err := cache.New(counter, cache.Config{Cache: memcache.New[cache.CachedResponse]()})
+	if err != nil {
+		log.Fatal(err)
+	}
 	req := []types.Message{
-		types.NewSystemMessage("Answer in exactly one word."),
-		types.NewUserMessage("What color is a clear daytime sky?"),
+		types.SystemMsg(types.Text("Answer in exactly one word.")),
+		types.UserMsg(types.Text("What color is a clear daytime sky?")),
 	}
 	// Miss, then hit.
-	_ = drainText(mustStream(cached.ChatStream(context.Background(), req, nil)))
-	hitDeltas := drainAll(mustStream(cached.ChatStream(context.Background(), req, nil)))
+	_ = drainText(mustStream(cached.Stream(context.Background(), types.Request{Messages: req})))
+	hitDeltas := drainAll(mustStream(cached.Stream(context.Background(), types.Request{Messages: req})))
 
 	if counter.calls != 1 {
 		return "", fmt.Errorf("upstream called %d times, want 1 (second served from cache)", counter.calls)
@@ -183,7 +201,10 @@ func checkResponseCaching(p types.Provider) (string, error) {
 
 func checkTokenMetrics(p types.Provider) (string, error) {
 	m := &recordingMetrics{}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Be brief."}, agentsdk.WithMetrics(m))
+	a, err := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Be brief."}, agentsdk.WithMetrics(m))
+	if err != nil {
+		log.Fatal(err)
+	}
 	if _, _, err := run(a, "Say hello."); err != nil {
 		return "", err
 	}
@@ -197,7 +218,7 @@ func checkTokenMetrics(p types.Provider) (string, error) {
 }
 
 func checkHandoff(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a, err := agentsdk.New(agentsdk.Config{
 		Name: "triage", Provider: p,
 		SystemPrompt: "You are ONLY a router and cannot do arithmetic yourself. " +
 			"For ANY math or calculation request you MUST call the handoff_to_math tool " +
@@ -207,6 +228,9 @@ func checkHandoff(p types.Provider) (string, error) {
 		Name: "math", Description: "Math specialist that solves arithmetic and math problems.", Provider: p,
 		SystemPrompt: "You are a math expert. Answer concisely with the number.",
 	}))
+	if err != nil {
+		log.Fatal(err)
+	}
 	_, deltas, err := run(a, "Please calculate 6 times 7 for me.")
 	if err != nil {
 		return "", err
@@ -221,9 +245,12 @@ func checkHandoff(p types.Provider) (string, error) {
 
 func checkDurable(p types.Provider) (string, error) {
 	counter := &countingProvider{inner: p}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: counter, SystemPrompt: "Be brief."})
+	a, err := agentsdk.New(agentsdk.Config{Provider: counter, SystemPrompt: "Be brief."})
+	if err != nil {
+		log.Fatal(err)
+	}
 	runner := newMemoRunner()
-	input := []types.Message{types.NewUserMessage("Name one planet.")}
+	input := []types.Message{types.UserMsg(types.Text("Name one planet."))}
 
 	first, err := a.RunDurable(context.Background(), runner, input, "")
 	if err != nil {
@@ -231,7 +258,10 @@ func checkDurable(p types.Provider) (string, error) {
 	}
 	// "Replay": a fresh agent on a fresh tree with the SAME runner must reuse the
 	// recorded LLM step and NOT call the provider again.
-	a2 := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: counter, SystemPrompt: "Be brief."})
+	a2, err := agentsdk.New(agentsdk.Config{Provider: counter, SystemPrompt: "Be brief."})
+	if err != nil {
+		log.Fatal(err)
+	}
 	second, err := a2.RunDurable(context.Background(), runner, input, "")
 	if err != nil {
 		return "", err
@@ -245,8 +275,11 @@ func checkDurable(p types.Provider) (string, error) {
 }
 
 func checkTimeout(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Be brief."},
+	a, err := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Be brief."},
 		agentsdk.WithLLMTimeout(time.Millisecond))
+	if err != nil {
+		log.Fatal(err)
+	}
 	_, deltas, _ := run(a, "Write a long essay about the ocean.")
 	for _, d := range deltas {
 		if e, ok := d.(types.ErrorDelta); ok && e.Error != nil {
@@ -263,10 +296,13 @@ func checkTimeout(p types.Provider) (string, error) {
 func checkMultimodal(p types.Provider) (string, error) {
 	red := solidPNG(color.RGBA{R: 220, G: 20, B: 20, A: 255})
 	imgTool := &imageTool{data: red}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a, err := agentsdk.New(agentsdk.Config{
 		Provider: p, Tools: types.NewToolRegistry(imgTool),
 		SystemPrompt: "When asked about an image, call make_image, then describe the dominant color you see in one word.",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, _, err := run(a, "Generate the image with make_image and tell me its dominant color.")
 	if err != nil {
 		return "", err
@@ -288,7 +324,7 @@ func (t *imageTool) Definition() types.ToolDef {
 }
 func (t *imageTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	r, err := t.ExecuteRich(ctx, args)
-	return r.Text, err
+	return r.Text(), err
 }
 func (t *imageTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
 	return types.ImageResult("Here is the generated image.", types.MediaPNG, t.data), nil
@@ -313,9 +349,10 @@ type countingProvider struct {
 	calls int
 }
 
-func (c *countingProvider) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
+func (c *countingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, t := req.Messages, req.Tools
 	c.calls++
-	return c.inner.ChatStream(ctx, m, t)
+	return c.inner.Stream(ctx, types.Request{Messages: m, Tools: t})
 }
 
 type recordingMetrics struct {
@@ -354,13 +391,13 @@ func (r *memoRunner) RunStep(ctx context.Context, name string, fn func(context.C
 // ── Stream helpers ──────────────────────────────────────────────────
 
 func run(a *agentsdk.Agent, prompt string) (text string, deltas []types.Delta, err error) {
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage(prompt)})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(prompt))})
 	var sb strings.Builder
 	for d := range stream.Deltas() {
 		deltas = append(deltas, d)
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			sb.WriteString(v.Content)
+		case types.PartDelta:
+			sb.WriteString(v.Text)
 		case types.ErrorDelta:
 			if v.Error != nil {
 				err = v.Error
@@ -375,8 +412,8 @@ func mustStream(ch <-chan types.Delta, _ error) <-chan types.Delta { return ch }
 func drainText(ch <-chan types.Delta) string {
 	var sb strings.Builder
 	for d := range ch {
-		if t, ok := d.(types.TextContentDelta); ok {
-			sb.WriteString(t.Content)
+		if t, ok := d.(types.PartDelta); ok {
+			sb.WriteString(t.Text)
 		}
 	}
 	return sb.String()

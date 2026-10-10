@@ -18,6 +18,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // spyTracerProvider hands out one spyTracer.
@@ -49,7 +50,7 @@ type richCountingTool struct{ *countingTool }
 
 func (t richCountingTool) ExecuteRich(ctx context.Context, args map[string]any) (types.ToolResult, error) {
 	text, err := t.Execute(ctx, args)
-	return types.ToolResult{Text: text, Citations: []types.Citation{{URI: "https://example.com/doc", Title: "doc"}}}, err
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}, Citations: []types.Citation{{URI: "https://example.com/doc", Title: "doc"}}}, err
 }
 
 // TestWithTracingKeepsToolBehavior runs a real agent loop with tracing on and
@@ -88,15 +89,15 @@ func TestWithTracingKeepsToolBehavior(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "write", map[string]any{}),
 				agenttest.TextResponse("finished"),
 			}}
-			a := agent.NewAgent(agent.AgentConfig{
+			a := must.Get(agent.New(agent.Config{
 				Name:     "traced",
 				Provider: prov,
 				Tools:    types.NewToolRegistry(tt.build(counter)),
-			}, WithTracing(cfg))
+			}, WithTracing(cfg)))
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			var markers, citations int
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
@@ -161,7 +162,7 @@ func TestWithTracingMetrics(t *testing.T) {
 	t.Run("existing sink keeps receiving records", func(t *testing.T) {
 		user := &recordingMetrics{}
 		cfg, _ := spyConfig()
-		c := agent.AgentConfig{Metrics: user}
+		c := agent.Config{Metrics: user}
 		WithTracing(cfg)(&c)
 		if _, ok := c.Metrics.(fanoutMetrics); !ok {
 			t.Fatalf("metrics = %T, want a fan-out over both sinks", c.Metrics)
@@ -175,7 +176,7 @@ func TestWithTracingMetrics(t *testing.T) {
 	t.Run("applying twice records once per call", func(t *testing.T) {
 		user := &recordingMetrics{}
 		cfg, _ := spyConfig()
-		c := agent.AgentConfig{Metrics: user}
+		c := agent.Config{Metrics: user}
 		WithTracing(cfg)(&c)
 		WithTracing(cfg)(&c)
 		f, ok := c.Metrics.(fanoutMetrics)
@@ -193,7 +194,7 @@ func TestWithTracingMetrics(t *testing.T) {
 
 	t.Run("no-op sink is replaced", func(t *testing.T) {
 		cfg, _ := spyConfig()
-		c := agent.AgentConfig{Metrics: types.NoopMetrics{}}
+		c := agent.Config{Metrics: types.NoopMetrics{}}
 		WithTracing(cfg)(&c)
 		if _, ok := c.Metrics.(*Metrics); !ok {
 			t.Fatalf("metrics = %T, want *Metrics", c.Metrics)
@@ -205,7 +206,7 @@ func TestWithTracingMetrics(t *testing.T) {
 		user := &recordingMetrics{}
 		cfg, _ := spyConfig()
 		cfg.MeterProvider = failingMeterProvider{}
-		c := agent.AgentConfig{Metrics: user, Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+		c := agent.Config{Metrics: user, Logger: slog.New(slog.NewTextHandler(&buf, nil))}
 		WithTracing(cfg)(&c)
 		if c.Metrics != types.Metrics(user) {
 			t.Errorf("metrics = %T, want the user sink unchanged", c.Metrics)
@@ -219,7 +220,7 @@ func TestWithTracingMetrics(t *testing.T) {
 func TestWithTracingWrapsMembersOnce(t *testing.T) {
 	cfg, _ := spyConfig()
 	subs := []agent.SubAgentDef{{Name: "child", Provider: &fakeProvider{}, Tools: types.NewToolRegistry(plainTool{name: "t"})}, {Name: "inherit"}}
-	c := agent.AgentConfig{
+	c := agent.Config{
 		Provider:  &fakeProvider{},
 		SubAgents: subs,
 		Handoffs:  []agent.HandoffDef{{Name: "worker", Provider: &fakeProvider{}}},
@@ -259,7 +260,7 @@ func TestAgentTracerParentsRunSpans(t *testing.T) {
 	tracer := cfg.tracer()
 
 	ctx, end := at.StartAgent(context.Background(), "parent")
-	ch, err := NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer).ChatStream(ctx, nil, nil)
+	ch, err := must.Get(NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer)).Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,8 +312,9 @@ type capsOnlyProvider struct {
 	caps  types.ModelCapabilities
 }
 
-func (p capsOnlyProvider) ChatStream(ctx context.Context, m []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.inner.ChatStream(ctx, m, tools)
+func (p capsOnlyProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tools := req.Messages, req.Tools
+	return p.inner.Stream(ctx, types.Request{Messages: m, Tools: tools})
 }
 
 func (p capsOnlyProvider) Capabilities() types.ModelCapabilities { return p.caps }
@@ -343,7 +345,7 @@ func TestTracedProviderCapabilitiesFollowOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer, _ := newSpyTracer()
-			caps := NewTracedProvider(tt.inner, tracer).Capabilities()
+			caps := must.Get(NewTracedProvider(tt.inner, tracer)).Capabilities()
 			if got := caps.Supports(types.CapToolChoice); got != tt.wantChoice {
 				t.Errorf("tool choice = %v, want %v", got, tt.wantChoice)
 			}
@@ -369,15 +371,15 @@ func TestWithTracingToolChoiceNoneWithoutOptions(t *testing.T) {
 	prov := capsOnlyProvider{inner: scripted, caps: types.ModelCapabilities{Caps: map[types.Capability]bool{
 		types.CapToolChoice: true,
 	}}}
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:     "traced",
 		Provider: prov,
 		Tools:    types.NewToolRegistry(plainTool{name: "t"}),
-	}, agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNone}), WithTracing(cfg))
+	}, agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNone}), WithTracing(cfg)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
 	if err := stream.Wait(); err != nil {

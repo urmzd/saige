@@ -49,11 +49,15 @@ func TestWireConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
-	sess := b.Session().(types.ModelSwitcher)
-	for _, id := range []string{"w/claude", "w/haiku", "w/gpt", "w/o3", "w/gemini"} {
-		ch, err := sess.WithModel(id).ChatStream(context.Background(), []types.Message{
-			types.NewSystemMessage("sys"), types.NewUserMessage("hi")}, nil)
+	defer func() { _ = b.Close(context.Background()) }()
+	sess := b.Session().(types.TargetSwitcher)
+	for _, id := range []types.ProfileID{"w/claude", "w/haiku", "w/gpt", "w/o3", "w/gemini"} {
+		pinned, err := sess.WithTarget(types.ProfileTarget(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch, err := pinned.Stream(context.Background(), types.Request{Messages: []types.Message{
+			types.SystemMsg(types.Text("sys")), types.UserMsg(types.Text("hi"))}})
 		if err == nil {
 			for range ch {
 			}

@@ -3,6 +3,7 @@ package pgstore
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -29,7 +30,7 @@ var (
 // root node ID of the tree is a natural choice of conversation ID.
 //
 // For a multi-tenant host, build the conversation ID with
-// ScopedConversationID, or use NewScopedStore, so a conversation ID chosen by
+// ScopedConversationID, or set Config.Scope, so a conversation ID chosen by
 // one tenant can never name another tenant's rows.
 //
 // The pool should already be connected; schema migration is handled
@@ -40,17 +41,54 @@ type Store struct {
 	logger         *slog.Logger
 }
 
-// NewStore creates a PostgreSQL-backed agent store scoped to conversationID.
-// All node, branch and checkpoint operations are isolated to that namespace, so two
-// conversations can each have a "main" branch without touching each other.
-// An empty conversationID selects the legacy unscoped namespace (rows written
-// before namespacing existed) and should only be used by single-conversation
-// deployments.
-func NewStore(pool *pgxpool.Pool, conversationID string, logger *slog.Logger) *Store {
-	if logger == nil {
-		logger = slog.Default()
+// Config names the database and the conversation a Store serves.
+type Config struct {
+	// Pool is the database. Required. The caller owns it: the store never
+	// closes it.
+	Pool *pgxpool.Pool
+	// ConversationID scopes every node, branch and checkpoint operation, so
+	// two conversations can each have a "main" branch without touching each
+	// other. An empty ID selects the legacy unscoped namespace (rows written
+	// before namespacing existed); use it only for a single-conversation
+	// deployment.
+	ConversationID string
+	// Scope, when set, is a tenant scope: the store's namespace is
+	// ScopedConversationID(Scope, ConversationID).
+	Scope string
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithScope sets Config.Scope.
+func WithScope(scope string) Option { return func(c *Config) { c.Scope = scope } }
+
+// WithLogger sets Config.Logger.
+func WithLogger(l *slog.Logger) Option { return func(c *Config) { c.Logger = l } }
+
+// New creates a PostgreSQL-backed agent store for cfg's conversation. A nil
+// pool or an invalid scope is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Store, error) {
+	for _, o := range opts {
+		o(&cfg)
 	}
-	return &Store{pool: pool, conversationID: conversationID, logger: logger}
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("%w: pgstore: Config.Pool is required", types.ErrInvalidConfig)
+	}
+	id := cfg.ConversationID
+	if cfg.Scope != "" {
+		scoped, err := ScopedConversationID(cfg.Scope, cfg.ConversationID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", types.ErrInvalidConfig, err)
+		}
+		id = scoped
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	return &Store{pool: cfg.Pool, conversationID: id, logger: cfg.Logger}, nil
 }
 
 // scopeSeparator joins a tenant scope and a conversation ID. It is an ASCII
@@ -84,16 +122,6 @@ func SplitConversationID(id string) (scope, conversationID string, ok bool) {
 		return "", id, false
 	}
 	return scope, conversationID, true
-}
-
-// NewScopedStore creates a Store for conversationID inside a tenant scope.
-// It is NewStore with the ID from ScopedConversationID.
-func NewScopedStore(pool *pgxpool.Pool, scope, conversationID string, logger *slog.Logger) (*Store, error) {
-	id, err := ScopedConversationID(scope, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	return NewStore(pool, id, logger), nil
 }
 
 // ConversationID returns the namespace this store reads and writes,

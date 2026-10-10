@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestResolveMarkerErr(t *testing.T) {
@@ -96,7 +97,7 @@ func TestTerminalDeltasSurviveCancel(t *testing.T) {
 	s := newEventStream(ctx, cancel)
 	s.Cancel()
 	go func() {
-		s.send(types.TextContentDelta{Content: "may be dropped"})
+		s.send(types.PartDelta{Index: 0, Text: "may be dropped"})
 		s.send(types.ErrorDelta{Error: context.Canceled})
 		s.send(types.DoneDelta{})
 		s.close(context.Canceled)
@@ -123,7 +124,7 @@ func TestTerminalSendDoesNotBlockAbandonedStream(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := newEventStream(ctx, cancel)
 	for range cap(s.deltas) {
-		s.deltas <- types.TextContentDelta{}
+		s.deltas <- types.PartDelta{Index: 0}
 	}
 	s.Cancel()
 	finished := make(chan struct{})
@@ -141,8 +142,8 @@ func TestTerminalSendDoesNotBlockAbandonedStream(t *testing.T) {
 
 func TestInvokeCancelReportsStreamCanceled(t *testing.T) {
 	provider := &delayedProvider{ready: make(chan struct{}), response: "never"}
-	a := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	a := must.Get(New(Config{Provider: provider, SystemPrompt: "sys"}))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	stream.Cancel()
 	var sawDone bool
 	for d := range stream.Deltas() {
@@ -172,7 +173,7 @@ func TestNewRemoteStream(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := make(chan types.Delta, 4)
-			want := []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "hi"}, types.TextEndDelta{}, types.DoneDelta{}}
+			want := []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "hi"}, types.PartEnd{Index: 0}, types.DoneDelta{}}
 			for _, d := range want {
 				in <- d
 			}
@@ -253,19 +254,19 @@ func TestNewRemoteStreamCancelAndResolve(t *testing.T) {
 
 func TestReplayCarriesToolNamesAndIDs(t *testing.T) {
 	msgs := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go"}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go"}},
 		}},
-		types.SystemMessage{Content: []types.SystemContent{types.ToolResultContent{ToolCallID: "c1", Text: "found"}}},
-		types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "c9", Text: "orphan"}}},
+		types.SystemMessage{Parts: []types.SystemPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("found")}}}},
+		types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "c9", Parts: []types.ToolOutputPart{types.Text("orphan")}}}},
 	}
 	var got []types.Delta
 	for d := range Replay(msgs).Deltas() {
 		got = append(got, d)
 	}
 	want := []types.Delta{
-		types.ToolCallStartDelta{ID: "c1", Name: "search"},
-		types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"q": "go"}},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+		types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go"}}},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
 		types.ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "found"},
 		types.ToolExecStartDelta{ToolCallID: "c9"},

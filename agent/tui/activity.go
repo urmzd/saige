@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +30,9 @@ const (
 	activityNotice                       // handoff, route, citation, or interrupt note
 	activityError                        // a run ended with an error
 	activityStopped                      // a run was stopped or cut short
+	activityMedia                        // media the model produced
+	activityCitation                     // a citation, shown as a footnote
+	activityRefusal                      // the model declined (accumulates)
 )
 
 // toolStatus is the lifecycle of one tool call.
@@ -58,11 +61,18 @@ type activityEntry struct {
 	errMsg   string
 	result   string
 
-	content *strings.Builder  // text, thinking, and nested sub-agent output
+	content *strings.Builder  // text, thinking, refusal, and nested sub-agent output
 	usage   *types.UsageDelta // usage entries
 	markers []types.Marker    // marker entries
-	text    string            // user, notice, error, and stopped entries
+	text    string            // user, notice, citation, error, and stopped entries
 	steer   bool              // user entry injected into an active run
+
+	media     *mediaInfo  // media entries
+	toolMedia []mediaInfo // media a tool call returned
+	ordinal   int         // citation footnote number
+
+	// born is when the entry appeared, for the fade-in.
+	born time.Time
 
 	// final is set once the turn holding a text entry has ended; only final
 	// text is rendered as markdown, so a half-written block never reflows.
@@ -77,11 +87,26 @@ type activityEntry struct {
 type activity struct {
 	entries   []activityEntry
 	calls     map[string]int // tool call ID to entry index
+	parts     map[int]int    // part index of a streaming tool call or media part to entry index
 	subAgents map[string]bool
+	// footnotes numbers citations that arrive without an ordinal.
+	footnotes int
+	// now stamps new entries; nil means time.Now.
+	now func() time.Time
+}
+
+// push appends e, stamped with the time it appeared.
+func (a *activity) push(e activityEntry) {
+	if a.now != nil {
+		e.born = a.now()
+	} else {
+		e.born = time.Now()
+	}
+	a.entries = append(a.entries, e)
 }
 
 func newActivity(subAgents []string) activity {
-	a := activity{calls: make(map[string]int), subAgents: make(map[string]bool)}
+	a := activity{calls: make(map[string]int), parts: make(map[int]int), subAgents: make(map[string]bool)}
 	for _, s := range subAgents {
 		a.subAgents[s] = true
 	}
@@ -108,12 +133,12 @@ func (a *activity) agentToolName(name string) (string, bool) {
 
 // addUser records a message the user sent.
 func (a *activity) addUser(text string, steer bool) {
-	a.entries = append(a.entries, activityEntry{kind: activityUser, text: text, steer: steer})
+	a.push(activityEntry{kind: activityUser, text: text, steer: steer})
 }
 
 // addNotice records a one-line note.
 func (a *activity) addNotice(kind activityKind, text string) {
-	a.entries = append(a.entries, activityEntry{kind: kind, text: text})
+	a.push(activityEntry{kind: kind, text: text})
 }
 
 // appendText adds s to the open entry of kind, starting a new one when the
@@ -125,7 +150,7 @@ func (a *activity) appendText(kind activityKind, s string) {
 	}
 	b := &strings.Builder{}
 	b.WriteString(s)
-	a.entries = append(a.entries, activityEntry{kind: kind, content: b})
+	a.push(activityEntry{kind: kind, content: b})
 }
 
 // tool returns the entry for a tool call ID, creating one named name when the
@@ -138,7 +163,7 @@ func (a *activity) tool(id, name string) *activityEntry {
 		}
 		return e
 	}
-	a.entries = append(a.entries, activityEntry{kind: activityTool, callID: id, name: name})
+	a.push(activityEntry{kind: activityTool, callID: id, name: name})
 	idx := len(a.entries) - 1
 	if id != "" {
 		a.calls[id] = idx
@@ -146,17 +171,6 @@ func (a *activity) tool(id, name string) *activityEntry {
 	e := &a.entries[idx]
 	_, e.agent = a.agentToolName(name)
 	return e
-}
-
-// oldestOpenTool returns the oldest call whose arguments are still streaming.
-func (a *activity) oldestOpenTool() *activityEntry {
-	for i := range a.entries {
-		e := &a.entries[i]
-		if e.kind == activityTool && !e.argsDone && e.status == toolPending {
-			return e
-		}
-	}
-	return nil
 }
 
 // isCancellation reports whether err means the run was stopped on request.
@@ -167,32 +181,8 @@ func isCancellation(err error) bool {
 // apply folds one delta into the transcript.
 func (a *activity) apply(d types.Delta) {
 	switch d := d.(type) {
-	case types.TextContentDelta:
-		a.appendText(activityText, d.Content)
-
-	case types.ThinkingContentDelta:
-		a.appendText(activityThinking, d.Content)
-
-	case types.ToolCallStartDelta:
-		e := a.tool(d.ID, d.Name)
-		e.status = toolPending
-
-	case types.ToolCallEndDelta:
-		var e *activityEntry
-		if idx, ok := a.calls[d.ID]; ok && d.ID != "" {
-			e = &a.entries[idx]
-		} else {
-			e = a.oldestOpenTool()
-		}
-		if e == nil {
-			return
-		}
-		e.args = d.Arguments
-		e.argsErr = d.ArgumentsError
-		e.argsDone = true
-		if e.status == toolPending {
-			e.status = toolReady
-		}
+	case types.PartStart, types.PartDelta, types.PartEnd:
+		a.applyPart(d)
 
 	case types.ToolExecStartDelta:
 		e := a.tool(d.ToolCallID, d.Name)
@@ -206,6 +196,11 @@ func (a *activity) apply(d types.Delta) {
 		e := a.tool(d.ToolCallID, d.Name)
 		e.argsDone = true
 		e.result = d.Result
+		for _, p := range d.Parts {
+			if types.IsMedia(p) {
+				e.toolMedia = append(e.toolMedia, mediaOf(p))
+			}
+		}
 		if d.Error != "" {
 			e.status = toolFailed
 			e.errMsg = d.Error
@@ -214,7 +209,7 @@ func (a *activity) apply(d types.Delta) {
 		}
 
 	case types.MarkerDelta:
-		a.entries = append(a.entries, activityEntry{
+		a.push(activityEntry{
 			kind:    activityMarker,
 			callID:  d.ToolCallID,
 			name:    d.ToolName,
@@ -224,7 +219,7 @@ func (a *activity) apply(d types.Delta) {
 
 	case types.UsageDelta:
 		usage := d
-		a.entries = append(a.entries, activityEntry{kind: activityUsage, usage: &usage})
+		a.push(activityEntry{kind: activityUsage, usage: &usage})
 
 	case types.HandoffDelta:
 		from := d.From
@@ -241,7 +236,7 @@ func (a *activity) apply(d types.Delta) {
 		a.addNotice(activityNotice, formatRoute(d))
 
 	case types.CitationDelta:
-		a.addNotice(activityNotice, formatCitation(d.Citation))
+		a.addCitation(d.Citation)
 
 	case types.InterruptedDelta:
 		a.addNotice(activityNotice, "interrupted: "+d.Reason)
@@ -256,6 +251,130 @@ func (a *activity) apply(d types.Delta) {
 			a.addNotice(activityError, errorText(d.Error))
 		}
 	}
+}
+
+// applyPart folds a model part delta into the transcript.
+func (a *activity) applyPart(d types.Delta) {
+	switch d := d.(type) {
+	case types.PartDelta:
+		switch {
+		case d.Text != "":
+			a.appendText(activityText, d.Text)
+		case d.Thinking != "":
+			a.appendText(activityThinking, d.Thinking)
+		case d.Refusal != "":
+			a.appendText(activityRefusal, d.Refusal)
+		case len(d.Data) > 0 || d.Transcript != "":
+			if e := a.mediaAt(d.Index); e != nil {
+				e.media.size += int64(len(d.Data))
+				e.media.transcript += d.Transcript
+			}
+		}
+
+	case types.PartStart:
+		if isMediaKind(d.Kind) {
+			a.push(activityEntry{kind: activityMedia, media: &mediaInfo{kind: d.Kind, mediaType: d.MediaType, streaming: true}})
+			if a.parts == nil {
+				a.parts = map[int]int{}
+			}
+			a.parts[d.Index] = len(a.entries) - 1
+			return
+		}
+		if d.Kind != types.KindToolCall {
+			return
+		}
+		e := a.tool(d.ID, d.Name)
+		e.status = toolPending
+		if a.parts == nil {
+			a.parts = map[int]int{}
+		}
+		a.parts[d.Index] = a.calls[d.ID]
+		if d.ID == "" {
+			a.parts[d.Index] = len(a.entries) - 1
+		}
+
+	case types.PartEnd:
+		a.endPart(d)
+	}
+}
+
+// endPart folds the end of a model part into the transcript.
+func (a *activity) endPart(d types.PartEnd) {
+	switch p := d.Part.(type) {
+	case types.CitationPart:
+		a.addCitation(p.Citation)
+		return
+	case types.RefusalPart:
+		if n := len(a.entries); p.Text != "" && (n == 0 || a.entries[n-1].kind != activityRefusal || a.entries[n-1].final) {
+			a.appendText(activityRefusal, p.Text)
+		}
+		if n := len(a.entries); n > 0 && a.entries[n-1].kind == activityRefusal {
+			a.entries[n-1].text = p.Category
+			a.entries[n-1].final = true
+		}
+		return
+	}
+	if d.Part != nil && types.IsMedia(d.Part) {
+		e := a.mediaAt(d.Index)
+		if e == nil {
+			a.push(activityEntry{kind: activityMedia, media: &mediaInfo{}})
+			e = &a.entries[len(a.entries)-1]
+		}
+		delete(a.parts, d.Index)
+		size := e.media.size
+		*e.media = mediaOf(d.Part)
+		if e.media.size == 0 {
+			e.media.size = size
+		}
+		return
+	}
+	idx, ok := a.parts[d.Index]
+	if !ok {
+		return
+	}
+	delete(a.parts, d.Index)
+	e := &a.entries[idx]
+	if e.kind != activityTool {
+		return
+	}
+	if call, ok := d.Part.(types.ToolCallPart); ok {
+		e.args = call.Arguments
+		e.argsErr = call.ArgumentsError
+	}
+	e.argsDone = true
+	if e.status == toolPending {
+		e.status = toolReady
+	}
+}
+
+// mediaAt returns the media entry streaming at part index i, or nil.
+func (a *activity) mediaAt(i int) *activityEntry {
+	idx, ok := a.parts[i]
+	if !ok || a.entries[idx].kind != activityMedia {
+		return nil
+	}
+	return &a.entries[idx]
+}
+
+// addCitation records a citation as a footnote. One the run did not number
+// gets the next number of the transcript's own.
+func (a *activity) addCitation(c types.Citation) {
+	n := c.Ordinal
+	if n <= 0 {
+		a.footnotes++
+		n = a.footnotes
+	}
+	a.push(activityEntry{kind: activityCitation, ordinal: n, text: citationLabel(c)})
+}
+
+// isMediaKind reports whether parts of kind k carry media.
+func isMediaKind(k types.PartKind) bool {
+	switch k {
+	case types.KindImage, types.KindAudio, types.KindVideo, types.KindDocument, types.KindFile,
+		types.KindImageOut, types.KindAudioOut, types.KindVideoOut:
+		return true
+	}
+	return false
 }
 
 // applyNested attributes a delta from inside a tool call (a sub-agent run or a
@@ -278,10 +397,12 @@ func (a *activity) applyNested(d types.ToolExecDelta) {
 		e.content.WriteString("\n")
 	}
 	switch in := inner.(type) {
-	case types.TextContentDelta:
-		e.content.WriteString(in.Content)
-	case types.ToolCallStartDelta:
-		line(iconTool + " " + in.Name)
+	case types.PartDelta:
+		e.content.WriteString(in.Text)
+	case types.PartStart:
+		if in.Kind == types.KindToolCall {
+			line(iconTool + " " + in.Name)
+		}
 	case types.ToolExecEndDelta:
 		if in.Error != "" {
 			line(iconError + " " + in.Name + ": " + in.Error)
@@ -297,8 +418,10 @@ func (a *activity) finish() {
 	for i := range a.entries {
 		e := &a.entries[i]
 		switch e.kind {
-		case activityText:
+		case activityText, activityThinking, activityRefusal:
 			e.final = true
+		case activityMedia:
+			e.media.streaming = false
 		case activityTool:
 			if e.status == toolPending || e.status == toolReady || e.status == toolRunning {
 				e.status = toolStopped
@@ -338,26 +461,81 @@ func (a *activity) text() string {
 
 // logRenderer renders an activity log.
 type logRenderer struct {
-	entries  []activityEntry
-	spinner  spinner.Model
+	entries []activityEntry
+	// spin is the spinner frame to draw for work in progress.
+	spin     string
 	template Template
 	// thinking adds a spinner line while a run is active and nothing has
 	// arrived yet.
 	thinking bool
+	// expandThinking shows reasoning in full instead of collapsed, as
+	// Template.ShowThinking does.
+	expandThinking bool
+	// animate fades new entries in, judged at now.
+	animate bool
+	now     time.Time
 }
 
 func (lr logRenderer) renderLog() string {
 	var b strings.Builder
 	for _, e := range lr.entries {
-		lr.renderEntry(&b, e)
+		if !lr.animate {
+			lr.renderEntry(&b, e)
+			continue
+		}
+		var eb strings.Builder
+		lr.renderEntry(&eb, e)
+		b.WriteString(fade(eb.String(), e.born, lr.now, lr.animate))
 	}
 	if lr.thinking && lr.template.ShowSpinner {
-		fmt.Fprintf(&b, "  %s %s\n", lr.spinner.View(), thinkingStyle.Render("Thinking..."))
+		fmt.Fprintf(&b, "  %s %s\n", lr.spin, thinkingStyle.Render("Thinking..."))
 	}
 	return b.String()
 }
 
+// shows reports whether renderEntry draws anything for e under the
+// template, so counts of the transcript match what is on screen.
+func (lr logRenderer) shows(e activityEntry) bool {
+	t := lr.template
+	switch e.kind {
+	case activityText:
+		return e.content != nil && e.content.Len() > 0 && (e.final || t.ShowStreamText)
+	case activityThinking:
+		return e.content != nil && e.content.Len() > 0
+	case activityMedia:
+		return e.media != nil
+	case activityRefusal:
+		return e.content != nil
+	case activityTool:
+		if e.agent {
+			return t.ShowAgents
+		}
+		return t.ShowToolCalls
+	case activityMarker:
+		return t.ShowMarkers
+	case activityUsage:
+		return t.ShowUsage && e.usage != nil
+	case activityNotice:
+		return t.ShowRouting
+	}
+	return true
+}
+
+// visible counts the entries renderEntry draws.
+func (lr logRenderer) visible(entries []activityEntry) int {
+	n := 0
+	for _, e := range entries {
+		if lr.shows(e) {
+			n++
+		}
+	}
+	return n
+}
+
 func (lr logRenderer) renderEntry(b *strings.Builder, e activityEntry) {
+	if !lr.shows(e) {
+		return
+	}
 	switch e.kind {
 	case activityUser:
 		label := "you"
@@ -368,10 +546,20 @@ func (lr logRenderer) renderEntry(b *strings.Builder, e activityEntry) {
 	case activityText:
 		lr.renderText(b, e)
 	case activityThinking:
-		if lr.template.ShowThinking && e.content != nil {
-			for _, line := range strings.Split(strings.TrimRight(e.content.String(), "\n"), "\n") {
-				fmt.Fprintf(b, "    %s\n", thinkingStyle.Render(line))
+		lr.renderThinking(b, e)
+	case activityMedia:
+		if e.media != nil {
+			fmt.Fprintf(b, "  %s\n", mediaStyle.Render(iconMedia+" "+e.media.label()))
+		}
+	case activityCitation:
+		fmt.Fprintf(b, "  %s\n", footnoteStyle.Render(fmt.Sprintf("[%d] %s", e.ordinal, e.text)))
+	case activityRefusal:
+		if e.content != nil {
+			label := iconRefusal + " declined"
+			if e.text != "" {
+				label += " (" + e.text + ")"
 			}
+			fmt.Fprintf(b, "  %s %s\n", refusalStyle.Render(label+":"), strings.TrimSpace(e.content.String()))
 		}
 	case activityTool:
 		lr.renderTool(b, e)
@@ -392,6 +580,28 @@ func (lr logRenderer) renderEntry(b *strings.Builder, e activityEntry) {
 	case activityStopped:
 		fmt.Fprintf(b, "  %s\n", stoppedStyle.Render(iconStopped+" "+e.text))
 	}
+}
+
+// renderThinking draws reasoning collapsed to one line, or in full when the
+// template or the user expands it.
+func (lr logRenderer) renderThinking(b *strings.Builder, e activityEntry) {
+	if e.content == nil || e.content.Len() == 0 {
+		return
+	}
+	text := strings.TrimRight(e.content.String(), "\n")
+	if lr.template.ShowThinking || lr.expandThinking {
+		fmt.Fprintf(b, "  %s\n", thinkingStyle.Render(iconExpanded+" thinking"))
+		for _, line := range strings.Split(text, "\n") {
+			fmt.Fprintf(b, "    %s\n", thinkingStyle.Render(line))
+		}
+		return
+	}
+	words := len(strings.Fields(text))
+	label := fmt.Sprintf("%s thinking (%d words, ctrl+t expands)", iconCollapsed, words)
+	if !e.final {
+		label = fmt.Sprintf("%s thinking %s (%d words)", iconCollapsed, lr.spin, words)
+	}
+	fmt.Fprintf(b, "  %s\n", thinkingStyle.Render(label))
 }
 
 func (lr logRenderer) renderText(b *strings.Builder, e activityEntry) {
@@ -434,7 +644,7 @@ func (lr logRenderer) renderTool(b *strings.Builder, e activityEntry) {
 	case toolPending, toolReady:
 		line += " " + usageStyle.Render("...")
 	case toolRunning:
-		line += " " + lr.spinner.View()
+		line += " " + lr.spin
 	case toolDone:
 		line += " " + statusDone.Render(iconDone)
 	case toolFailed:
@@ -460,6 +670,9 @@ func (lr logRenderer) renderTool(b *strings.Builder, e activityEntry) {
 		for _, l := range headLines(e.result, 5) {
 			fmt.Fprintf(b, "    %s\n", agentOutputStyle.Render(l))
 		}
+	}
+	for _, m := range e.toolMedia {
+		fmt.Fprintf(b, "    %s\n", mediaStyle.Render(iconMedia+" "+m.label()))
 	}
 }
 
@@ -490,17 +703,18 @@ func formatRoute(d types.RouteDelta) string {
 	return strings.Join(parts, " ")
 }
 
-func formatCitation(c types.Citation) string {
+// citationLabel is a citation's title and URI.
+func citationLabel(c types.Citation) string {
 	label := c.Title
 	if label == "" {
 		label = c.URI
 	} else if c.URI != "" {
 		label += " " + c.URI
 	}
-	if c.Ordinal > 0 {
-		return fmt.Sprintf("cite [%d] %s", c.Ordinal, label)
+	if label == "" {
+		label = "(untitled source)"
 	}
-	return "cite " + label
+	return label
 }
 
 // encodeArgs encodes tool arguments as JSON with sorted keys and without HTML

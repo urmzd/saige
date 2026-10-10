@@ -41,15 +41,29 @@ The input stays focused while a reply streams, so you can type the next message 
 | `Ctrl-J` or `Alt-Enter` | Steer: add the message at the next safe point without stopping the run (most terminals send `Ctrl-J` for `Ctrl-Enter`) | Send |
 | `Esc` | Stop the run and stay in the session | |
 | `Ctrl-C` | Stop the run; press again to quit | Press twice to quit |
-| `PgUp` `PgDn` `Up` `Down` | Scroll the transcript | Scroll the transcript |
+| `PgUp` `PgDn` | Scroll a page | Scroll a page |
+| `Shift-Up` `Shift-Down` | Scroll half a page | Scroll half a page |
+| `Up` `Down`, mouse wheel | Scroll a line (the wheel scrolls three) | Same |
+| `Ctrl-Home` `Ctrl-End` | Jump to the top or the bottom | Same |
+| `Home` `End` `Ctrl-U` `Ctrl-D` | With an empty input: top, bottom, half a page up or down | Same |
+| `Ctrl-F` | Filter the transcript | Filter the transcript |
+| `Ctrl-T` | Expand or collapse reasoning | Same |
 
 Queued messages show in a strip above the input until the run picks them up. A stopped run is tagged `stopped`; `/continue` resumes the last turn, and messages still queued at the stop go back to the input. An error ends the turn, not the session. `/quit` exits.
 
-`--template detailed` adds reasoning, tool arguments and results, handoffs, routes, and citations to the transcript.
+The transcript follows new output while it is scrolled to the bottom. Scrolling up pauses that, and a `↓ N new messages` line counts what arrived below; scrolling back to the bottom (or `Ctrl-End`) follows again.
+
+`Ctrl-F` opens a filter in place of the input, and the header shows `▽` with the query and how many entries it keeps. Terms are words the entry must contain (case is ignored) and `kind:NAME`, with several names separated by commas: `user`, `text`, `thinking`, `tool`, `media`, `citation`, `refusal`, `approval`, `usage`, `notice`, `error`, `stopped`. For example `kind:tool,media chart`. `Enter` keeps the filter, `Esc` clears it.
+
+Reasoning is collapsed to one line with its word count. Citations are numbered footnotes under the answer. A refusal is labelled `⊘ declined`. Media never renders inline: it is a placeholder with its type, size, name and where the bytes are kept, such as `[image image/png 1024x768 · 120 KB · chart.png · saige-artifact://9f1c…]`, or `[image/png streaming… 120 KB]` while it arrives.
+
+The spinner, the fade-in of new entries and smooth scrolling are off with `--no-animation`, when `NO_COLOR` or `SAIGE_REDUCED_MOTION` is set, and on a `dumb` terminal.
+
+`--template detailed` adds expanded reasoning, tool arguments and results, handoffs and routes to the transcript.
 
 ### JSON output
 
-With `--format json`, `ask` and `chat` write one JSON object per line: a versioned envelope per stream event (`{"v":1,"kind":"text.delta","data":{...}}`), the same format other stream consumers decode. `chat --format json` reads prompts line by line from stdin and writes its prompts to stderr, so stdout stays machine-readable.
+With `--format json`, `ask` and `chat` write one JSON object per line: a wire version 2 envelope per stream event (`{"v":2,"kind":"part.delta","data":{"index":0,"text":"..."}}`), the same format other stream consumers decode. Media bytes are written inline whatever their size. `chat --format json` reads prompts line by line from stdin and writes its prompts to stderr, so stdout stays machine-readable.
 
 ```bash
 saige ask --format json "Summarize RFC 9110" | jq -j 'select(.kind=="text.delta") | .data.content'
@@ -86,21 +100,43 @@ Tools that change data (`write_file`, `edit_file`, `execute_code`, `rag_update`,
 saige serve --tools fs,fetch --workspace .            # listens on 127.0.0.1:8787
 
 sid=$(curl -s -XPOST -H 'Content-Type: application/json' -d '{}' localhost:8787/v1/sessions | jq -r .session_id)
-tid=$(curl -s -XPOST -H 'Content-Type: application/json' -d '{"message":"List the Go files"}' \
+tid=$(curl -s -XPOST -H 'Content-Type: application/json' -d '{"parts":[{"type":"text","text":"List the Go files"}]}' \
   localhost:8787/v1/sessions/$sid/turns | jq -r .turn_id)
 curl -N localhost:8787/v1/sessions/$sid/turns/$tid/events
+
+# Media: upload it, then send its ref.
+ref=$(curl -s -XPOST -H 'Content-Type: image/png' --data-binary @chart.png \
+  "localhost:8787/v1/sessions/$sid/artifacts?filename=chart.png" | jq -r .ref)
+curl -s -XPOST -H 'Content-Type: application/json' localhost:8787/v1/sessions/$sid/turns -d '{"parts":[
+  {"type":"text","text":"What does this chart show?"},
+  {"type":"image","source":{"media_type":"image/png","ref":"'$ref'"}}]}'
 ```
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/v1/sessions` | Create a session: `{session_id}`. `429` at the session limit. |
 | DELETE | `/v1/sessions/{sid}` | Cancel the running turn and drop the session |
-| POST | `/v1/sessions/{sid}/turns` | `{message}` starts a turn: `202 {turn_id}`. `409` while another turn in the session runs. |
-| GET | `/v1/sessions/{sid}/turns/{tid}/events` | SSE stream. `Last-Event-ID` (or `?after=`) resumes after that seq. Ends after the turn's last event. `410 {oldest_seq}` when the next event is no longer kept (see below). |
+| POST | `/v1/sessions/{sid}/artifacts` | Upload media; the body is the bytes and `Content-Type` their media type (`?media_type=` overrides it, `?filename=` names it): `201 {ref, sha256, size, media_type, filename, url}`. `413` over `--max-upload` (32 MiB), `507` over `--artifact-budget` (256 MiB per session). |
+| GET | `/v1/sessions/{sid}/artifacts/{sha256}` | The bytes, served as an attachment |
+| POST | `/v1/sessions/{sid}/turns` | `{parts}` starts a turn: `202 {turn_id}`. `409` while another turn in the session runs. `{message}` (text only) is deprecated and still accepted. |
+| GET | `/v1/sessions/{sid}/turns/{tid}/events` | SSE stream. `Last-Event-ID` (or `?after=`) resumes after that seq. Ends after the turn's last event. `410 {oldest_seq}` when the next event is no longer kept (see below). `?wire=1` or `Accept: application/vnd.saige.events+json;v=1` selects wire version 1; `?format=agui` selects AG-UI events. |
 | POST | `/v1/sessions/{sid}/turns/{tid}/interrupts/{tool_call_id}` | `{approved, message, modified_args, grant}` answers a `marker` event. An optional `grant` (`scope`: `once`, `tool`, `args` or `session`; `match`; `expires_at`) approves later calls it covers for the rest of the session. An invalid, expired, or refused grant is a `400`. A sub-agent's call id contains `/` (`<delegation id>/<child id>`); send it as-is or percent-encoded. `404` when nothing is pending for that call. |
 | POST | `/v1/sessions/{sid}/turns/{tid}/cancel` | Cancel the turn |
 | GET | `/v1/sessions/{sid}/turns/{tid}` | `{done, last_seq, error}` |
 | GET | `/v1/sessions/{sid}/tree` | The conversation tree as JSON |
+
+A turn's `parts` use the shared part codec: `{"type":"text","text":...}` and media parts (`image`, `audio`, `video`, `document`, `file`) whose `source` holds `media_type` and one of `data` (base64, at most 256 KiB per part), an `https` `uri`, or the `ref` of an upload to the same session. A refused body is a `400` (`413` for inline data over the limit) with a `code`:
+
+| Code | Cause |
+|---|---|
+| `vendor_file_refused` | The source names a vendor file ID (`files`). Those belong to the server's provider accounts, so clients never send them. |
+| `uri_scheme_refused` | A `uri` that is not `https`, such as `file://` or `gs://`. |
+| `artifact_not_found` | A `ref` this session does not hold. |
+| `part_kind_refused` | A part other than text or media, such as a `tool_result`. |
+| `inline_too_large` | Inline `data` over 256 KiB, or a body over 1 MiB. Upload it instead. |
+| `bad_body` | Malformed JSON, an unknown part type, or no content. |
+
+Events use wire version 2 (`part.start`, `part.delta`, `part.end`), and the `Saige-Wire-Version` response header names the version. A version 1 client gets `text.*`, `reasoning.*` and `tool.call.*` events; output with no version 1 form, such as produced images and refusals, arrives as an `error` event with code `wire_unrepresentable`. Media over 256 KiB in a run's output (a tool's image, a produced image) is stored in the session's artifacts and sent as its `ref` (in version 1, as its `uri`); download it from `/v1/sessions/{sid}/artifacts/{sha256}`. In the AG-UI stream, media and refusals are `CUSTOM` events named `saige.media` (with a `url`) and `saige.refusal`.
 
 Each turn keeps its most recent 10000 events for replay. When a client asks for events older than that, the request fails with `410 Gone` and `oldest_seq`, and a stream that falls that far behind ends with a `gap` event carrying `oldest_seq`. Refetch the turn and the tree, then resume with `Last-Event-ID: <oldest_seq - 1>`.
 
@@ -109,7 +145,8 @@ A session with no running turn is dropped after `--idle-ttl` (default 1h). A run
 Safety rules:
 
 - **Localhost by default.** Binding to a non-loopback address requires `--token` or `SAIGE_SERVE_TOKEN`, sent as `Authorization: Bearer <token>`. Without a token, requests whose `Host` is not a loopback name are refused.
-- **JSON-only POSTs.** Every POST must send `Content-Type: application/json`, which a cross-site form cannot do without a CORS preflight the server never grants.
+- **JSON-only POSTs.** Every POST must send `Content-Type: application/json`, which a cross-site form cannot do without a CORS preflight the server never grants. An upload sends its media type instead, which may not be one a form can send (`text/plain`, `multipart/form-data`, `application/x-www-form-urlencoded`).
+- **Client media is checked.** Vendor file IDs and non-`https` URIs are refused, and a `ref` resolves only within its session. Downloads are attachments with `nosniff` and a sandbox CSP, never rendered in the server's origin.
 - **Grants are explicit.** Only a client's approval creates a grant, it never covers a destructive tool, and `--deny-after N` stops asking about a tool after N denials in a session. See [approval policy and grants](../../docs/approval-policy.md).
 - **No silent approvals.** `approved` must be present. A pending approval that gets no decision within `--approval-timeout` (default 10m) is denied, including when the client disconnected.
 
@@ -207,9 +244,19 @@ saige catalog validate --strict       # exit 1 on errors, or warnings with --str
 saige catalog layers                  # which files were merged, and whether each is trusted
 saige catalog export                  # the merged catalog as canonical JSON
 saige catalog schema                  # the JSON Schema of the file format
+saige catalog migrate my-catalog.json --write   # convert a version 1 layer to version 2 in place
 ```
 
 A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
+
+## Stored Trees
+
+Node messages written by earlier releases are read on the fly. `saige tree migrate` counts them and, with `--write`, rewrites them in the current format. The target is a PostgreSQL URL (every conversation), a tree JSON document or a file WAL. Nothing writes the older format and there is no way back, so take a snapshot first, and stop writers of a WAL while it is rewritten.
+
+```bash
+saige tree migrate "$DATABASE_URL"            # count older messages
+saige tree migrate "$DATABASE_URL" --write    # rewrite them
+```
 
 ## Agent Definitions
 
@@ -231,6 +278,18 @@ saige ask --agent assistant "question"  # also chat, and serve (one pinned agent
 | `--agents-reload` | On `serve --agent`: reload the definitions this often, so new sessions see edits. |
 
 A project's `.saige/agents` is untrusted unless `SAIGE_TRUST_PROJECT_AGENTS=1` or it is named with `--agents-dir`: it may not connect to MCP servers, use memory, loosen approvals, or use the `exec` and `web` harness groups. See [agent definitions](../../docs/agent-definitions.md).
+
+## Harnesses and ACP
+
+Run a definition inside another harness or editor. See [harnesses](../../docs/harnesses.md).
+
+```bash
+saige export claude --agent reviewer --dry-run   # also codex, gemini, opencode, cursor, skills; --user for user-level files
+saige launch codex --agent reviewer -- exec "review the last commit"
+saige acp --agent reviewer --sessions-dir ~/.local/state/saige/acp   # ACP agent over stdio for Zed, JetBrains, Neovim, Emacs
+saige approvals list                             # approvals held for MCP clients without elicitation
+saige approvals approve TOKEN --grant tool
+```
 
 ## Provider Auto-Detection
 

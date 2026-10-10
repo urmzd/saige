@@ -1,0 +1,2 @@
+start 0 image_out image/jpeg
+end 0 {"type":"image_out","source":{"media_type":"image/jpeg","uri":"gs://out/img.jpg"}}

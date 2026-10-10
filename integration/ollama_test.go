@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestOllamaChatStream exercises the raw Provider contract: a streamed chat
@@ -15,11 +16,11 @@ import (
 func TestOllamaChatStream(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 5*time.Minute)
-	adapter := ollama.NewAdapter(client)
+	adapter := must.Get(ollama.New(ollama.Config{Client: client}))
 
-	rx, err := adapter.ChatStream(ctx, []types.Message{
-		types.NewUserMessage("Reply with exactly one word: hello"),
-	}, nil)
+	rx, err := adapter.Stream(ctx, types.Request{Messages: []types.Message{
+		types.UserMsg(types.Text("Reply with exactly one word: hello")),
+	}})
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -28,8 +29,8 @@ func TestOllamaChatStream(t *testing.T) {
 	var usage *types.UsageDelta
 	for d := range rx {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.UsageDelta:
 			usage = &v
 		case types.ErrorDelta:
@@ -55,7 +56,7 @@ func TestOllamaChatStream(t *testing.T) {
 func TestOllamaStructuredOutput(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 5*time.Minute)
-	adapter := ollama.NewAdapter(client)
+	adapter := must.Get(ollama.New(ollama.Config{Client: client}))
 
 	schema := &types.ParameterSchema{
 		Type:     "object",
@@ -65,9 +66,9 @@ func TestOllamaStructuredOutput(t *testing.T) {
 		},
 	}
 
-	rx, err := adapter.ChatStreamWithSchema(ctx, []types.Message{
-		types.NewUserMessage("What is 2 + 3? Respond in JSON."),
-	}, nil, schema)
+	rx, err := adapter.Stream(ctx, types.Request{Messages: []types.Message{
+		types.UserMsg(types.Text("What is 2 + 3? Respond in JSON.")),
+	}, Schema: schema})
 	if err != nil {
 		t.Fatalf("ChatStreamWithSchema: %v", err)
 	}
@@ -75,8 +76,8 @@ func TestOllamaStructuredOutput(t *testing.T) {
 	var text strings.Builder
 	for d := range rx {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.ErrorDelta:
 			t.Fatalf("stream error: %v", v.Error)
 		}

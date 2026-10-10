@@ -1,0 +1,24 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "capital of France"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "responseMimeType": "application/json",
+    "responseSchema": {
+      "properties": {
+        "capital": {
+          "type": "STRING"
+        }
+      },
+      "type": "OBJECT"
+    },
+    "temperature": 0.2
+  }
+}

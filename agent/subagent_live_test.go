@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // recordingProvider keeps the size of every request it forwards.
@@ -22,11 +23,12 @@ type recordingProvider struct {
 	sizes []int
 }
 
-func (p *recordingProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *recordingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	p.mu.Lock()
 	p.sizes = append(p.sizes, types.EstimateTokens(msgs))
 	p.mu.Unlock()
-	return p.inner.ChatStream(ctx, msgs, tools)
+	return p.inner.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }
 
 // TestSubAgentReadsDocumentByReferenceLive gives a bounded child a large
@@ -39,9 +41,9 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	var inner types.Provider
 	switch {
 	case os.Getenv("OPENAI_API_KEY") != "":
-		inner = openai.NewAdapter(os.Getenv("OPENAI_API_KEY"), "gpt-6-luna")
+		inner = must.Get(openai.New(openai.Config{APIKey: os.Getenv("OPENAI_API_KEY"), Model: "gpt-6-luna"}))
 	case os.Getenv("ANTHROPIC_API_KEY") != "":
-		inner = anthropic.NewAdapter(os.Getenv("ANTHROPIC_API_KEY"), "claude-haiku-5-5")
+		inner = must.Get(anthropic.New(anthropic.Config{APIKey: os.Getenv("ANTHROPIC_API_KEY"), Model: "claude-haiku-5-5"}))
 	default:
 		t.Skip("no OPENAI_API_KEY or ANTHROPIC_API_KEY")
 	}
@@ -57,13 +59,13 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	task := "Using the document below, what is the serial number of the backup generator? Reply with the serial number only.\n\n" + doc.String()
 
 	provider := &recordingProvider{inner: inner}
-	parent := agent.NewAgent(agent.AgentConfig{Name: "lead", Provider: inner}, agent.WithSubAgents(agent.SubAgentDef{
+	parent := must.Get(agent.New(agent.Config{Name: "lead", Provider: inner}, agent.WithSubAgents(agent.SubAgentDef{
 		Name:         "reader",
 		Description:  "Answers questions about documents.",
 		SystemPrompt: "You answer questions about documents you are given by reference. Use search_artifact to find the passage you need.",
 		Provider:     provider,
 		MaxIter:      4,
-	}))
+	})))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s, err := parent.InvokeSubAgent(ctx, "reader", task)
@@ -82,7 +84,7 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	if r.Iterations > r.MaxIter+1 {
 		t.Fatalf("iterations = %d over the budget of %d", r.Iterations, r.MaxIter)
 	}
-	docTokens := types.EstimateTokens([]types.Message{types.NewUserMessage(task)})
+	docTokens := types.EstimateTokens([]types.Message{types.UserMsg(types.Text(task))})
 	for i, n := range provider.sizes {
 		if n > docTokens/4 {
 			t.Fatalf("request %d sent about %d tokens; the document is %d", i, n, docTokens)

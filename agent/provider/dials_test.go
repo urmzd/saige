@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -20,14 +21,14 @@ func TestBuildServesReasoningDialOnResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := p.(*openai.ResponsesAdapter); !ok {
+	if _, ok := wrapper.As[*openai.ResponsesAdapter](p); !ok {
 		t.Fatalf("got %T, want the Responses adapter", p)
 	}
 	off := types.Dials{Reasoning: &types.ReasoningDial{Mode: types.ReasoningOff}}
 	if p, err = Build(context.Background(), Config{Model: "gpt-6-luna", Dials: off, Getenv: keys}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := p.(*openai.Adapter); !ok {
+	if _, ok := wrapper.As[*openai.Adapter](p); !ok {
 		t.Fatalf("got %T, want Chat Completions", p)
 	}
 }

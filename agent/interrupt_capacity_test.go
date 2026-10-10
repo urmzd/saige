@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestApprovalWaitDoesNotConsumeToolSlot(t *testing.T) {
@@ -16,10 +17,10 @@ func TestApprovalWaitDoesNotConsumeToolSlot(t *testing.T) {
 	independent := make(chan struct{}, 1)
 	read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { independent <- struct{}{}; return "ok", nil }}
 	tools := types.NewToolRegistry(types.WithMarkers(marked, types.Marker{Kind: "approval"}), read)
-	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "done"}, Tools: tools, MaxParallelTools: 2})
+	a := must.Get(New(Config{Provider: &mockProvider{response: "done"}, Tools: tools, MaxParallelTools: 2}))
 	done := make(chan struct{})
 	go func() {
-		a.executeToolsConcurrently(ctx, stream, []types.ToolUseContent{{ID: "1", Name: "marked"}, {ID: "2", Name: "marked"}, {ID: "3", Name: "read"}}, tools)
+		a.executeToolsConcurrently(ctx, stream, []types.ToolCallPart{{ID: "1", Name: "marked"}, {ID: "2", Name: "marked"}, {ID: "3", Name: "read"}}, tools)
 		close(done)
 	}()
 	var markers []string
@@ -53,8 +54,8 @@ func TestNonStreamingApprovalFailsWithoutResolver(t *testing.T) {
 	defer cancel()
 	stream := newEventStream(ctx, cancel)
 	stream.nonStreaming = true
-	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "done"}})
-	_, _, approved := a.awaitApproval(ctx, stream, types.ToolUseContent{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
+	a := must.Get(New(Config{Provider: &mockProvider{response: "done"}}))
+	_, _, approved := a.awaitApproval(ctx, stream, types.ToolCallPart{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
 	if approved || stream.runError() == nil || ctx.Err() != nil {
 		t.Fatalf("approval did not fail immediately: %v", stream.runError())
 	}

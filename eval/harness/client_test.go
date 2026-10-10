@@ -57,16 +57,19 @@ type schemaProvider struct {
 	schema *types.ParameterSchema
 }
 
-func (p *schemaProvider) ChatStreamWithSchema(ctx context.Context, m []types.Message, tl []types.ToolDef, s *types.ParameterSchema) (<-chan types.Delta, error) {
-	p.schema = s
-	return p.ChatStream(ctx, m, tl)
+func (p *schemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	p.schema = req.Schema
+	return p.ScriptedProvider.Stream(ctx, types.Request{Messages: req.Messages, Tools: req.Tools})
 }
+
+func (p *schemaProvider) SupportsSchema() bool { return true }
 
 // plainProvider implements only types.Provider.
 type plainProvider struct{ inner *agenttest.ScriptedProvider }
 
-func (p plainProvider) ChatStream(ctx context.Context, m []types.Message, tl []types.ToolDef) (<-chan types.Delta, error) {
-	return p.inner.ChatStream(ctx, m, tl)
+func (p plainProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tl := req.Messages, req.Tools
+	return p.inner.Stream(ctx, types.Request{Messages: m, Tools: tl})
 }
 
 func TestProviderClientChat(t *testing.T) {
@@ -135,7 +138,7 @@ func TestProviderClientChat(t *testing.T) {
 
 func TestProviderClientReturnsStreamError(t *testing.T) {
 	boom := &types.ProviderError{Provider: "p", Kind: types.ErrorKindAuth, Err: errors.New("denied")}
-	scripted := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{types.TextContentDelta{Content: "x"}, types.ErrorDelta{Error: boom}}}}
+	scripted := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{types.PartDelta{Index: 0, Text: "x"}, types.ErrorDelta{Error: boom}}}}
 	_, err := NewProviderClient(scripted).Chat(context.Background(), []Message{{Role: roleUser, Content: "hi"}})
 	if !types.IsAuth(err) {
 		t.Fatalf("err = %v, want an auth error", err)

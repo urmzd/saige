@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store"
 	"github.com/urmzd/saige/eval/store/memstore"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestScriptObservations(t *testing.T) {
@@ -88,7 +89,7 @@ func TestRunnerRecordsRun(t *testing.T) {
 	}
 	results := memstore.New()
 	var saved eval.RunRecord
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client:          NewClient(server.URL, "test-key", "mock"),
 		Flows:           []Flow{BaseFlow{}, StatelessFlow{}},
 		ContinueOnError: true,
@@ -96,7 +97,7 @@ func TestRunnerRecordsRun(t *testing.T) {
 		RunID:           "run-1",
 		Provenance:      eval.Provenance{GitCommit: "abc", Models: []string{"judge"}},
 		OnSaved:         func(r eval.RunRecord) { saved = r },
-	}
+	}))
 	runErr := runner.Run(context.Background(), scripts)
 	if runErr == nil || !strings.Contains(runErr.Error(), "b:") {
 		t.Fatalf("Run err = %v, want b to fail", runErr)
@@ -150,12 +151,12 @@ func TestRunnerRecordsCanceledRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	results := memstore.New()
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client:  NewClient("http://127.0.0.1:0", "k", "mock"),
 		Flows:   []Flow{BaseFlow{}},
 		Results: results,
 		RunID:   "canceled",
-	}
+	}))
 	if err := runner.Run(ctx, scripts); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run err = %v, want context.Canceled", err)
 	}
@@ -173,7 +174,7 @@ func TestRunnerReportsSaveFailure(t *testing.T) {
 	if err := results.CreateRun(context.Background(), eval.RunRecord{ID: "taken", Suite: DefaultSuite}); err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{Client: NewClient("http://127.0.0.1:0", "k", "mock"), Results: results, RunID: "taken"}
+	runner := must.Get(New(Config{Client: NewClient("http://127.0.0.1:0", "k", "mock"), Results: results, RunID: "taken"}))
 	err := runner.Run(context.Background(), nil)
 	if !errors.Is(err, store.ErrRunExists) {
 		t.Fatalf("Run err = %v, want ErrRunExists", err)

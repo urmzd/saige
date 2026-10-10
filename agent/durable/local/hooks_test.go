@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // Hook and guardrail outcomes are saved with the run, so a resumed run
@@ -24,14 +25,14 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 	}}
 	read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { return "read", nil }}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{
+		return must.Get(agent.New(agent.Config{
 			Provider: recordingInput{provider{&calls}, &seen}, SystemPrompt: "rules", MaxParallelTools: 1,
 			Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read),
 		},
 			agent.WithHooks(agent.Hooks{
 				UserInput: func(_ context.Context, ev *agent.UserInputEvent) error {
 					n := hookCalls.Add(1)
-					ev.Message = types.NewUserMessage(fmt.Sprintf("go (annotated %d)", n))
+					ev.Message = types.UserMsg(types.Text(fmt.Sprintf("go (annotated %d)", n)))
 					return nil
 				},
 				BeforeTool: func(_ context.Context, ev *agent.BeforeToolEvent) error {
@@ -46,9 +47,9 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 				hookCalls.Add(1)
 				return agent.Rewrite(strings.ToUpper(in.Text), "shout"), nil
 			})}),
-		)
+		))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -65,8 +66,8 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 		t.Errorf("resumed run sent %q, recorded run sent %q", got, firstInput)
 	}
 	var text string
-	for _, c := range result.Content {
-		if tc, ok := c.(types.TextContent); ok {
+	for _, c := range result.Parts {
+		if tc, ok := c.(types.TextPart); ok {
 			text += tc.Text
 		}
 	}
@@ -88,16 +89,17 @@ type recordingInput struct {
 	seen *atomic.Value
 }
 
-func (p recordingInput) ChatStream(ctx context.Context, m []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p recordingInput) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tools := req.Messages, req.Tools
 	for _, msg := range m {
 		if um, ok := msg.(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					p.seen.Store(tc.Text)
-					return p.provider.ChatStream(ctx, m, tools)
+					return p.provider.Stream(ctx, types.Request{Messages: m, Tools: tools})
 				}
 			}
 		}
 	}
-	return p.provider.ChatStream(ctx, m, tools)
+	return p.provider.Stream(ctx, types.Request{Messages: m, Tools: tools})
 }

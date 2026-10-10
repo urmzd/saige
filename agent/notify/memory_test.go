@@ -40,7 +40,7 @@ func closed(t *testing.T, ch <-chan types.Notification) {
 func TestMemoryFanOut(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemory(0)
-	defer m.Close()
+	defer m.Close(ctx)
 	a, cancelA, err := m.Subscribe(ctx, "jobs")
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestMemoryFanOut(t *testing.T) {
 
 func TestMemoryValidatesChannel(t *testing.T) {
 	m := NewMemory(0)
-	defer m.Close()
+	defer m.Close(context.Background())
 	for _, ch := range []string{"", "has space", "semi;colon", string(make([]byte, 64))} {
 		if err := m.Publish(context.Background(), ch, nil); !errors.Is(err, types.ErrInvalidChannel) {
 			t.Errorf("Publish(%q) = %v", ch, err)
@@ -90,7 +90,7 @@ func TestMemoryValidatesChannel(t *testing.T) {
 
 func TestMemoryCancelAndContext(t *testing.T) {
 	m := NewMemory(0)
-	defer m.Close()
+	defer m.Close(context.Background())
 	ch, cancel, err := m.Subscribe(context.Background(), "c")
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestMemoryClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if err := m.Close(); err != nil {
+	if err := m.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	closed(t, ch)
@@ -135,7 +135,7 @@ func TestMemoryClose(t *testing.T) {
 // or the subscriber cancels; nothing is dropped silently.
 func TestMemorySlowSubscriber(t *testing.T) {
 	m := NewMemory(1)
-	defer m.Close()
+	defer m.Close(context.Background())
 	ch, cancel, err := m.Subscribe(context.Background(), "c")
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestMemorySlowSubscriber(t *testing.T) {
 
 func TestMemoryConcurrent(t *testing.T) {
 	m := NewMemory(4)
-	defer m.Close()
+	defer m.Close(context.Background())
 	ctx := context.Background()
 	const subscribers, messages = 8, 100
 	var wg sync.WaitGroup
@@ -236,7 +236,7 @@ func TestMemoryConcurrent(t *testing.T) {
 
 func TestListen(t *testing.T) {
 	m := NewMemory(0)
-	defer m.Close()
+	defer m.Close(context.Background())
 	got := make(chan string, 1)
 	stop, err := Listen(context.Background(), m, "refresh", func(_ context.Context, n types.Notification) {
 		got <- string(n.Payload)

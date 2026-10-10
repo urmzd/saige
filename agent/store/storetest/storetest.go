@@ -56,7 +56,7 @@ func node(id, parent types.NodeID, depth int, version uint64, text string) *type
 	return &types.Node{
 		ID:        id,
 		ParentID:  parent,
-		Message:   types.NewUserMessage(text),
+		Message:   types.UserMsg(types.Text(text)),
 		Version:   version,
 		Depth:     depth,
 		BranchID:  "main",
@@ -68,12 +68,12 @@ func node(id, parent types.NodeID, depth int, version uint64, text string) *type
 func text(t *testing.T, n *types.Node) string {
 	t.Helper()
 	msg, ok := n.Message.(types.UserMessage)
-	if !ok || len(msg.Content) == 0 {
+	if !ok || len(msg.Parts) == 0 {
 		t.Fatalf("node %s message = %#v, want a user message", n.ID, n.Message)
 	}
-	tc, ok := msg.Content[0].(types.TextContent)
+	tc, ok := msg.Parts[0].(types.TextPart)
 	if !ok {
-		t.Fatalf("node %s content = %#v, want text", n.ID, msg.Content[0])
+		t.Fatalf("node %s content = %#v, want text", n.ID, msg.Parts[0])
 	}
 	return tc.Text
 }

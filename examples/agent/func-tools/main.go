@@ -50,7 +50,10 @@ func main() {
 	if key == "" {
 		log.Fatal("set OPENAI_API_KEY")
 	}
-	llm := openai.NewAdapter(key, "gpt-6-luna")
+	llm, err := openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stock := agentsdk.Func("stock", "Units in stock for a SKU",
 		func(rc agentsdk.RunContext[*Inventory], in StockIn) (StockOut, error) {
@@ -79,20 +82,23 @@ func main() {
 	}
 	fmt.Printf("sentiment %s (version %s)\n", s.Label, sentiment.Version())
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "clerk",
 		SystemPrompt: "You manage inventory. Use the tools.",
 		Provider:     llm,
 		Tools:        types.NewToolRegistry(stock, reserve, sentiment.Tool()),
 	}, agentsdk.WithDeps(&Inventory{stock: map[string]int{"A-100": 7}}))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("How many A-100 are in stock? Reserve 2 of them."),
+		types.UserMsg(types.Text("How many A-100 are in stock? Reserve 2 of them.")),
 	})
 	for d := range stream.Deltas() {
 		switch d := d.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.MarkerDelta:
 			fmt.Printf("[approving %s %v]\n", d.ToolName, d.Arguments)
 			_ = stream.ResolveMarkerErr(d.ToolCallID, agentsdk.Resolution{Approved: true, Approver: "example"})

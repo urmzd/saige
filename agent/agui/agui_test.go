@@ -29,7 +29,7 @@ func mapAll(t *testing.T, m *Mapper, deltas []types.Delta) []Event {
 		}
 		out = append(out, events...)
 	}
-	return append(out, m.Close()...)
+	return append(out, m.Flush()...)
 }
 
 func TestMapperSequences(t *testing.T) {
@@ -41,21 +41,21 @@ func TestMapperSequences(t *testing.T) {
 		{
 			name: "text message",
 			deltas: []types.Delta{
-				types.TextStartDelta{}, types.TextContentDelta{Content: "hi"}, types.TextEndDelta{}, types.DoneDelta{},
+				types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "hi"}, types.PartEnd{Index: 0}, types.DoneDelta{},
 			},
 			want: []EventType{TextMessageStart, TextMessageContent, TextMessageEnd, RunFinished},
 		},
 		{
 			name:   "content without a start opens a message and done closes it",
-			deltas: []types.Delta{types.TextContentDelta{Content: "hi"}, types.TextContentDelta{}, types.DoneDelta{}},
+			deltas: []types.Delta{types.PartDelta{Index: 1, Text: "hi"}, types.PartDelta{Index: 1}, types.DoneDelta{}},
 			want:   []EventType{TextMessageStart, TextMessageContent, TextMessageEnd, RunFinished},
 		},
 		{
 			name: "tool call and result",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "read"},
-				types.ToolCallArgumentDelta{ID: "c1", Content: `{"path":"a"}`},
-				types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"path": "a"}},
+				types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "c1", Name: "read"},
+				types.PartDelta{Index: 2, Args: `{"path":"a"}`},
+				types.PartEnd{Index: 2, Part: types.ToolCallPart{ID: "c1", Name: "read", Arguments: map[string]any{"path": "a"}}},
 				types.ToolExecStartDelta{ToolCallID: "c1", Name: "read"},
 				types.ToolExecEndDelta{ToolCallID: "c1", Name: "read", Result: "contents"},
 				types.DoneDelta{},
@@ -65,8 +65,8 @@ func TestMapperSequences(t *testing.T) {
 		{
 			name: "thinking then text",
 			deltas: []types.Delta{
-				types.ThinkingStartDelta{}, types.ThinkingContentDelta{Content: "hmm"},
-				types.TextContentDelta{Content: "answer"}, types.DoneDelta{},
+				types.PartStart{Index: 3, Kind: types.KindThinking}, types.PartDelta{Index: 3, Thinking: "hmm"},
+				types.PartDelta{Index: 1, Text: "answer"}, types.DoneDelta{},
 			},
 			want: []EventType{
 				ThinkingStart, ThinkingTextMessageStart, ThinkingTextMessageContent, ThinkingTextMessageEnd, ThinkingEnd,
@@ -75,12 +75,12 @@ func TestMapperSequences(t *testing.T) {
 		},
 		{
 			name:   "error ends the run and later deltas are dropped",
-			deltas: []types.Delta{types.TextContentDelta{Content: "x"}, types.ErrorDelta{Error: errors.New("boom")}, types.DoneDelta{}},
+			deltas: []types.Delta{types.PartDelta{Index: 1, Text: "x"}, types.ErrorDelta{Error: errors.New("boom")}, types.DoneDelta{}},
 			want:   []EventType{TextMessageStart, TextMessageContent, TextMessageEnd, RunError},
 		},
 		{
 			name:   "stream that closes early is an error",
-			deltas: []types.Delta{types.TextContentDelta{Content: "x"}},
+			deltas: []types.Delta{types.PartDelta{Index: 1, Text: "x"}},
 			want:   []EventType{TextMessageStart, TextMessageContent, TextMessageEnd, RunError},
 		},
 		{
@@ -106,8 +106,8 @@ func TestMapperSequences(t *testing.T) {
 func TestMapperFields(t *testing.T) {
 	m := NewMapper("thread", "run")
 	events := mapAll(t, m, []types.Delta{
-		types.TextContentDelta{Content: "let me look"},
-		types.ToolCallStartDelta{ID: "c1", Name: "read"},
+		types.PartDelta{Index: 0, Text: "let me look"},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "read"},
 		types.ToolExecEndDelta{ToolCallID: "c1", Error: "denied"},
 		types.ErrorDelta{Error: types.ErrResponseTruncated},
 	})
@@ -132,7 +132,7 @@ func TestMapperFields(t *testing.T) {
 
 func TestCustomEventCarriesEnvelope(t *testing.T) {
 	m := NewMapper("thread", "run")
-	inner := types.ToolExecDelta{ToolCallID: "c1", Inner: types.TextContentDelta{Content: "from child"}}
+	inner := types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartDelta{Index: 0, Text: "from child"}}
 	events, err := m.Map(inner)
 	if err != nil {
 		t.Fatal(err)
@@ -151,14 +151,14 @@ func TestCustomEventCarriesEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := d.(types.TextContentDelta); !ok || got.Content != "from child" {
+	if got, ok := d.(types.PartDelta); !ok || got.Text != "from child" {
 		t.Fatalf("delta = %#v", d)
 	}
 }
 
 func TestStream(t *testing.T) {
 	deltas := make(chan types.Delta, 4)
-	deltas <- types.TextContentDelta{Content: "hi"}
+	deltas <- types.PartDelta{Index: 0, Text: "hi"}
 	deltas <- types.DoneDelta{}
 	close(deltas)
 

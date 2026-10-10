@@ -1,0 +1,46 @@
+{
+  "messages": [
+    {
+      "content": "snap",
+      "role": "user"
+    },
+    {
+      "content": "Taking it.",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "function": {
+            "arguments": "{\"q\":\"x\"}",
+            "name": "snapshot"
+          },
+          "type": "function"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": "done\n{\"ok\":true}",
+      "tool_call_id": "call_1",
+      "role": "tool"
+    },
+    {
+      "content": "[TOOL ERROR] boom",
+      "tool_call_id": "call_2",
+      "role": "tool"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "reasoning_effort": "none",
+  "tools": [
+    {
+      "function": {
+        "name": "snapshot",
+        "description": "Takes a snapshot",
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

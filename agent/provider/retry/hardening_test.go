@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestDelay(t *testing.T) {
@@ -38,7 +39,7 @@ func TestDelay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := base
 			cfg.DisableJitter = !tc.jitter
-			if got := New(nil, cfg).delay(tc.attempt, tc.err, tc.u); got != tc.want {
+			if got := must.Get(New(&plainProvider{}, cfg)).delay(tc.attempt, tc.err, tc.u); got != tc.want {
 				t.Fatalf("delay = %v, want %v", got, tc.want)
 			}
 			if got := cfg.Delay(tc.attempt, tc.err, tc.u); got != tc.want {
@@ -49,7 +50,7 @@ func TestDelay(t *testing.T) {
 }
 
 func TestJitterSamplesSpread(t *testing.T) {
-	p := New(nil, Config{BaseDelay: 100 * time.Millisecond, MaxDelay: time.Second})
+	p := must.Get(New(&plainProvider{}, Config{BaseDelay: 100 * time.Millisecond, MaxDelay: time.Second}))
 	limit := 200 * time.Millisecond
 	seen := map[time.Duration]bool{}
 	for range 100 {
@@ -68,9 +69,9 @@ func TestBackoffHonorsRetryAfter(t *testing.T) {
 	var calls atomic.Int32
 	inner := &countingProvider{calls: &calls, failUntil: 1, response: "ok",
 		err: &types.ProviderError{Kind: types.ErrorKindRateLimit, RetryAfter: 80 * time.Millisecond, Err: errors.New("429")}}
-	p := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	p := must.Get(New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 	start := time.Now()
-	ch, err := p.ChatStream(context.Background(), nil, nil)
+	ch, err := p.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestBackoffHonorsRetryAfter(t *testing.T) {
 
 type plainProvider struct{ calls atomic.Int32 }
 
-func (p *plainProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *plainProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.calls.Add(1)
 	ch := make(chan types.Delta)
 	close(ch)
@@ -92,12 +93,12 @@ func (p *plainProvider) ChatStream(context.Context, []types.Message, []types.Too
 
 func TestSchemaIsNeverDropped(t *testing.T) {
 	inner := &plainProvider{}
-	p := New(inner, DefaultConfig())
-	_, err := p.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+	p := must.Get(New(inner, DefaultConfig()))
+	_, err := p.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) || types.IsTransient(err) || inner.calls.Load() != 0 {
 		t.Fatalf("err = %v calls = %d, want a local rejection", err, inner.calls.Load())
 	}
-	if _, err := p.ChatStreamWithSchema(context.Background(), nil, nil, nil); err != nil || inner.calls.Load() != 1 {
+	if _, err := p.Stream(context.Background(), types.Request{}); err != nil || inner.calls.Load() != 1 {
 		t.Fatalf("a nil schema must pass through: err = %v", err)
 	}
 }
@@ -110,7 +111,7 @@ type endlessProvider struct {
 	finished chan struct{}
 }
 
-func (p *endlessProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *endlessProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	go func() {
 		defer close(p.finished)
@@ -119,7 +120,7 @@ func (p *endlessProvider) ChatStream(context.Context, []types.Message, []types.T
 			ch <- d
 		}
 		for range p.n {
-			ch <- types.TextContentDelta{Content: "x"}
+			ch <- types.PartDelta{Index: 0, Text: "x"}
 		}
 	}()
 	return ch, nil
@@ -136,9 +137,9 @@ func waitFinished(t *testing.T, done chan struct{}) {
 
 func TestConsumerCancelDoesNotLeak(t *testing.T) {
 	before := runtime.NumGoroutine()
-	inner := &endlessProvider{lead: []types.Delta{types.TextStartDelta{}}, n: 1000, finished: make(chan struct{})}
+	inner := &endlessProvider{lead: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}}, n: 1000, finished: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, err := New(inner, DefaultConfig()).ChatStream(ctx, nil, nil)
+	ch, err := must.Get(New(inner, DefaultConfig())).Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,20 +162,21 @@ type chattyFailure struct {
 	finished chan struct{}
 }
 
-func (p *chattyFailure) ChatStream(ctx context.Context, m []types.Message, tl []types.ToolDef) (<-chan types.Delta, error) {
+func (p *chattyFailure) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tl := req.Messages, req.Tools
 	if p.calls.Add(1) == 1 {
 		return (&endlessProvider{
 			lead:     []types.Delta{types.ErrorDelta{Error: transientErr()}},
 			n:        100,
 			finished: p.finished,
-		}).ChatStream(ctx, m, tl)
+		}).Stream(ctx, types.Request{Messages: m, Tools: tl})
 	}
-	return (&mockProvider{response: "ok"}).ChatStream(ctx, m, tl)
+	return (&mockProvider{response: "ok"}).Stream(ctx, types.Request{Messages: m, Tools: tl})
 }
 
 func TestRetriedAttemptIsDrained(t *testing.T) {
 	inner := &chattyFailure{finished: make(chan struct{})}
-	ch, err := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond}).ChatStream(context.Background(), nil, nil)
+	ch, err := must.Get(New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond})).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}

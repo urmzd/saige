@@ -6,19 +6,22 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 
 | Package | Role |
 |---------|------|
-| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `agent` (definitions), `models`, `update`, `version` |
-| `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) over stdio JSON-RPC |
+| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
+| `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) and an agent definition as a tool, holding approvals for clients without elicitation |
+| `cmd/internal/agenthost/` | Session layer shared by serve, acp and saige-mcp: pinned binding, one turn at a time, grant checks |
+| `cmd/internal/approvals/` | File store of held approvals that `saige approvals` decides |
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
-| `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
+| `agent/types/` | Sealed types: Message and its typed parts (text, media with a `Source`, tool calls and results, citations, refusals, metadata parts), part deltas, the wire codec, Tool/RichTool, Provider and `Request`, typed IDs and `Target`, Cache, StepRunner |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
 | `agent/provider/` | Adapters implementing `types.Provider`: Anthropic (Messages), OpenAI (Chat Completions, Responses), Google (Gemini API, Vertex AI) and the local Ollama runtime; `provider.Build` factory |
-| `agent/provider/cache/` | Response-cache decorator: memoizes ChatStream by deterministic request hash |
+| `agent/provider/cache/` | Response-cache decorator: memoizes Stream by deterministic request hash |
 | `agent/provider/retry/`, `agent/provider/fallback/` | Retry with backoff and Retry-After; ordered fallback across adapters |
 | `agent/provider/router/` | Routing sessions over complete model configurations: sticky and affinity policies, route locks, classified failover |
 | `agent/provider/catalog/` | Model catalog: embedded `data/default.json`, strict loading, layered sources, merge rules, preset resolution and validation |
 | `agent/provider/preset/` | Builds a catalog preset into per-entry adapters behind one router, with groups per preset |
 | `agent/provider/split/` | Traffic splits: weighted arms, guarded canaries, shadow arms with their own budget |
-| `agent/provider/wrapper/` | Decorator conventions: `Unwrap`, `As`, `Members`, `Innermost` |
+| `agent/provider/wrapper/` | Decorator conventions: `Base` (forwards every optional provider interface), `Describe`, `NoClose`, `Unwrap`, `As`, `Members`, `Innermost` |
+| `agent/convert/` | Modality conversion: plans each part against the serving offering (native, convert, omit or reject by default), converters (extract, describe, transcribe), the `convert.Provider` and `convert.Batch` decorators |
 | `agent/privacy/` | Swaps personal data for placeholders at the provider and tool boundary |
 | `agent/guardrail/` | Built-in input and output guardrails: PII and regex detection, length, JSON schema, model classifier |
 | `agent/workspace/` | Content-addressed scratch artifacts for a run, with tools to write, read and list them |
@@ -38,7 +41,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/durable/duraturo/` | duraturo-backed durable engine: runs on any duraturo ledger and queue, such as Postgres tables |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
-| `rag/knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
+| `rag/knowledge/` | Knowledge graph public API (`knowledge.New`, query helpers) |
 | `rag/knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
 | `rag/knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |
 | `rag/knowledge/tool/` | Agent tool bindings for KG operations (kg_search, kg_ingest) |
@@ -92,6 +95,10 @@ saige agent list                               # every definition, highest versi
 saige agent show repo-steward@^1               # digests, sub-agents, skill hashes, the file
 saige agent validate examples/agents           # offline checks; exit 2 when invalid
 saige ask --agents-dir examples/agents --agent assistant "question"   # also chat and serve
+saige acp --agents-dir examples/agents --agent assistant             # ACP agent over stdio for editors
+saige export claude --agents-dir examples/agents --agent assistant --dry-run   # also codex, gemini, opencode, cursor, skills
+saige launch claude --agents-dir examples/agents --agent assistant -- -p "question"
+saige approvals list                          # held approvals; approve or deny TOKEN
 
 # Evals
 saige eval init evals                          # scaffold a corpus and manifest
@@ -126,6 +133,7 @@ go build ./...      # compile all packages
 gofmt -w .          # format
 fsrc run README.md  # re-embed examples/quickstart into the README (CI fails on drift)
 fsrc run docs/agent-definitions.md  # re-embed examples/agents (a test fails on drift)
+fsrc run docs/parts.md              # re-embed examples/parts
 ```
 
 ## Commit Convention

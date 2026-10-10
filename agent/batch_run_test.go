@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchModel answers each call from its last user text, so concurrent calls
@@ -28,7 +29,7 @@ func (m *batchModel) reply(msgs []types.Message, tools []types.ToolDef, schema b
 	m.tools += len(tools)
 	for _, msg := range msgs {
 		if s, ok := msg.(types.SystemMessage); ok {
-			m.systems = append(m.systems, s.Content[0].(types.TextContent).Text)
+			m.systems = append(m.systems, s.Parts[0].(types.TextPart).Text)
 		}
 	}
 	m.mu.Unlock()
@@ -45,28 +46,39 @@ func (m *batchModel) reply(msgs []types.Message, tools []types.ToolDef, schema b
 		answer = `{"priority":"` + priority + `"}`
 	}
 	out := make(chan types.Delta, 4)
-	out <- types.TextStartDelta{}
-	out <- types.TextContentDelta{Content: answer}
-	out <- types.TextEndDelta{}
+	out <- types.PartStart{Index: 0, Kind: types.KindText}
+	out <- types.PartDelta{Index: 0, Text: answer}
+	out <- types.PartEnd{Index: 0}
 	close(out)
 	return out, nil
 }
 
-func (m *batchModel) ChatStream(_ context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (m *batchModel) chatStream(_ context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return m.reply(msgs, tools, false)
 }
 
-func (m *batchModel) ChatStreamWithSchema(_ context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+// Stream implements types.Provider.
+func (m *batchModel) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil {
+		return m.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	}
+	return m.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (m *batchModel) SupportsSchema() bool { return true }
+
+func (m *batchModel) chatStreamWithSchema(_ context.Context, msgs []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
 	return m.reply(msgs, tools, true)
 }
 
 func TestRunBatch(t *testing.T) {
 	m := &batchModel{}
 	tools := types.NewToolRegistry()
-	a := NewAgent(AgentConfig{Name: "bulk", SystemPrompt: "Be brief.", Provider: m, Tools: tools})
+	a := must.Get(New(Config{Name: "bulk", SystemPrompt: "Be brief.", Provider: m, Tools: tools}))
 	inputs := []BatchInput{
-		{ID: "one", Messages: []types.Message{types.NewUserMessage("first")}},
-		{Messages: []types.Message{types.NewUserMessage("second")}},
+		{ID: "one", Messages: []types.Message{types.UserMsg(types.Text("first"))}},
+		{Messages: []types.Message{types.UserMsg(types.Text("second"))}},
 	}
 	got, err := a.RunBatch(context.Background(), inputs, BatchConfig{})
 	if err != nil {
@@ -88,8 +100,8 @@ func TestRunBatch(t *testing.T) {
 func TestRunBatchUsesProviderBatchAPI(t *testing.T) {
 	bp := &recordingBatch{Local: batch.NewLocal(&batchModel{}, 2)}
 	b := types.NewBudget(types.BudgetPolicy{})
-	a := NewAgent(AgentConfig{Name: "bulk", Provider: bp, Budget: b})
-	if _, err := a.RunBatch(context.Background(), []BatchInput{{Messages: []types.Message{types.NewUserMessage("x")}}}, BatchConfig{}); err != nil {
+	a := must.Get(New(Config{Name: "bulk", Provider: bp, Budget: b}))
+	if _, err := a.RunBatch(context.Background(), []BatchInput{{Messages: []types.Message{types.UserMsg(types.Text("x"))}}}, BatchConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	if bp.submits != 1 {
@@ -103,7 +115,7 @@ type recordingBatch struct {
 	submits int
 }
 
-func (r *recordingBatch) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (r *recordingBatch) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return nil, errors.New("streaming not expected")
 }
 
@@ -137,7 +149,69 @@ func TestAIFuncBatch(t *testing.T) {
 
 func batchUserText(msgs []types.Message) string {
 	if u, ok := msgs[len(msgs)-1].(types.UserMessage); ok {
-		return u.Content[0].(types.TextContent).Text
+		return u.Parts[0].(types.TextPart).Text
 	}
 	return ""
+}
+
+// offeringBatch is a batch-capable provider that serves a text-only
+// offering, so media in a batch request must be converted or rejected.
+type offeringBatch struct {
+	recordingBatch
+	sent []types.BatchRequest
+}
+
+func (o *offeringBatch) Offering() types.Offering {
+	return types.Offering{ID: "test/texty@test", Model: types.ModelInfo{Vendor: "test", Prefix: "texty", Known: true},
+		Endpoint: types.EndpointInfo{Name: "test"}}
+}
+
+func (o *offeringBatch) Capabilities() types.ModelCapabilities { return o.Offering().Capabilities() }
+
+func (o *offeringBatch) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
+	o.sent = append(o.sent, reqs...)
+	return o.recordingBatch.Submit(ctx, reqs, opts)
+}
+
+// TestRunBatchConvertsAtSubmit checks that a batch request is planned
+// against the serving offering when the batch is submitted: a PDF the model
+// cannot read is rejected before anything is uploaded, and extracted to
+// text when the agent's extractors permit it.
+func TestRunBatchConvertsAtSubmit(t *testing.T) {
+	doc := types.Document(types.Bytes(types.MediaPDF, []byte("%PDF-1.4 notes")))
+	inputs := []BatchInput{{ID: "doc", Messages: []types.Message{types.UserMsg(types.Text("summarize"), doc)}}}
+
+	rejecting := &offeringBatch{recordingBatch: recordingBatch{Local: batch.NewLocal(&batchModel{}, 1)}}
+	a := must.Get(New(Config{Name: "bulk", Provider: rejecting}))
+	if _, err := a.RunBatch(context.Background(), inputs, BatchConfig{}); !errors.Is(err, types.ErrModalityUnsupported) {
+		t.Fatalf("err = %v, want the PDF rejected", err)
+	}
+	if rejecting.submits != 0 {
+		t.Fatal("a rejected batch was submitted")
+	}
+
+	extracting := &offeringBatch{recordingBatch: recordingBatch{Local: batch.NewLocal(&batchModel{}, 1)}}
+	extract := types.ExtractorFunc(func(context.Context, []byte, types.MediaType) ([]types.UserPart, error) {
+		return []types.UserPart{types.Text("extracted notes")}, nil
+	})
+	a = must.Get(New(Config{Name: "bulk", Provider: extracting,
+		Extractors: map[types.MediaType]types.Extractor{types.MediaPDF: extract}}))
+	res, err := a.RunBatch(context.Background(), inputs, BatchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(extracting.sent) != 1 || !strings.Contains(types.TextOf(extracting.sent[0].Messages[0]), "extracted notes") {
+		t.Fatalf("sent %+v, want the extracted text", extracting.sent)
+	}
+	for _, p := range types.PartsOf(extracting.sent[0].Messages[0]) {
+		if types.IsMedia(p) {
+			t.Fatalf("the PDF itself was submitted: %#v", p)
+		}
+	}
+	if _, ok := inputs[0].Messages[0].(types.UserMessage).Parts[1].(types.DocumentPart); !ok {
+		t.Error("the input was modified")
+	}
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("results = %+v", res)
+	}
 }

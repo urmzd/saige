@@ -1,0 +1,21 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "hi"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {},
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "Be brief."
+      }
+    ],
+    "role": "user"
+  }
+}

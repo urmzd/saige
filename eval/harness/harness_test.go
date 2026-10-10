@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/urmzd/saige/internal/must"
 )
 
 func writeFixture(t *testing.T, path string, value string) {
@@ -253,10 +255,10 @@ func TestRunnerBaseAndStatelessEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{BaseFlow{}, StatelessFlow{}},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -338,10 +340,10 @@ func TestRunnerSkipAndForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{BaseFlow{}},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -620,11 +622,6 @@ func TestFilterScripts(t *testing.T) {
 			if strings.Join(ids, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("FilterScripts = %v, want %v", ids, tt.want)
 			}
-			// The deprecated name keeps working through the alias.
-			legacy := FilterExperiments(scripts, tt.prefix, tt.count)
-			if len(legacy) != len(got) {
-				t.Errorf("FilterExperiments = %d scripts, want %d", len(legacy), len(got))
-			}
 		})
 	}
 }
@@ -686,16 +683,16 @@ func TestCustomFlowAndAssemble(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{countingFlow{}},
-		Assemble: func(exp Experiment, results map[string]FlowResult) (any, error) {
+		Assemble: func(exp Script, results map[string]FlowResult) (any, error) {
 			return map[string]any{
 				"experiment_id": exp.ID,
 				"turns_seen":    results["counting"].Extra["turns_seen"],
 			}, nil
 		},
-	}
+	}))
 	if err := runner.Run(context.Background(), experiments); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -713,7 +710,7 @@ type countingFlow struct{}
 
 func (countingFlow) Name() string { return "counting" }
 
-func (countingFlow) Run(ctx context.Context, c *Client, exp Experiment, fc *FlowContext) (FlowResult, error) {
+func (countingFlow) Run(ctx context.Context, c *Client, exp Script, fc *FlowContext) (FlowResult, error) {
 	if len(exp.Turns) == 0 {
 		return FlowResult{}, fmt.Errorf("no turns")
 	}

@@ -12,23 +12,26 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type provider struct{ calls *atomic.Int32 }
 
-func (p provider) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p provider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	m := req.Messages
 	p.calls.Add(1)
 	out := make(chan types.Delta, 20)
+	re := agenttest.Reindexer()
 	if len(m) <= 2 {
 		for _, d := range agenttest.ToolCallResponse("approval-call", "write", map[string]any{"value": "original"}) {
-			out <- d
+			out <- re(d)
 		}
 		for _, d := range agenttest.ToolCallResponse("independent-call", "read", nil) {
-			out <- d
+			out <- re(d)
 		}
 	} else {
 		for _, d := range agenttest.TextResponse("done") {
-			out <- d
+			out <- re(d)
 		}
 	}
 	close(out)
@@ -48,9 +51,9 @@ func TestSuspendReleaseResumeAndReplay(t *testing.T) {
 	}}
 	read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { reads.Add(1); return "read", nil }}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1})
+		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1}))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	_, err := engine.Run(ctx, "run", "v1", factory, input)
 	if !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
@@ -113,7 +116,7 @@ func TestUncertainAttemptNeedsReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	result := types.StepResult{Kind: types.StepKindTool, ToolResult: "verified written", ToolBlocks: []types.ToolResultBlock{{Data: []byte{1, 2}}}}
+	result := types.StepResult{Kind: types.StepKindTool, ToolResult: "verified written", ToolParts: []types.ToolOutputPart{types.Image(types.Bytes(types.MediaPNG, []byte{1, 2}))}}
 	if err := e.Reconcile("run", "v1", "write", &result); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +128,7 @@ func TestUncertainAttemptNeedsReconciliation(t *testing.T) {
 	if err := decode(saved.Steps["write"].Result, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.ToolBlocks[0].Data[1] != 2 {
+	if restored.ToolParts[0].(types.ImagePart).Source.Inline[1] != 2 {
 		t.Fatal("lost bytes")
 	}
 }
@@ -156,7 +159,7 @@ func TestApprovalExpiryAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &runner{path: path, ttl: time.Hour, state: State{Version: 1, RunID: "run", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
-	req := types.ApprovalRequest{ID: "approval", ToolCall: types.ToolUseContent{ID: "call", Arguments: map[string]any{"integer": 9007199254740993}}}
+	req := types.ApprovalRequest{ID: "approval", ToolCall: types.ToolCallPart{ID: "call", Arguments: map[string]any{"integer": 9007199254740993}}}
 	if _, err := r.ResolveApproval(context.Background(), req); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -241,9 +244,9 @@ func TestBudgetReplayRestoresUnknownSettlement(t *testing.T) {
 		current = types.NewBudget(types.BudgetPolicy{MaxRequests: 5, PerCallTokens: 100})
 		p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}
 		calls.Add(1)
-		return agent.NewAgent(agent.AgentConfig{Provider: p, Budget: current})
+		return must.Get(agent.New(agent.Config{Provider: p, Budget: current}))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "budget", "v1", factory, input); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +266,8 @@ type stagedProvider struct {
 	first []types.Delta
 }
 
-func (p stagedProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p stagedProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	p.calls.Add(1)
 	deltas := agenttest.TextResponse("done")
 	if len(messages) <= 2 {
@@ -286,9 +290,9 @@ func TestChildApprovalReplaysParentAndChildWithoutRepeatingEffects(t *testing.T)
 	e := New(t.TempDir())
 	factory := func() *agent.Agent {
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { writes.Add(1); return "written", nil }}
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}}))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "child", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -320,9 +324,9 @@ func TestAdmissionApprovalPersistsBeforeProviderAndRestoresGrant(t *testing.T) {
 	var budget *types.Budget
 	factory := func() *agent.Agent {
 		budget = types.NewBudget(types.BudgetPolicy{Limit: types.USD(.25), PerCallCost: types.USD(.4), OnExceed: types.BudgetRequireApproval})
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget}))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "grant", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -355,9 +359,9 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 	e := New(t.TempDir())
 	var parentCalls, childCalls atomic.Int32
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.AgentOption{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.Option{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}}))
 	}
-	_, err := e.Run(context.Background(), "separate", "v1", factory, []types.Message{types.NewUserMessage("go")})
+	_, err := e.Run(context.Background(), "separate", "v1", factory, []types.Message{types.UserMsg(types.Text("go"))})
 	if err == nil || childCalls.Load() != 0 {
 		t.Fatalf("independent child dispatched: %d, err=%v", childCalls.Load(), err)
 	}
@@ -390,7 +394,8 @@ func TestIdempotentAttemptRepeats(t *testing.T) {
 // destructive call, then answers.
 type grantProvider struct{}
 
-func (grantProvider) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (grantProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	m := req.Messages
 	out := make(chan types.Delta, 20)
 	var deltas []types.Delta
 	switch {
@@ -402,8 +407,9 @@ func (grantProvider) ChatStream(_ context.Context, m []types.Message, _ []types.
 	default:
 		deltas = agenttest.TextResponse("done")
 	}
+	re := agenttest.Reindexer()
 	for _, d := range deltas {
-		out <- d
+		out <- re(d)
 	}
 	close(out)
 	return out, nil
@@ -425,10 +431,10 @@ func TestGrantVerdictReplaysAfterExpiry(t *testing.T) {
 		return "dropped", nil
 	}}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{Provider: grantProvider{}, Tools: types.NewToolRegistry(write, drop), MaxParallelTools: 1},
-			agent.WithApprovalPolicy(agent.ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }}))
+		return must.Get(agent.New(agent.Config{Provider: grantProvider{}, Tools: types.NewToolRegistry(write, drop), MaxParallelTools: 1},
+			agent.WithApprovalPolicy(agent.ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }})))
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}

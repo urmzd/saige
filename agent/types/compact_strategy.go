@@ -85,10 +85,10 @@ const CompactionSummaryPrefix = "Summary of the earlier conversation, written wh
 // IsCompactionSummary reports whether m is a summary a strategy wrote.
 func IsCompactionSummary(m Message) bool {
 	sm, ok := m.(SystemMessage)
-	if !ok || len(sm.Content) != 1 {
+	if !ok || len(sm.Parts) != 1 {
 		return false
 	}
-	tc, ok := sm.Content[0].(TextContent)
+	tc, ok := sm.Parts[0].(TextPart)
 	return ok && strings.HasPrefix(tc.Text, CompactionSummaryPrefix)
 }
 
@@ -308,8 +308,10 @@ type KeepRecent struct {
 // NewKeepRecent keeps the last n turns (default 4).
 func NewKeepRecent(n int) *KeepRecent { return &KeepRecent{Turns: n} }
 
+// Name implements CompactionStrategy.
 func (k *KeepRecent) Name() string { return string(CompactKeepRecent) }
 
+// CompactEntries implements CompactionStrategy.
 func (k *KeepRecent) CompactEntries(_ context.Context, req CompactRequest) (CompactResult, error) {
 	l := layoutOf(req.Entries)
 	n := keepTurns(k.Turns)
@@ -325,6 +327,7 @@ func (k *KeepRecent) CompactEntries(_ context.Context, req CompactRequest) (Comp
 	}, nil
 }
 
+// Compact implements Compactor.
 func (k *KeepRecent) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, k, messages, provider)
 }
@@ -342,8 +345,10 @@ type Summary struct {
 	Threshold int
 }
 
+// Name implements CompactionStrategy.
 func (s *Summary) Name() string { return string(CompactSummary) }
 
+// CompactEntries implements CompactionStrategy.
 func (s *Summary) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	if !triggered(req, s.Threshold) {
 		return CompactResult{Entries: req.Entries}, nil
@@ -357,6 +362,7 @@ func (s *Summary) CompactEntries(ctx context.Context, req CompactRequest) (Compa
 	return summarizeSpan(ctx, req, s.Name(), l, nil, slices.Concat(l.summaries, flatten(old)), flatten(recent))
 }
 
+// Compact implements Compactor.
 func (s *Summary) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, s, messages, provider)
 }
@@ -397,7 +403,7 @@ func summarizeSpan(ctx context.Context, req CompactRequest, name string, l layou
 		if err != nil {
 			return unchanged, fmt.Errorf("%s: %w", name, err)
 		}
-		summaryEntry = []CompactEntry{{Message: NewSystemMessage(CompactionSummaryPrefix + text), Index: -1}}
+		summaryEntry = []CompactEntry{{Message: SystemMsg(Text(CompactionSummaryPrefix + text)), Index: -1}}
 	}
 	sel := pick(req.Entries, selected)
 	for i := range sel {
@@ -416,10 +422,10 @@ const SummaryInstruction = "Summarize the following conversation concisely, pres
 // Summarize asks provider to summarize msgs. It fails on a stream error or
 // an empty summary, so a failed call never replaces real history.
 func Summarize(ctx context.Context, provider Provider, msgs []Message) (string, error) {
-	rx, err := provider.ChatStream(ctx, []Message{
-		NewSystemMessage(SummaryInstruction),
-		NewUserMessage(MessagesToText(msgs)),
-	}, nil)
+	rx, err := provider.Stream(ctx, Request{Messages: []Message{
+		SystemMsg(Text(SummaryInstruction)),
+		UserMsg(Text(MessagesToText(msgs))),
+	}})
 	if err != nil {
 		return "", fmt.Errorf("summarization: %w", err)
 	}
@@ -427,8 +433,8 @@ func Summarize(ctx context.Context, provider Provider, msgs []Message) (string, 
 	var streamErr error
 	for d := range rx {
 		switch v := d.(type) {
-		case TextContentDelta:
-			sb.WriteString(v.Content)
+		case PartDelta:
+			sb.WriteString(v.Text)
 		case ErrorDelta:
 			streamErr = v.Error
 		}
@@ -455,8 +461,10 @@ type RelevantPlusSummary struct {
 	Threshold int // as Summary.Threshold
 }
 
+// Name implements CompactionStrategy.
 func (r *RelevantPlusSummary) Name() string { return string(CompactRelevantPlusSummary) }
 
+// CompactEntries implements CompactionStrategy.
 func (r *RelevantPlusSummary) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	if !triggered(req, r.Threshold) {
 		return CompactResult{Entries: req.Entries}, nil
@@ -503,6 +511,7 @@ func (r *RelevantPlusSummary) CompactEntries(ctx context.Context, req CompactReq
 	return summarizeSpan(ctx, req, r.Name(), l, selected, rest, flatten(recent))
 }
 
+// Compact implements Compactor.
 func (r *RelevantPlusSummary) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, r, messages, provider)
 }
@@ -514,6 +523,7 @@ func (r *RelevantPlusSummary) Compact(ctx context.Context, messages []Message, p
 // still over the target. Without one it applies every step.
 type Chain []CompactionStrategy
 
+// Name implements CompactionStrategy.
 func (c Chain) Name() string {
 	names := make([]string, len(c))
 	for i, s := range c {
@@ -522,6 +532,7 @@ func (c Chain) Name() string {
 	return string(CompactChain) + "(" + strings.Join(names, ",") + ")"
 }
 
+// CompactEntries implements CompactionStrategy.
 func (c Chain) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	tok := req.Tokenizer
 	if tok == nil {
@@ -561,14 +572,17 @@ func (c Chain) CompactEntries(ctx context.Context, req CompactRequest) (CompactR
 	return res, nil
 }
 
+// Compact implements Compactor.
 func (c Chain) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, c, messages, provider)
 }
 
 // ── ClearToolResults as a strategy ───────────────────────────────────
 
+// Name implements CompactionStrategy.
 func (c *ClearToolResultsCompactor) Name() string { return string(CompactClearToolResults) }
 
+// CompactEntries implements CompactionStrategy.
 func (c *ClearToolResultsCompactor) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	in := EntryMessages(req.Entries)
 	out, err := c.Compact(ctx, in, req.Provider)
@@ -604,16 +618,16 @@ func ToolPairingError(msgs []Message) error {
 	calls := map[string]bool{}
 	for _, m := range msgs {
 		if am, ok := m.(AssistantMessage); ok {
-			for _, c := range am.Content {
-				if tu, ok := c.(ToolUseContent); ok {
+			for _, c := range am.Parts {
+				if tu, ok := c.(ToolCallPart); ok {
 					calls[tu.ID] = true
 				}
 			}
 			continue
 		}
 		for _, r := range toolResults(m) {
-			if !calls[r.ToolCallID] {
-				return fmt.Errorf("%w: %s", ErrSplitToolCall, r.ToolCallID)
+			if !calls[r.CallID] {
+				return fmt.Errorf("%w: %s", ErrSplitToolCall, r.CallID)
 			}
 		}
 	}

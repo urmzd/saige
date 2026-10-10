@@ -15,9 +15,9 @@ It does not provide remote scheduling or an atomic transaction with an external 
 
 ```go
 engine := local.New("./private-runs")
-input := []types.Message{types.NewUserMessage("Review and apply the change")}
+input := []types.Message{types.UserMsg(types.Text("Review and apply the change"))}
 factory := func() *agent.Agent {
-    return agent.NewAgent(agent.AgentConfig{
+    a, err := agent.New(agent.Config{
         Provider: configuredProvider,
         Tools: types.NewToolRegistry(types.WithMarkers(writeTool,
             types.Marker{Kind: "approval"})),
@@ -26,6 +26,10 @@ factory := func() *agent.Agent {
             MaxTokens: 20000, PerCallTokens: 4000, MaxRequests: 10,
         }),
     })
+    if err != nil {
+        log.Fatal(err) // a fixed configuration: it fails on every replay or none
+    }
+    return a
 }
 _, err := engine.Run(ctx, "run-42", "config-v3", factory, input)
 if errors.Is(err, types.ErrSuspended) {
@@ -164,18 +168,18 @@ A summary needs stable per-owner checkpoints before it can participate in determ
 For now, bound the context or create an explicit new run with a reviewed summary and a new revision.
 A context-limit error is not fixed by retrying the same oversized request.
 Factories, tool gates, and result policies must reproduce the same decisions during replay.
-A provider call stopped by an interrupting submission commits its completed text with a `TruncationContent` marker and records a `step.truncated` event, so replay does not repeat the call.
+A provider call stopped by an interrupting submission commits its completed text with a `TruncationPart` marker and records a `step.truncated` event, so replay does not repeat the call.
 If a policy needs time, randomness, or an external read, version or checkpoint that input in the host.
 
 ### Files, traces, and deployment limits
 
 Each run uses a SHA-256 directory name containing `state.json` and `worker.lock`.
 `state.json` is a versioned recovery snapshot. It includes steps, interrupts, receipts, and ordered event metadata.
-Input and result fields contain base64 gob data to preserve Go content types and binary tool results.
+Input and result fields contain base64 records: gob envelopes with a format version, holding messages and tool output in the shared part codec with their media bytes. Records written before typed parts are still read and upgraded on replay, so a run in flight across an upgrade resumes.
 The snapshot is not the public JSON conversation trace. Use `tree.Print` for that separate export.
 State files use mode 0600 and new run directories use mode 0700.
 Protect the parent directory, retain required audit records, and remove secrets from application inputs.
-The engine does not provide encryption, a retention service, cross-version gob migration, or a portable export format.
+The engine does not provide encryption, a retention service, or a portable export format.
 Each update rewrites the snapshot. Large or long-running workloads need a different storage backend.
 `Engine.List` reads every run's snapshot, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
 
@@ -190,7 +194,11 @@ The adapter validates the tables and never migrates them; `pgledger.RecommendedD
 ```go
 engine := duraturo.New(lgr, q) // any duraturo ledger and queue
 wf := engine.Register("reviewer.v3", func(runID string) *agent.Agent {
-    return agent.NewAgent(agent.AgentConfig{Provider: configuredProvider, Tools: tools})
+    a, err := agent.New(agent.Config{Provider: configuredProvider, Tools: tools})
+    if err != nil {
+        log.Fatal(err)
+    }
+    return a
 })
 go engine.Worker().Run(ctx) // one or more workers, in this process or others
 

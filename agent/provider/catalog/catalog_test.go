@@ -9,7 +9,7 @@ import (
 
 func TestLookupMatchesLongestPrefix(t *testing.T) {
 	tests := []struct {
-		provider string
+		provider types.ProviderName
 		model    string
 		family   string
 	}{
@@ -69,7 +69,7 @@ func TestUnknownProviderDeclaresNothing(t *testing.T) {
 func TestReasoningKnobsDifferWithinAProvider(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider string
+		provider types.ProviderName
 		model    string
 		want     []types.Capability
 		notWant  []types.Capability
@@ -241,8 +241,9 @@ func TestLocalModelsArePricedFreeNotUnpriced(t *testing.T) {
 // ollama has none, and the flag and the enumerated kinds must agree.
 func TestServerToolDeclarationsAgreeWithFlags(t *testing.T) {
 	for _, tt := range []struct {
-		provider, model string
-		wantWebSearch   bool
+		provider      types.ProviderName
+		model         string
+		wantWebSearch bool
 	}{
 		{"anthropic", "claude-sonnet-4-5", true},
 		{"google", "gemini-2.5-flash", true},
@@ -268,7 +269,7 @@ func TestMinReasoningBudgetIsDeclaredWhereItIsEnforced(t *testing.T) {
 
 func TestProvidersAndFamiliesAreListed(t *testing.T) {
 	provs := Providers()
-	want := map[string]bool{"anthropic": true, "openai": true, "google": true, "ollama": true}
+	want := map[types.ProviderName]bool{"anthropic": true, "openai": true, "google": true, "ollama": true}
 	for _, p := range provs {
 		delete(want, p)
 	}
@@ -277,5 +278,35 @@ func TestProvidersAndFamiliesAreListed(t *testing.T) {
 	}
 	if len(Families("anthropic")) == 0 {
 		t.Error("Families(anthropic) must not be empty")
+	}
+}
+
+// TestModalityPricingFromVendorPages checks the modality rates the default
+// catalog declares, which are only those the vendor's pricing page states:
+// Gemini lists audio input apart from text, image and video, and bills
+// documents at the image rate. A model the page does not list, and every
+// OpenAI chat row (whose page gives no per-modality input rate), declares
+// none, so its non-text usage is unpriced.
+func TestModalityPricingFromVendorPages(t *testing.T) {
+	for _, tc := range []struct {
+		provider types.ProviderName
+		model    types.ModelID
+		want     map[types.Modality]float64
+	}{
+		{"google", "gemini-2.5-flash", map[types.Modality]float64{types.ModalityAudio: 1, types.ModalityImage: 0.3, types.ModalityVideo: 0.3, types.ModalityDocument: 0.3}},
+		{"google", "gemini-3.1-flash-lite", map[types.Modality]float64{types.ModalityAudio: 0.5, types.ModalityImage: 0.25, types.ModalityDocument: 0.25}},
+		{"google", "gemini-3.8-flash", map[types.Modality]float64{types.ModalityAudio: 0.75, types.ModalityDocument: 0.75}},
+		{"google", "gemini-3.7-flash", nil},
+		{"openai", "gpt-6-luna", nil},
+	} {
+		modal := MustLookup(tc.provider, tc.model).Pricing.Modal
+		if tc.want == nil && len(modal) != 0 {
+			t.Errorf("%s: modal = %+v, want none", tc.model, modal)
+		}
+		for m, rate := range tc.want {
+			if got := modal[m].InputPerMTok; got != rate {
+				t.Errorf("%s %s input = %v, want %v", tc.model, m, got, rate)
+			}
+		}
 	}
 }

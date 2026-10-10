@@ -1,0 +1,35 @@
+[
+  {
+    "type": "text",
+    "text": "Go 1.26 shipped."
+  },
+  {
+    "type": "audio_out",
+    "source": {
+      "media_type": "audio/wav",
+      "size": 3,
+      "sha256": "ae4b3280e56e2faf83f414a6e3dabe9d5fbe18976544c05fed121accb85b53fc"
+    },
+    "audio": {
+      "format": "wav"
+    },
+    "transcript": "Go 1.26 shipped.",
+    "vendor_id": "audio_1",
+    "expires_at": "2026-10-10T05:17:29Z"
+  },
+  {
+    "type": "citation",
+    "citation": {
+      "kind": "web",
+      "uri": "https://go.dev",
+      "title": "Go",
+      "end": 7,
+      "producer": "openai"
+    },
+    "anchor": {
+      "part_index": 0,
+      "start": 0,
+      "end": 7
+    }
+  }
+]

@@ -16,14 +16,17 @@ type SearchKnowledgeTool struct {
 	groupID string
 }
 
+// NewSearchKnowledgeTool returns a tool that searches graph.
 func NewSearchKnowledgeTool(graph kgtypes.Graph) *SearchKnowledgeTool {
 	return &SearchKnowledgeTool{graph: graph}
 }
 
+// WithGroupID limits the tool to one graph group.
 func (t *SearchKnowledgeTool) WithGroupID(id string) *SearchKnowledgeTool {
 	return &SearchKnowledgeTool{graph: t.graph, groupID: id}
 }
 
+// Definition implements types.Tool.
 func (t *SearchKnowledgeTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "search_knowledge",
@@ -39,6 +42,7 @@ func (t *SearchKnowledgeTool) Definition() types.ToolDef {
 	}
 }
 
+// Execute implements types.Tool.
 func (t *SearchKnowledgeTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	query, _ := args[argQuery].(string)
 	if query == "" {

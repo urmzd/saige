@@ -18,8 +18,10 @@ import (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Track concurrent execution with an atomic counter.
 	var running int32
@@ -71,7 +73,7 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name: "coordinator",
 		SystemPrompt: `You coordinate research and fact-checking tasks.
 You have two specialists available:
@@ -99,21 +101,24 @@ This allows them to work concurrently.`,
 			},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Research the latest Go 1.24 features and verify that Go 1.24 introduced generic type aliases."),
+		types.UserMsg(types.Text("Research the latest Go 1.24 features and verify that Go 1.24 introduced generic type aliases.")),
 	})
 
 	// Consume deltas, showing sub-agent attribution.
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.ToolExecStartDelta:
 			fmt.Printf("\n[tool-start] %s (id=%s)\n", d.Name, d.ToolCallID)
 		case types.ToolExecDelta:
-			if inner, ok := d.Inner.(types.TextContentDelta); ok {
-				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Content)
+			if inner, ok := d.Inner.(types.PartDelta); ok {
+				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Text)
 			}
 		case types.ToolExecEndDelta:
 			fmt.Printf("\n[tool-end] id=%s\n", d.ToolCallID)

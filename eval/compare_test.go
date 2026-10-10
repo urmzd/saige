@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TestRunExperiment covers the deprecated names, which must keep working.
+// TestRunExperiment covers Compare with a base and an experimental subject.
 func TestRunExperiment(t *testing.T) {
 	inputs := []Observation{
 		{ID: "e1", Input: json.RawMessage(`"query1"`)},
@@ -34,8 +34,8 @@ func TestRunExperiment(t *testing.T) {
 		return Score{Name: "latency_ms", Value: float64(obs.Timing.TotalMs)}, nil
 	})
 
-	result, err := RunExperiment(context.Background(), inputs, base, exp, []Scorer{latencyScorer},
-		WithExperimentName("test-experiment"))
+	result, err := Compare(context.Background(), inputs, base, exp, []Scorer{latencyScorer},
+		WithName("test-experiment"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,9 +323,6 @@ func TestCompareDefaultNames(t *testing.T) {
 		{"compare", func() (*Comparison, error) {
 			return Compare(context.Background(), experimentInputs(2), offsetSubject(0), offsetSubject(0), []Scorer{indexValue(2)})
 		}, "comparison"},
-		{"deprecated run experiment", func() (*Comparison, error) {
-			return RunExperiment(context.Background(), experimentInputs(2), offsetSubject(0), offsetSubject(0), []Scorer{indexValue(2)})
-		}, "experiment"},
 		{"explicit name", func() (*Comparison, error) {
 			return Compare(context.Background(), experimentInputs(2), offsetSubject(0), offsetSubject(0), []Scorer{indexValue(2)}, WithName("mine"))
 		}, "mine"},

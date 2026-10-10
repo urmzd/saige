@@ -2,7 +2,7 @@
 
 > A Go SDK and CLI for building AI agents, giving them context and memory, and evaluating them.
 
-Combines three packages: agent (streaming AI agent loop with typed deltas, tool dispatch, sub-agents, human-in-the-loop markers, structured output, resilience via retry/fallback across adapters for Anthropic, OpenAI, Google and the local Ollama runtime, conversation tree with branching and compaction, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, HyDE query transformation, and citations). Includes research tools (web search via SearXNG, file search/read, knowledge graph CRUD), opt-in tool packs (workspace files with root confinement, a sandboxed bash tool with command/env/network policy, and a URL fetch tool that blocks private and metadata addresses; mutating tools always require approval) and an MCP server binary (`saige-mcp`) that exposes tool packs and a saige agent over stdio or authenticated streamable HTTP for Claude Code, Gemini CLI, and other MCP clients. Includes a universal evaluation framework with built-in scorers for text quality, agent performance, RAG relevance, and knowledge graph extraction. Ships a CLI (`saige`) with interactive chat, single-shot queries, an HTTP + SSE server (`saige serve`) with approve and cancel endpoints, and standalone RAG/KG operations.
+Combines three packages: agent (streaming AI agent loop over messages of typed parts (text, images, audio, video, documents, tool calls, citations) with part deltas, tool dispatch, sub-agents, human-in-the-loop markers, structured output, resilience via retry/fallback across adapters for Anthropic, OpenAI, Google and the local Ollama runtime, conversation tree with branching and compaction, and RLHF feedback), knowledge (LLM-powered knowledge graph construction with PostgreSQL + pgvector and hybrid search), and rag (multi-modal RAG pipelines with chunking, multi-retriever fusion, reranking, HyDE query transformation, and citations). Includes research tools (web search via SearXNG, file search/read, knowledge graph CRUD), opt-in tool packs (workspace files with root confinement, a sandboxed bash tool with command/env/network policy, and a URL fetch tool that blocks private and metadata addresses; mutating tools always require approval) and an MCP server binary (`saige-mcp`) that exposes tool packs and a saige agent over stdio or authenticated streamable HTTP for Claude Code, Gemini CLI, and other MCP clients. Includes a universal evaluation framework with built-in scorers for text quality, agent performance, RAG relevance, and knowledge graph extraction. Ships a CLI (`saige`) with interactive chat, single-shot queries, an HTTP + SSE server (`saige serve`) with approve and cancel endpoints, and standalone RAG/KG operations.
 
 ## Docs
 
@@ -15,9 +15,12 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
+- [docs/harnesses.md](docs/harnesses.md): Running a saige agent in other harnesses: saige export and saige launch for Claude Code, Codex, Gemini CLI, opencode and Cursor (MCP entry, skills, native agent files, merge rules, dry run, user scope), saige acp (ACP v1 for Zed, JetBrains and other editors: config options, permission requests, cancel, load), held approvals with saige approvals for clients without elicitation, verified vs unverified matrix
 - [docs/agent-definitions.md](docs/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
-- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
+- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema (version 2: models, endpoints, offerings), sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
+- [docs/parts.md](docs/parts.md): Parts: message parts, sources, part deltas, wire versions, sending each modality
+- [docs/modality-conversion.md](docs/modality-conversion.md): Modality conversion policy: media a model cannot take is rejected by default or converted, transcribed, described, extracted or omitted per attempt; scopes, router and fallback planning, memoization, durable steps, budget, reports
 - [docs/tool-calling.md](docs/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
 - [docs/delegation.md](docs/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration budgets and wrap-up, private scratch, passing tasks and results by reference
 - [docs/func-tools.md](docs/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
@@ -36,7 +39,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [docs/cache-contracts.md](docs/cache-contracts.md): Cache identity, provider cache modes, known limits
 - [docs/tool-schemas.md](docs/tool-schemas.md): Nullable tool properties across vendor APIs and MCP
 - [docs/tree-traces.md](docs/tree-traces.md): Printing a conversation tree as JSON
-- [docs/upgrade-notes.md](docs/upgrade-notes.md): Behavior changes that can affect existing code
+- [docs/upgrade-notes.md](docs/upgrade-notes.md): Upgrading to this release: breaking changes, ordered migration steps (renames, stored data, wire clients, catalogs, behavior changes), per-area detail
 - [docs/system-hardening.md](docs/system-hardening.md): What the hardening release changed and how each fix was verified
 - [docs/load-testing.md](docs/load-testing.md): Load and concurrency testing: the stress build tag, Postgres and live burst tests, -cpu benchmarks, nightly workflow
 - [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
@@ -45,21 +48,24 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [tools/fetch/README.md](tools/fetch/README.md): URL fetch tool and SafeHTTPClient
 - [examples/README.md](examples/README.md): Runnable example index
 - [examples/quickstart/](examples/quickstart/): The README quick start programs, embedded with fsrc
+- [examples/parts/](examples/parts/): Parts programs embedded in docs/parts.md: building parts, an image, a PDF via extract, part deltas
 - [AGENTS.md](AGENTS.md): Architecture, packages, CLI, commands, code style
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development setup, commit conventions
 
 ## Key Files
 
+- Parts examples: examples/parts/build/main.go, examples/parts/image/main.go, examples/parts/document/main.go, examples/parts/stream/main.go
 - Quick start: examples/quickstart/agent/main.go, examples/quickstart/tool/main.go, examples/quickstart/structured/main.go, examples/quickstart/dials/main.go, examples/quickstart/rag/main.go
 - Presets: agent/provider/catalog/data/default.json, agent/provider/preset/preset.go
 - Agent definitions: agent/definition/definition.go, agent/definition/decode.go, agent/definition/registry.go, agent/definition/source.go, agent/definition/rule.go, agent/definition/bind/bind.go, agent/definition/pgsource/pgsource.go, examples/agents/, cmd/saige/agents.go, cmd/saige-mcp/definition.go
 - CLI: cmd/saige/main.go, cmd/saige/serve.go, cmd/saige/serve_server.go, cmd/saige/chat.go, cmd/saige/ask.go, cmd/saige/rag.go, cmd/saige/kg.go, cmd/saige/provider.go, cmd/saige/catalog.go, cmd/saige/connect.go
 - MCP: cmd/saige-mcp/main.go, cmd/saige-mcp/bridge.go, cmd/saige-mcp/http.go, cmd/saige-mcp/agenttool.go, cmd/saige-mcp/packs.go, cmd/saige-mcp/deps.go, agent/mcp/mcp.go, agent/mcp/pool.go, agent/mcp/catalog.go, agent/mcp/config.go
-- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/content.go, agent/types/node.go, agent/types/compactor.go, agent/types/compact_strategy.go
+- Conversion: agent/convert/plan.go, agent/convert/provider.go, agent/convert/extract.go, agent/types/conversion.go
+- Agent: agent/agent.go, agent/types/provider.go, agent/types/tool.go, agent/types/message.go, agent/types/delta.go, agent/types/part.go, agent/types/source.go, agent/types/partcodec.go, agent/types/wire.go, agent/types/node.go, agent/types/compactor.go, agent/types/compact_strategy.go
 - Tree: agent/tree/tree.go, agent/tree/compact.go, agent/tree/serialize.go
 - Knowledge: rag/knowledge/config.go, rag/knowledge/types/types.go, rag/knowledge/pgstore/store.go, rag/knowledge/tool/tools.go, rag/knowledge/graph/format.go
-- RAG: rag/config.go, rag/types/types.go, rag/internal/pipeline/pipeline.go, rag/tool/tools.go
-- Eval: eval/eval.go, eval/experiment.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
+- RAG: rag/config.go, rag/types/types.go, rag/types/parts.go, rag/internal/pipeline/pipeline.go, rag/extractor/parts.go, rag/tool/tools.go
+- Eval: eval/eval.go, eval/input.go, eval/experiment.go, eval/compare.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, agent/eval/partscorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
 - Research: tools/research/tools.go, tools/research/web_search.go, tools/research/file_search.go, tools/research/read_file.go, tools/research/search_knowledge.go, tools/research/store_knowledge.go, tools/research/get_graph.go
 - Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go
 - SearXNG: rag/source/searxng/searxng.go

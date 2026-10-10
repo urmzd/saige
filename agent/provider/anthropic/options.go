@@ -1,30 +1,12 @@
 package anthropic
 
 import (
-	"context"
 	"math"
 
 	"github.com/urmzd/saige/agent/types"
 )
 
 var _ types.OptionsProvider = (*Adapter)(nil)
-
-// ChatStreamWithOptions implements types.OptionsProvider. Each option set in
-// opts overrides the adapter's configured value for this call only; unset
-// options keep the configured ones. The tool choice maps to Anthropic's
-// tool_choice: auto, none, any (required) or tool (named). Options the model
-// does not declare, and combinations Anthropic rejects, fail before any
-// network I/O with an error matching types.ErrInvalidModelConfig.
-func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	c, err := a.withRequestOptions(opts.Raw())
-	if err != nil {
-		return nil, err
-	}
-	if c, err = c.compileDials(opts, tools, false); err != nil {
-		return nil, err
-	}
-	return c.ChatStream(ctx, messages, tools)
-}
 
 // withRequestOptions returns a copy of the adapter with opts applied.
 func (a *Adapter) withRequestOptions(o types.RequestOptions) (*Adapter, error) {

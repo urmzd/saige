@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var testTools = []types.ToolDef{
@@ -41,8 +42,8 @@ func TestToolChoiceEmulation(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			a := NewAdapter(NewClient(server.URL, tc.model, ""), opts...)
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			a := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: types.ModelID(tc.model)}))}, opts...))
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want a local configuration error", err)
@@ -66,8 +67,9 @@ func TestToolChoiceEmulation(t *testing.T) {
 }
 
 func TestWithModelKeepsToolChoice(t *testing.T) {
-	a := NewAdapter(NewClient("http://unused", "qwen3:4b", ""), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
-	if err := a.WithModel("llama3.1").(*Adapter).Validate(); err == nil {
+	client := must.Get(NewClient(Config{Host: "http://unused", Model: "qwen3:4b"}))
+	a := must.Get(New(Config{Client: client}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
+	if err := must.Get(a.WithTarget(types.ModelTarget("llama3.1"))).(*Adapter).Validate(); err == nil {
 		t.Fatal("a switched adapter must keep, and still reject, the configured choice")
 	}
 }
@@ -84,7 +86,7 @@ func TestListModels(t *testing.T) {
 			{"name":"custom-encoder","model":"custom-encoder","details":{"family":"bert"}}]}`)
 	}))
 	t.Cleanup(server.Close)
-	models, err := NewAdapter(NewClient(server.URL+"/", "qwen3:4b", "")).ListModels(context.Background())
+	models, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL + "/", Model: "qwen3:4b"}))})).ListModels(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,7 @@ func TestListModels(t *testing.T) {
 		http.Error(w, "loading", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(down.Close)
-	if _, err := NewClient(down.URL, "m", "").ListModels(context.Background()); !types.IsUnavailable(err) {
+	if _, err := must.Get(NewClient(Config{Host: down.URL, Model: "m"})).ListModels(context.Background()); !types.IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
 	}
 }

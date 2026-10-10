@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -21,15 +20,16 @@ var _ catalog.ModelLister = (*Adapter)(nil)
 //
 // The choice applies to requests that offer tools, local or server. A request
 // without any tools sends no choice. A named choice must name a local tool.
-// ChatStreamWithSchema with a schema forces its hidden structured-output tool,
-// so it rejects any choice other than auto.
+// A schema on a model that takes it as a hidden tool forces that tool, so
+// such a request rejects any choice other than auto.
 func WithToolChoice(c types.ToolChoice) Option {
 	return func(a *Adapter) { a.toolChoice = &c }
 }
 
 // WithServerTools enables tools Anthropic runs itself: web search and code
-// execution. Their calls and results stream back as ServerToolCallDelta and
-// ServerToolResultDelta; no local gate sees them. Kinds the model does not
+// execution. Their calls and results stream back as ServerToolCallPart and
+// ServerToolResultPart parts; no local gate sees them. A later turn replays
+// them natively while the tool is still offered. Kinds the model does not
 // declare fail locally, and remote MCP is rejected because it needs the MCP
 // connector, which this adapter does not send.
 func WithServerTools(tools ...types.ServerTool) Option {
@@ -175,58 +175,6 @@ func serverToolKind(name string) types.ServerToolKind {
 	default:
 		return types.ServerToolKind(name)
 	}
-}
-
-// serverToolResult decodes a server tool result block (web_search_tool_result,
-// code_execution_tool_result, and the bash and text-editor variants) into a
-// result delta with a readable projection. The raw content is kept as the
-// provider-native payload.
-func serverToolResult(raw string, kind types.ServerToolKind) types.ServerToolResultDelta {
-	var blk struct {
-		ToolUseID string          `json:"tool_use_id"`
-		Content   json.RawMessage `json:"content"`
-	}
-	_ = json.Unmarshal([]byte(raw), &blk)
-	d := types.ServerToolResultDelta{ID: blk.ToolUseID, Kind: kind, Result: blk.Content}
-
-	type item struct {
-		Type       string `json:"type"`
-		URL        string `json:"url"`
-		Title      string `json:"title"`
-		ErrorCode  string `json:"error_code"`
-		Stdout     string `json:"stdout"`
-		Stderr     string `json:"stderr"`
-		ReturnCode *int   `json:"return_code"`
-	}
-	var list []item
-	if json.Unmarshal(blk.Content, &list) != nil {
-		var one item
-		if json.Unmarshal(blk.Content, &one) == nil {
-			list = []item{one}
-		}
-	}
-	var lines []string
-	for _, it := range list {
-		switch {
-		case strings.HasSuffix(it.Type, "_error"):
-			d.IsError = true
-			lines = append(lines, "error: "+it.ErrorCode)
-		case it.URL != "":
-			lines = append(lines, strings.TrimSpace(it.Title+" "+it.URL))
-		default:
-			if it.ReturnCode != nil && *it.ReturnCode != 0 {
-				d.IsError = true
-			}
-			if it.Stdout != "" {
-				lines = append(lines, it.Stdout)
-			}
-			if it.Stderr != "" {
-				lines = append(lines, it.Stderr)
-			}
-		}
-	}
-	d.Text = strings.Join(lines, "\n")
-	return d
 }
 
 // ListModels implements catalog.ModelLister with the Models API, following

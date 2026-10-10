@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // A router reports each attempt's dials on its route; the span carries the
@@ -19,10 +20,10 @@ func TestDialAttributesFromRoute(t *testing.T) {
 	}}
 	inner := &fakeProvider{deltas: []types.Delta{
 		types.RouteDelta{Profile: "p/a", Provider: "openai", Options: &types.RequestOptions{ReasoningEffort: &low}, Dials: &rep},
-		types.TextContentDelta{Content: "ok"},
+		types.PartDelta{Index: 0, Text: "ok"},
 	}}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).ChatStream(context.Background(), nil, nil)
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +60,14 @@ func (p *capsProvider) Capabilities() types.ModelCapabilities { return p.caps }
 // A single adapter reports no route, so the traced call compiles the dials
 // itself and records the effective options it sends.
 func TestDialAttributesForSingleAdapter(t *testing.T) {
-	inner := &capsProvider{optionsProvider: optionsProvider{fakeProvider{deltas: []types.Delta{types.TextContentDelta{Content: "ok"}}}},
+	inner := &capsProvider{optionsProvider: optionsProvider{fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}},
 		caps: catalog.MustLookup("ollama", "qwen3")}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).ChatStreamWithOptions(context.Background(), nil, nil,
-		types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}, DialPolicy: &types.DialPolicy{}})
+	p := must.Get(NewTracedProvider(inner, tracer))
+	ch, err := p.Stream(context.Background(), types.Request{Options: &types.RequestOptions{
+		Dials:      types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}},
+		DialPolicy: &types.DialPolicy{},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

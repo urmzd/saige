@@ -1,7 +1,6 @@
 package tree
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -9,28 +8,13 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
-// Content type constants used in serialization envelopes.
-const (
-	contentTypeText       = "text"
-	contentTypeToolResult = "tool_result"
-	contentTypeConfig     = "config"
-	contentTypeThinking   = "thinking"
-	contentTypeHandoff    = "handoff"
-	contentTypeServerTool = "server_tool"
-	contentTypeSteer      = "steer"
-	contentTypeTruncation = "truncation"
-	contentTypeRoute      = "route"
-	contentTypeApproval   = "approval"
-	contentTypeGuardrail  = "guardrail"
-	contentTypeCompaction = "compaction"
-	contentTypeUnknown    = "unknown"
-)
-
 // TreeFormatVersion is the serialized tree format this package writes.
 // UnmarshalJSON rejects a document with a higher version instead of guessing
 // at its meaning. A document without a version predates the field and is
-// read as version 1.
-const TreeFormatVersion = 1
+// read as version 1. Version 2 stores node messages in the version 2
+// message format (MessageFormatVersion); each message names its own format,
+// so a version 1 document reads the same way.
+const TreeFormatVersion = 2
 
 // serializedTree is the JSON wire format for a Tree.
 type serializedTree struct {
@@ -68,273 +52,118 @@ type serializedCheckpoint struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// contentEnvelope wraps a content block with its type for JSON round-tripping.
-type contentEnvelope struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
+// MessageFormatVersion is the node message format MarshalMessage writes:
+//
+//	{"v":2,"parts":[<part>, ...]}
+//
+// with each part in the shared part codec form (types.MarshalPart), which
+// never holds media bytes. Pgstore rows and WAL records store messages on
+// their own, without the tree's version, so every message names its own.
+// A message without "v" is the version 1 form ({"content":[...]}), read by
+// legacy_v1.go.
+const MessageFormatVersion = 2
+
+// messageV2 is the version 2 node message.
+type messageV2 struct {
+	V     int               `json:"v"`
+	Parts []json.RawMessage `json:"parts"`
 }
 
-// messageEnvelope wraps content blocks with type tags.
-type messageEnvelope struct {
-	Content []contentEnvelope `json:"content"`
-}
-
-// MarshalMessage serializes a Message to its JSON envelope representation.
+// MarshalMessage serializes a Message in the current node message format.
 func MarshalMessage(msg types.Message) (json.RawMessage, error) {
-	return marshalMessage(msg)
-}
-
-// UnmarshalMessage deserializes a Message from its role and JSON envelope.
-func UnmarshalMessage(role types.Role, data json.RawMessage) (types.Message, error) {
-	return unmarshalMessage(role, data)
-}
-
-func marshalMessage(msg types.Message) (json.RawMessage, error) {
-	var env messageEnvelope
-
-	switch m := msg.(type) {
-	case types.SystemMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := systemContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
+	parts := types.PartsOf(msg)
+	out := messageV2{V: MessageFormatVersion, Parts: make([]json.RawMessage, 0, len(parts))}
+	for _, p := range parts {
+		raw, err := types.MarshalPart(p)
+		if err != nil {
+			return nil, err
 		}
-	case types.UserMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := userContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
-		}
-	case types.AssistantMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := assistantContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
-		}
+		out.Parts = append(out.Parts, raw)
 	}
-
-	return json.Marshal(env)
+	return json.Marshal(out)
 }
 
-func unmarshalMessage(role types.Role, data json.RawMessage) (types.Message, error) {
-	var env messageEnvelope
-	if err := json.Unmarshal(data, &env); err != nil {
+// UnmarshalMessage deserializes a Message from its role and stored JSON, in
+// any format a release has written. A version newer than this package
+// reads returns ErrMessageFormatVersion.
+func UnmarshalMessage(role types.Role, data json.RawMessage) (types.Message, error) {
+	v, err := messageVersion(data)
+	if err != nil {
 		return nil, err
 	}
+	switch v {
+	case 1:
+		return unmarshalV1Message(role, data)
+	case MessageFormatVersion:
+		return unmarshalV2Message(role, data)
+	default:
+		return nil, fmt.Errorf("%w: %d", ErrMessageFormatVersion, v)
+	}
+}
 
+// MigrateMessage rewrites a stored message in the current format. It
+// reports false, with data unchanged, when the message already is.
+func MigrateMessage(role types.Role, data json.RawMessage) (json.RawMessage, bool, error) {
+	v, err := messageVersion(data)
+	if err != nil {
+		return nil, false, err
+	}
+	if v == MessageFormatVersion {
+		return data, false, nil
+	}
+	msg, err := UnmarshalMessage(role, data)
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := MarshalMessage(msg)
+	return out, err == nil, err
+}
+
+// messageVersion reads the format version a stored message names. A
+// message without one is version 1.
+func messageVersion(data json.RawMessage) (int, error) {
+	var head struct {
+		V *int `json:"v"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return 0, err
+	}
+	if head.V == nil {
+		return 1, nil
+	}
+	return *head.V, nil
+}
+
+func unmarshalV2Message(role types.Role, data json.RawMessage) (types.Message, error) {
+	var m messageV2
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
 	switch role {
 	case types.RoleSystem:
-		var content []types.SystemContent
-		for _, ce := range env.Content {
-			c, err := unmarshalSystemContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.SystemMessage{Content: content}, nil
-
+		parts, err := v2Parts[types.SystemPart](role, m.Parts)
+		return types.SystemMessage{Parts: parts}, err
 	case types.RoleUser:
-		var content []types.UserContent
-		for _, ce := range env.Content {
-			c, err := unmarshalUserContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.UserMessage{Content: content}, nil
-
+		parts, err := v2Parts[types.UserPart](role, m.Parts)
+		return types.UserMessage{Parts: parts}, err
 	case types.RoleAssistant:
-		var content []types.AssistantContent
-		for _, ce := range env.Content {
-			c, err := unmarshalAssistantContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.AssistantMessage{Content: content}, nil
-
+		parts, err := v2Parts[types.AssistantPart](role, m.Parts)
+		return types.AssistantMessage{Parts: parts}, err
 	default:
 		return nil, fmt.Errorf("unknown role: %s", role)
 	}
 }
 
-func systemContentType(c types.SystemContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolResultContent:
-		return contentTypeToolResult
-	case types.ConfigContent:
-		return contentTypeConfig
-	case types.HandoffContent:
-		return contentTypeHandoff
-	case types.RouteContent:
-		return contentTypeRoute
-	case types.ApprovalContent:
-		return contentTypeApproval
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	case types.CompactionContent:
-		return contentTypeCompaction
-	default:
-		return contentTypeUnknown
-	}
-}
-
-func userContentType(c types.UserContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolResultContent:
-		return contentTypeToolResult
-	case types.ConfigContent:
-		return contentTypeConfig
-	case types.HandoffContent:
-		return contentTypeHandoff
-	case types.FileContent:
-		return "file"
-	case types.FeedbackContent:
-		return "feedback"
-	case types.SteerContent:
-		return contentTypeSteer
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	default:
-		return contentTypeUnknown
-	}
-}
-
-func assistantContentType(c types.AssistantContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolUseContent:
-		return "tool_use"
-	case types.ThinkingContent:
-		return contentTypeThinking
-	case types.ServerToolContent:
-		return contentTypeServerTool
-	case types.TruncationContent:
-		return contentTypeTruncation
-	case types.RouteContent:
-		return contentTypeRoute
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	default:
-		return contentTypeUnknown
-	}
-}
-
-func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
-	switch ce.Type {
-	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeToolResult:
-		var c types.ToolResultContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeConfig:
-		var c types.ConfigContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeHandoff:
-		var c types.HandoffContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeRoute:
-		var c types.RouteContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeApproval:
-		var c types.ApprovalContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeCompaction:
-		var c types.CompactionContent
-		return c, json.Unmarshal(ce.Data, &c)
-	default:
-		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)
-	}
-}
-
-func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
-	switch ce.Type {
-	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeToolResult:
-		var c types.ToolResultContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeConfig:
-		var c types.ConfigContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeHandoff:
-		var c types.HandoffContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case "file":
-		var c types.FileContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case "feedback":
-		var c types.FeedbackContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeSteer:
-		var c types.SteerContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
-	default:
-		return nil, fmt.Errorf("unknown user content type: %s", ce.Type)
-	}
-}
-
-func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, error) {
-	switch ce.Type {
-	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case "tool_use":
-		var c types.ToolUseContent
-		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&c); err != nil {
-			return nil, err
+func v2Parts[T types.Part](role types.Role, raw []json.RawMessage) ([]T, error) {
+	var out []T
+	for _, r := range raw {
+		p, err := types.UnmarshalRolePart[T](r)
+		if err != nil {
+			return nil, fmt.Errorf("%s message: %w", role, err)
 		}
-		return c, nil
-	case contentTypeThinking:
-		var c types.ThinkingContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeServerTool:
-		var c types.ServerToolContent
-		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&c); err != nil {
-			return nil, err
-		}
-		return c, nil
-	case contentTypeTruncation:
-		var c types.TruncationContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeRoute:
-		var c types.RouteContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
-	default:
-		return nil, fmt.Errorf("unknown assistant content type: %s", ce.Type)
+		out = append(out, p)
 	}
+	return out, nil
 }
 
 // MarshalJSON serializes the tree to JSON.
@@ -419,7 +248,7 @@ func (t *Tree) UnmarshalJSON(data []byte) error {
 	checkpoints := make(map[types.CheckpointID]types.Checkpoint)
 
 	for _, sn := range st.Nodes {
-		msg, err := unmarshalMessage(types.Role(sn.Role), sn.Message)
+		msg, err := UnmarshalMessage(types.Role(sn.Role), sn.Message)
 		if err != nil {
 			return fmt.Errorf("node %s: %w", sn.ID, err)
 		}

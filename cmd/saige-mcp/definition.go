@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/definition"
 	"github.com/urmzd/saige/agent/definition/bind"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/preset"
+	"github.com/urmzd/saige/agent/skills"
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 	"github.com/urmzd/saige/tools"
 )
 
@@ -39,7 +42,12 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 			return agentTool{}, false, err
 		}
 	}
-	reg := definition.NewRegistry(definition.DirSource(f.dir), definition.Checks{Model: bind.ModelCheck(cat)})
+	home, _ := os.UserHomeDir()
+	sk, err := skills.NewCatalog(ctx, skills.StandardSources(f.root, home))
+	if err != nil {
+		return agentTool{}, false, err
+	}
+	reg := definition.NewRegistry(definition.DirSource(f.dir), definition.Checks{Model: bind.ModelCheck(cat), Skill: bind.SkillCheck(sk)})
 	if _, err := reg.Load(ctx); err != nil {
 		return agentTool{}, false, fmt.Errorf("--agents-dir %s: %w", f.dir, err)
 	}
@@ -50,11 +58,11 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 	if err != nil {
 		return agentTool{}, false, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}
-	env := bind.Env{Catalog: cat, PresetOptions: preset.Options{}, Harness: tools.HarnessOptions{Root: f.root}}
+	env := bind.Env{Catalog: cat, PresetOptions: preset.Options{}, Harness: tools.HarnessOptions{Root: f.root}, Skills: sk}
 	if len(packs.Definitions()) > 0 {
 		env.Tools = packs
 	}
-	var opts []agentsdk.AgentOption
+	var opts []agentsdk.Option
 	if f.set["agent-max-iter"] {
 		opts = append(opts, agentsdk.WithMaxIter(f.maxIter))
 	}
@@ -71,17 +79,17 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 		return agentTool{}, false, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}
 	gated := boundGated(first)
-	_ = first.Close()
+	_ = first.Close(ctx)
 
 	at = agentTool{name: f.name, description: f.description, schema: schema, timeout: f.timeout, gated: gated,
 		// Each call binds the resolution pinned at start, so calls share no
 		// tools, scratch workspace or budget.
-		newBound: func(ctx context.Context) (*agentsdk.Agent, func(), error) {
+		newSession: func(ctx context.Context) (agenthost.Agent, error) {
 			b, err := bind.Bind(ctx, res, env)
 			if err != nil {
-				return nil, nil, err
+				return agenthost.Agent{}, err
 			}
-			return b.NewAgent(opts...), func() { _ = b.Close() }, nil
+			return agenthost.FromBound(b, opts...)
 		},
 	}
 	if !f.set["agent-tool"] {

@@ -38,6 +38,20 @@ A cached decision does not prove that a write is still correct or authorized.
 
 The recorder rejects errors, cancellation, empty responses, and unfinished content blocks.
 Replay preserves citations and copies mutable maps.
+
+### Parts and conversions in the key
+
+The key derivation is versioned (`cache.KeyVersion`, now 2) and hashes every part in the shared part codec, except metadata parts the loop strips.
+Media is hashed by what it is, not by how it is reached: its digest, else the digest of its inline bytes, else its URI, else its workspace reference, else its first vendor upload.
+A re-upload, a resolved URI or an externalized artifact therefore hits the same entry.
+The media type, file name and metadata (detail, pages, clip, frame rate) are hashed too, because they change what the provider receives.
+
+When a conversion decorator (`convert.Provider`) sits below the cache, the cache plans the request through it and hashes the planned report (`types.ConversionReport.Hash`) into the key with `cache.KeyWithConversions`.
+A described image and the image itself never share an entry.
+The recorder drops a response whose serving attempt sent another view: a conversion that fell back to another action, or a failover to a member that planned differently, ends with a different executed report.
+A request whose plan rejects passes through uncached.
+
+Entries written by earlier releases miss once and are written again: their key derivation and value codec are both older versions.
 Response caching changes sampling: repeated requests return an old sample.
 Disable it for independent evaluation samples and stochastic judges.
 A response that stopped at the output token limit (a truncation finish reason) is not admitted.
@@ -57,7 +71,7 @@ store := postgres.NewCacheStore(pool, postgres.CacheStoreOptions{})
 stop := store.StartSweeper(ctx, time.Minute, logger)
 defer stop()
 
-responses := cache.New(inner, cache.Config{
+responses, err := cache.New(inner, cache.Config{
     Cache: cache.BytesCache(store), ScopeKey: tenant, ConfigKey: revision,
 })
 cached, err := toolcache.New(tool, toolcache.Config{

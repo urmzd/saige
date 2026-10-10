@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
+	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 )
 
@@ -18,8 +19,8 @@ const ManifestFile = "saige.eval.json"
 // ManifestVersion is the only manifest schema version this package reads.
 const ManifestVersion = 1
 
-// Provider names a [Manifest] subject may use. An empty provider means
-// [OpenAICompatible].
+// ManifestProviders are the provider names a [Manifest] subject may use.
+// An empty provider means [OpenAICompatible].
 var ManifestProviders = []string{OpenAICompatible, providerOpenAI, providerAnthropic, providerGoogle, providerOllama}
 
 // Provider names of the saige adapters a manifest can select.
@@ -214,7 +215,7 @@ func (m *Manifest) validateSubject() []Issue {
 		}
 	}
 	if s.Model != "" && slices.Contains(catalogProviders, provider) {
-		if _, ok := catalog.Describe(provider, s.Model); !ok {
+		if _, ok := catalog.Describe(types.ProviderName(provider), s.Model); !ok {
 			issues = append(issues, warningIssue("/subject/model", "model %q is not in the %s catalog; check the name, or allow unknown models when running", s.Model, provider))
 		}
 	}

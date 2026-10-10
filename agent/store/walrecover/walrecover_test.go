@@ -20,17 +20,17 @@ func buildTree(t *testing.T, wal types.WAL) (*tree.Tree, types.CheckpointID) {
 	t.Helper()
 	ctx := context.Background()
 
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithWAL(wal))
 	if err != nil {
 		t.Fatalf("tree.New: %v", err)
 	}
 	root := tr.Root()
-	user, err := tr.AddChild(ctx, root.ID, types.NewUserMessage("hello"))
+	user, err := tr.AddChild(ctx, root.ID, types.UserMsg(types.Text("hello")))
 	if err != nil {
 		t.Fatalf("AddChild: %v", err)
 	}
 	asst, err := tr.AddChild(ctx, user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("AddChild: %v", err)
@@ -128,19 +128,19 @@ func TestRecoverWALAppliesToMemstore(t *testing.T) {
 func TestRecoverWALFromFileWAL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "wal.jsonl")
-	wal, err := filewal.New(path)
+	wal, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("filewal.New: %v", err)
 	}
 	tr, cpID := buildTree(t, wal)
-	wal.Close()
+	wal.Close(ctx)
 
 	// "Restart": reopen the log and heal an empty store from it.
-	reopened, err := filewal.New(path)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 
 	s := memstore.New()
 	applied, err := walrecover.RecoverWAL(ctx, reopened, s)
@@ -168,12 +168,12 @@ func TestRecoverWALFromFileWAL(t *testing.T) {
 func TestRecoverWALCompactsFileWAL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "wal.jsonl")
-	wal, err := filewal.New(path)
+	wal, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("filewal.New: %v", err)
 	}
 	tr, cpID := buildTree(t, wal)
-	wal.Close()
+	wal.Close(ctx)
 
 	before, err := os.Stat(path)
 	if err != nil {
@@ -183,11 +183,11 @@ func TestRecoverWALCompactsFileWAL(t *testing.T) {
 		t.Fatal("session left an empty WAL; test cannot observe compaction")
 	}
 
-	reopened, err := filewal.New(path)
+	reopened, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer reopened.Close()
+	defer reopened.Close(ctx)
 
 	s := memstore.New()
 	if _, err := walrecover.RecoverWAL(ctx, reopened, s); err != nil {
@@ -208,12 +208,12 @@ func TestRecoverWALCompactsFileWAL(t *testing.T) {
 	verifyStore(t, s, tr, cpID)
 
 	// A fresh open of the compacted log recovers nothing.
-	reopened.Close()
-	final, err := filewal.New(path)
+	reopened.Close(ctx)
+	final, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatalf("open compacted log: %v", err)
 	}
-	defer final.Close()
+	defer final.Close(ctx)
 	txIDs, err := final.Recover(ctx)
 	if err != nil {
 		t.Fatalf("Recover on compacted log: %v", err)
@@ -257,21 +257,21 @@ func TestRecoverWALRestoresActiveBranch(t *testing.T) {
 	}{
 		{"memwal", func(*testing.T) types.WAL { return memwal.New() }},
 		{"filewal", func(t *testing.T) types.WAL {
-			w, err := filewal.New(filepath.Join(t.TempDir(), "wal.jsonl"))
+			w, err := filewal.New(filewal.Config{Path: filepath.Join(t.TempDir(), "wal.jsonl")})
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = w.Close() })
+			t.Cleanup(func() { _ = w.Close(ctx) })
 			return w
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wal := tc.wal(t)
-			tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+			tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithWAL(wal))
 			if err != nil {
 				t.Fatal(err)
 			}
-			side, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.NewUserMessage("alt"))
+			side, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.UserMsg(types.Text("alt")))
 			if err != nil {
 				t.Fatal(err)
 			}

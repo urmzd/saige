@@ -1,0 +1,5 @@
+start 0 text
+delta 0 text="Hel"
+delta 0 text="lo, "
+delta 0 text="world."
+end 0

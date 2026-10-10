@@ -1,0 +1,39 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": "Be brief.",
+      "role": "system"
+    },
+    {
+      "content": [
+        {
+          "text": "hi",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": "hello",
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "again",
+          "type": "input_text"
+        },
+        {
+          "text": " please",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

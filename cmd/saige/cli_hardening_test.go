@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestBaseURLAppliesOnPresetPath(t *testing.T) {
@@ -37,8 +38,8 @@ func TestBaseURLAppliesOnPresetPath(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = b.Close() }()
-		rp, _ := b.Resolved(presetName)
+		defer func() { _ = b.Close(context.Background()) }()
+		rp, _ := b.Resolved(types.PresetName(presetName))
 		urls := map[string]string{}
 		for _, e := range rp.Chain {
 			urls[e.ID] = e.BaseURL
@@ -100,11 +101,11 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = b.Close() }()
+		defer func() { _ = b.Close(context.Background()) }()
 		rp, _ := b.Resolved("default")
 		var ids []string
 		for _, e := range rp.Chain {
-			ids = append(ids, e.ProfileID)
+			ids = append(ids, string(e.ProfileID))
 		}
 		return ids, nil
 	}
@@ -138,7 +139,7 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	if rp, _ := b.Resolved("default"); len(rp.Chain) != 2 {
 		t.Fatalf("explicit preset chain %+v", rp.Chain)
 	}
@@ -171,7 +172,7 @@ func TestCatalogFlagNamingProjectFileLoadsOnce(t *testing.T) {
 
 func TestFailedAskPrintsErrorOnce(t *testing.T) {
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{types.ErrorDelta{Error: errors.New("upstream exploded")}}}}
-	ag := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: provider})
+	ag := must.Get(agentsdk.New(agentsdk.Config{Provider: provider}))
 	var stdout, stderr bytes.Buffer
 	out := tui.ResolveOutputWriters(false, tui.TemplateDefault, &stdout, &stderr)
 	err := runAsk(context.Background(), ag, "hi", out, false)

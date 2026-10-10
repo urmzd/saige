@@ -18,7 +18,7 @@ import (
 // request's error.
 func serve(t *testing.T, s types.Provider) (string, error) {
 	t.Helper()
-	ch, err := s.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := s.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		return "", err
 	}
@@ -26,8 +26,8 @@ func serve(t *testing.T, s types.Provider) (string, error) {
 	var failed error
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			out += v.Content
+		case types.PartDelta:
+			out += v.Text
 		case types.ErrorDelta:
 			failed = v.Error
 		}
@@ -42,7 +42,7 @@ func TestFailoverOnAuthIsOptIn(t *testing.T) {
 			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"lenient":{"extends":"strict","routing":{"failover_on_auth":true}}}}`)
 	for _, tt := range []struct {
-		name   string
+		name   types.PresetName
 		served string
 	}{{"strict", ""}, {"lenient", "gemini-3.1-flash-lite"}} {
 		rec := newRecorder()
@@ -59,7 +59,7 @@ func TestFailoverOnAuthIsOptIn(t *testing.T) {
 		} else if err != nil || got != tt.served {
 			t.Fatalf("%s: served %q, err %v", tt.name, got, err)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -70,7 +70,7 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 			{"id":"b","provider":"google","model":"gemini-3.1-flash-lite"}]},
 		"returns":{"extends":"sticky","routing":{"fail_threshold":1,"reprobe_after":1}}}}`)
 	for _, tt := range []struct {
-		name        string
+		name        types.PresetName
 		wantPrimary bool
 	}{{"sticky", false}, {"returns", true}} {
 		rec := newRecorder()
@@ -98,7 +98,7 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 		if served[0] != "gemini-3.1-flash-lite" || back != tt.wantPrimary {
 			t.Fatalf("%s: served %v, want return to primary %v", tt.name, served, tt.wantPrimary)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -151,7 +151,7 @@ func TestOptionalOllamaDroppedWhenUnreachable(t *testing.T) {
 		if rp, _ := b.Resolved("p"); len(rp.Chain) != 1 || rp.Chain[0].ID != "local" {
 			t.Fatalf("%s: chain %+v", tt.name, rp.Chain)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -188,8 +188,8 @@ func TestRouteNamesTheAdapterNotItsDecorators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
-	routes, _ := drain(t)(b.Session().ChatStream(context.Background(), nil, nil))
+	defer func() { _ = b.Close(context.Background()) }()
+	routes, _ := drain(t)(b.Session().Stream(context.Background(), types.Request{}))
 	// Every entry is wrapped in a retry decorator, which names itself
 	// "retry(openai)"; the route reports the vendor.
 	if len(routes) == 0 || routes[0].Provider != "openai" || routes[0].Model != "gpt-4.1" {

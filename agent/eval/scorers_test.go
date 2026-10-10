@@ -125,8 +125,8 @@ func TestToolSuccessRateScorerExecState(t *testing.T) {
 // started and never ended: it is a failure, not a success.
 func TestToolSuccessRateScorerCollectedHang(t *testing.T) {
 	run := CollectAgentRun(feed(
-		types.ToolCallStartDelta{ID: "c1", Name: "slow"},
-		types.ToolCallEndDelta{ID: "c1"},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "slow"},
+		types.PartEnd{Index: 0},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "slow"},
 	))
 	var obs topeval.Observation

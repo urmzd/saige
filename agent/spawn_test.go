@@ -11,6 +11,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // holdTool waits until release is closed or its context ends.
@@ -54,13 +55,13 @@ func (r spawnRun) injected() []types.InjectedDelta {
 
 // runSpawn runs a parent agent with one spawn definition named "worker" to
 // completion. onDelta sees every parent delta as it arrives.
-func runSpawn(t *testing.T, parent, child *agenttest.ScriptedProvider, def SubAgentDef, onDelta func(*EventStream, types.Delta), opts ...AgentOption) spawnRun {
+func runSpawn(t *testing.T, parent, child *agenttest.ScriptedProvider, def SubAgentDef, onDelta func(*EventStream, types.Delta), opts ...Option) spawnRun {
 	t.Helper()
 	def.Name, def.Provider, def.Mode = "worker", child, SubAgentSpawn
-	a := NewAgent(AgentConfig{Name: "lead", Provider: parent, SubAgents: []SubAgentDef{def}}, opts...)
+	a := must.Get(New(Config{Name: "lead", Provider: parent, SubAgents: []SubAgentDef{def}}, opts...))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	run := spawnRun{stream: stream}
 	for d := range stream.Deltas() {
 		run.deltas = append(run.deltas, d)
@@ -101,7 +102,7 @@ func TestSpawnResultInjectedAtFinish(t *testing.T) {
 	def := SubAgentDef{Tools: types.NewToolRegistry(holdTool("hold", release))}
 	var once sync.Once
 	run := runSpawn(t, parent, child, def, func(_ *EventStream, d types.Delta) {
-		if _, ok := d.(types.TextContentDelta); ok {
+		if pd, ok := d.(types.PartDelta); ok && pd.Text != "" {
 			once.Do(func() { close(release) })
 		}
 	})
@@ -262,7 +263,7 @@ func TestRunEndCancelsSpawnedChildren(t *testing.T) {
 	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("hold", "hold", nil)}}
 	def := SubAgentDef{Tools: types.NewToolRegistry(holdTool("hold", release))}
 	submit := &agenttest.MockTool{Def: types.ToolDef{Name: "submit"}, Result: "ok"}
-	run := runSpawn(t, parent, child, def, nil, func(c *AgentConfig) {
+	run := runSpawn(t, parent, child, def, nil, func(c *Config) {
 		c.Tools = types.NewToolRegistry(submit)
 		c.StopAtTools = []string{"submit"}
 	})
@@ -317,7 +318,7 @@ func TestSpawnBudgetAdmission(t *testing.T) {
 
 func TestChildAdmissionRelease(t *testing.T) {
 	budget := types.NewBudget(types.BudgetPolicy{MaxRequests: 1})
-	child := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}, Budget: budget})
+	child := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}, Budget: budget}))
 	admission, err := admitChild(child, "h1")
 	if err != nil {
 		t.Fatal(err)
@@ -374,13 +375,13 @@ func TestSearchDelegationTranscript(t *testing.T) {
 		agenttest.TextResponse("done"),
 	}}
 	helper := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("the answer is 7")}}
-	a := NewAgent(AgentConfig{Name: "lead", Provider: parent, SubAgents: []SubAgentDef{
+	a := must.Get(New(Config{Name: "lead", Provider: parent, SubAgents: []SubAgentDef{
 		{Name: "helper", Provider: helper},
 		{Name: "worker", Provider: &agenttest.ScriptedProvider{}, Mode: SubAgentSpawn},
-	}})
+	}}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	run := spawnRun{stream: stream}
 	for d := range stream.Deltas() {
 		run.deltas = append(run.deltas, d)
@@ -405,15 +406,15 @@ func TestSpawnRefusedUnderDurableRunner(t *testing.T) {
 		agenttest.ToolCallResponse("s1", "spawn_worker", map[string]any{"task": "x"}),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Provider: parent, SubAgents: []SubAgentDef{{Name: "worker", Provider: &agenttest.ScriptedProvider{}, Mode: SubAgentSpawn}}})
-	if _, err := a.RunDurable(context.Background(), inlineRunner{}, []types.Message{types.NewUserMessage("go")}, ""); err != nil {
+	a := must.Get(New(Config{Provider: parent, SubAgents: []SubAgentDef{{Name: "worker", Provider: &agenttest.ScriptedProvider{}, Mode: SubAgentSpawn}}}))
+	if _, err := a.RunDurable(context.Background(), inlineRunner{}, []types.Message{types.UserMsg(types.Text("go"))}, ""); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := a.Tree().FlattenBranch(a.Tree().Active())
 	found := false
 	for _, r := range msgs {
 		for _, res := range toolResultsOf(r) {
-			if res.ToolCallID == "s1" && strings.Contains(res.Text, ErrSpawnUnsupported.Error()) {
+			if res.CallID == "s1" && strings.Contains(res.Text(), ErrSpawnUnsupported.Error()) {
 				found = true
 			}
 		}
@@ -425,7 +426,11 @@ func TestSpawnRefusedUnderDurableRunner(t *testing.T) {
 
 func TestInvokeSubAgentFindsSpawnDefinition(t *testing.T) {
 	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("direct")}}
-	a := NewAgent(AgentConfig{Name: "lead", Provider: &agenttest.ScriptedProvider{}, SubAgents: []SubAgentDef{{Name: "worker", Provider: child, Mode: SubAgentSpawn}}})
+	a := must.Get(New(Config{
+		Name:      "lead",
+		Provider:  &agenttest.ScriptedProvider{},
+		SubAgents: []SubAgentDef{{Name: "worker", Provider: child, Mode: SubAgentSpawn}},
+	}))
 	stream, err := a.InvokeSubAgent(context.Background(), "worker", "task")
 	if err != nil {
 		t.Fatal(err)
@@ -493,7 +498,7 @@ func TestCancelledChildWithPendingApproval(t *testing.T) {
 					if _, ok := d.(types.MarkerDelta); ok {
 						once.Do(func() { close(marked) })
 					}
-				}, func(c *AgentConfig) {
+				}, func(c *Config) {
 					c.ToolGate = approvalReadGate
 					c.Tools = types.NewToolRegistry(wait, submit)
 					if tt.stop {

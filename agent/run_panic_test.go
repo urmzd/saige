@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // panicTracer panics when a run starts.
@@ -41,7 +42,7 @@ func TestRunPanicEndsRunWithError(t *testing.T) {
 				stepCall{before: agenttest.TextResponse("done")},
 			)
 			var calls atomic.Int32
-			opts := []AgentOption{WithToolPolicy(ToolPolicyFunc(func(_ context.Context, _ string, defs []types.ToolDef) ([]string, error) {
+			opts := []Option{WithToolPolicy(ToolPolicyFunc(func(_ context.Context, _ string, defs []types.ToolDef) ([]string, error) {
 				if calls.Add(1) == tt.panicAt {
 					panic("policy broke")
 				}
@@ -51,15 +52,15 @@ func TestRunPanicEndsRunWithError(t *testing.T) {
 				}
 				return names, nil
 			}))}
-			cfg := AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)}
+			cfg := Config{Provider: provider, Tools: types.NewToolRegistry(tool)}
 			if tt.tracer {
 				cfg.RunTracer = panicTracer{}
 			}
-			a := NewAgent(cfg, opts...)
+			a := must.Get(New(cfg, opts...))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			for range stream.Deltas() {
 			}
 			err := stream.Wait()
@@ -74,7 +75,7 @@ func TestRunPanicEndsRunWithError(t *testing.T) {
 				t.Errorf("provider calls = %d, want %d", got, tt.wantCalls)
 			}
 			// The branch claim was released: another run can start.
-			next := a.Invoke(ctx, []types.Message{types.NewUserMessage("again")})
+			next := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("again"))})
 			for range next.Deltas() {
 			}
 			if err := next.Wait(); err != nil && strings.Contains(err.Error(), "active") {
@@ -94,20 +95,20 @@ func TestAnswerOpenToolCalls(t *testing.T) {
 	}{
 		{
 			name:        "trailing tool calls are answered",
-			tail:        []types.Message{types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "c1", Name: "echo"}, types.ToolUseContent{ID: "c2", Name: "echo"}}}},
+			tail:        []types.Message{types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "c1", Name: "echo"}, types.ToolCallPart{ID: "c2", Name: "echo"}}}},
 			wantResults: 2,
 		},
 		{
 			name: "text answer is left alone",
-			tail: []types.Message{types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "hi"}}}},
+			tail: []types.Message{types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "hi"}}}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: newStepProvider()})
+			a := must.Get(New(Config{Provider: newStepProvider()}))
 			ctx := context.Background()
 			branch := a.Tree().Active()
-			for _, m := range append([]types.Message{types.NewUserMessage("go")}, tt.tail...) {
+			for _, m := range append([]types.Message{types.UserMsg(types.Text("go"))}, tt.tail...) {
 				if err := a.appendToBranch(ctx, a.Tree(), branch, m); err != nil {
 					t.Fatal(err)
 				}
@@ -117,10 +118,10 @@ func TestAnswerOpenToolCalls(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var results []types.ToolResultContent
+			var results []types.ToolResultPart
 			if sm, ok := msgs[len(msgs)-1].(types.SystemMessage); ok {
-				for _, c := range sm.Content {
-					if r, ok := c.(types.ToolResultContent); ok {
+				for _, c := range sm.Parts {
+					if r, ok := c.(types.ToolResultPart); ok {
 						results = append(results, r)
 					}
 				}
@@ -129,7 +130,7 @@ func TestAnswerOpenToolCalls(t *testing.T) {
 				t.Fatalf("tool results = %+v, want %d", results, tt.wantResults)
 			}
 			for _, r := range results {
-				if !r.IsError || r.Text != "agent run panicked" {
+				if !r.IsError || r.Text() != "agent run panicked" {
 					t.Errorf("result = %+v, want an error result", r)
 				}
 			}

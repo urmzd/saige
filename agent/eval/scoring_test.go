@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -82,19 +83,19 @@ func TestToolRespondsWithinCollectedStream(t *testing.T) {
 		declined bool
 	}{
 		{"started but never ended", []any{
-			types.ToolCallStartDelta{ID: "c1", Name: "slow"},
-			types.ToolCallEndDelta{ID: "c1"},
+			types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "slow"},
+			types.PartEnd{Index: 0},
 			types.ToolExecStartDelta{ToolCallID: "c1", Name: "slow"},
 			types.DoneDelta{},
 		}, 0, "slow never finished", false},
 		{"announced but never executed", []any{
-			types.ToolCallStartDelta{ID: "c1", Name: "slow"},
-			types.ToolCallEndDelta{ID: "c1"},
+			types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "slow"},
+			types.PartEnd{Index: 1},
 			types.DoneDelta{},
 		}, 0, "", true},
 		{"finished", []any{
-			types.ToolCallStartDelta{ID: "c1", Name: "slow"},
-			types.ToolCallEndDelta{ID: "c1"},
+			types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "c1", Name: "slow"},
+			types.PartEnd{Index: 2},
 			types.ToolExecStartDelta{ToolCallID: "c1", Name: "slow"},
 			types.ToolExecEndDelta{ToolCallID: "c1", Name: "slow", Result: "ok"},
 			types.DoneDelta{},
@@ -131,7 +132,7 @@ func TestAgentRunUsageModelsAndCost(t *testing.T) {
 		types.DoneDelta{},
 	))
 	want := types.TokenUsage{InputTokens: 1100, CachedInputTokens: 400, OutputTokens: 150, Requests: 2}
-	if run.Usage != want {
+	if !reflect.DeepEqual(run.Usage, want) {
 		t.Fatalf("Usage = %+v, want %+v", run.Usage, want)
 	}
 	if fmt.Sprint(run.Models) != "[model-a]" {
@@ -244,10 +245,12 @@ type schemaProvider struct {
 	schemas []*types.ParameterSchema
 }
 
-func (p *schemaProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	p.schemas = append(p.schemas, schema)
-	return p.ChatStream(ctx, msgs, tools)
+func (p *schemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	p.schemas = append(p.schemas, req.Schema)
+	return p.ScriptedProvider.Stream(ctx, types.Request{Messages: req.Messages, Tools: req.Tools})
 }
+
+func (p *schemaProvider) SupportsSchema() bool { return true }
 
 func TestGenerator(t *testing.T) {
 	verdict := `{"reasoning": "good", "score": 0.9}`

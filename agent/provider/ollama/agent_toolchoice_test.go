@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestAgentToolChoiceThroughOllama checks that a tool choice set on the agent
@@ -58,15 +59,15 @@ func TestAgentToolChoiceThroughOllama(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			choice := tt.choice
-			a := agent.NewAgent(agent.AgentConfig{
-				Provider:   ollama.NewAdapter(ollama.NewClient(server.URL, tt.model, "")),
+			a := must.Get(agent.New(agent.Config{
+				Provider:   must.Get(ollama.New(ollama.Config{Client: must.Get(ollama.NewClient(ollama.Config{Host: server.URL, Model: types.ModelID(tt.model)}))})),
 				ToolChoice: &choice,
 				Tools: types.NewToolRegistry(
 					&agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "r"},
 					&agenttest.MockTool{Def: types.ToolDef{Name: "write"}, Result: "w"},
 				),
-			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			}))
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			err := stream.Wait()
 

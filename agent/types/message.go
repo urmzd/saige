@@ -1,8 +1,14 @@
 package types
 
+import (
+	"iter"
+	"strings"
+)
+
 // Role represents the sender of a message.
 type Role string
 
+// Message roles.
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
@@ -10,7 +16,8 @@ const (
 )
 
 // Message is a sealed interface: one of SystemMessage, UserMessage,
-// or AssistantMessage.
+// or AssistantMessage. A message is an ordered list of typed parts; the
+// role decides which part kinds it may hold.
 type Message interface {
 	Role() Role
 	isMessage()
@@ -18,85 +25,116 @@ type Message interface {
 
 // SystemMessage contains system instructions or automatic tool results.
 type SystemMessage struct {
-	Content []SystemContent
+	Parts []SystemPart
 }
 
+// Role implements Message.
 func (SystemMessage) Role() Role { return RoleSystem }
 func (SystemMessage) isMessage() {}
 
 // UserMessage contains user input or human-provided tool results.
 type UserMessage struct {
-	Content []UserContent
+	Parts []UserPart
 }
 
+// Role implements Message.
 func (UserMessage) Role() Role { return RoleUser }
 func (UserMessage) isMessage() {}
 
-// AssistantMessage contains the model's response (text and/or tool calls).
+// AssistantMessage contains the model's response: text, reasoning, tool
+// calls, citations and any media it produced.
 type AssistantMessage struct {
-	Content []AssistantContent
+	Parts []AssistantPart
 }
 
+// Role implements Message.
 func (AssistantMessage) Role() Role { return RoleAssistant }
 func (AssistantMessage) isMessage() {}
 
-// ── Convenience constructors ────────────────────────────────────────
+// ── Constructors ─────────────────────────────────────────────────────
 
-// NewSystemMessage creates a SystemMessage with a single text block.
-func NewSystemMessage(text string) SystemMessage {
-	return SystemMessage{Content: []SystemContent{TextContent{Text: text}}}
-}
+// SystemMsg returns a system message holding parts.
+func SystemMsg(parts ...SystemPart) SystemMessage { return SystemMessage{Parts: parts} }
 
-// NewUserMessage creates a UserMessage with a single text block.
-func NewUserMessage(text string) UserMessage {
-	return UserMessage{Content: []UserContent{TextContent{Text: text}}}
-}
+// UserMsg returns a user message holding parts.
+func UserMsg(parts ...UserPart) UserMessage { return UserMessage{Parts: parts} }
 
-// NewAssistantMessage creates an AssistantMessage with a single text block.
-func NewAssistantMessage(text string) AssistantMessage {
-	return AssistantMessage{Content: []AssistantContent{TextContent{Text: text}}}
-}
+// AssistantMsg returns an assistant message holding parts.
+func AssistantMsg(parts ...AssistantPart) AssistantMessage { return AssistantMessage{Parts: parts} }
 
-// NewToolResultMessage creates a SystemMessage containing tool results.
-// Tool results from automatic execution are system messages: the SDK
-// executed the tools, not the user.
-func NewToolResultMessage(results ...ToolResultContent) SystemMessage {
-	content := make([]SystemContent, len(results))
+// ToolResults returns a system message holding tool results. Results from
+// automatic execution are system messages: the SDK ran the tools, not the
+// user.
+func ToolResults(results ...ToolResultPart) SystemMessage {
+	parts := make([]SystemPart, len(results))
 	for i, r := range results {
-		content[i] = r
+		parts[i] = r
 	}
-	return SystemMessage{Content: content}
+	return SystemMessage{Parts: parts}
 }
 
-// NewUserToolResultMessage creates a UserMessage containing tool results.
-// Used for human-in-the-loop: the agent requested a tool call but a human
-// provided the response (e.g., on interrupt).
-func NewUserToolResultMessage(results ...ToolResultContent) UserMessage {
-	content := make([]UserContent, len(results))
+// UserToolResults returns a user message holding tool results, for a human
+// in the loop: the agent requested a call and a person answered it.
+func UserToolResults(results ...ToolResultPart) UserMessage {
+	parts := make([]UserPart, len(results))
 	for i, r := range results {
-		content[i] = r
+		parts[i] = r
 	}
-	return UserMessage{Content: content}
+	return UserMessage{Parts: parts}
 }
 
-// NewFileMessage creates a UserMessage with a single file attachment.
-// If mediaType is provided, it is used; otherwise it will be inferred during resolution.
-func NewFileMessage(uri string, mediaType ...MediaType) UserMessage {
-	fc := FileContent{URI: uri}
-	if len(mediaType) > 0 {
-		fc.MediaType = mediaType[0]
+// ── Accessors ────────────────────────────────────────────────────────
+
+// PartsOf returns the parts of m in order. It returns nil for a nil message.
+func PartsOf(m Message) []Part {
+	switch v := m.(type) {
+	case SystemMessage:
+		return toParts(v.Parts)
+	case *SystemMessage:
+		return toParts(v.Parts)
+	case UserMessage:
+		return toParts(v.Parts)
+	case *UserMessage:
+		return toParts(v.Parts)
+	case AssistantMessage:
+		return toParts(v.Parts)
+	case *AssistantMessage:
+		return toParts(v.Parts)
+	default:
+		return nil
 	}
-	return UserMessage{Content: []UserContent{fc}}
 }
 
-// NewUserMessageWithFiles creates a UserMessage with text and file attachments.
-func NewUserMessageWithFiles(text string, files ...FileContent) UserMessage {
-	content := make([]UserContent, 0, 1+len(files))
-	if text != "" {
-		content = append(content, TextContent{Text: text})
+func toParts[P Part](ps []P) []Part {
+	if ps == nil {
+		return nil
 	}
-	for _, f := range files {
-		content = append(content, f)
+	out := make([]Part, len(ps))
+	for i, p := range ps {
+		out[i] = p
 	}
-	return UserMessage{Content: content}
+	return out
+}
+
+// TextOf returns the text parts of m concatenated.
+func TextOf(m Message) string {
+	var b strings.Builder
+	for _, t := range Each[TextPart](m) {
+		b.WriteString(t.Text)
+	}
+	return b.String()
+}
+
+// Each iterates over the parts of m that have type T, yielding each part's
+// position in the message.
+func Each[T Part](m Message) iter.Seq2[int, T] {
+	return func(yield func(int, T) bool) {
+		for i, p := range PartsOf(m) {
+			if v, ok := p.(T); ok {
+				if !yield(i, v) {
+					return
+				}
+			}
+		}
+	}
 }

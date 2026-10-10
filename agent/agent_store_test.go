@@ -8,6 +8,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/store/memstore"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // messageText projects any message into a comparable text string, concatenating
@@ -19,25 +20,25 @@ func messageText(msg types.Message) string {
 	sb.WriteString(":")
 	switch m := msg.(type) {
 	case types.SystemMessage:
-		for _, c := range m.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range m.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				sb.WriteString(tc.Text)
 			}
-			if trc, ok := c.(types.ToolResultContent); ok {
+			if trc, ok := c.(types.ToolResultPart); ok {
 				sb.WriteString("tool_result(")
-				sb.WriteString(trc.Text)
+				sb.WriteString(trc.Text())
 				sb.WriteString(")")
 			}
 		}
 	case types.UserMessage:
-		for _, c := range m.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range m.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				sb.WriteString(tc.Text)
 			}
 		}
 	case types.AssistantMessage:
-		for _, c := range m.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range m.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				sb.WriteString(tc.Text)
 			}
 		}
@@ -68,21 +69,21 @@ func TestStoreMultiTurnRoundTrip(t *testing.T) {
 		},
 	}
 
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "store-agent",
 		SystemPrompt: "you are helpful",
 		Provider:     provider,
-	}, WithStore(store))
+	}, WithStore(store)))
 
 	rootID := ag.Tree().Root().ID
 
 	// Turn 1.
-	stream := ag.Invoke(ctx, []types.Message{types.NewUserMessage("first question")})
+	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("first question"))})
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("turn 1 invoke: %v", err)
 	}
 	// Turn 2.
-	stream = ag.Invoke(ctx, []types.Message{types.NewUserMessage("second question")})
+	stream = ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("second question"))})
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("turn 2 invoke: %v", err)
 	}
@@ -135,15 +136,15 @@ func TestStoreNilIsBackwardCompatible(t *testing.T) {
 	provider := &agenttest.ScriptedProvider{
 		Responses: [][]types.Delta{agenttest.TextResponse("ok")},
 	}
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "no-store",
 		SystemPrompt: "sys",
 		Provider:     provider,
-	})
+	}))
 	if ag.cfg.Store != nil {
 		t.Fatal("expected nil Store by default")
 	}
-	stream := ag.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
@@ -162,11 +163,11 @@ func TestStoreNilIsBackwardCompatible(t *testing.T) {
 func TestStorePersistsRootOnConstruction(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "root-persist",
 		SystemPrompt: "sys prompt",
 		Provider:     &agenttest.ScriptedProvider{},
-	}, WithStore(store))
+	}, WithStore(store)))
 
 	rootID := ag.Tree().Root().ID
 	got, err := store.LoadNode(ctx, rootID)
@@ -195,13 +196,13 @@ func TestStoreReloadLandsOnCompactedBranch(t *testing.T) {
 		agenttest.TextResponse("summary of the request"),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     script,
 		SystemPrompt: "sys",
 		Store:        store,
 		CompactCfg:   &types.CompactConfig{MaxInputTokens: 1},
-	})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello there")})
+	}))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello there"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

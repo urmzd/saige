@@ -332,7 +332,7 @@ func scalar(ln line, s string) (string, error) {
 		}
 		v, err := strconv.Unquote(s[:end+1])
 		if err != nil {
-			return "", fmt.Errorf("%w: line %d: %v", ErrFrontmatter, ln.num, err)
+			return "", fmt.Errorf("%w: line %d: %w", ErrFrontmatter, ln.num, err)
 		}
 		return v, nil
 	case strings.HasPrefix(s, "'"):

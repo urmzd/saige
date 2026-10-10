@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // A model requested in the conversation must be recorded as the router
@@ -24,7 +25,7 @@ func TestConfigModelPinsRouterSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := r.Session()
-	a := NewAgent(AgentConfig{Provider: session, SystemPrompt: "sys"})
+	a := must.Get(New(Config{Provider: session, SystemPrompt: "sys"}))
 	run := func(msg types.Message) {
 		t.Helper()
 		stream := a.Invoke(context.Background(), []types.Message{msg})
@@ -33,12 +34,12 @@ func TestConfigModelPinsRouterSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run(types.NewUserMessage("first"))
+	run(types.UserMsg(types.Text("first")))
 	if got := session.Model(); got != "a" {
 		t.Fatalf("first turn used %q, want a", got)
 	}
-	run(types.UserMessage{Content: []types.UserContent{
-		types.TextContent{Text: "second"}, types.ConfigContent{Model: "a"},
+	run(types.UserMessage{Parts: []types.UserPart{
+		types.TextPart{Text: "second"}, types.ConfigPart{Target: types.ModelTarget("a")},
 	}})
 	if pin := session.RouteState().Pin; pin != "a" {
 		t.Fatalf("pin = %q, want a", pin)

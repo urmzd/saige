@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pricedProvider reports a rate card, which is what chargeBudget needs to cost
@@ -24,7 +25,7 @@ func (p *pricedProvider) Capabilities() types.ModelCapabilities {
 		Pricing:  types.Pricing{InputPerMTok: 3, OutputPerMTok: 15, AsOf: "2026-07-01"},
 	}
 }
-func (p *pricedProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *pricedProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
@@ -33,10 +34,10 @@ func (p *pricedProvider) ChatStream(context.Context, []types.Message, []types.To
 func chargeFixture(t *testing.T, policy types.BudgetPolicy) (*Agent, *EventStream, *types.Budget) {
 	t.Helper()
 	budget := types.NewBudget(policy)
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     &pricedProvider{model: "primary-model"},
 		SystemPrompt: "sys",
-	}, WithBudget(budget))
+	}, WithBudget(budget)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

@@ -1,0 +1,19 @@
+# deltas
+start 0 text
+delta 0 text="Checking both."
+end 0
+start 1 tool_call id=call_a name=get_weather
+delta 1 args="{\"city\":\"Paris\"}"
+end 1 {"type":"tool_call","id":"call_a","name":"get_weather","arguments":{"city":"Paris"}}
+start 2 tool_call id=call_b name=get_weather
+delta 2 args="{\"city\":\"Rome\"}"
+end 2 {"type":"tool_call","id":"call_b","name":"get_weather","arguments":{"city":"Rome"}}
+start 3 text
+delta 3 text="Done."
+end 3
+usage prompt=50 completion=40 finish=[stop]
+# parts
+{"type":"text","text":"Checking both."}
+{"type":"tool_call","id":"call_a","name":"get_weather","arguments":{"city":"Paris"}}
+{"type":"tool_call","id":"call_b","name":"get_weather","arguments":{"city":"Rome"}}
+{"type":"text","text":"Done."}

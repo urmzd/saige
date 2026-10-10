@@ -14,27 +14,21 @@ import (
 // EntryCodecVersion is the Entry encoding version EncodeEntry writes.
 // DecodeEntry rejects other versions, so a store shared across releases
 // misses rather than replaying a value it cannot read.
-const EntryCodecVersion = 1
+const EntryCodecVersion = 2
 
 // ErrEntryCodec reports a stored value DecodeEntry cannot read.
 var ErrEntryCodec = errors.New("tool cache: cannot decode stored value")
 
-// wireEntry is the stored form of an Entry. Blocks keep their raw bytes,
-// which the JSON form of types.ToolResultBlock leaves out.
+// wireEntry is the stored form of an Entry. Parts keep their inline bytes
+// (types.MarshalPartInline), which the persisted part form leaves out.
 type wireEntry struct {
-	V         int              `json:"v"`
-	Text      string           `json:"text"`
-	Blocks    []wireBlock      `json:"blocks,omitempty"`
-	IsError   bool             `json:"is_error,omitempty"`
-	Citations []types.Citation `json:"citations,omitempty"`
-	StoredAt  time.Time        `json:"stored_at"`
-	ExpiresAt time.Time        `json:"expires_at"`
-	Err       string           `json:"err,omitempty"`
-}
-
-type wireBlock struct {
-	types.ToolResultBlock
-	Data []byte `json:"data,omitempty"`
+	V         int               `json:"v"`
+	Parts     []json.RawMessage `json:"parts,omitempty"`
+	IsError   bool              `json:"is_error,omitempty"`
+	Citations []types.Citation  `json:"citations,omitempty"`
+	StoredAt  time.Time         `json:"stored_at"`
+	ExpiresAt time.Time         `json:"expires_at"`
+	Err       string            `json:"err,omitempty"`
 }
 
 // EncodeEntry serializes a cached tool result for a byte store such as
@@ -42,15 +36,18 @@ type wireBlock struct {
 func EncodeEntry(e Entry) ([]byte, error) {
 	w := wireEntry{
 		V:         EntryCodecVersion,
-		Text:      e.Result.Text,
 		IsError:   e.Result.IsError,
 		Citations: e.Result.Citations,
 		StoredAt:  e.StoredAt,
 		ExpiresAt: e.ExpiresAt,
 		Err:       e.Err,
 	}
-	for _, b := range e.Result.Blocks {
-		w.Blocks = append(w.Blocks, wireBlock{ToolResultBlock: b, Data: b.Data})
+	for _, p := range e.Result.Parts {
+		raw, err := types.MarshalPartInline(p)
+		if err != nil {
+			return nil, err
+		}
+		w.Parts = append(w.Parts, raw)
 	}
 	return json.Marshal(w)
 }
@@ -62,21 +59,23 @@ func DecodeEntry(b []byte) (Entry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	decoder.UseNumber()
 	if err := decoder.Decode(&w); err != nil {
-		return Entry{}, fmt.Errorf("%w: %v", ErrEntryCodec, err)
+		return Entry{}, fmt.Errorf("%w: %w", ErrEntryCodec, err)
 	}
 	if w.V != EntryCodecVersion {
 		return Entry{}, fmt.Errorf("%w: version %d", ErrEntryCodec, w.V)
 	}
 	e := Entry{
-		Result:    types.ToolResult{Text: w.Text, IsError: w.IsError, Citations: w.Citations},
+		Result:    types.ToolResult{IsError: w.IsError, Citations: w.Citations},
 		StoredAt:  w.StoredAt,
 		ExpiresAt: w.ExpiresAt,
 		Err:       w.Err,
 	}
-	for _, wb := range w.Blocks {
-		blk := wb.ToolResultBlock
-		blk.Data = wb.Data
-		e.Result.Blocks = append(e.Result.Blocks, blk)
+	for _, raw := range w.Parts {
+		p, err := types.UnmarshalRolePart[types.ToolOutputPart](raw)
+		if err != nil {
+			return Entry{}, fmt.Errorf("%w: %w", ErrEntryCodec, err)
+		}
+		e.Result.Parts = append(e.Result.Parts, p)
 	}
 	return e, nil
 }

@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "what is it"
+        },
+        {
+          "inlineData": {
+            "data": "iVBORyBmYWtl",
+            "mimeType": "image/png"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

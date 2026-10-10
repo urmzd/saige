@@ -55,7 +55,11 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 					return reported(out, err)
 				}
 				defer run.cleanup()
-				if err := runAsk(ctx, run.bound.NewAgent(), question, out, approve == approveAllow); err != nil {
+				a, err := run.bound.NewAgent()
+				if err != nil {
+					return reported(out, err)
+				}
+				if err := runAsk(ctx, a, question, out, approve == approveAllow); err != nil {
 					return reported(out, err)
 				}
 				if !cf.isJSON() {
@@ -80,7 +84,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 				return reported(out, err)
 			}
 
-			agentCfg := agentsdk.AgentConfig{
+			agentCfg := agentsdk.Config{
 				Name:         cliName,
 				SystemPrompt: *cf.system,
 			}
@@ -88,7 +92,11 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			if err := runAsk(ctx, agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness)), question, out, approve == approveAllow); err != nil {
+			a, err := agentsdk.New(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness))
+			if err != nil {
+				return reported(out, err)
+			}
+			if err := runAsk(ctx, a, question, out, approve == approveAllow); err != nil {
 				return reported(out, err)
 			}
 			if !cf.isJSON() {
@@ -111,7 +119,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 // resolved inline with allow, so a marked tool call can never leave the
 // command waiting for an answer nobody will give.
 func runAsk(ctx context.Context, agent *agentsdk.Agent, question string, out tui.Output, allow bool) error {
-	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
+	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
 	resolve := func(d types.MarkerDelta) {
 		if allow {
 			stream.ResolveMarker(d.ToolCallID, true, nil)

@@ -30,7 +30,7 @@ func openEvalStore(ctx context.Context, spec, tenant string, create bool) (s sto
 		if err != nil {
 			return nil, nil, fmt.Errorf("results store: %w", err)
 		}
-		pg, err := pgstore.New(ctx, pool, tenant)
+		pg, err := pgstore.New(ctx, pgstore.Config{Pool: pool, Tenant: tenant})
 		if err != nil {
 			pool.Close()
 			return nil, nil, err

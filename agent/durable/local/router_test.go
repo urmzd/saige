@@ -177,7 +177,7 @@ func TestRouterExpiry(t *testing.T) {
 func TestRouterApprovalsAndScoping(t *testing.T) {
 	ctx := context.Background()
 	e := New(t.TempDir())
-	req := types.ApprovalRequest{ID: "marker/call", ToolCall: types.ToolUseContent{ID: "call", Name: "write"}, Markers: []types.Marker{{Kind: "approval"}}}
+	req := types.ApprovalRequest{ID: "marker/call", ToolCall: types.ToolCallPart{ID: "call", Name: "write"}, Markers: []types.Marker{{Kind: "approval"}}}
 	for _, id := range []string{"a", "b"} {
 		suspendedRun(t, e, id)
 		r, release := workerRunner(t, e, id)

@@ -1,0 +1,23 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "what is it?",
+          "type": "input_text"
+        },
+        {
+          "detail": "high",
+          "image_url": "https://example.com/a.png",
+          "type": "input_image"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

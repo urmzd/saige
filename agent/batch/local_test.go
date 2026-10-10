@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // echoProvider answers "echo: <last user text>", tracking concurrency.
@@ -41,26 +42,43 @@ func (p *echoProvider) answer(ctx context.Context, msgs []types.Message) (<-chan
 			out <- types.ErrorDelta{Error: ctx.Err()}
 			return
 		}
-		out <- types.TextStartDelta{}
-		out <- types.TextContentDelta{Content: "echo: " + lastText(msgs)}
-		out <- types.TextEndDelta{}
+		out <- types.PartStart{Index: 0, Kind: types.KindText}
+		out <- types.PartDelta{Index: 0, Text: "echo: " + lastText(msgs)}
+		out <- types.PartEnd{Index: 0}
 		out <- types.UsageDelta{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5, FinishReasons: []string{"stop"}}
 	}()
 	return out, nil
 }
 
-func (p *echoProvider) ChatStream(ctx context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *echoProvider) chatStream(ctx context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
 	return p.answer(ctx, msgs)
 }
 
-func (p *echoProvider) ChatStreamWithSchema(ctx context.Context, msgs []types.Message, _ []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+// Stream implements types.Provider.
+func (p *echoProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		return p.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
+	}
+	if req.Schema != nil {
+		return p.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	}
+	return p.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsOptions implements types.OptionsProvider.
+func (p *echoProvider) SupportsOptions() bool { return true }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (p *echoProvider) SupportsSchema() bool { return true }
+
+func (p *echoProvider) chatStreamWithSchema(ctx context.Context, msgs []types.Message, _ []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	p.schemas++
 	p.mu.Unlock()
 	return p.answer(ctx, msgs)
 }
 
-func (p *echoProvider) ChatStreamWithOptions(ctx context.Context, msgs []types.Message, _ []types.ToolDef, _ types.RequestOptions) (<-chan types.Delta, error) {
+func (p *echoProvider) chatStreamWithOptions(ctx context.Context, msgs []types.Message, _ []types.ToolDef, _ types.RequestOptions) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	p.options++
 	p.mu.Unlock()
@@ -70,8 +88,9 @@ func (p *echoProvider) ChatStreamWithOptions(ctx context.Context, msgs []types.M
 // plainProvider has no schema or options support.
 type plainProvider struct{ inner echoProvider }
 
-func (p *plainProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return p.inner.ChatStream(ctx, msgs, tools)
+func (p *plainProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
+	return p.inner.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }
 
 func TestLocalBoundedConcurrency(t *testing.T) {
@@ -171,11 +190,12 @@ func TestLocalCancel(t *testing.T) {
 // TestLocalPricedInteractive checks that a local batch is charged at the
 // interactive rates: its calls are ordinary calls.
 func TestLocalPricedInteractive(t *testing.T) {
-	r := NewRunner(NewLocal(&echoProvider{}, 1), NewMemoryStore(), WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5}))
+	r := must.Get(NewRunner(RunnerConfig{Provider: NewLocal(&echoProvider{}, 1), Store: NewMemoryStore()},
+		WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5})))
 	if got := r.batchPricing().InputPerMTok; got != 2 {
 		t.Fatalf("input rate = %v, want 2", got)
 	}
-	r = NewRunner(newFakeVendor(), NewMemoryStore())
+	r = must.Get(NewRunner(RunnerConfig{Provider: newFakeVendor(), Store: NewMemoryStore()}))
 	if got := r.batchPricing().InputPerMTok; got != 1 {
 		t.Fatalf("vendor batch input rate = %v, want 1", got)
 	}

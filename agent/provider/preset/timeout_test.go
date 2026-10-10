@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/wrappertest"
 	"github.com/urmzd/saige/agent/types"
 )
 
 type hanging struct{}
 
-func (hanging) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (hanging) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	go func() {
 		<-ctx.Done()
@@ -22,7 +23,7 @@ func (hanging) ChatStream(ctx context.Context, _ []types.Message, _ []types.Tool
 
 func TestAttemptTimeoutIsTransient(t *testing.T) {
 	p := withAttemptTimeout(hanging{}, 10*time.Millisecond)
-	ch, err := p.ChatStream(context.Background(), nil, nil)
+	ch, err := p.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,11 +37,19 @@ func TestAttemptTimeoutIsTransient(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, _ = p.ChatStream(ctx, nil, nil)
+	ch, _ = p.Stream(ctx, types.Request{})
 	cancel()
 	for d := range ch {
 		if e, ok := d.(types.ErrorDelta); ok && types.IsTransient(e.Error) {
 			t.Fatal("a caller cancellation must not read as an attempt timeout")
 		}
 	}
+}
+
+// The attempt deadline forwards every optional interface, so a preset
+// entry with a timeout can still be re-targeted and isolated.
+func TestAttemptTimeoutForwardsEveryOptionalInterface(t *testing.T) {
+	wrappertest.Run(t, []wrappertest.Case{{Name: "attempt timeout", Build: func(p types.Provider) types.Provider {
+		return withAttemptTimeout(p, time.Minute)
+	}}})
 }

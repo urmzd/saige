@@ -40,20 +40,20 @@ func TestRouteDeltaWireCarriesProvenance(t *testing.T) {
 
 func TestRouteContentJSON(t *testing.T) {
 	n := int64(512)
-	c := RouteContentFrom(RouteDelta{Profile: "p/a", Preset: "p", ConfigHash: "h", CatalogRevision: "r",
+	c := RoutePartFrom(RouteDelta{Profile: "p/a", Preset: "p", ConfigHash: "h", CatalogRevision: "r",
 		Options: &RequestOptions{MaxOutputTokens: &n}})
 	b, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got RouteContent
+	var got RoutePart
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, c) {
 		t.Fatalf("got %#v want %#v (%s)", got, c, b)
 	}
-	var legacy RouteContent
+	var legacy RoutePart
 	if err := json.Unmarshal([]byte(`{"profile":"x","model":"m"}`), &legacy); err != nil || legacy.Profile != "x" || legacy.Options != nil {
 		t.Fatalf("legacy: %v %#v", err, legacy)
 	}
@@ -73,12 +73,12 @@ func TestRouteDialReportRoundTrips(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, d) {
 		t.Fatalf("delta round trip: %v\n got %#v\nwant %#v", err, got, d)
 	}
-	c := RouteContentFrom(d)
+	c := RoutePartFrom(d)
 	b, err = json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var back RouteContent
+	var back RoutePart
 	if err := json.Unmarshal(b, &back); err != nil || !reflect.DeepEqual(back, c) {
 		t.Fatalf("content round trip: %v\n got %#v\nwant %#v (%s)", err, back, c, b)
 	}

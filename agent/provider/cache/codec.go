@@ -13,7 +13,7 @@ import (
 // ResponseCodecVersion is the CachedResponse encoding version EncodeResponse
 // writes. DecodeResponse rejects other versions, so a store shared across
 // releases misses rather than replaying a value it cannot read.
-const ResponseCodecVersion = 1
+const ResponseCodecVersion = 2
 
 // ErrResponseCodec reports a stored value DecodeResponse cannot read.
 var ErrResponseCodec = errors.New("response cache: cannot decode stored value")
@@ -56,7 +56,7 @@ func EncodeResponse(cr CachedResponse) ([]byte, error) {
 func DecodeResponse(b []byte) (CachedResponse, error) {
 	var w wireResponse
 	if err := json.Unmarshal(b, &w); err != nil {
-		return CachedResponse{}, fmt.Errorf("%w: %v", ErrResponseCodec, err)
+		return CachedResponse{}, fmt.Errorf("%w: %w", ErrResponseCodec, err)
 	}
 	if w.V != ResponseCodecVersion {
 		return CachedResponse{}, fmt.Errorf("%w: version %d", ErrResponseCodec, w.V)
@@ -65,7 +65,7 @@ func DecodeResponse(b []byte) (CachedResponse, error) {
 	for _, raw := range w.Deltas {
 		d, err := types.UnmarshalDelta(raw)
 		if err != nil {
-			return CachedResponse{}, fmt.Errorf("%w: %v", ErrResponseCodec, err)
+			return CachedResponse{}, fmt.Errorf("%w: %w", ErrResponseCodec, err)
 		}
 		if !recordable(d) {
 			return CachedResponse{}, fmt.Errorf("%w: unexpected %T", ErrResponseCodec, d)
@@ -75,7 +75,7 @@ func DecodeResponse(b []byte) (CachedResponse, error) {
 	if len(w.Usage) > 0 {
 		d, err := types.UnmarshalDelta(w.Usage)
 		if err != nil {
-			return CachedResponse{}, fmt.Errorf("%w: %v", ErrResponseCodec, err)
+			return CachedResponse{}, fmt.Errorf("%w: %w", ErrResponseCodec, err)
 		}
 		usage, ok := d.(types.UsageDelta)
 		if !ok {
@@ -89,9 +89,7 @@ func DecodeResponse(b []byte) (CachedResponse, error) {
 // recordable reports whether the recorder keeps d in CachedResponse.Deltas.
 func recordable(d types.Delta) bool {
 	switch d.(type) {
-	case types.TextStartDelta, types.TextContentDelta, types.TextEndDelta,
-		types.ThinkingStartDelta, types.ThinkingContentDelta, types.ThinkingEndDelta,
-		types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta, types.CitationDelta:
+	case types.PartStart, types.PartDelta, types.PartEnd, types.CitationDelta:
 		return true
 	default:
 		return false

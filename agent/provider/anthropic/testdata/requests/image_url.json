@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "type": "url",
+            "url": "https://example.com/a.png"
+          },
+          "type": "image"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

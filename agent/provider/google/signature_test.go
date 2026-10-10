@@ -17,41 +17,37 @@ func TestFunctionCallSignatureRoundTrip(t *testing.T) {
 	events := []string{`{"candidates":[{"content":{"role":"model","parts":[` +
 		`{"functionCall":{"name":"get_weather","args":{"city":"Oslo"}},"thoughtSignature":"c2lnLTE="},` +
 		`{"functionCall":{"name":"get_weather","args":{"city":"Rome"}}}]},"finishReason":"STOP"}]}`}
-	a, err := NewAdapter(context.Background(), "test-key", "gemini-3.1-flash-lite",
+	a, err := New(context.Background(), Config{APIKey: "test-key", Model: "gemini-3.1-flash-lite"},
 		WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("weather")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("weather"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var msg types.AssistantMessage
-	var thinkingOpen bool
+	asm := types.NewPartAssembler()
 	for d := range ch {
-		switch v := d.(type) {
-		case types.ThinkingStartDelta:
-			thinkingOpen = true
-		case types.ThinkingEndDelta:
-			if !thinkingOpen {
-				t.Fatal("thinking end without start")
-			}
-			msg.Content = append(msg.Content, types.ThinkingContent{Signature: v.Signature})
-			thinkingOpen = false
-		case types.ToolCallEndDelta:
-			msg.Content = append(msg.Content, types.ToolUseContent{ID: v.ID, Name: "get_weather", Arguments: v.Arguments})
-		case types.ErrorDelta:
+		if v, ok := d.(types.ErrorDelta); ok {
 			t.Fatal(v.Error)
 		}
+		asm.Push(d)
 	}
-	if len(msg.Content) != 3 {
-		t.Fatalf("content = %+v, want a signed block and two calls", msg.Content)
+	if n := asm.Violations(); n != 0 {
+		t.Fatalf("%d part protocol violations", n)
 	}
-	if th, ok := msg.Content[0].(types.ThinkingContent); !ok || th.Signature != "c2lnLTE=" || th.Thinking != "" {
-		t.Fatalf("first block = %+v", msg.Content[0])
+	msg := types.AssistantMessage{Parts: asm.Parts()}
+	if len(msg.Parts) != 3 {
+		t.Fatalf("content = %+v, want a signed block and two calls", msg.Parts)
+	}
+	if th, ok := msg.Parts[0].(types.ThinkingPart); !ok || th.Signature != "c2lnLTE=" || th.Text != "" {
+		t.Fatalf("first block = %+v", msg.Parts[0])
 	}
 
-	_, contents := toGeminiContents([]types.Message{types.NewUserMessage("weather"), msg})
+	_, contents, err := (&mapper{names: map[string]string{}}).contents([]types.Message{types.UserMsg(types.Text("weather")), msg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := contents[len(contents)-1].Parts
 	if len(parts) != 2 {
 		t.Fatalf("model parts = %d, want the two calls only", len(parts))
@@ -61,5 +57,18 @@ func TestFunctionCallSignatureRoundTrip(t *testing.T) {
 	}
 	if parts[1].FunctionCall == nil || len(parts[1].ThoughtSignature) != 0 {
 		t.Fatalf("second call part = %+v, want no signature", parts[1])
+	}
+}
+
+func TestEmptySystemTextSendsNoInstruction(t *testing.T) {
+	inst, _, err := (&mapper{names: map[string]string{}}).contents([]types.Message{
+		types.SystemMsg(types.Text("")),
+		types.UserMsg(types.Text("hi")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst != nil {
+		t.Fatalf("system instruction = %+v, want none for an empty system prompt", inst)
 	}
 }

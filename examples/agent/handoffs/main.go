@@ -17,13 +17,15 @@ import (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// The triage agent is the entry agent. WithHandoffs registers the group; the
 	// triage agent automatically gains handoff_to_billing and handoff_to_tech
 	// tools, and each specialist can hand back to triage.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "triage",
 		SystemPrompt: "You triage customer questions. Hand off billing questions to the billing agent and technical questions to the tech agent.",
 		Provider:     adapter,
@@ -41,15 +43,18 @@ func main() {
 			Provider:     adapter,
 		},
 	))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("I was double-charged on my last invoice. Can you help?"),
+		types.UserMsg(types.Text("I was double-charged on my last invoice. Can you help?")),
 	})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.HandoffDelta:
 			fmt.Printf("\n[handoff %s → %s]\n", d.From, d.To)
 		case types.ErrorDelta:

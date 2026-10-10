@@ -17,6 +17,7 @@ type DefaultAssembler struct {
 	MaxTokens int
 }
 
+// Assemble implements types.ContextAssembler.
 func (a *DefaultAssembler) Assemble(_ context.Context, query string, hits []types.SearchHit) (*types.AssembledContext, error) {
 	var blocks []types.ContextBlock
 	var parts []string

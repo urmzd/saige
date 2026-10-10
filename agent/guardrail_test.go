@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pricedScript is a scripted provider with a rate card, so a budget can cost
@@ -37,30 +38,30 @@ func blockWord(word string) Guardrail {
 	})
 }
 
-func guardrailRecords(t *testing.T, tr *tree.Tree) []types.GuardrailContent {
+func guardrailRecords(t *testing.T, tr *tree.Tree) []types.GuardrailPart {
 	t.Helper()
 	msgs, err := tr.FlattenBranch(tr.Active())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []types.GuardrailContent
+	var out []types.GuardrailPart
 	add := func(c any) {
-		if g, ok := c.(types.GuardrailContent); ok {
+		if g, ok := c.(types.GuardrailPart); ok {
 			out = append(out, g)
 		}
 	}
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case types.AssistantMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		}
@@ -73,7 +74,7 @@ func collectWithDeltas(t *testing.T, a *Agent, input string) (Transcript, []type
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var deltas []types.Delta
-	tr, err := Collect(a.Invoke(ctx, []types.Message{types.NewUserMessage(input)}), func(d types.Delta) { deltas = append(deltas, d) })
+	tr, err := Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(input))}), func(d types.Delta) { deltas = append(deltas, d) })
 	return tr, deltas, err
 }
 
@@ -90,9 +91,9 @@ func guardrailDeltas(deltas []types.Delta) []types.GuardrailDelta {
 func TestSequentialInputGuardrailBlocksBeforeTheModel(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("never")}}
 	var stop RunStopEvent
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p},
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p},
 		WithInputGuardrails(InputGuardrail{Guardrail: blockWord("secret")}),
-		WithHooks(Hooks{RunStop: func(_ context.Context, ev *RunStopEvent) error { stop = *ev; return nil }}))
+		WithHooks(Hooks{RunStop: func(_ context.Context, ev *RunStopEvent) error { stop = *ev; return nil }})))
 
 	_, deltas, err := collectWithDeltas(t, a, "tell me the secret")
 	var tripped *GuardrailTrippedError
@@ -140,7 +141,7 @@ func TestInputGuardrailRewrite(t *testing.T) {
 	redact := NewGuardrail("redact", func(_ context.Context, in GuardrailInput) (GuardrailVerdict, error) {
 		return Rewrite(strings.ReplaceAll(in.Text, "ana@example.com", "[email]"), "email"), nil
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p}, WithInputGuardrails(InputGuardrail{Guardrail: redact}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p}, WithInputGuardrails(InputGuardrail{Guardrail: redact})))
 	_, deltas, err := collectWithDeltas(t, a, "mail ana@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -150,8 +151,8 @@ func TestInputGuardrailRewrite(t *testing.T) {
 	if got := userText(last); got != "mail [email]" {
 		t.Errorf("model saw %q", got)
 	}
-	for _, c := range last.Content {
-		if _, ok := c.(types.GuardrailContent); ok {
+	for _, c := range last.Parts {
+		if _, ok := c.(types.GuardrailPart); ok {
 			t.Error("guardrail metadata reached the model")
 		}
 	}
@@ -170,19 +171,19 @@ type stallingProvider struct {
 	canceled atomic.Bool
 }
 
-func (p *stallingProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *stallingProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 4)
 	go func() {
 		defer close(ch)
-		ch <- types.TextStartDelta{}
-		ch <- types.TextContentDelta{Content: "partial "}
+		ch <- types.PartStart{Index: 0, Kind: types.KindText}
+		ch <- types.PartDelta{Index: 0, Text: "partial "}
 		close(p.started)
 		select {
 		case <-ctx.Done():
 			p.canceled.Store(true)
 		case <-time.After(5 * time.Second):
-			ch <- types.TextContentDelta{Content: "finished"}
-			ch <- types.TextEndDelta{}
+			ch <- types.PartDelta{Index: 0, Text: "finished"}
+			ch <- types.PartEnd{Index: 0}
 		}
 	}()
 	return ch, nil
@@ -199,8 +200,8 @@ func TestParallelGuardrailCancelsTheModelCall(t *testing.T) {
 		}
 		return Block("off policy"), nil
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p},
-		WithInputGuardrails(InputGuardrail{Guardrail: slow, Mode: GuardrailParallel}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p},
+		WithInputGuardrails(InputGuardrail{Guardrail: slow, Mode: GuardrailParallel})))
 	start := time.Now()
 	_, deltas, err := collectWithDeltas(t, a, "anything")
 	var tripped *GuardrailTrippedError
@@ -246,8 +247,8 @@ func TestParallelGuardrailPassKeepsTheTurn(t *testing.T) {
 		}
 		return Pass(), nil
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: signal},
-		WithInputGuardrails(InputGuardrail{Guardrail: pass, Mode: GuardrailParallel}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: signal},
+		WithInputGuardrails(InputGuardrail{Guardrail: pass, Mode: GuardrailParallel})))
 	tr, _, err := collectWithDeltas(t, a, "hello")
 	if err != nil || tr.Text != "answer" {
 		t.Fatalf("text %q err %v", tr.Text, err)
@@ -259,9 +260,10 @@ type signalProvider struct {
 	started chan struct{}
 }
 
-func (s *signalProvider) ChatStream(ctx context.Context, m []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (s *signalProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tools := req.Messages, req.Tools
 	close(s.started)
-	return s.Provider.ChatStream(ctx, m, tools)
+	return s.Provider.Stream(ctx, types.Request{Messages: m, Tools: tools})
 }
 
 func TestParallelGuardrailCannotRewrite(t *testing.T) {
@@ -269,8 +271,8 @@ func TestParallelGuardrailCannotRewrite(t *testing.T) {
 	rewrite := NewGuardrail("redact", func(context.Context, GuardrailInput) (GuardrailVerdict, error) {
 		return Rewrite("clean", "pii"), nil
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p},
-		WithInputGuardrails(InputGuardrail{Guardrail: rewrite, Mode: GuardrailParallel}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p},
+		WithInputGuardrails(InputGuardrail{Guardrail: rewrite, Mode: GuardrailParallel})))
 	_, _, err := collectWithDeltas(t, a, "hello")
 	if !errors.Is(err, ErrGuardrailTripped) || !strings.Contains(err.Error(), "cannot rewrite") {
 		t.Fatalf("err = %v", err)
@@ -285,7 +287,7 @@ func TestOutputGuardrailRewritesTheAnswer(t *testing.T) {
 		}
 		return Rewrite(strings.ReplaceAll(in.Text, "ana@example.com", "[email]"), "email"), nil
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p}, WithOutputGuardrails(OutputGuardrail{Guardrail: redact}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p}, WithOutputGuardrails(OutputGuardrail{Guardrail: redact})))
 	tr, deltas, err := collectWithDeltas(t, a, "who?")
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +300,7 @@ func TestOutputGuardrailRewritesTheAnswer(t *testing.T) {
 	}
 	msgs, _ := a.Tree().FlattenBranch(a.Tree().Active())
 	final := msgs[len(msgs)-1].(types.AssistantMessage)
-	if got := contentText(final.Content); got != "write to [email]" {
+	if got := contentText(final.Parts); got != "write to [email]" {
 		t.Errorf("recorded answer %q", got)
 	}
 	if recs := guardrailRecords(t, a.Tree()); len(recs) != 1 || recs[0].Phase != types.GuardrailPhaseOutput {
@@ -308,14 +310,14 @@ func TestOutputGuardrailRewritesTheAnswer(t *testing.T) {
 
 func TestOutputGuardrailBlockDropsTheAnswer(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("the secret is 42")}}
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p}, WithOutputGuardrails(OutputGuardrail{Guardrail: blockWord("secret")}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p}, WithOutputGuardrails(OutputGuardrail{Guardrail: blockWord("secret")})))
 	_, _, err := collectWithDeltas(t, a, "q")
 	if !errors.Is(err, ErrGuardrailTripped) {
 		t.Fatalf("err = %v", err)
 	}
 	msgs, _ := a.Tree().FlattenBranch(a.Tree().Active())
 	for _, m := range msgs {
-		if am, ok := m.(types.AssistantMessage); ok && strings.Contains(contentText(am.Content), "secret") {
+		if am, ok := m.(types.AssistantMessage); ok && strings.Contains(contentText(am.Parts), "secret") {
 			t.Error("the blocked answer was recorded")
 		}
 	}
@@ -326,9 +328,9 @@ func TestOutputGuardrailChecksForcedFinalAnswer(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "lookup", map[string]any{"q": "x"}),
 		agenttest.TextResponse("the secret is 42"),
 	}}
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup")),
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup")),
 		MaxIter: 1, OnMaxIter: MaxIterForceFinal},
-		WithOutputGuardrails(OutputGuardrail{Guardrail: blockWord("secret")}))
+		WithOutputGuardrails(OutputGuardrail{Guardrail: blockWord("secret")})))
 	if _, _, err := collectWithDeltas(t, a, "q"); !errors.Is(err, ErrGuardrailTripped) {
 		t.Fatalf("err = %v", err)
 	}
@@ -338,8 +340,8 @@ func TestGuardrailErrorFailsClosed(t *testing.T) {
 	broken := NewGuardrail("broken", func(context.Context, GuardrailInput) (GuardrailVerdict, error) {
 		return GuardrailVerdict{}, errors.New("detector offline")
 	})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
-		WithInputGuardrails(InputGuardrail{Guardrail: broken}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
+		WithInputGuardrails(InputGuardrail{Guardrail: broken})))
 	_, _, err := collectWithDeltas(t, a, "q")
 	if !errors.Is(err, ErrGuardrailTripped) || !strings.Contains(err.Error(), "detector offline") {
 		t.Fatalf("err = %v", err)
@@ -353,7 +355,7 @@ func TestGuardrailModelCallsAreCharged(t *testing.T) {
 		append(agenttest.TextResponse("ALLOW"), types.UsageDelta{PromptTokens: 1000, CompletionTokens: 10}),
 	}}, model: "cheap"}
 	check := NewGuardrail("classify", func(ctx context.Context, in GuardrailInput) (GuardrailVerdict, error) {
-		rx, err := in.Metered(classifier).ChatStream(ctx, []types.Message{types.NewUserMessage(in.Text)}, nil)
+		rx, err := in.Metered(classifier).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text(in.Text))}})
 		if err != nil {
 			return GuardrailVerdict{}, err
 		}
@@ -365,8 +367,8 @@ func TestGuardrailModelCallsAreCharged(t *testing.T) {
 		append(agenttest.TextResponse("ok"), types.UsageDelta{PromptTokens: 10, CompletionTokens: 1}),
 	}}, model: "main"}
 	budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(1), PerCallTokens: 100_000})
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: main}, WithBudget(budget),
-		WithInputGuardrails(InputGuardrail{Guardrail: check}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: main}, WithBudget(budget),
+		WithInputGuardrails(InputGuardrail{Guardrail: check})))
 	tr, _, err := collectWithDeltas(t, a, "q")
 	if err != nil {
 		t.Fatal(err)
@@ -394,21 +396,21 @@ func TestGuardrailVerdictReplaysFromRecord(t *testing.T) {
 		calls.Add(1)
 		return Rewrite(strings.ReplaceAll(in.Text, "42", "[n]"), "number"), nil
 	})
-	input := []types.Message{types.NewUserMessage("q")}
-	first := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "it is 42"}},
-		WithOutputGuardrails(OutputGuardrail{Guardrail: redact}))
+	input := []types.Message{types.UserMsg(types.Text("q"))}
+	first := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "it is 42"}},
+		WithOutputGuardrails(OutputGuardrail{Guardrail: redact})))
 	final, err := first.RunDurable(context.Background(), runner, input, "")
-	if err != nil || contentText(final.Content) != "it is [n]" {
+	if err != nil || contentText(final.Parts) != "it is [n]" {
 		t.Fatalf("final %v err %v", final, err)
 	}
 	other := NewGuardrail("redact", func(context.Context, GuardrailInput) (GuardrailVerdict, error) {
 		calls.Add(1)
 		return Block("would block now"), nil
 	})
-	replay := NewAgent(AgentConfig{SystemPrompt: "s", Provider: panicProvider{}},
-		WithOutputGuardrails(OutputGuardrail{Guardrail: other}))
+	replay := must.Get(New(Config{SystemPrompt: "s", Provider: panicProvider{}},
+		WithOutputGuardrails(OutputGuardrail{Guardrail: other})))
 	final, err = replay.RunDurable(context.Background(), runner, input, "")
-	if err != nil || contentText(final.Content) != "it is [n]" {
+	if err != nil || contentText(final.Parts) != "it is [n]" {
 		t.Fatalf("replayed final %v err %v", final, err)
 	}
 	if calls.Load() != 1 {
@@ -419,12 +421,12 @@ func TestGuardrailVerdictReplaysFromRecord(t *testing.T) {
 func TestSubmittedMessagesPassInputGuardrails(t *testing.T) {
 	release := make(chan struct{})
 	p := &gatedProvider{release: release, text: "first"}
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p},
-		WithInputGuardrails(InputGuardrail{Guardrail: blockWord("secret"), Mode: GuardrailParallel}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p},
+		WithInputGuardrails(InputGuardrail{Guardrail: blockWord("secret"), Mode: GuardrailParallel})))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("hello")})
-	if _, err := stream.Submit(types.NewUserMessage("now the secret"), SubmitQueue); err != nil {
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hello"))})
+	if _, err := stream.Submit(types.UserMsg(types.Text("now the secret")), SubmitQueue); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -440,7 +442,7 @@ type gatedProvider struct {
 	text    string
 }
 
-func (p *gatedProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *gatedProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
 	go func() {
 		defer close(ch)

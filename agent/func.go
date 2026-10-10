@@ -56,8 +56,8 @@ type (
 
 // WithDeps sets the dependencies every Func tool of this agent receives as
 // RunContext.Deps. Deps attached with ContextWithDeps take precedence.
-func WithDeps(deps any) AgentOption {
-	return func(c *AgentConfig) { c.Deps = deps }
+func WithDeps(deps any) Option {
+	return func(c *Config) { c.Deps = deps }
 }
 
 // ContextWithDeps attaches dependencies to a run's context, for a host that

@@ -7,14 +7,16 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestPrivateNamespaceAndExplicitConfigurationScope(t *testing.T) {
 	store := memcache.New[CachedResponse]()
 	makeProvider := func(answer, scope, config string) *Provider {
-		return New(&agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}, Config{Cache: store, ScopeKey: scope, ConfigKey: config})
+		inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}
+		return must.Get(New(inner, Config{Cache: store, ScopeKey: scope, ConfigKey: config}))
 	}
-	msgs := []types.Message{types.NewUserMessage("same")}
+	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 	first := makeProvider("first", "", "")
 	second := makeProvider("second", "", "")
 	collect(mustStream(t, first, msgs))
@@ -35,8 +37,8 @@ func TestPrivateNamespaceAndExplicitConfigurationScope(t *testing.T) {
 
 func TestCachedToolArgumentsAndIDsAreIndependent(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("original", "read", map[string]any{"nested": map[string]any{"value": "clean"}})}}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true})
-	msgs := []types.Message{types.NewUserMessage("read")}
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true}))
+	msgs := []types.Message{types.UserMsg(types.Text("read"))}
 	first := agenttest.CollectToolCalls(mustStream(t, p, msgs))
 	first[0].Arguments["nested"].(map[string]any)["value"] = "corrupt"
 	second := agenttest.CollectToolCalls(mustStream(t, p, msgs))
@@ -52,11 +54,11 @@ func TestCachedToolArgumentsAndIDsAreIndependent(t *testing.T) {
 
 func TestIncompleteResponseNotCachedAndCitationsRetained(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
-		{types.TextStartDelta{}, types.TextContentDelta{Content: "partial"}},
+		{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "partial"}},
 		append(agenttest.TextResponse("complete"), types.CitationDelta{Citation: types.Citation{URI: "https://example.com"}}),
 	}}
 	p := newProvider(inner)
-	msgs := []types.Message{types.NewUserMessage("task")}
+	msgs := []types.Message{types.UserMsg(types.Text("task"))}
 	collect(mustStream(t, p, msgs))
 	collect(mustStream(t, p, msgs))
 	got := collect(mustStream(t, p, msgs))
@@ -74,7 +76,7 @@ func TestIncompleteResponseNotCachedAndCitationsRetained(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := p.ChatStream(ctx, msgs, nil); err == nil {
+	if _, err := p.Stream(ctx, types.Request{Messages: msgs}); err == nil {
 		t.Fatal("cancelled cache read succeeded")
 	}
 }

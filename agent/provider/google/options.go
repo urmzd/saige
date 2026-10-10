@@ -1,7 +1,6 @@
 package google
 
 import (
-	"context"
 	"math"
 	"strings"
 
@@ -10,26 +9,6 @@ import (
 )
 
 var _ types.OptionsProvider = (*Adapter)(nil)
-
-// ChatStreamWithOptions implements types.OptionsProvider. Each option set in
-// opts overrides the adapter's configured value for this call only; unset
-// options keep the configured ones. The tool choice maps to
-// FunctionCallingConfig: AUTO, NONE, ANY, or ANY with AllowedFunctionNames
-// for a named tool. Options the model does not declare, and options Gemini
-// has no field for (parallel tool control, a reasoning toggle), fail before
-// any network I/O with an error matching types.ErrInvalidModelConfig. With a
-// context cache bound, the tool configuration belongs to the cached resource,
-// so a per-call tool choice that changes it is rejected.
-func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	c, err := a.withRequestOptions(opts.Raw())
-	if err != nil {
-		return nil, err
-	}
-	if c, err = c.compileDials(opts, tools, false); err != nil {
-		return nil, err
-	}
-	return c.ChatStream(ctx, messages, tools)
-}
 
 // withRequestOptions returns a copy of the adapter with opts applied.
 func (a *Adapter) withRequestOptions(o types.RequestOptions) (*Adapter, error) {

@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestCompactionLive compacts a long conversation with a real model and asks
@@ -23,9 +24,9 @@ func TestCompactionLive(t *testing.T) {
 	}
 	const fact = "QX-58213"
 	history := []types.Message{
-		types.NewUserMessage("I am planning a conference. I will send notes; acknowledge each one briefly."),
-		types.NewUserMessage("Note: the keynote speaker's hotel confirmation number is " + fact + "."),
-		types.NewAssistantMessage("Noted the keynote speaker's hotel confirmation number."),
+		types.UserMsg(types.Text("I am planning a conference. I will send notes; acknowledge each one briefly.")),
+		types.UserMsg(types.Text("Note: the keynote speaker's hotel confirmation number is " + fact + ".")),
+		types.AssistantMsg(types.Text("Noted the keynote speaker's hotel confirmation number.")),
 	}
 	topics := []string{"catering menu", "badge printing", "projector rental", "parking passes", "wifi vouchers",
 		"stage lighting", "signage", "volunteer shifts", "coffee breaks", "photographer", "name tags",
@@ -33,10 +34,10 @@ func TestCompactionLive(t *testing.T) {
 		"accessibility ramps", "cloakroom", "first aid kit"}
 	for i, topic := range topics {
 		history = append(history,
-			types.NewUserMessage(fmt.Sprintf("Note %d: the %s vendor confirmed for day %d; budget line %d is approved.", i, topic, i%3+1, 100+i)),
-			types.NewAssistantMessage(fmt.Sprintf("Noted the %s confirmation.", topic)))
+			types.UserMsg(types.Text(fmt.Sprintf("Note %d: the %s vendor confirmed for day %d; budget line %d is approved.", i, topic, i%3+1, 100+i))),
+			types.AssistantMsg(types.Text(fmt.Sprintf("Noted the %s confirmation.", topic))))
 	}
-	history = append(history, types.NewUserMessage("What is the keynote speaker's hotel confirmation number? Reply with the number only."))
+	history = append(history, types.UserMsg(types.Text("What is the keynote speaker's hotel confirmation number? Reply with the number only.")))
 
 	tests := []struct {
 		name string
@@ -48,23 +49,23 @@ func TestCompactionLive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
-			a := agent.NewAgent(agent.AgentConfig{
-				Provider:     anthropic.NewAdapter(key, "claude-haiku-5-5"),
+			a := must.Get(agent.New(agent.Config{
+				Provider:     must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: "claude-haiku-5-5"})),
 				SystemPrompt: "You are a concise assistant.",
 				MaxIter:      1,
 				CompactCfg:   &cfg,
-			})
+			}))
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			stream := a.Invoke(ctx, history)
 			var (
 				text strings.Builder
-				recs []types.CompactionContent
+				recs []types.CompactionPart
 			)
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text.WriteString(v.Content)
+				case types.PartDelta:
+					text.WriteString(v.Text)
 				case types.CompactionDelta:
 					recs = append(recs, v.Record)
 				}

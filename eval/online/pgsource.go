@@ -22,7 +22,7 @@ const LabelScope = "scope"
 type PGSource struct {
 	Pool *pgxpool.Pool
 	// Scope limits the source to one tenant's conversations, those written
-	// through pgstore.NewScopedStore with this scope. Records then name
+	// through an agent pgstore.Store whose Config.Scope is this scope. Records then name
 	// conversations without the scope prefix and carry LabelScope. Empty
 	// reads every conversation.
 	Scope string
@@ -53,7 +53,8 @@ func (s PGSource) Records(ctx context.Context, w Window) ([]Record, error) {
 		SELECT conversation_id, uuid FROM agent_node
 		WHERE role = 'assistant' AND state = $1
 		  AND created_at >= $2 AND ($3::timestamptz IS NULL OR created_at < $3)
-		  AND NOT (message->'content' @> '[{"type": "tool_use"}]'::jsonb)
+		  AND NOT COALESCE(message->'parts' @> '[{"type": "tool_call"}]'::jsonb, false)
+		  AND NOT COALESCE(message->'content' @> '[{"type": "tool_use"}]'::jsonb, false)
 		  AND ($4 = '' OR starts_with(conversation_id, $4))
 		ORDER BY created_at, uuid
 		LIMIT $5`, int(types.NodeActive), w.From, to, prefix, limit)
@@ -101,7 +102,11 @@ func (s PGSource) Lookup(ctx context.Context, ref Ref) (Record, error) {
 }
 
 func (s PGSource) load(ctx context.Context, conversation, node string) (Record, error) {
-	path, err := pgstore.NewStore(s.Pool, conversation, nil).LoadPath(ctx, types.NodeID(node))
+	store, err := pgstore.New(pgstore.Config{Pool: s.Pool, ConversationID: conversation})
+	if err != nil {
+		return Record{}, fmt.Errorf("online: load %s: %w", node, err)
+	}
+	path, err := store.LoadPath(ctx, types.NodeID(node))
 	if err != nil {
 		return Record{}, fmt.Errorf("online: load %s: %w", node, err)
 	}

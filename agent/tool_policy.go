@@ -15,14 +15,17 @@ type ToolPolicy interface {
 	Select(context.Context, string, []types.ToolDef) ([]string, error)
 }
 
+// ToolPolicyFunc adapts a function to a ToolPolicy.
 type ToolPolicyFunc func(context.Context, string, []types.ToolDef) ([]string, error)
 
+// Select calls f.
 func (f ToolPolicyFunc) Select(ctx context.Context, name string, defs []types.ToolDef) ([]string, error) {
 	return f(ctx, name, defs)
 }
 
-func WithToolPolicy(policy ToolPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.ToolPolicy = policy }
+// WithToolPolicy sets the policy that picks which tools each turn offers.
+func WithToolPolicy(policy ToolPolicy) Option {
+	return func(cfg *Config) { cfg.ToolPolicy = policy }
 }
 
 func (a *Agent) selectTools(ctx context.Context, active activeContext) (activeContext, error) {

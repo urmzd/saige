@@ -103,15 +103,29 @@ func WithLogger(l *slog.Logger) RunnerOption {
 	}
 }
 
-// NewRunner returns a runner for jobs on p, recorded in store.
-func NewRunner(p types.BatchProvider, store Store, opts ...RunnerOption) *Runner {
+// RunnerConfig names what a Runner submits to and records in.
+type RunnerConfig struct {
+	// Provider runs the batches. Required.
+	Provider types.BatchProvider
+	// Store records the jobs. Required.
+	Store Store
+}
+
+// NewRunner returns a runner for jobs on cfg.Provider, recorded in
+// cfg.Store. A missing provider or store is an error wrapping
+// types.ErrInvalidConfig.
+func NewRunner(cfg RunnerConfig, opts ...RunnerOption) (*Runner, error) {
+	if cfg.Provider == nil || cfg.Store == nil {
+		return nil, fmt.Errorf("%w: batch: a runner needs a provider and a store", types.ErrInvalidConfig)
+	}
+	p, store := cfg.Provider, cfg.Store
 	r := &Runner{provider: p, store: store, channel: DefaultChannel,
 		minPoll: 5 * time.Second, maxPoll: 2 * time.Minute, logger: slog.Default(),
 		now: time.Now, lookupSlack: 5 * time.Minute}
 	for _, o := range opts {
 		o(r)
 	}
-	return r
+	return r, nil
 }
 
 // Store returns the runner's job store.
@@ -121,7 +135,7 @@ func (r *Runner) Store() Store { return r.store }
 func (r *Runner) Provider() types.BatchProvider { return r.provider }
 
 func (r *Runner) identity() (string, string) {
-	return types.ProviderName(asProvider(r.provider)), types.ProviderModel(asProvider(r.provider))
+	return types.NameOf(asProvider(r.provider)), types.ProviderModel(asProvider(r.provider))
 }
 
 // asProvider lets the name and model helpers read a BatchProvider that also
@@ -135,7 +149,7 @@ func asProvider(p types.BatchProvider) types.Provider {
 
 type namedOnly struct{ p types.BatchProvider }
 
-func (namedOnly) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (namedOnly) Stream(context.Context, types.Request) (<-chan types.Delta, error) {
 	return nil, errors.New("batch provider")
 }
 

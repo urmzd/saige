@@ -1,0 +1,49 @@
+== .agents/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .agents/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
+== .gemini/agents/helper.md ==
+---
+name: helper
+description: Answers questions about the project and edits files.
+kind: local
+tools:
+  - read_file
+  - list_directory
+  - glob
+  - search_file_content
+  - write_file
+  - replace
+max_turns: 8
+---
+
+You are a careful helper.
+Answer briefly.
+== .gemini/settings.json ==
+{
+  "mcpServers": {
+    "saige-helper": {
+      "command": "saige-mcp",
+      "args": [
+        "--agents-dir",
+        "$PROJECT/agents",
+        "--agent",
+        "helper",
+        "--root",
+        "$PROJECT",
+        "--tools",
+        "none"
+      ]
+    }
+  }
+}

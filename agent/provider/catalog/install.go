@@ -38,7 +38,7 @@ var (
 // are not installed: they live on the catalog value the host passes around.
 func Install(c *Catalog, opts ...registry.Option) (InstallReport, error) {
 	if c == nil {
-		return InstallReport{}, fmt.Errorf("catalog: Install needs a catalog")
+		return InstallReport{}, fmt.Errorf("%w: catalog: Install needs a catalog", types.ErrInvalidConfig)
 	}
 	if err := c.Validate(); err != nil {
 		return InstallReport{}, err
@@ -101,7 +101,7 @@ func Install(c *Catalog, opts ...registry.Option) (InstallReport, error) {
 
 // installedBaselines are the baselines an Install wrote, so a later Install
 // that drops one removes it while RegisterBaseline calls stay.
-var installedBaselines = map[string]bool{}
+var installedBaselines = map[types.ProviderName]bool{}
 
 func sameEntry(a, b Entry) bool {
 	return reflect.DeepEqual(cloneEntry(a), cloneEntry(b))
@@ -116,9 +116,4 @@ func Active() *Catalog {
 		return Default()
 	}
 	return active.clone()
-}
-
-// baselineSpec converts resolved capabilities to a spec, for Export.
-func baselineSpec(c types.ModelCapabilities) ModelSpec {
-	return entrySpec(Entry{Caps: c})
 }

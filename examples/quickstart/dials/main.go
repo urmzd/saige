@@ -19,11 +19,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{}, agent.WithPreset(bundle),
+	a, err := agent.New(agent.Config{}, agent.WithPreset(bundle),
 		agent.WithDials(types.Dials{Creativity: new(types.CreativityFocused), Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}))
-	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("Is 2^61 - 1 prime? Answer yes or no.")}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Is 2^61 - 1 prime? Answer yes or no."))}))
 	if err != nil {
 		log.Fatal(err)
 	}

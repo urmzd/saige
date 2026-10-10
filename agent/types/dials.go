@@ -40,11 +40,18 @@ type Dials struct {
 	// only. It selects the prompt cache mode the catalog row declares, so it
 	// takes effect only in the layers a provider is built from.
 	Cache *bool `json:"cache,omitempty"`
+	// Modality says what may be done with a part the serving model cannot
+	// take natively. Contractual: a part no permitted action can serve
+	// rejects the attempt. It never compiles to a vendor parameter; the
+	// conversion planner reads it per attempt (see ModalityDial). Layers
+	// merge it per modality.
+	Modality *ModalityDial `json:"modality,omitempty"`
 }
 
 // Creativity is a sampling intent.
 type Creativity string
 
+// Creativity levels.
 const (
 	CreativityDeterministic Creativity = "deterministic"
 	CreativityFocused       Creativity = "focused"
@@ -58,6 +65,7 @@ var creativityOrder = []Creativity{CreativityDeterministic, CreativityFocused, C
 // ReasoningMode says whether the model reasons.
 type ReasoningMode string
 
+// Reasoning modes.
 const (
 	ReasoningOff      ReasoningMode = "off"
 	ReasoningAdaptive ReasoningMode = "adaptive" // the model decides how much
@@ -67,6 +75,7 @@ const (
 // Depth is how much the model reasons when reasoning is on.
 type Depth string
 
+// Reasoning depths.
 const (
 	DepthMinimal Depth = "minimal"
 	DepthLow     Depth = "low"
@@ -107,6 +116,7 @@ func (r ReasoningDial) String() string {
 // DialName names one dial.
 type DialName string
 
+// Dial names.
 const (
 	DialCreativity   DialName = "creativity"
 	DialReasoning    DialName = "reasoning"
@@ -115,6 +125,10 @@ const (
 	DialParallel     DialName = "parallel"
 	DialReproducible DialName = "reproducible"
 	DialCache        DialName = "cache"
+	// DialModality is the modality conversion dial. It is not among
+	// AllDialNames: it compiles to a conversion plan, not to request
+	// options, and a DialPolicy cannot loosen it.
+	DialModality DialName = "modality"
 )
 
 // AllDialNames lists every dial in canonical order.
@@ -127,11 +141,11 @@ func AllDialNames() []DialName {
 type DialClass string
 
 const (
-	// DialAdvisory: mapped to the nearest declared value, or dropped.
+	// DialAdvisory means mapped to the nearest declared value, or dropped.
 	DialAdvisory DialClass = "advisory"
-	// DialClamp: lowered to the model's limit, never raised.
+	// DialClamp means lowered to the model's limit, never raised.
 	DialClamp DialClass = "clamp"
-	// DialContractual: rejected with ErrInvalidModelConfig.
+	// DialContractual means rejected with ErrInvalidModelConfig.
 	DialContractual DialClass = "contractual"
 )
 
@@ -154,7 +168,7 @@ func (n DialName) Class(d Dials) DialClass {
 // IsZero reports whether no dial is set.
 func (d Dials) IsZero() bool {
 	return d.Creativity == nil && d.Reasoning == nil && d.MaxOutput == nil && d.Tools == nil &&
-		d.Parallel == nil && d.Seed == nil && d.Cache == nil
+		d.Parallel == nil && d.Seed == nil && d.Cache == nil && d.Modality == nil
 }
 
 // Names returns the names of the dials set in d, in canonical order.
@@ -197,6 +211,13 @@ func (d Dials) Merge(over Dials) Dials {
 	if over.Cache != nil {
 		out.Cache = over.Cache
 	}
+	if over.Modality != nil {
+		m := over.Modality.Clone()
+		if out.Modality != nil {
+			m = out.Modality.Merge(*over.Modality)
+		}
+		out.Modality = &m
+	}
 	return out
 }
 
@@ -219,6 +240,8 @@ func (d Dials) Without(names ...DialName) Dials {
 			out.Seed = nil
 		case DialCache:
 			out.Cache = nil
+		case DialModality:
+			out.Modality = nil
 		}
 	}
 	return out
@@ -227,7 +250,16 @@ func (d Dials) Without(names ...DialName) Dials {
 // Clone returns a deep copy.
 func (d Dials) Clone() Dials {
 	return Dials{Creativity: clonePtr(d.Creativity), Reasoning: clonePtr(d.Reasoning), MaxOutput: clonePtr(d.MaxOutput),
-		Tools: clonePtr(d.Tools), Parallel: clonePtr(d.Parallel), Seed: clonePtr(d.Seed), Cache: clonePtr(d.Cache)}
+		Tools: clonePtr(d.Tools), Parallel: clonePtr(d.Parallel), Seed: clonePtr(d.Seed), Cache: clonePtr(d.Cache),
+		Modality: cloneModality(d.Modality)}
+}
+
+func cloneModality(m *ModalityDial) *ModalityDial {
+	if m == nil {
+		return nil
+	}
+	c := m.Clone()
+	return &c
 }
 
 // Validate checks the dial values themselves, independently of any model.
@@ -262,6 +294,11 @@ func (d Dials) Validate() error {
 	if d.Tools != nil {
 		if err := d.Tools.Validate(nil); err != nil {
 			return err
+		}
+	}
+	if d.Modality != nil {
+		if err := d.Modality.Validate(); err != nil {
+			return bad(DialModality, "%s", err.Error())
 		}
 	}
 	return nil
@@ -426,18 +463,19 @@ type DialSurfaceReporter interface {
 // DialAction is what happened to one dial.
 type DialAction string
 
+// What happened to a requested dial.
 const (
 	DialApplied DialAction = "applied"
-	// DialMapped: a different value than requested was sent, the nearest the
+	// DialMapped means a different value than requested was sent, the nearest the
 	// model declares, or the requested value lowered to a limit.
 	DialMapped DialAction = "mapped"
-	// DialDropped: nothing was sent for the dial.
+	// DialDropped means nothing was sent for the dial.
 	DialDropped DialAction = "dropped"
-	// DialRejected: the attempt failed with ErrInvalidModelConfig.
+	// DialRejected means the attempt failed with ErrInvalidModelConfig.
 	DialRejected DialAction = "rejected"
-	// DialRawOverride: a raw option set the same parameter and won.
+	// DialRawOverride means a raw option set the same parameter and won.
 	DialRawOverride DialAction = "raw_override"
-	// DialDeferred: the change waits for the next user turn.
+	// DialDeferred means the change waits for the next user turn.
 	DialDeferred DialAction = "deferred"
 )
 
@@ -553,10 +591,46 @@ func optionsHash(o RequestOptions) string {
 
 // HasDials reports whether o carries dials to compile.
 func (o RequestOptions) HasDials() bool {
-	if !o.Dials.IsZero() {
+	if o.Dials.compiles() {
 		return true
 	}
-	return slices.ContainsFunc(o.DialLayers, func(l DialLayer) bool { return !l.Dials.IsZero() })
+	return slices.ContainsFunc(o.DialLayers, func(l DialLayer) bool { return l.Dials.compiles() })
+}
+
+// compiles reports whether d sets a dial that compiles to request options:
+// any dial but Modality, which the conversion planner reads instead.
+func (d Dials) compiles() bool {
+	return !d.Without(DialModality).IsZero()
+}
+
+// ModalityLayers returns the layers of o that set the modality dial, in
+// precedence order, with every other dial cleared: DialLayers, then Dials
+// at request scope.
+func (o RequestOptions) ModalityLayers() []DialLayer {
+	var out []DialLayer
+	for _, l := range o.Layers() {
+		if l.Dials.Modality != nil {
+			out = append(out, DialLayer{Scope: l.Scope, Dials: Dials{Modality: cloneModality(l.Dials.Modality)}})
+		}
+	}
+	return out
+}
+
+// WithoutModality returns o with the modality dial cleared from its dials
+// and layers, and layers left empty removed. It is what reaches an adapter:
+// the modality dial is spent before the request is sent.
+func (o RequestOptions) WithoutModality() RequestOptions {
+	out := o.Clone()
+	out.Dials.Modality = nil
+	var layers []DialLayer
+	for _, l := range out.DialLayers {
+		l.Dials.Modality = nil
+		if !l.Dials.IsZero() || l.Hold != nil {
+			layers = append(layers, l)
+		}
+	}
+	out.DialLayers = layers
+	return out
 }
 
 // Layers returns o's dial layers in precedence order: DialLayers, then

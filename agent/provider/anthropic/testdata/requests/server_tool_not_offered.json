@@ -1,0 +1,31 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "where is go",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Go is at go.dev.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "thanks",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

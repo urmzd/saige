@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -45,15 +46,30 @@ type overflowState struct {
 	// last rejected because it would split a tool call from its result. The
 	// same history is not tried again until new nodes are added.
 	discardedTip types.NodeID
+	// offering is what the active provider serves, so the local estimate
+	// prices media by its token rules. Nil prices media flat.
+	offering *types.Offering
 }
 
 // turnSucceeded records a completed provider call and starts a new turn.
 func (s *overflowState) turnSucceeded(usage *types.UsageDelta) {
 	s.retries, s.original, s.compacted = 0, nil, false
 	s.pressure, s.pressureSize, s.pressureRounds = false, 0, 0
-	if usage != nil && usage.PromptTokens > 0 {
+	// A turn served by several requests (a continued server tool turn)
+	// reports their prompts summed, which is not the size of the history:
+	// the local estimate measures it instead.
+	if usage != nil && usage.PromptTokens > 0 && usage.Requests <= 1 {
 		s.lastPromptTokens = usage.PromptTokens
 	}
+}
+
+// target records the offering of the provider the next turn goes to.
+func (s *overflowState) target(p types.Provider) {
+	if o, ok := convert.Target(p); ok {
+		s.offering = &o
+		return
+	}
+	s.offering = nil
 }
 
 // canCompact reports whether the current turn may be compacted before it is
@@ -62,10 +78,14 @@ func (s *overflowState) canCompact() bool {
 	return !s.compacted || s.pressure
 }
 
-// tokenizer returns the configured tokenizer or the local estimator.
-func (a *Agent) tokenizer() types.Tokenizer {
+// tokenizer returns the configured tokenizer or the local estimator, which
+// prices media by the token rules of the offering st records.
+func (a *Agent) tokenizer(st *overflowState) types.Tokenizer {
 	if a.cfg.Tokenizer != nil {
 		return a.cfg.Tokenizer
+	}
+	if st != nil {
+		return types.EstimatingTokenizer{Offering: st.offering}
 	}
 	return types.EstimatingTokenizer{}
 }
@@ -76,7 +96,7 @@ func (a *Agent) tokenizer() types.Tokenizer {
 // turn, before any report exists.
 func (a *Agent) inputSize(ctx context.Context, st *overflowState, messages []types.Message) int {
 	size := st.lastPromptTokens
-	if n, err := a.tokenizer().CountTokens(ctx, messages); err != nil {
+	if n, err := a.tokenizer(st).CountTokens(ctx, messages); err != nil {
 		a.cfg.Logger.Warn("token count failed, using the last reported input size", "agent", a.cfg.Name, "error", err)
 	} else {
 		size = max(size, n)
@@ -91,6 +111,7 @@ func (a *Agent) inputSize(ctx context.Context, st *overflowState, messages []typ
 // again until it fits, until a compaction no longer shrinks it, or until
 // maxPressureCompactions. A non-nil error ends the run.
 func (a *Agent) compactIfNeeded(ctx context.Context, stream *EventStream, st *overflowState, resolved resolvedConfig, active activeContext, tr *tree.Tree, branch types.BranchID) (types.BranchID, bool, error) {
+	st.target(active.provider)
 	cfg := resolved.compactCfg
 	if cfg == nil || cfg.MaxInputTokens <= 0 {
 		if resolved.compactor == nil {
@@ -162,11 +183,11 @@ func (a *Agent) recoverOverflow(ctx context.Context, stream *EventStream, st *ov
 }
 
 // runCompaction compacts the branch. Summaries are written by the
-// compaction provider: AgentConfig.CompactProvider, else the active provider
+// compaction provider: Config.CompactProvider, else the active provider
 // switched to CompactConfig.SummaryModel, else the active provider. Every
 // summary call is admitted by the budget before it is sent and settled
 // afterwards, like a turn. It reports the new branch when the history
-// changed, after writing a CompactionContent record onto it and streaming a
+// changed, after writing a CompactionPart record onto it and streaming a
 // CompactionDelta. A failed compaction leaves the branch as it was and is
 // logged, not fatal; only a budget refusal or stop ends the run.
 func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *overflowState, resolved resolvedConfig, active activeContext, tr *tree.Tree, branch types.BranchID, trigger types.CompactionTrigger) (types.BranchID, bool, error) {
@@ -175,6 +196,7 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 			return "", false, err
 		}
 	}
+	st.target(active.provider)
 	force := trigger == types.CompactionTriggerRequested || trigger == types.CompactionTriggerContextLength
 	if skip, err := a.beforeCompactionHooks(ctx, stream, force, len(active.messages)); err != nil || skip {
 		return "", false, err
@@ -183,7 +205,7 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 	meter := &meteredProvider{Provider: summarizer, agent: a, stream: stream, step: fmt.Sprintf("compact-%s", branch)}
 	var (
 		newBranch types.BranchID
-		rec       *types.CompactionContent
+		rec       *types.CompactionPart
 		compacted bool
 	)
 	defer func() {
@@ -196,7 +218,7 @@ func (a *Agent) runCompaction(ctx context.Context, stream *EventStream, st *over
 	case usesTreeCompaction(resolved.compactCfg, force):
 		newBranch, rec = a.treeCompact(ctx, st, tr, branch, meter, resolved.compactCfg.MaxInputTokens, force)
 	case resolved.compactor != nil:
-		newBranch, rec = a.compactBranch(ctx, tr, branch, types.AsStrategy(resolved.compactor), meter, resolved.compactCfg, trigger)
+		newBranch, rec = a.compactBranch(ctx, st, tr, branch, types.AsStrategy(resolved.compactor), meter, resolved.compactCfg, trigger)
 	}
 	calls, budgetErr := meter.result()
 	for i := range calls {
@@ -227,15 +249,19 @@ func (a *Agent) compactionProvider(active activeContext, cfg *types.CompactConfi
 		return a.cfg.CompactProvider
 	}
 	if cfg != nil && cfg.SummaryModel != "" {
-		return a.applyModel(activeContext{provider: active.provider}, cfg.SummaryModel).provider
+		// A summary model the provider cannot serve falls back to the active
+		// provider: compaction must not fail the turn.
+		if ac, err := a.applyTarget(activeContext{provider: active.provider}, types.ModelTarget(types.ModelID(cfg.SummaryModel))); err == nil {
+			return ac.provider
+		}
 	}
 	return active.provider
 }
 
 // recordCompaction writes rec onto the branch compaction created and
 // streams it.
-func (a *Agent) recordCompaction(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, rec types.CompactionContent) error {
-	node, err := a.appendNode(ctx, tr, branch, types.SystemMessage{Content: []types.SystemContent{rec}})
+func (a *Agent) recordCompaction(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, rec types.CompactionPart) error {
+	node, err := a.appendNode(ctx, tr, branch, types.SystemMessage{Parts: []types.SystemPart{rec}})
 	if err != nil {
 		return err
 	}
@@ -266,7 +292,7 @@ func usesTreeCompaction(cfg *types.CompactConfig, force bool) bool {
 // from its result costs nothing and is not retried on the same history. It
 // returns the new branch and a record of the compaction, or nil when the
 // branch was left as it was.
-func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tree, branch types.BranchID, provider types.Provider, limit int, force bool) (types.BranchID, *types.CompactionContent) {
+func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tree, branch types.BranchID, provider types.Provider, limit int, force bool) (types.BranchID, *types.CompactionPart) {
 	log := a.cfg.Logger
 	tip, err := tr.Tip(branch)
 	if err != nil {
@@ -290,7 +316,7 @@ func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tre
 	if force {
 		limit, observed = 0, 0
 	}
-	tok := pressureTokenizer{base: a.tokenizer(), observed: observed}
+	tok := pressureTokenizer{base: a.tokenizer(st), observed: observed}
 	newBranch, err := tr.Compact(ctx, branch, provider, tok, tree.CompactOpts{MaxTokens: limit, PreserveShared: true})
 	if err != nil {
 		log.Warn("compaction failed, continuing with full history", "agent", a.cfg.Name, "error", err)
@@ -312,7 +338,7 @@ func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tre
 	a.persistBranch(ctx, tr, newBranch)
 	log.Debug("compacted to new branch", "agent", a.cfg.Name, "branch", newBranch)
 
-	rec := &types.CompactionContent{Strategy: string(types.CompactSummarize), Steps: []string{string(types.CompactSummarize)}}
+	rec := &types.CompactionPart{Strategy: string(types.CompactSummarize), Steps: []string{string(types.CompactSummarize)}}
 	after, err := visibleHistory(tr, newBranch)
 	if err == nil {
 		summarized := map[types.NodeID]bool{}
@@ -331,9 +357,9 @@ func (a *Agent) treeCompact(ctx context.Context, st *overflowState, tr *tree.Tre
 				rec.Kept = append(rec.Kept, n.ID)
 			}
 		}
-		rec.TokensAfter = a.countTokens(ctx, after.messages)
+		rec.TokensAfter = a.countTokens(ctx, st, after.messages)
 	}
-	rec.TokensBefore = a.countTokens(ctx, before.messages)
+	rec.TokensBefore = a.countTokens(ctx, st, before.messages)
 	return newBranch, rec
 }
 
@@ -382,36 +408,36 @@ func stripMetadata(m types.Message) (types.Message, bool) {
 	switch v := m.(type) {
 	case types.SystemMessage:
 		out := types.SystemMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	case types.UserMessage:
 		out := types.UserMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	case types.AssistantMessage:
 		out := types.AssistantMessage{}
-		for _, c := range v.Content {
-			if !types.IsMetadataContent(c) {
-				out.Content = append(out.Content, c)
+		for _, c := range v.Parts {
+			if !types.IsMetadata(c) {
+				out.Parts = append(out.Parts, c)
 			}
 		}
-		return out, len(out.Content) > 0
+		return out, len(out.Parts) > 0
 	}
 	return m, true
 }
 
 // countTokens measures messages with the agent's tokenizer, or 0 when it
 // fails.
-func (a *Agent) countTokens(ctx context.Context, messages []types.Message) int {
-	n, err := a.tokenizer().CountTokens(ctx, messages)
+func (a *Agent) countTokens(ctx context.Context, st *overflowState, messages []types.Message) int {
+	n, err := a.tokenizer(st).CountTokens(ctx, messages)
 	if err != nil {
 		return 0
 	}
@@ -427,8 +453,8 @@ func compactionQuery(messages []types.Message) string {
 			continue
 		}
 		var parts []string
-		for _, c := range um.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range um.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				parts = append(parts, tc.Text)
 			}
 		}
@@ -443,7 +469,7 @@ func compactionQuery(messages []types.Message) string {
 // moves the run onto a new branch holding its output. Messages kept
 // verbatim are copied with their metadata. It returns nil when the strategy
 // failed, changed nothing, or would separate a tool call from its result.
-func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.BranchID, strategy types.CompactionStrategy, provider types.Provider, cfg *types.CompactConfig, trigger types.CompactionTrigger) (types.BranchID, *types.CompactionContent) {
+func (a *Agent) compactBranch(ctx context.Context, st *overflowState, tr *tree.Tree, branch types.BranchID, strategy types.CompactionStrategy, provider types.Provider, cfg *types.CompactConfig, trigger types.CompactionTrigger) (types.BranchID, *types.CompactionPart) {
 	log := a.cfg.Logger
 	hist, err := visibleHistory(tr, branch)
 	if err != nil {
@@ -464,7 +490,7 @@ func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.B
 		Query:     compactionQuery(hist.messages),
 		Target:    target,
 		Force:     trigger != types.CompactionTriggerRule,
-		Tokenizer: a.tokenizer(),
+		Tokenizer: a.tokenizer(st),
 		Provider:  provider,
 	})
 	if err != nil {
@@ -498,11 +524,11 @@ func (a *Agent) compactBranch(ctx context.Context, tr *tree.Tree, branch types.B
 	}
 	a.persistBranch(ctx, tr, newBranch)
 
-	rec := &types.CompactionContent{
+	rec := &types.CompactionPart{
 		Strategy:     strategy.Name(),
 		Steps:        res.Steps,
-		TokensBefore: a.countTokens(ctx, hist.messages),
-		TokensAfter:  a.countTokens(ctx, types.EntryMessages(res.Entries)),
+		TokensBefore: a.countTokens(ctx, st, hist.messages),
+		TokensAfter:  a.countTokens(ctx, st, types.EntryMessages(res.Entries)),
 	}
 	for _, e := range res.Entries {
 		if e.Index < 0 {
@@ -681,14 +707,14 @@ type meteredProvider struct {
 	err   error
 }
 
-func (m *meteredProvider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (m *meteredProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
 	settle := func(usage *types.UsageDelta, _ bool) (*types.UsageDelta, error) { return usage, nil }
 	if m.agent != nil && m.agent.cfg.Budget != nil {
 		m.mu.Lock()
 		m.n++
 		step := fmt.Sprintf("%s-%d", m.step, m.n)
 		m.mu.Unlock()
-		reservation, pricing, err := m.agent.reserveProviderCall(ctx, m.stream, m.Provider, step)
+		reservation, pricing, err := m.agent.reserveProviderCall(ctx, m.stream, m.Provider, step, types.ConversionEstimate{})
 		if err != nil {
 			m.fail(err)
 			return nil, err
@@ -698,7 +724,7 @@ func (m *meteredProvider) ChatStream(ctx context.Context, messages []types.Messa
 			return settled, err
 		}
 	}
-	rx, err := m.Provider.ChatStream(ctx, messages, tools)
+	rx, err := m.Provider.Stream(ctx, req)
 	if err != nil {
 		m.finish(settle(nil, true))
 		return nil, err

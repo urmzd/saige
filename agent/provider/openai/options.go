@@ -1,30 +1,8 @@
 package openai
 
-import (
-	"context"
-
-	"github.com/urmzd/saige/agent/types"
-)
+import "github.com/urmzd/saige/agent/types"
 
 var _ types.OptionsProvider = (*Adapter)(nil)
-
-// ChatStreamWithOptions implements types.OptionsProvider. Each option set in
-// opts overrides the adapter's configured value for this call only; unset
-// options keep the configured ones. The tool choice maps to OpenAI's
-// tool_choice: auto, none, required, or a named function. Options the model
-// does not declare, and options this adapter cannot send (top_k, a reasoning
-// toggle or budget), fail before any network I/O with an error matching
-// types.ErrInvalidModelConfig.
-func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	c, err := a.withRequestOptions(opts.Raw())
-	if err != nil {
-		return nil, err
-	}
-	if c, err = c.compileDials(opts, tools, false, types.SurfaceChat); err != nil {
-		return nil, err
-	}
-	return c.chatStream(ctx, messages, tools, nil)
-}
 
 // withRequestOptions returns a copy of the adapter with opts applied.
 func (a *Adapter) withRequestOptions(o types.RequestOptions) (*Adapter, error) {

@@ -59,11 +59,11 @@ func TestToolChoiceWire(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash", opts...)
+			a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(bodies) != 0 {
 					t.Fatalf("err = %v, requests = %d; want a local configuration error", err, len(bodies))
@@ -92,13 +92,13 @@ func TestToolChoiceWire(t *testing.T) {
 func TestPenaltiesAreSentAndValidated(t *testing.T) {
 	var bodies []map[string]any
 	half := float32(0.5)
-	a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash",
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
 		WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}),
 		WithGenerationConfig(GenerationConfig{FrequencyPenalty: &half, PresencePenalty: &half}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +110,9 @@ func TestPenaltiesAreSentAndValidated(t *testing.T) {
 	}
 
 	tooHigh := float32(3)
-	if _, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash",
-		WithGenerationConfig(GenerationConfig{FrequencyPenalty: &tooHigh})); !errors.Is(err, types.ErrInvalidModelConfig) {
+	_, err = New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+		WithGenerationConfig(GenerationConfig{FrequencyPenalty: &tooHigh}))
+	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("err = %v, want an out-of-range rejection", err)
 	}
 }
@@ -124,27 +125,30 @@ func TestServerToolDeltas(t *testing.T) {
 		`{"candidates":[{"content":{"role":"model","parts":[{"text":"answer"}]},"groundingMetadata":{"webSearchQueries":["go generics"],"groundingChunks":[{"web":{"uri":"https://go.dev/doc","title":"Docs"}}]}}]}`,
 		`{"candidates":[{"content":{"role":"model","parts":[{"text":"."}]},"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["go generics"],"groundingChunks":[{"web":{"uri":"https://go.dev/doc","title":"Docs"}}]}}]}`,
 	}
-	a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash",
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
 		WithServerTools(types.ServerTool{Kind: types.ServerToolCodeExecution}, types.ServerTool{Kind: types.ServerToolWebSearch}),
 		WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var calls []types.ServerToolCallDelta
-	var results []types.ServerToolResultDelta
+	var calls []types.ServerToolCallPart
+	var results []types.ServerToolResultPart
 	var citations int
 	for d := range ch {
 		switch v := d.(type) {
-		case types.ServerToolCallDelta:
-			calls = append(calls, v)
-		case types.ServerToolResultDelta:
-			results = append(results, v)
-		case types.CitationDelta:
-			citations++
+		case types.PartEnd:
+			switch p := v.Part.(type) {
+			case types.ServerToolCallPart:
+				calls = append(calls, p)
+			case types.ServerToolResultPart:
+				results = append(results, p)
+			case types.CitationPart:
+				citations++
+			}
 		case types.ErrorDelta:
 			t.Fatal(v.Error)
 		}
@@ -163,7 +167,7 @@ func TestServerToolDeltas(t *testing.T) {
 		{types.ServerToolWebSearch, "", "Docs https://go.dev/doc", false},
 	} {
 		c, r := calls[i], results[i]
-		if c.ID == "" || c.ID != r.ID || c.Kind != tc.kind || r.Kind != tc.kind {
+		if c.ID == "" || c.ID != r.CallID || c.ToolKind != tc.kind || r.ToolKind != tc.kind {
 			t.Errorf("pair %d: call %+v, result %+v", i, c, r)
 		}
 		if tc.input != "" && (c.Input["code"] != tc.input || c.Input["language"] != "PYTHON") {
@@ -193,7 +197,7 @@ func TestListModels(t *testing.T) {
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body:   io.NopCloser(strings.NewReader(body))}, nil
 	})
-	a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash", WithHTTPClient(&http.Client{Transport: transport}))
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: transport}))
 	if err != nil {
 		t.Fatal(err)
 	}

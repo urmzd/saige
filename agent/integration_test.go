@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/store/memwal"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // ===================================================================
@@ -23,11 +24,11 @@ type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (m *mockProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: m.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: m.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -51,7 +52,7 @@ type toolCallProvider struct {
 	response string
 }
 
-func (p *toolCallProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *toolCallProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -59,13 +60,13 @@ func (p *toolCallProvider) ChatStream(_ context.Context, _ []types.Message, _ []
 
 	ch := make(chan types.Delta, 10)
 	if call == 0 {
-		ch <- types.ToolCallStartDelta{ID: p.toolID, Name: p.toolName}
-		ch <- types.ToolCallArgumentDelta{Content: `{"key":"value"}`}
-		ch <- types.ToolCallEndDelta{Arguments: p.toolArgs}
+		ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: p.toolID, Name: p.toolName}
+		ch <- types.PartDelta{Index: 0, Args: `{"key":"value"}`}
+		ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: p.toolID, Name: p.toolName, Arguments: p.toolArgs}}
 	} else {
-		ch <- types.TextStartDelta{}
-		ch <- types.TextContentDelta{Content: p.response}
-		ch <- types.TextEndDelta{}
+		ch <- types.PartStart{Index: 1, Kind: types.KindText}
+		ch <- types.PartDelta{Index: 1, Text: p.response}
+		ch <- types.PartEnd{Index: 1}
 	}
 	close(ch)
 	return ch, nil
@@ -83,7 +84,7 @@ type multiToolCallProvider struct {
 	response string
 }
 
-func (p *multiToolCallProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *multiToolCallProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -91,14 +92,14 @@ func (p *multiToolCallProvider) ChatStream(_ context.Context, _ []types.Message,
 
 	ch := make(chan types.Delta, 20)
 	if call == 0 {
-		for _, tc := range p.toolCalls {
-			ch <- types.ToolCallStartDelta{ID: tc.ID, Name: tc.Name}
-			ch <- types.ToolCallEndDelta{Arguments: tc.Args}
+		for i, tc := range p.toolCalls {
+			ch <- types.PartStart{Index: i, Kind: types.KindToolCall, ID: tc.ID, Name: tc.Name}
+			ch <- types.PartEnd{Index: i, Part: types.ToolCallPart{ID: tc.ID, Name: tc.Name, Arguments: tc.Args}}
 		}
 	} else {
-		ch <- types.TextStartDelta{}
-		ch <- types.TextContentDelta{Content: p.response}
-		ch <- types.TextEndDelta{}
+		ch <- types.PartStart{Index: 0, Kind: types.KindText}
+		ch <- types.PartDelta{Index: 0, Text: p.response}
+		ch <- types.PartEnd{Index: 0}
 	}
 	close(ch)
 	return ch, nil
@@ -113,7 +114,7 @@ type multiTurnToolProvider struct {
 	finalMessage string
 }
 
-func (p *multiTurnToolProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *multiTurnToolProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -122,23 +123,23 @@ func (p *multiTurnToolProvider) ChatStream(_ context.Context, _ []types.Message,
 	ch := make(chan types.Delta, 10)
 	if call < p.toolTurns {
 		id := fmt.Sprintf("call-%d", call)
-		ch <- types.ToolCallStartDelta{ID: id, Name: p.toolName}
-		ch <- types.ToolCallEndDelta{Arguments: map[string]any{"step": float64(call)}}
+		ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: id, Name: p.toolName}
+		ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: id, Name: p.toolName, Arguments: map[string]any{"step": float64(call)}}}
 	} else {
-		ch <- types.TextStartDelta{}
-		ch <- types.TextContentDelta{Content: p.finalMessage}
-		ch <- types.TextEndDelta{}
+		ch <- types.PartStart{Index: 1, Kind: types.KindText}
+		ch <- types.PartDelta{Index: 1, Text: p.finalMessage}
+		ch <- types.PartEnd{Index: 1}
 	}
 	close(ch)
 	return ch, nil
 }
 
-// errorProvider always returns an error from ChatStream.
+// errorProvider always returns an error from Stream.
 type errorProvider struct {
 	err error
 }
 
-func (p *errorProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *errorProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return nil, &types.ProviderError{
 		Provider: "error-mock",
 		Kind:     types.ErrorKindPermanent,
@@ -149,7 +150,7 @@ func (p *errorProvider) ChatStream(_ context.Context, _ []types.Message, _ []typ
 // emptyProvider returns an empty channel (no deltas).
 type emptyProvider struct{}
 
-func (p *emptyProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *emptyProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
@@ -162,7 +163,8 @@ type recordingProvider struct {
 	response string
 }
 
-func (p *recordingProvider) ChatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *recordingProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs := req.Messages
 	p.mu.Lock()
 	copied := make([]types.Message, len(msgs))
 	copy(copied, msgs)
@@ -170,9 +172,9 @@ func (p *recordingProvider) ChatStream(_ context.Context, msgs []types.Message, 
 	p.mu.Unlock()
 
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: p.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: p.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -183,15 +185,15 @@ type delayedProvider struct {
 	response string
 }
 
-func (p *delayedProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *delayedProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 10)
 	go func() {
 		defer close(ch)
 		select {
 		case <-p.ready:
-			ch <- types.TextStartDelta{}
-			ch <- types.TextContentDelta{Content: p.response}
-			ch <- types.TextEndDelta{}
+			ch <- types.PartStart{Index: 0, Kind: types.KindText}
+			ch <- types.PartDelta{Index: 0, Text: p.response}
+			ch <- types.PartEnd{Index: 0}
 		case <-ctx.Done():
 		}
 	}()
@@ -205,7 +207,7 @@ type sequenceProvider struct {
 	responses []func(ch chan<- types.Delta)
 }
 
-func (p *sequenceProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *sequenceProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.mu.Lock()
 	idx := p.calls
 	p.calls++
@@ -244,11 +246,50 @@ func collectDeltasByType[T types.Delta](deltas []types.Delta) []T {
 func textFromDeltas(deltas []types.Delta) string {
 	var sb strings.Builder
 	for _, d := range deltas {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			sb.WriteString(tc.Content)
+		if tc, ok := d.(types.PartDelta); ok {
+			sb.WriteString(tc.Text)
 		}
 	}
 	return sb.String()
+}
+
+// partStarts returns the top-level part starts of the given kind.
+func partStarts(deltas []types.Delta, kind types.PartKind) []types.PartStart {
+	var out []types.PartStart
+	for _, d := range deltas {
+		if s, ok := d.(types.PartStart); ok && s.Kind == kind {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// partEnds returns the top-level part ends of parts of the given kind.
+func partEnds(deltas []types.Delta, kind types.PartKind) []types.PartEnd {
+	kinds := map[int]types.PartKind{}
+	var out []types.PartEnd
+	for _, d := range deltas {
+		switch v := d.(type) {
+		case types.PartStart:
+			kinds[v.Index] = v.Kind
+		case types.PartEnd:
+			if kinds[v.Index] == kind {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// textChunks returns the top-level text fragments, in order.
+func textChunks(deltas []types.Delta) []string {
+	var out []string
+	for _, d := range deltas {
+		if v, ok := d.(types.PartDelta); ok && v.Text != "" {
+			out = append(out, v.Text)
+		}
+	}
+	return out
 }
 
 // ===================================================================
@@ -257,31 +298,31 @@ func textFromDeltas(deltas []types.Delta) string {
 
 func TestAgentTextOnlyResponse(t *testing.T) {
 	provider := &mockProvider{response: "Hello, world!"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "You are a helper.",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should contain TextStart, TextContent, TextEnd, Done
-	starts := collectDeltasByType[types.TextStartDelta](deltas)
-	contents := collectDeltasByType[types.TextContentDelta](deltas)
-	ends := collectDeltasByType[types.TextEndDelta](deltas)
+	// Should contain a text part's start, content and end, then Done
+	starts := partStarts(deltas, types.KindText)
+	contents := textChunks(deltas)
+	ends := partEnds(deltas, types.KindText)
 	dones := collectDeltasByType[types.DoneDelta](deltas)
 
 	if len(starts) != 1 {
-		t.Errorf("TextStartDelta count = %d, want 1", len(starts))
+		t.Errorf("text start count = %d, want 1", len(starts))
 	}
-	if len(contents) != 1 || contents[0].Content != "Hello, world!" {
-		t.Errorf("TextContentDelta = %v, want 'Hello, world!'", contents)
+	if len(contents) != 1 || contents[0] != "Hello, world!" {
+		t.Errorf("text = %v, want 'Hello, world!'", contents)
 	}
 	if len(ends) != 1 {
-		t.Errorf("TextEndDelta count = %d, want 1", len(ends))
+		t.Errorf("text end count = %d, want 1", len(ends))
 	}
 	if len(dones) != 1 {
 		t.Errorf("DoneDelta count = %d, want 1", len(dones))
@@ -303,13 +344,13 @@ func TestAgentSingleToolCall(t *testing.T) {
 		response: "Done!",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("greet me")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet me"))})
 	deltas := collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -395,13 +436,13 @@ func TestAgentMultipleToolCallsInParallel(t *testing.T) {
 		response: "Both done.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(toolA, toolB),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("do both")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do both"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -428,8 +469,8 @@ func TestAgentMultipleToolCallsInParallel(t *testing.T) {
 	if !ok {
 		t.Fatal("msgs[3] not SystemMessage")
 	}
-	if len(sysMsg.Content) != 2 {
-		t.Errorf("tool result content blocks = %d, want 2", len(sysMsg.Content))
+	if len(sysMsg.Parts) != 2 {
+		t.Errorf("tool result content blocks = %d, want 2", len(sysMsg.Parts))
 	}
 }
 
@@ -441,12 +482,12 @@ func TestAgentToolNotFound(t *testing.T) {
 		response: "After error",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("call it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("call it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -461,12 +502,12 @@ func TestAgentToolNotFound(t *testing.T) {
 	// The error should be persisted as a tool result with IsError flag
 	msgs, _ := agent.Tree().FlattenBranch("main")
 	sysMsg := msgs[3].(types.SystemMessage)
-	tr := sysMsg.Content[0].(types.ToolResultContent)
+	tr := sysMsg.Parts[0].(types.ToolResultPart)
 	if !tr.IsError {
 		t.Error("expected IsError to be true for tool-not-found result")
 	}
-	if !strings.Contains(tr.Text, "tool not found") {
-		t.Errorf("tool result text = %q, expected 'tool not found' message", tr.Text)
+	if !strings.Contains(tr.Text(), "tool not found") {
+		t.Errorf("tool result text = %q, expected 'tool not found' message", tr.Text())
 	}
 }
 
@@ -485,13 +526,13 @@ func TestAgentToolReturnsError(t *testing.T) {
 		response: "After failure",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("do it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -523,13 +564,13 @@ func TestAgentMultiTurnToolLoop(t *testing.T) {
 		finalMessage: "All steps done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("multi-step")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("multi-step"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -557,8 +598,8 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 	for i := range infiniteToolProvider.responses {
 		infiniteToolProvider.responses[i] = func(ch chan<- types.Delta) {
 			id := fmt.Sprintf("call-%d", i)
-			ch <- types.ToolCallStartDelta{ID: id, Name: "repeat"}
-			ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+			ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: id, Name: "repeat"}
+			ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: id, Name: "repeat", Arguments: map[string]any{}}}
 		}
 	}
 
@@ -569,14 +610,14 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     infiniteToolProvider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
 		MaxIter:      3,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("loop")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("loop"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -591,10 +632,10 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 }
 
 func TestAgentDefaultMaxIter(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 	// Default MaxIter is 10
 	if agent.cfg.MaxIter != 10 {
 		t.Errorf("default MaxIter = %d, want 10", agent.cfg.MaxIter)
@@ -608,12 +649,12 @@ func TestAgentDefaultMaxIter(t *testing.T) {
 func TestAgentProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("connection refused")}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -629,12 +670,12 @@ func TestAgentProviderError(t *testing.T) {
 func TestAgentEmptyProviderResponse(t *testing.T) {
 	provider := &emptyProvider{}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -663,12 +704,12 @@ func TestAgentCancellation(t *testing.T) {
 		response: "never",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 
 	// Cancel the stream immediately
 	stream.Cancel()
@@ -695,12 +736,12 @@ func TestAgentContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Hi"))})
 
 	// Cancel via context
 	cancel()
@@ -721,12 +762,12 @@ func TestAgentContextCancellation(t *testing.T) {
 
 func TestStreamCancelIdempotent(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -751,7 +792,7 @@ func TestSubAgentDelegation(t *testing.T) {
 		response: "Parent done based on child.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		SubAgents: []SubAgentDef{
@@ -762,13 +803,13 @@ func TestSubAgentDelegation(t *testing.T) {
 				Provider:     childProvider,
 			},
 		},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("delegate")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
-	// Should see ToolExecDelta with inner TextContentDelta from child
+	// Should see ToolExecDelta with inner text from child
 	execDeltas := collectDeltasByType[types.ToolExecDelta](deltas)
 	if len(execDeltas) == 0 {
 		t.Fatal("expected ToolExecDelta from child agent")
@@ -777,7 +818,7 @@ func TestSubAgentDelegation(t *testing.T) {
 	// Check that child deltas were forwarded
 	foundChildText := false
 	for _, ed := range execDeltas {
-		if tc, ok := ed.Inner.(types.TextContentDelta); ok && tc.Content == "child result" {
+		if tc, ok := ed.Inner.(types.PartDelta); ok && tc.Text == "child result" {
 			foundChildText = true
 		}
 	}
@@ -793,13 +834,13 @@ func TestSubAgentDelegation(t *testing.T) {
 }
 
 func TestSubAgentRegisteredAsTool(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helps", Provider: &mockProvider{response: "ok"}},
 		},
-	})
+	}))
 
 	// Tool should be registered as delegate_to_helper
 	tool, found := agent.tools.Get("delegate_to_helper")
@@ -828,11 +869,11 @@ func TestSubAgentBlockingExecute(t *testing.T) {
 	sat := &subAgentTool{
 		def: types.ToolDef{Name: "test_sub", Description: "test"},
 		factory: func(_ context.Context, runner types.StepRunner, _ string) (*Agent, error) {
-			return NewAgent(AgentConfig{
+			return must.Get(New(Config{
 				Provider:     childProvider,
 				SystemPrompt: "child",
 				StepRunner:   runner,
-			}), nil
+			})), nil
 		},
 	}
 
@@ -865,7 +906,7 @@ func TestNestedSubAgents(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent",
 		SubAgents: []SubAgentDef{
@@ -884,9 +925,9 @@ func TestNestedSubAgents(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go deep")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go deep"))})
 	collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -903,13 +944,13 @@ func TestNestedSubAgents(t *testing.T) {
 func TestAgentWithNoopCompactor(t *testing.T) {
 	recording := &recordingProvider{response: "hi"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     recording,
 		SystemPrompt: "sys",
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactNone},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -928,25 +969,25 @@ func TestAgentWithSlidingWindowCompactor(t *testing.T) {
 	recording := &recordingProvider{response: "reply"}
 
 	// Build a tree with several messages already
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 	current := root
 	for i := 0; i < 10; i++ {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
+			msg = types.UserMsg(types.Text(fmt.Sprintf("user-%d", i)))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
 		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:   recording,
 		CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 3},
 		Tree:       tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{})
 	collectDeltas(stream)
@@ -967,9 +1008,9 @@ func TestAgentWithSlidingWindowCompactor(t *testing.T) {
 func TestSlidingWindowCompactorBelowWindow(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(5)
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, nil)
@@ -984,8 +1025,8 @@ func TestSlidingWindowCompactorBelowWindow(t *testing.T) {
 func TestSummarizeCompactorBelowThreshold(t *testing.T) {
 	compactor := types.NewSummarizeCompactor(10, 0)
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, nil)
@@ -1002,14 +1043,14 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 	compactor := types.NewSummarizeCompactor(3, 0)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
-		types.NewUserMessage("four"),
-		types.NewUserMessage("five"),
-		types.NewUserMessage("six"),
-		types.NewUserMessage("seven"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
+		types.UserMsg(types.Text("four")),
+		types.UserMsg(types.Text("five")),
+		types.UserMsg(types.Text("six")),
+		types.UserMsg(types.Text("seven")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -1035,7 +1076,7 @@ func TestSummarizeCompactorAboveThreshold(t *testing.T) {
 	if !ok {
 		t.Fatal("third message should be AssistantMessage (summary)")
 	}
-	tc, ok := am.Content[0].(types.TextContent)
+	tc, ok := am.Parts[0].(types.TextPart)
 	if !ok {
 		t.Fatal("summary content should be TextContent")
 	}
@@ -1051,14 +1092,14 @@ func TestSummarizeCompactorProviderError(t *testing.T) {
 	// Enough messages that the compactor actually reaches the provider
 	// (default KeepLast is 4, and at least 3 must be summarizable).
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
-		types.NewUserMessage("four"),
-		types.NewUserMessage("five"),
-		types.NewUserMessage("six"),
-		types.NewUserMessage("seven"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
+		types.UserMsg(types.Text("four")),
+		types.UserMsg(types.Text("five")),
+		types.UserMsg(types.Text("six")),
+		types.UserMsg(types.Text("seven")),
 	}
 
 	// Provider error should cause fallback to original messages
@@ -1074,13 +1115,13 @@ func TestSummarizeCompactorProviderError(t *testing.T) {
 func TestAgentCompactorErrorSilentlyIgnored(t *testing.T) {
 	recording := &recordingProvider{response: "hi"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     recording,
 		SystemPrompt: "sys",
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, Threshold: 2},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1100,20 +1141,20 @@ func TestAgentCompactorErrorSilentlyIgnored(t *testing.T) {
 
 func TestAggregatorTextOnly(t *testing.T) {
 	agg := NewDefaultAggregator()
-	agg.Push(types.TextStartDelta{})
-	agg.Push(types.TextContentDelta{Content: "Hello "})
-	agg.Push(types.TextContentDelta{Content: "World"})
-	agg.Push(types.TextEndDelta{})
+	agg.Push(types.PartStart{Index: 0, Kind: types.KindText})
+	agg.Push(types.PartDelta{Index: 0, Text: "Hello "})
+	agg.Push(types.PartDelta{Index: 0, Text: "World"})
+	agg.Push(types.PartEnd{Index: 0})
 
 	msg := agg.Message()
 	am, ok := msg.(types.AssistantMessage)
 	if !ok {
 		t.Fatal("expected AssistantMessage")
 	}
-	if len(am.Content) != 1 {
-		t.Fatalf("content blocks = %d, want 1", len(am.Content))
+	if len(am.Parts) != 1 {
+		t.Fatalf("content blocks = %d, want 1", len(am.Parts))
 	}
-	tc, ok := am.Content[0].(types.TextContent)
+	tc, ok := am.Parts[0].(types.TextPart)
 	if !ok {
 		t.Fatal("expected TextContent")
 	}
@@ -1124,19 +1165,19 @@ func TestAggregatorTextOnly(t *testing.T) {
 
 func TestAggregatorToolCallOnly(t *testing.T) {
 	agg := NewDefaultAggregator()
-	agg.Push(types.ToolCallStartDelta{ID: "tc-1", Name: "search"})
-	agg.Push(types.ToolCallArgumentDelta{Content: `{"q": "test"}`})
-	agg.Push(types.ToolCallEndDelta{Arguments: map[string]any{"q": "test"}})
+	agg.Push(types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "tc-1", Name: "search"})
+	agg.Push(types.PartDelta{Index: 0, Args: `{"q": "test"}`})
+	agg.Push(types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "test"}}})
 
 	msg := agg.Message()
 	am, ok := msg.(types.AssistantMessage)
 	if !ok {
 		t.Fatal("expected AssistantMessage")
 	}
-	if len(am.Content) != 1 {
-		t.Fatalf("content blocks = %d, want 1", len(am.Content))
+	if len(am.Parts) != 1 {
+		t.Fatalf("content blocks = %d, want 1", len(am.Parts))
 	}
-	tuc, ok := am.Content[0].(types.ToolUseContent)
+	tuc, ok := am.Parts[0].(types.ToolCallPart)
 	if !ok {
 		t.Fatal("expected ToolUseContent")
 	}
@@ -1149,23 +1190,23 @@ func TestAggregatorMixedTextAndToolCalls(t *testing.T) {
 	agg := NewDefaultAggregator()
 
 	// Text first
-	agg.Push(types.TextStartDelta{})
-	agg.Push(types.TextContentDelta{Content: "Let me search"})
-	agg.Push(types.TextEndDelta{})
+	agg.Push(types.PartStart{Index: 0, Kind: types.KindText})
+	agg.Push(types.PartDelta{Index: 0, Text: "Let me search"})
+	agg.Push(types.PartEnd{Index: 0})
 
 	// Then tool call
-	agg.Push(types.ToolCallStartDelta{ID: "tc-1", Name: "search"})
-	agg.Push(types.ToolCallEndDelta{Arguments: map[string]any{"q": "test"}})
+	agg.Push(types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "tc-1", Name: "search"})
+	agg.Push(types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "test"}}})
 
 	msg := agg.Message()
 	am := msg.(types.AssistantMessage)
-	if len(am.Content) != 2 {
-		t.Fatalf("content blocks = %d, want 2", len(am.Content))
+	if len(am.Parts) != 2 {
+		t.Fatalf("content blocks = %d, want 2", len(am.Parts))
 	}
-	if _, ok := am.Content[0].(types.TextContent); !ok {
+	if _, ok := am.Parts[0].(types.TextPart); !ok {
 		t.Error("first block should be TextContent")
 	}
-	if _, ok := am.Content[1].(types.ToolUseContent); !ok {
+	if _, ok := am.Parts[1].(types.ToolCallPart); !ok {
 		t.Error("second block should be ToolUseContent")
 	}
 }
@@ -1179,9 +1220,9 @@ func TestAggregatorEmptyReturnsNil(t *testing.T) {
 
 func TestAggregatorReset(t *testing.T) {
 	agg := NewDefaultAggregator()
-	agg.Push(types.TextStartDelta{})
-	agg.Push(types.TextContentDelta{Content: "hello"})
-	agg.Push(types.TextEndDelta{})
+	agg.Push(types.PartStart{Index: 0, Kind: types.KindText})
+	agg.Push(types.PartDelta{Index: 0, Text: "hello"})
+	agg.Push(types.PartEnd{Index: 0})
 
 	agg.Reset()
 	if msg := agg.Message(); msg != nil {
@@ -1191,13 +1232,13 @@ func TestAggregatorReset(t *testing.T) {
 
 func TestAggregatorInProgressText(t *testing.T) {
 	agg := NewDefaultAggregator()
-	agg.Push(types.TextStartDelta{})
-	agg.Push(types.TextContentDelta{Content: "partial"})
-	// No TextEndDelta -- in-progress
+	agg.Push(types.PartStart{Index: 0, Kind: types.KindText})
+	agg.Push(types.PartDelta{Index: 0, Text: "partial"})
+	// No end -- in-progress
 
 	msg := agg.Message()
 	am := msg.(types.AssistantMessage)
-	tc := am.Content[0].(types.TextContent)
+	tc := am.Parts[0].(types.TextPart)
 	if tc.Text != "partial" {
 		t.Errorf("in-progress text = %q, want 'partial'", tc.Text)
 	}
@@ -1221,29 +1262,29 @@ func TestAggregatorIgnoresNonTextNonToolDeltas(t *testing.T) {
 
 func TestReplayAssistantText(t *testing.T) {
 	messages := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("hello"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "hi there"}}},
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("hello")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "hi there"}}},
 	}
 
 	stream := Replay(messages)
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
-	// System and user messages produce no deltas; assistant text produces TextStart/Content/End + Done
-	starts := collectDeltasByType[types.TextStartDelta](deltas)
-	contents := collectDeltasByType[types.TextContentDelta](deltas)
-	ends := collectDeltasByType[types.TextEndDelta](deltas)
+	// System and user messages produce no deltas; assistant text produces a part's start, content and end + Done
+	starts := partStarts(deltas, types.KindText)
+	contents := textChunks(deltas)
+	ends := partEnds(deltas, types.KindText)
 	dones := collectDeltasByType[types.DoneDelta](deltas)
 
 	if len(starts) != 1 {
-		t.Errorf("TextStartDelta count = %d, want 1", len(starts))
+		t.Errorf("text start count = %d, want 1", len(starts))
 	}
-	if len(contents) != 1 || contents[0].Content != "hi there" {
+	if len(contents) != 1 || contents[0] != "hi there" {
 		t.Errorf("content = %v, want 'hi there'", contents)
 	}
 	if len(ends) != 1 {
-		t.Errorf("TextEndDelta count = %d, want 1", len(ends))
+		t.Errorf("text end count = %d, want 1", len(ends))
 	}
 	if len(dones) != 1 {
 		t.Errorf("DoneDelta count = %d, want 1", len(dones))
@@ -1252,8 +1293,8 @@ func TestReplayAssistantText(t *testing.T) {
 
 func TestReplayAssistantToolUse(t *testing.T) {
 	messages := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "test"}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "test"}},
 		}},
 	}
 
@@ -1261,22 +1302,22 @@ func TestReplayAssistantToolUse(t *testing.T) {
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
-	toolStarts := collectDeltasByType[types.ToolCallStartDelta](deltas)
-	toolEnds := collectDeltasByType[types.ToolCallEndDelta](deltas)
+	toolStarts := partStarts(deltas, types.KindToolCall)
+	toolEnds := partEnds(deltas, types.KindToolCall)
 
 	if len(toolStarts) != 1 || toolStarts[0].ID != "tc-1" || toolStarts[0].Name != "search" {
-		t.Errorf("ToolCallStartDelta = %+v", toolStarts)
+		t.Errorf("tool call starts = %+v", toolStarts)
 	}
 	if len(toolEnds) != 1 {
-		t.Errorf("ToolCallEndDelta count = %d, want 1", len(toolEnds))
+		t.Errorf("tool call end count = %d, want 1", len(toolEnds))
 	}
 }
 
 func TestReplayToolResults(t *testing.T) {
 	messages := []types.Message{
-		types.NewToolResultMessage(
-			types.ToolResultContent{ToolCallID: "tc-1", Text: "result1"},
-			types.ToolResultContent{ToolCallID: "tc-2", Text: "result2"},
+		types.ToolResults(
+			types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("result1")}},
+			types.ToolResultPart{CallID: "tc-2", Parts: []types.ToolOutputPart{types.Text("result2")}},
 		),
 	}
 
@@ -1297,7 +1338,7 @@ func TestReplayToolResults(t *testing.T) {
 
 func TestReplayUserToolResults(t *testing.T) {
 	messages := []types.Message{
-		types.NewUserToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "user result"}),
+		types.UserToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("user result")}}),
 	}
 
 	stream := Replay(messages)
@@ -1315,14 +1356,14 @@ func TestReplayUserToolResults(t *testing.T) {
 
 func TestReplayMixedConversation(t *testing.T) {
 	messages := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("hello"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "I'll search"},
-			types.ToolUseContent{ID: "tc-1", Name: "search", Arguments: map[string]any{}},
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("hello")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "I'll search"},
+			types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{}},
 		}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "found it"}),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "Here is the result"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("found it")}}),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "Here is the result"}}},
 	}
 
 	stream := Replay(messages)
@@ -1330,15 +1371,15 @@ func TestReplayMixedConversation(t *testing.T) {
 	stream.Wait()
 
 	// 2 text blocks (from 2 assistant messages) + 1 tool use + 1 tool result
-	textStarts := collectDeltasByType[types.TextStartDelta](deltas)
-	toolCallStarts := collectDeltasByType[types.ToolCallStartDelta](deltas)
+	textStarts := partStarts(deltas, types.KindText)
+	toolCallStarts := partStarts(deltas, types.KindToolCall)
 	execStarts := collectDeltasByType[types.ToolExecStartDelta](deltas)
 
 	if len(textStarts) != 2 {
-		t.Errorf("TextStartDelta count = %d, want 2", len(textStarts))
+		t.Errorf("text start count = %d, want 2", len(textStarts))
 	}
 	if len(toolCallStarts) != 1 {
-		t.Errorf("ToolCallStartDelta count = %d, want 1", len(toolCallStarts))
+		t.Errorf("tool call start count = %d, want 1", len(toolCallStarts))
 	}
 	if len(execStarts) != 1 {
 		t.Errorf("ToolExecStartDelta count = %d, want 1", len(execStarts))
@@ -1460,19 +1501,19 @@ func TestEmptyToolRegistry(t *testing.T) {
 // ===================================================================
 
 func TestInvoke(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("You are helpful."))
+	tr, _ := tree.New(types.SystemMsg(types.Text("You are helpful.")))
 
 	provider := &mockProvider{response: "Hello!"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hi"),
+		types.UserMsg(types.Text("Hi")),
 	})
 
 	// Consume all deltas.
@@ -1505,24 +1546,24 @@ func TestInvoke(t *testing.T) {
 }
 
 func TestInvokeOnExplicitBranch(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("You are helpful."))
+	tr, _ := tree.New(types.SystemMsg(types.Text("You are helpful.")))
 	root := tr.Root()
 
 	// Set up a side branch.
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("setup")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "ok"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "ok"}},
 	})
-	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "side", types.NewUserMessage("side question"))
+	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "side", types.UserMsg(types.Text("side question")))
 
 	provider := &mockProvider{response: "side answer"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{}, branchID)
 	for range stream.Deltas() {
@@ -1539,11 +1580,11 @@ func TestInvokeOnExplicitBranch(t *testing.T) {
 func TestInvokeAutoCreatesTree(t *testing.T) {
 	provider := &mockProvider{response: "Hello!"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
-	})
+	}))
 
 	// Tree should be auto-created.
 	if agent.Tree() == nil {
@@ -1551,7 +1592,7 @@ func TestInvokeAutoCreatesTree(t *testing.T) {
 	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hi"),
+		types.UserMsg(types.Text("Hi")),
 	})
 
 	for range stream.Deltas() {
@@ -1571,23 +1612,23 @@ func TestInvokeAutoCreatesTree(t *testing.T) {
 }
 
 func TestInvokeUsesActiveCursor(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("You are helpful."))
+	tr, _ := tree.New(types.SystemMsg(types.Text("You are helpful.")))
 	root := tr.Root()
 
 	// Create a side branch
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
-	branchID, _, _ := tr.Branch(context.Background(), user.ID, "side", types.NewUserMessage("side msg"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("setup")))
+	branchID, _, _ := tr.Branch(context.Background(), user.ID, "side", types.UserMsg(types.Text("side msg")))
 
 	// Set side as active
 	tr.SetActive(branchID)
 
 	provider := &mockProvider{response: "side answer"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	// Invoke without explicit branch -- should use active (side)
 	stream := agent.Invoke(context.Background(), []types.Message{})
@@ -1612,18 +1653,18 @@ func TestInvokeUsesActiveCursor(t *testing.T) {
 func TestAgentMultipleInvocationsOnSameTree(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	// First conversation turn
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("turn 1")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 1"))})
 	collectDeltas(stream)
 	stream.Wait()
 
 	// Second conversation turn (continues on same branch)
-	stream = agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("turn 2")})
+	stream = agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 2"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -1643,14 +1684,14 @@ func TestAgentMultipleInvocationsOnSameTree(t *testing.T) {
 func TestAgentInvokeWithMultipleInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "got both"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("first"),
-		types.NewUserMessage("second"),
+		types.UserMsg(types.Text("first")),
+		types.UserMsg(types.Text("second")),
 	})
 	collectDeltas(stream)
 	stream.Wait()
@@ -1665,20 +1706,20 @@ func TestAgentInvokeWithMultipleInputMessages(t *testing.T) {
 func TestAgentBranchAndContinue(t *testing.T) {
 	provider := &mockProvider{response: "branched response"}
 
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "hi"}},
 	})
 
 	// Branch from assistant
-	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "edit", types.NewUserMessage("different question"))
+	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "edit", types.UserMsg(types.Text("different question")))
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke on the branch
 	stream := agent.Invoke(context.Background(), []types.Message{}, branchID)
@@ -1699,12 +1740,12 @@ func TestAgentBranchAndContinue(t *testing.T) {
 }
 
 func TestAgentInvokeOnNonExistentBranch(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")}, "nonexistent")
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))}, "nonexistent")
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -1721,12 +1762,12 @@ func TestAgentInvokeOnNonExistentBranch(t *testing.T) {
 
 func TestEventStreamDrainRequired(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 
 	// Must drain before Wait completes (DoneDelta is sent to channel)
 	done := make(chan error)
@@ -1753,62 +1794,62 @@ func TestEventStreamDrainRequired(t *testing.T) {
 // ===================================================================
 
 func TestMessageConstructors(t *testing.T) {
-	sys := types.NewSystemMessage("system prompt")
+	sys := types.SystemMsg(types.Text("system prompt"))
 	if sys.Role() != types.RoleSystem {
 		t.Error("system role wrong")
 	}
-	if len(sys.Content) != 1 {
+	if len(sys.Parts) != 1 {
 		t.Fatal("system content length != 1")
 	}
-	if tc, ok := sys.Content[0].(types.TextContent); !ok || tc.Text != "system prompt" {
+	if tc, ok := sys.Parts[0].(types.TextPart); !ok || tc.Text != "system prompt" {
 		t.Error("system text wrong")
 	}
 
-	usr := types.NewUserMessage("user input")
+	usr := types.UserMsg(types.Text("user input"))
 	if usr.Role() != types.RoleUser {
 		t.Error("user role wrong")
 	}
-	if tc, ok := usr.Content[0].(types.TextContent); !ok || tc.Text != "user input" {
+	if tc, ok := usr.Parts[0].(types.TextPart); !ok || tc.Text != "user input" {
 		t.Error("user text wrong")
 	}
 
-	tr := types.NewToolResultMessage(
-		types.ToolResultContent{ToolCallID: "tc-1", Text: "result"},
+	tr := types.ToolResults(
+		types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("result")}},
 	)
 	if tr.Role() != types.RoleSystem {
 		t.Error("tool result message role should be system")
 	}
-	if trc, ok := tr.Content[0].(types.ToolResultContent); !ok || trc.ToolCallID != "tc-1" {
+	if trc, ok := tr.Parts[0].(types.ToolResultPart); !ok || trc.CallID != "tc-1" {
 		t.Error("tool result content wrong")
 	}
 
-	utr := types.NewUserToolResultMessage(
-		types.ToolResultContent{ToolCallID: "tc-2", Text: "user result"},
+	utr := types.UserToolResults(
+		types.ToolResultPart{CallID: "tc-2", Parts: []types.ToolOutputPart{types.Text("user result")}},
 	)
 	if utr.Role() != types.RoleUser {
 		t.Error("user tool result role should be user")
 	}
-	if trc, ok := utr.Content[0].(types.ToolResultContent); !ok || trc.ToolCallID != "tc-2" {
+	if trc, ok := utr.Parts[0].(types.ToolResultPart); !ok || trc.CallID != "tc-2" {
 		t.Error("user tool result content wrong")
 	}
 }
 
 func TestToolResultContentInSystemMessage(t *testing.T) {
-	msg := types.NewToolResultMessage(
-		types.ToolResultContent{ToolCallID: "a", Text: "result-a"},
-		types.ToolResultContent{ToolCallID: "b", Text: "result-b"},
+	msg := types.ToolResults(
+		types.ToolResultPart{CallID: "a", Parts: []types.ToolOutputPart{types.Text("result-a")}},
+		types.ToolResultPart{CallID: "b", Parts: []types.ToolOutputPart{types.Text("result-b")}},
 	)
 
-	if len(msg.Content) != 2 {
-		t.Fatalf("content blocks = %d, want 2", len(msg.Content))
+	if len(msg.Parts) != 2 {
+		t.Fatalf("content blocks = %d, want 2", len(msg.Parts))
 	}
 
-	for i, c := range msg.Content {
-		trc, ok := c.(types.ToolResultContent)
+	for i, c := range msg.Parts {
+		trc, ok := c.(types.ToolResultPart)
 		if !ok {
 			t.Fatalf("content[%d] not ToolResultContent", i)
 		}
-		if trc.ToolCallID == "" {
+		if trc.CallID == "" {
 			t.Errorf("content[%d] has empty ToolCallID", i)
 		}
 	}
@@ -1860,11 +1901,11 @@ func TestWALReplayNonexistent(t *testing.T) {
 
 func TestTreeBranchWithWAL(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := tree.New(types.NewSystemMessage("sys"), tree.WithWAL(wal))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")), tree.WithWAL(wal))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
-	tr.Branch(context.Background(), user.ID, "alt", types.NewUserMessage("branch msg"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
+	tr.Branch(context.Background(), user.ID, "alt", types.UserMsg(types.Text("branch msg")))
 
 	committed, _ := wal.Recover(context.Background())
 	// New(root) + AddChild(hello) + Branch(branch msg) = 3 transactions
@@ -1875,11 +1916,11 @@ func TestTreeBranchWithWAL(t *testing.T) {
 
 func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := tree.New(types.NewSystemMessage("sys"), tree.WithWAL(wal))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")), tree.WithWAL(wal))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("original"))
-	tr.UpdateUserMessage(context.Background(), user.ID, types.NewUserMessage("edited"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("original")))
+	tr.UpdateUserMessage(context.Background(), user.ID, types.UserMsg(types.Text("edited")))
 
 	committed, _ := wal.Recover(context.Background())
 	// New(root) + AddChild + UpdateUserMessage = 3 transactions
@@ -1893,25 +1934,25 @@ func TestTreeUpdateUserMessageWithWAL(t *testing.T) {
 // ===================================================================
 
 func TestConcurrentInvocationsOnDifferentBranches(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("shared"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("shared")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "shared reply"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "shared reply"}},
 	})
 
 	// Create multiple branches
 	branches := make([]types.BranchID, 5)
 	for i := range branches {
-		bid, _, _ := tr.Branch(context.Background(), asst.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("branch %d input", i)))
+		bid, _, _ := tr.Branch(context.Background(), asst.ID, fmt.Sprintf("branch-%d", i), types.UserMsg(types.Text(fmt.Sprintf("branch %d input", i))))
 		branches[i] = bid
 	}
 
 	provider := &mockProvider{response: "branch response"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke on all branches concurrently
 	var wg sync.WaitGroup
@@ -1945,10 +1986,10 @@ func TestConcurrentInvocationsOnDifferentBranches(t *testing.T) {
 
 func TestMessagesToText(t *testing.T) {
 	msgs := []types.Message{
-		types.NewSystemMessage("system prompt"),
-		types.NewUserMessage("user question"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "assistant reply"}}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "tool output"}),
+		types.SystemMsg(types.Text("system prompt")),
+		types.UserMsg(types.Text("user question")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "assistant reply"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("tool output")}}),
 	}
 
 	text := types.MessagesToText(msgs)
@@ -1969,7 +2010,7 @@ func TestMessagesToText(t *testing.T) {
 
 func TestMessagesToTextUserToolResult(t *testing.T) {
 	msgs := []types.Message{
-		types.NewUserToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "user tool"}),
+		types.UserToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("user tool")}}),
 	}
 
 	text := types.MessagesToText(msgs)
@@ -1984,10 +2025,10 @@ func TestMessagesToTextUserToolResult(t *testing.T) {
 
 func TestAgentInvokeNoInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "unprompted"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{})
 	deltas := collectDeltas(stream)
@@ -2007,10 +2048,10 @@ func TestAgentInvokeNoInputMessages(t *testing.T) {
 
 func TestAgentInvokeNilInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), nil)
 	collectDeltas(stream)
@@ -2021,11 +2062,11 @@ func TestAgentInvokeNilInputMessages(t *testing.T) {
 
 func TestAgentEmptySystemPrompt(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hello")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2041,12 +2082,12 @@ func TestAgentEmptySystemPrompt(t *testing.T) {
 // ===================================================================
 
 func TestArchiveNonRecursive(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "hi"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "hi"}},
 	})
 
 	// Archive user non-recursively
@@ -2061,7 +2102,7 @@ func TestArchiveNonRecursive(t *testing.T) {
 }
 
 func TestArchiveNodeNotFound(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 
 	err := tr.Archive("nonexistent", "test", false)
 	if err == nil {
@@ -2070,7 +2111,7 @@ func TestArchiveNodeNotFound(t *testing.T) {
 }
 
 func TestRestoreNodeNotFound(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 
 	err := tr.Restore("nonexistent", false)
 	if err == nil {
@@ -2083,7 +2124,7 @@ func TestRestoreNodeNotFound(t *testing.T) {
 // ===================================================================
 
 func TestDeepConversationTree(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
 	// Build a deep chain of 50 messages
@@ -2091,9 +2132,9 @@ func TestDeepConversationTree(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
+			msg = types.UserMsg(types.Text(fmt.Sprintf("user-%d", i)))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
 		node, err := tr.AddChild(context.Background(), current.ID, msg)
 		if err != nil {
@@ -2119,14 +2160,14 @@ func TestDeepConversationTree(t *testing.T) {
 }
 
 func TestMultipleBranchesFromSameNode(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 
 	// Create 5 branches from the same node
 	branchIDs := make([]types.BranchID, 5)
 	for i := range 5 {
-		bid, _, err := tr.Branch(context.Background(), user.ID, fmt.Sprintf("branch-%d", i), types.NewUserMessage(fmt.Sprintf("alt-%d", i)))
+		bid, _, err := tr.Branch(context.Background(), user.ID, fmt.Sprintf("branch-%d", i), types.UserMsg(types.Text(fmt.Sprintf("alt-%d", i))))
 		if err != nil {
 			t.Fatalf("Branch %d: %v", i, err)
 		}
@@ -2150,16 +2191,16 @@ func TestMultipleBranchesFromSameNode(t *testing.T) {
 }
 
 func TestBranchNameCollision(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 
 	// Create two branches with the same name
-	bid1, _, err := tr.Branch(context.Background(), user.ID, "same", types.NewUserMessage("first"))
+	bid1, _, err := tr.Branch(context.Background(), user.ID, "same", types.UserMsg(types.Text("first")))
 	if err != nil {
 		t.Fatalf("Branch 1: %v", err)
 	}
-	bid2, _, err := tr.Branch(context.Background(), user.ID, "same", types.NewUserMessage("second"))
+	bid2, _, err := tr.Branch(context.Background(), user.ID, "same", types.UserMsg(types.Text("second")))
 	if err != nil {
 		t.Fatalf("Branch 2: %v", err)
 	}
@@ -2184,16 +2225,16 @@ func TestBranchNameCollision(t *testing.T) {
 // ===================================================================
 
 func TestTreeCompactChangesActiveBranch(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
 	current := root
 	for i := 0; i < 10; i++ {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
+			msg = types.UserMsg(types.Text(fmt.Sprintf("user-%d", i)))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
 		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
@@ -2222,12 +2263,12 @@ func TestTreeCompactChangesActiveBranch(t *testing.T) {
 }
 
 func TestTreeCompactOriginalBranchIntact(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
 	current := root
 	for i := 0; i < 8; i++ {
-		msg := types.NewUserMessage(fmt.Sprintf("msg-%d", i))
+		msg := types.UserMsg(types.Text(fmt.Sprintf("msg-%d", i)))
 		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
 	}
@@ -2253,14 +2294,14 @@ func TestTreeCompactOriginalBranchIntact(t *testing.T) {
 func TestCheckpointRewindAndInvoke(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// First turn
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("turn 1")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 1"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2271,7 +2312,7 @@ func TestCheckpointRewindAndInvoke(t *testing.T) {
 	}
 
 	// Second turn on main
-	stream = agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("turn 2")})
+	stream = agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 2"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2294,7 +2335,7 @@ func TestCheckpointRewindAndInvoke(t *testing.T) {
 	}
 
 	tip, _ := tr.Tip(rewindBranch)
-	altBranch, _, err := tr.Branch(context.Background(), tip.ID, "alt-turn-2", types.NewUserMessage("alternate turn 2"))
+	altBranch, _, err := tr.Branch(context.Background(), tip.ID, "alt-turn-2", types.UserMsg(types.Text("alternate turn 2")))
 	if err != nil {
 		t.Fatalf("Branch: %v", err)
 	}
@@ -2323,14 +2364,14 @@ func TestCheckpointRewindAndInvoke(t *testing.T) {
 func TestUpdateUserMessageAndInvoke(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// First turn
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("original question")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("original question"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2342,7 +2383,7 @@ func TestUpdateUserMessageAndInvoke(t *testing.T) {
 	userNodeID := path[1]
 
 	// Edit the user message
-	editBranch, _, err := tr.UpdateUserMessage(context.Background(), userNodeID, types.NewUserMessage("edited question"))
+	editBranch, _, err := tr.UpdateUserMessage(context.Background(), userNodeID, types.UserMsg(types.Text("edited question")))
 	if err != nil {
 		t.Fatalf("UpdateUserMessage: %v", err)
 	}
@@ -2358,7 +2399,7 @@ func TestUpdateUserMessageAndInvoke(t *testing.T) {
 		t.Errorf("edit messages = %d, want 3", len(editMsgs))
 	}
 	um := editMsgs[1].(types.UserMessage)
-	tc := um.Content[0].(types.TextContent)
+	tc := um.Parts[0].(types.TextPart)
 	if tc.Text != "edited question" {
 		t.Errorf("edited text = %q", tc.Text)
 	}
@@ -2374,19 +2415,19 @@ func TestUpdateUserMessageAndInvoke(t *testing.T) {
 // ===================================================================
 
 func TestAgentRespectsSetActive(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("setup"))
-	bid, _, _ := tr.Branch(context.Background(), user.ID, "alt", types.NewUserMessage("alt setup"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("setup")))
+	bid, _, _ := tr.Branch(context.Background(), user.ID, "alt", types.UserMsg(types.Text("alt setup")))
 
 	tr.SetActive(bid)
 
 	provider := &mockProvider{response: "on alt branch"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke without explicit branch
 	stream := agent.Invoke(context.Background(), []types.Message{})
@@ -2406,22 +2447,22 @@ func TestAgentRespectsSetActive(t *testing.T) {
 // ===================================================================
 
 func TestDiffAfterAgentInvoke(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("shared"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("shared")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "shared reply"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "shared reply"}},
 	})
 
 	// Branch
-	bid, _, _ := tr.Branch(context.Background(), asst.ID, "alt", types.NewUserMessage("alt question"))
+	bid, _, _ := tr.Branch(context.Background(), asst.ID, "alt", types.UserMsg(types.Text("alt question")))
 
 	// Invoke on both branches
 	provider := &mockProvider{response: "reply"}
-	agent := NewAgent(AgentConfig{Provider: provider, Tree: tr})
+	agent := must.Get(New(Config{Provider: provider, Tree: tr}))
 
-	s1 := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("main q")})
+	s1 := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("main q"))})
 	collectDeltas(s1)
 	s1.Wait()
 
@@ -2466,32 +2507,32 @@ func TestEndToEndScenario(t *testing.T) {
 	provider := &sequenceProvider{
 		responses: []func(ch chan<- types.Delta){
 			func(ch chan<- types.Delta) {
-				ch <- types.ToolCallStartDelta{ID: "tc-1", Name: "search"}
-				ch <- types.ToolCallEndDelta{Arguments: map[string]any{"query": "golang testing"}}
+				ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "tc-1", Name: "search"}
+				ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{"query": "golang testing"}}}
 			},
 			func(ch chan<- types.Delta) {
-				ch <- types.TextStartDelta{}
-				ch <- types.TextContentDelta{Content: "Based on search: Go testing is great"}
-				ch <- types.TextEndDelta{}
+				ch <- types.PartStart{Index: 0, Kind: types.KindText}
+				ch <- types.PartDelta{Index: 0, Text: "Based on search: Go testing is great"}
+				ch <- types.PartEnd{Index: 0}
 			},
 			// Turn 2 (second user input, new invocation)
 			func(ch chan<- types.Delta) {
-				ch <- types.TextStartDelta{}
-				ch <- types.TextContentDelta{Content: "You're welcome!"}
-				ch <- types.TextEndDelta{}
+				ch <- types.PartStart{Index: 0, Kind: types.KindText}
+				ch <- types.PartDelta{Index: 0, Text: "You're welcome!"}
+				ch <- types.PartEnd{Index: 0}
 			},
 		},
 	}
 
-	tr, _ := tree.New(types.NewSystemMessage("You are a helpful assistant."))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("You are a helpful assistant.")))
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tools:    types.NewToolRegistry(searchTool),
 		Tree:     tr,
-	})
+	}))
 
 	// Turn 1
-	s1 := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Tell me about Go testing")})
+	s1 := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Tell me about Go testing"))})
 	d1 := collectDeltas(s1)
 	s1.Wait()
 
@@ -2510,7 +2551,7 @@ func TestEndToEndScenario(t *testing.T) {
 	}
 
 	// Turn 2
-	s2 := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Thanks!")})
+	s2 := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Thanks!"))})
 	d2 := collectDeltas(s2)
 	s2.Wait()
 
@@ -2531,7 +2572,7 @@ func TestEndToEndScenario(t *testing.T) {
 	fullPath, _ := tr.Path(tip1.ID)
 	userNodeID := fullPath[1]
 
-	editBranch, _, _ := tr.UpdateUserMessage(context.Background(), userNodeID, types.NewUserMessage("Tell me about Rust testing instead"))
+	editBranch, _, _ := tr.UpdateUserMessage(context.Background(), userNodeID, types.UserMsg(types.Text("Tell me about Rust testing instead")))
 
 	editMsgs, _ := tr.FlattenBranch(editBranch)
 	if len(editMsgs) != 2 {
@@ -2612,13 +2653,13 @@ func TestToolReceivesCorrectArguments(t *testing.T) {
 		response: "Done.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("echo")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("echo"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2638,21 +2679,21 @@ func TestAgentMultiChunkTextStreaming(t *testing.T) {
 	provider := &sequenceProvider{
 		responses: []func(ch chan<- types.Delta){
 			func(ch chan<- types.Delta) {
-				ch <- types.TextStartDelta{}
-				ch <- types.TextContentDelta{Content: "Hello "}
-				ch <- types.TextContentDelta{Content: "beautiful "}
-				ch <- types.TextContentDelta{Content: "world"}
-				ch <- types.TextEndDelta{}
+				ch <- types.PartStart{Index: 0, Kind: types.KindText}
+				ch <- types.PartDelta{Index: 0, Text: "Hello "}
+				ch <- types.PartDelta{Index: 0, Text: "beautiful "}
+				ch <- types.PartDelta{Index: 0, Text: "world"}
+				ch <- types.PartEnd{Index: 0}
 			},
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -2664,7 +2705,7 @@ func TestAgentMultiChunkTextStreaming(t *testing.T) {
 	// Tree should have the full aggregated message
 	msgs, _ := agent.Tree().FlattenBranch("main")
 	am := msgs[2].(types.AssistantMessage)
-	tc := am.Content[0].(types.TextContent)
+	tc := am.Parts[0].(types.TextPart)
 	if tc.Text != "Hello beautiful world" {
 		t.Errorf("tree text = %q", tc.Text)
 	}
@@ -2686,36 +2727,36 @@ func TestAgentMixedTextAndToolCallResponse(t *testing.T) {
 		responses: []func(ch chan<- types.Delta){
 			func(ch chan<- types.Delta) {
 				// Text first, then tool call
-				ch <- types.TextStartDelta{}
-				ch <- types.TextContentDelta{Content: "Let me search"}
-				ch <- types.TextEndDelta{}
-				ch <- types.ToolCallStartDelta{ID: "tc-1", Name: "lookup"}
-				ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+				ch <- types.PartStart{Index: 0, Kind: types.KindText}
+				ch <- types.PartDelta{Index: 0, Text: "Let me search"}
+				ch <- types.PartEnd{Index: 0}
+				ch <- types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "tc-1", Name: "lookup"}
+				ch <- types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "tc-1", Name: "lookup", Arguments: map[string]any{}}}
 			},
 			func(ch chan<- types.Delta) {
-				ch <- types.TextStartDelta{}
-				ch <- types.TextContentDelta{Content: "Found it!"}
-				ch <- types.TextEndDelta{}
+				ch <- types.PartStart{Index: 0, Kind: types.KindText}
+				ch <- types.PartDelta{Index: 0, Text: "Found it!"}
+				ch <- types.PartEnd{Index: 0}
 			},
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("search")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("search"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
 	// Should have both text and tool exec deltas
-	texts := collectDeltasByType[types.TextContentDelta](deltas)
+	texts := textChunks(deltas)
 	execStarts := collectDeltasByType[types.ToolExecStartDelta](deltas)
 
 	if len(texts) < 2 {
-		t.Errorf("TextContentDelta count = %d, want >= 2", len(texts))
+		t.Errorf("text chunk count = %d, want >= 2", len(texts))
 	}
 	if len(execStarts) != 1 {
 		t.Errorf("ToolExecStartDelta count = %d, want 1", len(execStarts))
@@ -2724,13 +2765,13 @@ func TestAgentMixedTextAndToolCallResponse(t *testing.T) {
 	// The assistant message in tree should have both text and tool use
 	msgs, _ := agent.Tree().FlattenBranch("main")
 	am := msgs[2].(types.AssistantMessage)
-	if len(am.Content) != 2 {
-		t.Fatalf("assistant content blocks = %d, want 2", len(am.Content))
+	if len(am.Parts) != 2 {
+		t.Fatalf("assistant content blocks = %d, want 2", len(am.Parts))
 	}
-	if _, ok := am.Content[0].(types.TextContent); !ok {
+	if _, ok := am.Parts[0].(types.TextPart); !ok {
 		t.Error("first block should be TextContent")
 	}
-	if _, ok := am.Content[1].(types.ToolUseContent); !ok {
+	if _, ok := am.Parts[1].(types.ToolCallPart); !ok {
 		t.Error("second block should be ToolUseContent")
 	}
 }
@@ -2752,14 +2793,14 @@ func TestReplayRoundTrip(t *testing.T) {
 		response: "Done greeting",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	// Invoke
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("greet me")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet me"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -2771,11 +2812,11 @@ func TestReplayRoundTrip(t *testing.T) {
 	replayDeltas := collectDeltas(replayStream)
 	replayStream.Wait()
 
-	replayTexts := collectDeltasByType[types.TextContentDelta](replayDeltas)
-	replayToolStarts := collectDeltasByType[types.ToolCallStartDelta](replayDeltas)
+	replayTexts := textChunks(replayDeltas)
+	replayToolStarts := partStarts(replayDeltas, types.KindToolCall)
 	replayExecStarts := collectDeltasByType[types.ToolExecStartDelta](replayDeltas)
 
-	if len(replayTexts) != 1 || replayTexts[0].Content != "Done greeting" {
+	if len(replayTexts) != 1 || replayTexts[0] != "Done greeting" {
 		t.Errorf("replay text = %v", replayTexts)
 	}
 	if len(replayToolStarts) != 1 || replayToolStarts[0].Name != "greet" {
@@ -2798,23 +2839,23 @@ func TestAgentWithSummarizeCompactor(t *testing.T) {
 	for i := range provider.responses {
 		i := i
 		provider.responses[i] = func(ch chan<- types.Delta) {
-			ch <- types.TextStartDelta{}
-			ch <- types.TextContentDelta{Content: fmt.Sprintf("response-%d", i)}
-			ch <- types.TextEndDelta{}
+			ch <- types.PartStart{Index: 0, Kind: types.KindText}
+			ch <- types.PartDelta{Index: 0, Text: fmt.Sprintf("response-%d", i)}
+			ch <- types.PartEnd{Index: 0}
 		}
 	}
 	_ = callIdx
 
-	tr, _ := tree.New(types.NewSystemMessage("You are helpful."))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("You are helpful.")))
+	agent := must.Get(New(Config{
 		Provider:   provider,
 		CompactCfg: &types.CompactConfig{Strategy: types.CompactSummarize, Threshold: 5},
 		Tree:       tr,
-	})
+	}))
 
 	// Multiple turns: each Invoke uses tr.Active(), which may change after compaction.
 	for i := 0; i < 4; i++ {
-		stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage(fmt.Sprintf("turn-%d", i))})
+		stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(fmt.Sprintf("turn-%d", i)))})
 		collectDeltas(stream)
 		stream.Wait()
 	}
@@ -2846,16 +2887,16 @@ func TestAgentWithSummarizeCompactor(t *testing.T) {
 // ===================================================================
 
 func TestFlattenAnnotatedWithCompactedNodes(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
 	current := root
 	for i := 0; i < 6; i++ {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
+			msg = types.UserMsg(types.Text(fmt.Sprintf("user-%d", i)))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
 		node, _ := tr.AddChild(context.Background(), current.ID, msg)
 		current = node
@@ -2892,7 +2933,7 @@ func TestFlattenAnnotatedWithCompactedNodes(t *testing.T) {
 // ===================================================================
 
 func TestTreeConcurrentReadWrite(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
 	root := tr.Root()
 
 	var wg sync.WaitGroup
@@ -2903,7 +2944,7 @@ func TestTreeConcurrentReadWrite(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, err := tr.AddChild(context.Background(), root.ID, types.NewUserMessage(fmt.Sprintf("writer-%d", idx)))
+			_, err := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text(fmt.Sprintf("writer-%d", idx))))
 			if err != nil {
 				errCh <- fmt.Errorf("writer %d: %w", idx, err)
 			}
@@ -2956,10 +2997,10 @@ func TestSlidingWindowExactlyAtBoundary(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(3)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
 	}
 
 	result, _ := compactor.Compact(context.Background(), msgs, nil)
@@ -2972,11 +3013,11 @@ func TestSlidingWindowOneOverBoundary(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(3)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
-		types.NewUserMessage("four"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
+		types.UserMsg(types.Text("four")),
 	}
 
 	result, _ := compactor.Compact(context.Background(), msgs, nil)
@@ -2992,12 +3033,12 @@ func TestSlidingWindowPreservesSystem(t *testing.T) {
 	compactor := types.NewSlidingWindowCompactor(2)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("important system prompt"),
-		types.NewUserMessage("old 1"),
-		types.NewUserMessage("old 2"),
-		types.NewUserMessage("old 3"),
-		types.NewUserMessage("recent 1"),
-		types.NewUserMessage("recent 2"),
+		types.SystemMsg(types.Text("important system prompt")),
+		types.UserMsg(types.Text("old 1")),
+		types.UserMsg(types.Text("old 2")),
+		types.UserMsg(types.Text("old 3")),
+		types.UserMsg(types.Text("recent 1")),
+		types.UserMsg(types.Text("recent 2")),
 	}
 
 	result, _ := compactor.Compact(context.Background(), msgs, nil)
@@ -3006,7 +3047,7 @@ func TestSlidingWindowPreservesSystem(t *testing.T) {
 	}
 
 	sm := result[0].(types.SystemMessage)
-	tc := sm.Content[0].(types.TextContent)
+	tc := sm.Parts[0].(types.TextPart)
 	if tc.Text != "important system prompt" {
 		t.Error("system prompt not preserved")
 	}
@@ -3021,9 +3062,9 @@ func TestSummarizeCompactorFewMessages(t *testing.T) {
 	provider := &mockProvider{response: "summary"}
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -3044,12 +3085,12 @@ func TestSummarizeCompactorSkipsPreviousSummaryPair(t *testing.T) {
 	// Without pair exclusion, len=6 > threshold=4 would re-fire an LLM call
 	// on every turn; the pair must not count toward the threshold.
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage(types.SummaryRequestText),
-		types.NewAssistantMessage("earlier summary"),
-		types.NewUserMessage("turn-1"),
-		types.NewAssistantMessage("reply-1"),
-		types.NewUserMessage("turn-2"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text(types.SummaryRequestText)),
+		types.AssistantMsg(types.Text("earlier summary")),
+		types.UserMsg(types.Text("turn-1")),
+		types.AssistantMsg(types.Text("reply-1")),
+		types.UserMsg(types.Text("turn-2")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -3071,11 +3112,11 @@ func TestSummarizeCompactorSkipsUnprofitableSummary(t *testing.T) {
 	// Over threshold, but only 2 messages are summarizable: the summary
 	// pair would replace them one-for-one, so no LLM call should be made.
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("old-1"),
-		types.NewUserMessage("old-2"),
-		types.NewUserMessage("recent-1"),
-		types.NewUserMessage("recent-2"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("old-1")),
+		types.UserMsg(types.Text("old-2")),
+		types.UserMsg(types.Text("recent-1")),
+		types.UserMsg(types.Text("recent-2")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -3096,20 +3137,20 @@ func TestSummarizeCompactorMidStreamErrorFallsBack(t *testing.T) {
 	// real history.
 	provider := &sequenceProvider{responses: []func(ch chan<- types.Delta){
 		func(ch chan<- types.Delta) {
-			ch <- types.TextStartDelta{}
-			ch <- types.TextContentDelta{Content: "partial sum"}
+			ch <- types.PartStart{Index: 0, Kind: types.KindText}
+			ch <- types.PartDelta{Index: 0, Text: "partial sum"}
 			ch <- types.ErrorDelta{Error: errors.New("rate limited mid-stream")}
 		},
 	}}
 	compactor := types.NewSummarizeCompactor(2, 2)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
-		types.NewUserMessage("four"),
-		types.NewUserMessage("five"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
+		types.UserMsg(types.Text("four")),
+		types.UserMsg(types.Text("five")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -3127,12 +3168,12 @@ func TestSummarizeCompactorEmptySummaryFallsBack(t *testing.T) {
 	compactor := types.NewSummarizeCompactor(2, 2)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("one"),
-		types.NewUserMessage("two"),
-		types.NewUserMessage("three"),
-		types.NewUserMessage("four"),
-		types.NewUserMessage("five"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("one")),
+		types.UserMsg(types.Text("two")),
+		types.UserMsg(types.Text("three")),
+		types.UserMsg(types.Text("four")),
+		types.UserMsg(types.Text("five")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, &emptyProvider{})
@@ -3151,14 +3192,14 @@ func TestSummarizeCompactorEmptySummaryFallsBack(t *testing.T) {
 func TestAllDeltaTypesImplementInterface(t *testing.T) {
 	// Verify all delta types satisfy the Delta interface (compile-time check)
 	deltas := []types.Delta{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: "test"},
-		types.TextEndDelta{},
-		types.ToolCallStartDelta{ID: "1", Name: "tool"},
-		types.ToolCallArgumentDelta{Content: "{}"},
-		types.ToolCallEndDelta{Arguments: map[string]any{}},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: "test"},
+		types.PartEnd{Index: 0},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "1", Name: "tool"},
+		types.PartDelta{Index: 1, Args: "{}"},
+		types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "1", Name: "tool", Arguments: map[string]any{}}},
 		types.ToolExecStartDelta{ToolCallID: "1", Name: "tool"},
-		types.ToolExecDelta{ToolCallID: "1", Inner: types.TextContentDelta{Content: "inner"}},
+		types.ToolExecDelta{ToolCallID: "1", Inner: types.PartDelta{Index: 2, Text: "inner"}},
 		types.ToolExecEndDelta{ToolCallID: "1", Result: "ok"},
 		types.ErrorDelta{Error: errors.New("err")},
 		types.DoneDelta{},
@@ -3176,17 +3217,17 @@ func TestAllDeltaTypesImplementInterface(t *testing.T) {
 // ===================================================================
 
 func TestContentTypeRoleConstraints(t *testing.T) {
-	// TextContent is valid in all roles
-	var _ types.SystemContent = types.TextContent{Text: "hi"}
-	var _ types.UserContent = types.TextContent{Text: "hi"}
-	var _ types.AssistantContent = types.TextContent{Text: "hi"}
+	// TextPart is valid in all roles
+	var _ types.SystemPart = types.TextPart{Text: "hi"}
+	var _ types.UserPart = types.TextPart{Text: "hi"}
+	var _ types.AssistantPart = types.TextPart{Text: "hi"}
 
-	// ToolUseContent is only for assistant
-	var _ types.AssistantContent = types.ToolUseContent{ID: "1", Name: "tool"}
+	// ToolCallPart is only for assistant
+	var _ types.AssistantPart = types.ToolCallPart{ID: "1", Name: "tool"}
 
-	// ToolResultContent is for system and user
-	var _ types.SystemContent = types.ToolResultContent{ToolCallID: "1", Text: "result"}
-	var _ types.UserContent = types.ToolResultContent{ToolCallID: "1", Text: "result"}
+	// ToolResultPart is for system and user
+	var _ types.SystemPart = types.ToolResultPart{CallID: "1", Parts: []types.ToolOutputPart{types.Text("result")}}
+	var _ types.UserPart = types.ToolResultPart{CallID: "1", Parts: []types.ToolOutputPart{types.Text("result")}}
 }
 
 // ===================================================================
@@ -3209,11 +3250,11 @@ func TestNewIDUniqueness(t *testing.T) {
 // ===================================================================
 
 func TestAgentNilToolsCreatesEmptyRegistry(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		Tools:        nil,
-	})
+	}))
 
 	defs := agent.tools.Definitions()
 	if len(defs) != 0 {
@@ -3232,11 +3273,11 @@ func TestAgentWithToolsField(t *testing.T) {
 	}
 
 	reg := types.NewToolRegistry(tool)
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		Tools:        reg,
-	})
+	}))
 
 	_, found := agent.tools.Get("custom")
 	if !found {
@@ -3255,8 +3296,8 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 	}
 	for i := range childProvider.responses {
 		childProvider.responses[i] = func(ch chan<- types.Delta) {
-			ch <- types.ToolCallStartDelta{ID: "call", Name: "child_tool"}
-			ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+			ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "call", Name: "child_tool"}
+			ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "call", Name: "child_tool", Arguments: map[string]any{}}}
 		}
 	}
 
@@ -3272,7 +3313,7 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent",
 		SubAgents: []SubAgentDef{
@@ -3285,9 +3326,9 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 				MaxIter:      2, // limit child iterations
 			},
 		},
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 
 	done := make(chan struct{})
 	go func() {
@@ -3309,15 +3350,15 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 // ===================================================================
 
 func TestFeedback(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "I am helpful"},
-	})
+	}))
 
 	// Run a conversation.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hi"),
+		types.UserMsg(types.Text("Hi")),
 	})
 	collectDeltas(stream)
 	stream.Wait()
@@ -3370,14 +3411,14 @@ func TestFeedback(t *testing.T) {
 }
 
 func TestFeedbackIsPermanentLeaf(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "response"},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hi"),
+		types.UserMsg(types.Text("Hi")),
 	})
 	collectDeltas(stream)
 	stream.Wait()
@@ -3386,27 +3427,27 @@ func TestFeedbackIsPermanentLeaf(t *testing.T) {
 	fbNode, _ := agent.Feedback(context.Background(), tip.ID, types.RatingPositive, "good")
 
 	// Cannot add children to a feedback node.
-	_, err := agent.Tree().AddChild(context.Background(), fbNode.ID, types.NewUserMessage("nope"))
+	_, err := agent.Tree().AddChild(context.Background(), fbNode.ID, types.UserMsg(types.Text("nope")))
 	if err == nil {
 		t.Fatal("expected error adding child to feedback node")
 	}
 
 	// Cannot branch from a feedback node.
-	_, _, err = agent.Tree().Branch(context.Background(), fbNode.ID, "nope", types.NewUserMessage("nope"))
+	_, _, err = agent.Tree().Branch(context.Background(), fbNode.ID, "nope", types.UserMsg(types.Text("nope")))
 	if err == nil {
 		t.Fatal("expected error branching from feedback node")
 	}
 }
 
 func TestFeedbackNotInFlatten(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "response"},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hi"),
+		types.UserMsg(types.Text("Hi")),
 	})
 	collectDeltas(stream)
 	stream.Wait()
@@ -3421,8 +3462,8 @@ func TestFeedbackNotInFlatten(t *testing.T) {
 	}
 	for _, msg := range messages {
 		if um, ok := msg.(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if _, ok := c.(types.FeedbackContent); ok {
+			for _, c := range um.Parts {
+				if _, ok := c.(types.FeedbackPart); ok {
 					t.Fatal("feedback should not appear in main branch flatten")
 				}
 			}
@@ -3432,13 +3473,13 @@ func TestFeedbackNotInFlatten(t *testing.T) {
 
 func TestFeedbackReplay(t *testing.T) {
 	messages := []types.Message{
-		types.NewSystemMessage("system"),
-		types.NewUserMessage("hello"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "Hi there!"},
+		types.SystemMsg(types.Text("system")),
+		types.UserMsg(types.Text("hello")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "Hi there!"},
 		}},
-		types.UserMessage{Content: []types.UserContent{
-			types.FeedbackContent{
+		types.UserMessage{Parts: []types.UserPart{
+			types.FeedbackPart{
 				TargetNodeID: "node-123",
 				Rating:       types.RatingNegative,
 				Comment:      "too terse",
@@ -3472,18 +3513,18 @@ func TestFeedbackReplay(t *testing.T) {
 // ===================================================================
 
 func TestPersistCompactedCreatesBranch(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "ok"},
 		SystemPrompt: "sys",
 		Tree:         tr,
-	})
+	}))
 
 	compacted := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("Previous conversation summary: stuff happened"),
-		types.NewUserMessage("recent-1"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "recent-2"}}},
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("Previous conversation summary: stuff happened")),
+		types.UserMsg(types.Text("recent-1")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "recent-2"}}},
 	}
 
 	branchID, err := agent.persistCompacted(context.Background(), tr, compacted)
@@ -3507,16 +3548,16 @@ func TestPersistCompactedCreatesBranch(t *testing.T) {
 }
 
 func TestPersistCompactedTooShortReturnsError(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("sys"))
-	agent := NewAgent(AgentConfig{
+	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "ok"},
 		SystemPrompt: "sys",
 		Tree:         tr,
-	})
+	}))
 
 	// Only one message: too short to branch.
 	_, err := agent.persistCompacted(context.Background(), tr, []types.Message{
-		types.NewSystemMessage("sys"),
+		types.SystemMsg(types.Text("sys")),
 	})
 	if err == nil {
 		t.Fatal("expected error for short compacted history")
@@ -3531,7 +3572,7 @@ func TestPersistCompactedTooShortReturnsError(t *testing.T) {
 // user and assistant messages on main.
 func compactionHistory(t *testing.T, n int) *tree.Tree {
 	t.Helper()
-	tr, err := tree.New(types.NewSystemMessage("sys"))
+	tr, err := tree.New(types.SystemMsg(types.Text("sys")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3539,9 +3580,9 @@ func compactionHistory(t *testing.T, n int) *tree.Tree {
 	for i := range n {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage(fmt.Sprintf("user-%d", i))
+			msg = types.UserMsg(types.Text(fmt.Sprintf("user-%d", i)))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: fmt.Sprintf("asst-%d", i)}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: fmt.Sprintf("asst-%d", i)}}}
 		}
 		node, err := tr.AddChild(context.Background(), current.ID, msg)
 		if err != nil {
@@ -3570,7 +3611,7 @@ func TestRunCompactionWithCompactor(t *testing.T) {
 			configured := &mockProvider{response: "wrong provider"}
 			member := &mockProvider{response: "summary of conversation"}
 			tr := compactionHistory(t, tt.messages)
-			a := NewAgent(AgentConfig{Provider: configured, SystemPrompt: "sys", Tree: tr})
+			a := must.Get(New(Config{Provider: configured, SystemPrompt: "sys", Tree: tr}))
 			msgs, err := tr.FlattenBranch("main")
 			if err != nil {
 				t.Fatal(err)
@@ -3618,13 +3659,13 @@ func TestSlidingWindowPreservesToolPair(t *testing.T) {
 
 	// The cut point would land on a tool result: compactor should back up one.
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("old"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "x"}},
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("old")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{"q": "x"}},
 		}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "result"}),
-		types.NewUserMessage("recent"),
+		types.ToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("result")}}),
+		types.UserMsg(types.Text("recent")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, nil)
@@ -3649,10 +3690,10 @@ func TestSlidingWindowNoCutWhenToolPairAtStart(t *testing.T) {
 
 	// Tool result is right after system: backing up would make cut <= 0.
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "result"}),
-		types.NewUserMessage("recent-1"),
-		types.NewUserMessage("recent-2"),
+		types.SystemMsg(types.Text("sys")),
+		types.ToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("result")}}),
+		types.UserMsg(types.Text("recent-1")),
+		types.UserMsg(types.Text("recent-2")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, nil)
@@ -3675,12 +3716,12 @@ func TestSummarizeCompactorCustomKeepLast(t *testing.T) {
 	compactor := types.NewSummarizeCompactor(3, 2)
 
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("old-1"),
-		types.NewUserMessage("old-2"),
-		types.NewUserMessage("old-3"),
-		types.NewUserMessage("recent-1"),
-		types.NewUserMessage("recent-2"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("old-1")),
+		types.UserMsg(types.Text("old-2")),
+		types.UserMsg(types.Text("old-3")),
+		types.UserMsg(types.Text("recent-1")),
+		types.UserMsg(types.Text("recent-2")),
 	}
 
 	result, err := compactor.Compact(context.Background(), msgs, provider)
@@ -3722,13 +3763,13 @@ func TestCompactConfigKeepLastPassthrough(t *testing.T) {
 }
 
 // ===================================================================
-// MessagesToText with ToolUseContent
+// MessagesToText with ToolCallPart
 // ===================================================================
 
 func TestMessagesToTextToolUseContent(t *testing.T) {
 	msgs := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "tc-42", Name: "web_search", Arguments: map[string]any{"q": "test"}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "tc-42", Name: "web_search", Arguments: map[string]any{"q": "test"}},
 		}},
 	}
 
@@ -3740,9 +3781,9 @@ func TestMessagesToTextToolUseContent(t *testing.T) {
 
 func TestMessagesToTextMixedAssistantContent(t *testing.T) {
 	msgs := []types.Message{
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "Let me search for that."},
-			types.ToolUseContent{ID: "tc-1", Name: "search", Arguments: map[string]any{}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "Let me search for that."},
+			types.ToolCallPart{ID: "tc-1", Name: "search", Arguments: map[string]any{}},
 		}},
 	}
 
@@ -3760,16 +3801,16 @@ func TestMessagesToTextMixedAssistantContent(t *testing.T) {
 // ===================================================================
 
 func TestHasToolResultInSystemMessage(t *testing.T) {
-	toolResult := types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "tc-1", Text: "result"})
+	toolResult := types.ToolResults(types.ToolResultPart{CallID: "tc-1", Parts: []types.ToolOutputPart{types.Text("result")}})
 	compactor := types.NewSlidingWindowCompactor(2)
 
 	// cut = len(5) - 2 = 3 → messages[3] is the tool result → should back up.
 	msgs := []types.Message{
-		types.NewSystemMessage("sys"),
-		types.NewUserMessage("old-1"),
-		types.NewUserMessage("old-2"),
+		types.SystemMsg(types.Text("sys")),
+		types.UserMsg(types.Text("old-1")),
+		types.UserMsg(types.Text("old-2")),
 		toolResult,
-		types.NewUserMessage("recent"),
+		types.UserMsg(types.Text("recent")),
 	}
 
 	result, _ := compactor.Compact(context.Background(), msgs, nil)

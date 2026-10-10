@@ -39,16 +39,16 @@ func TestActivityToolLifecycle(t *testing.T) {
 		{
 			name: "plain tool is not a delegation and is done only after execution",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "search"},
-				types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"q": "go"}},
+				types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+				types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go"}}},
 			},
 			want: []want{{name: "search", status: toolReady}},
 		},
 		{
 			name: "plain tool executes",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "search"},
-				types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{}},
+				types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+				types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{}}},
 				types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
 				types.ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "ok"},
 			},
@@ -57,7 +57,7 @@ func TestActivityToolLifecycle(t *testing.T) {
 		{
 			name: "tool error is kept",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "fetch"},
+				types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "c1", Name: "fetch"},
 				types.ToolExecStartDelta{ToolCallID: "c1", Name: "fetch"},
 				types.ToolExecEndDelta{ToolCallID: "c1", Name: "fetch", Error: "404"},
 			},
@@ -66,10 +66,10 @@ func TestActivityToolLifecycle(t *testing.T) {
 		{
 			name: "parallel calls pair by ID, not position",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "one"},
-				types.ToolCallStartDelta{ID: "b", Name: "two"},
-				types.ToolCallEndDelta{ID: "b", Arguments: map[string]any{}},
-				types.ToolCallEndDelta{ID: "a", Arguments: map[string]any{}},
+				types.PartStart{Index: 3, Kind: types.KindToolCall, ID: "a", Name: "one"},
+				types.PartStart{Index: 4, Kind: types.KindToolCall, ID: "b", Name: "two"},
+				types.PartEnd{Index: 4, Part: types.ToolCallPart{ID: "b", Name: "two", Arguments: map[string]any{}}},
+				types.PartEnd{Index: 3, Part: types.ToolCallPart{ID: "a", Name: "one", Arguments: map[string]any{}}},
 				types.ToolExecStartDelta{ToolCallID: "b", Name: "two"},
 				types.ToolExecStartDelta{ToolCallID: "a", Name: "one"},
 				types.ToolExecEndDelta{ToolCallID: "a", Error: "boom"},
@@ -81,11 +81,11 @@ func TestActivityToolLifecycle(t *testing.T) {
 			},
 		},
 		{
-			name: "end without ID closes the oldest open call",
+			name: "end closes the call at its index",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "a", Name: "one"},
-				types.ToolCallStartDelta{ID: "b", Name: "two"},
-				types.ToolCallEndDelta{Arguments: map[string]any{}},
+				types.PartStart{Index: 5, Kind: types.KindToolCall, ID: "a", Name: "one"},
+				types.PartStart{Index: 6, Kind: types.KindToolCall, ID: "b", Name: "two"},
+				types.PartEnd{Index: 5},
 			},
 			want: []want{
 				{name: "one", status: toolReady},
@@ -95,7 +95,7 @@ func TestActivityToolLifecycle(t *testing.T) {
 		{
 			name: "delegation prefix marks a sub-agent",
 			deltas: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "delegate_to_researcher"},
+				types.PartStart{Index: 7, Kind: types.KindToolCall, ID: "c1", Name: "delegate_to_researcher"},
 				types.ToolExecStartDelta{ToolCallID: "c1", Name: "delegate_to_researcher"},
 				types.ToolExecEndDelta{ToolCallID: "c1"},
 			},
@@ -140,13 +140,13 @@ func TestActivityToolLifecycle(t *testing.T) {
 
 func TestActivityNestedOutput(t *testing.T) {
 	a := newActivity(nil)
-	a.apply(types.ToolCallStartDelta{ID: "c1", Name: "delegate_to_child"})
+	a.apply(types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "delegate_to_child"})
 	a.apply(types.ToolExecStartDelta{ToolCallID: "c1", Name: "delegate_to_child"})
-	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.TextContentDelta{Content: "looking"}})
-	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolCallStartDelta{ID: "n1", Name: "grep"}})
+	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartDelta{Index: 1, Text: "looking"}})
+	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "n1", Name: "grep"}})
 	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecEndDelta{ToolCallID: "n1", Name: "grep", Error: "denied"}})
 	// A grandchild's text is attributed to the outermost call.
-	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecDelta{ToolCallID: "g1", Inner: types.TextContentDelta{Content: "deep"}}})
+	a.apply(types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecDelta{ToolCallID: "g1", Inner: types.PartDelta{Index: 1, Text: "deep"}}})
 
 	got := tools(a)
 	if len(got) != 1 {
@@ -172,7 +172,7 @@ func TestActivityErrorsAndFinish(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newActivity(nil)
-			a.apply(types.TextContentDelta{Content: "partial"})
+			a.apply(types.PartDelta{Index: 0, Text: "partial"})
 			a.apply(types.ToolExecStartDelta{ToolCallID: "c1", Name: "slow"})
 			a.apply(types.ErrorDelta{Error: tt.err})
 			a.finish()
@@ -200,16 +200,16 @@ func TestActivityErrorsAndFinish(t *testing.T) {
 }
 
 func renderEntries(a activity, tmpl Template) string {
-	return logRenderer{entries: a.entries, spinner: spinner.New(), template: tmpl}.renderLog()
+	return logRenderer{entries: a.entries, spin: spinner.New().View(), template: tmpl}.renderLog()
 }
 
 func TestLogRendererTools(t *testing.T) {
 	a := newActivity(nil)
-	a.apply(types.ToolCallStartDelta{ID: "c1", Name: "search"})
-	a.apply(types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"query": "golang"}})
+	a.apply(types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "search"})
+	a.apply(types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"query": "golang"}}})
 	a.apply(types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"})
 	a.apply(types.ToolExecEndDelta{ToolCallID: "c1", Result: "result line"})
-	a.apply(types.ToolCallStartDelta{ID: "c2", Name: "fetch"})
+	a.apply(types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c2", Name: "fetch"})
 	a.apply(types.ToolExecStartDelta{ToolCallID: "c2", Name: "fetch"})
 	a.apply(types.ToolExecEndDelta{ToolCallID: "c2", Error: "timeout"})
 
@@ -256,7 +256,7 @@ func TestLogRendererTools(t *testing.T) {
 func TestLogRendererKeepsAllStreamingText(t *testing.T) {
 	a := newActivity(nil)
 	for i := range 20 {
-		a.apply(types.TextContentDelta{Content: fmt.Sprintf("line %d\n", i)})
+		a.apply(types.PartDelta{Index: 0, Text: fmt.Sprintf("line %d\n", i)})
 	}
 	out := renderEntries(a, TemplateDefault)
 	for _, w := range []string{"line 0", "line 10", "line 19"} {
@@ -357,11 +357,11 @@ func TestPromptApprovalShowsArguments(t *testing.T) {
 
 func TestJSONOutputWritesEnvelopes(t *testing.T) {
 	ch := make(chan types.Delta, 8)
-	ch <- types.TextContentDelta{Content: "hel"}
-	ch <- types.ToolCallStartDelta{ID: "c1", Name: "search"}
+	ch <- types.PartDelta{Index: 0, Text: "hel"}
+	ch <- types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "search"}
 	ch <- types.MarkerDelta{ToolCallID: "c1", ToolName: "search", Arguments: map[string]any{"q": "x"}}
 	ch <- types.UsageDelta{PromptTokens: 3, CompletionTokens: 4}
-	ch <- types.TextContentDelta{Content: "lo"}
+	ch <- types.PartDelta{Index: 0, Text: "lo"}
 	ch <- types.DoneDelta{}
 	close(ch)
 
@@ -374,7 +374,7 @@ func TestJSONOutputWritesEnvelopes(t *testing.T) {
 	if len(lines) != 6 {
 		t.Fatalf("got %d lines, want one per delta:\n%s", len(lines), out.String())
 	}
-	wantKinds := []string{types.WireTextDelta, types.WireToolCallStart, types.WireMarker, types.WireUsage, types.WireTextDelta, types.WireDone}
+	wantKinds := []string{types.WirePartDelta, types.WirePartStart, types.WireMarker, types.WireUsage, types.WirePartDelta, types.WireDone}
 	for i, line := range lines {
 		env, err := types.UnmarshalEnvelope([]byte(line))
 		if err != nil {
@@ -392,13 +392,13 @@ func TestJSONOutputWritesEnvelopes(t *testing.T) {
 func TestVerboseDoesNotShowPlainToolsAsDelegations(t *testing.T) {
 	ch := make(chan types.Delta, 16)
 	for _, d := range []types.Delta{
-		types.ToolCallStartDelta{ID: "c1", Name: "search"},
-		types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{}},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+		types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{}}},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
 		types.ToolExecEndDelta{ToolCallID: "c1", Name: "search", Error: "offline"},
-		types.ToolCallStartDelta{ID: "c2", Name: "delegate_to_writer"},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c2", Name: "delegate_to_writer"},
 		types.ToolExecStartDelta{ToolCallID: "c2", Name: "delegate_to_writer"},
-		types.ToolExecDelta{ToolCallID: "c2", Inner: types.TextContentDelta{Content: "draft\n"}},
+		types.ToolExecDelta{ToolCallID: "c2", Inner: types.PartDelta{Index: 0, Text: "draft\n"}},
 		types.ToolExecEndDelta{ToolCallID: "c2"},
 		types.DoneDelta{},
 	} {
@@ -449,7 +449,7 @@ func TestStreamModelQuitCancels(t *testing.T) {
 
 func TestStreamModelErrorKeepsTranscript(t *testing.T) {
 	m := NewStreamModel(AgentHeader{}, make(chan types.Delta), TemplateMinimal)
-	model, _ := m.Update(deltaMsg{delta: types.TextContentDelta{Content: "partial answer"}})
+	model, _ := m.Update(deltaMsg{delta: types.PartDelta{Index: 0, Text: "partial answer"}})
 	model, cmd := model.Update(deltaMsg{delta: types.ErrorDelta{Error: errors.New("boom")}})
 	sm := model.(StreamModel)
 	if sm.Err() == nil || sm.FinalReport() != "partial answer" {
@@ -463,12 +463,12 @@ func TestStreamModelErrorKeepsTranscript(t *testing.T) {
 func TestVerboseShowsNestedToolCalls(t *testing.T) {
 	ch := make(chan types.Delta, 16)
 	for _, d := range []types.Delta{
-		types.ToolCallStartDelta{ID: "c1", Name: "delegate_to_writer"},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "delegate_to_writer"},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "delegate_to_writer"},
-		types.ToolExecDelta{ToolCallID: "c1", Inner: types.TextContentDelta{Content: "looking"}},
-		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolCallStartDelta{ID: "n1", Name: "grep"}},
+		types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartDelta{Index: 0, Text: "looking"}},
+		types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "n1", Name: "grep"}},
 		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecEndDelta{ToolCallID: "n1", Name: "grep", Error: "denied"}},
-		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecDelta{ToolCallID: "g1", Inner: types.TextContentDelta{Content: "deep"}}},
+		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecDelta{ToolCallID: "g1", Inner: types.PartDelta{Index: 0, Text: "deep"}}},
 		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolExecDelta{ToolCallID: "g1", Inner: types.ErrorDelta{Error: errors.New("inner failed")}}},
 		types.ToolExecEndDelta{ToolCallID: "c1"},
 		types.DoneDelta{},

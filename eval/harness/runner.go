@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store"
 )
@@ -26,6 +27,12 @@ import (
 // [DefaultMetrics] document; set Assemble to produce a custom schema from
 // the collected flow results.
 type Runner struct {
+	Config
+}
+
+// Config is what a Runner runs and where it records the results.
+type Config struct {
+	// Client sends the requests. Required.
 	Client      *Client
 	Flows       []Flow
 	Force       bool
@@ -158,6 +165,33 @@ func (e *InconclusiveError) Is(target error) bool { return target == ErrInconclu
 
 // Unwrap returns the script failures.
 func (e *InconclusiveError) Unwrap() error { return e.Err }
+
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithConcurrency sets Config.Concurrency.
+func WithConcurrency(n int) Option { return func(c *Config) { c.Concurrency = n } }
+
+// WithResults sets Config.Results.
+func WithResults(s store.Store) Option { return func(c *Config) { c.Results = s } }
+
+// New returns a runner for cfg. A missing client, a negative concurrency,
+// or a MaxInconclusive outside [0, 1] is an error wrapping
+// types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Runner, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	switch {
+	case cfg.Client == nil:
+		return nil, fmt.Errorf("%w: harness: Config.Client is required", types.ErrInvalidConfig)
+	case cfg.Concurrency < 0:
+		return nil, fmt.Errorf("%w: harness: negative concurrency %d", types.ErrInvalidConfig, cfg.Concurrency)
+	case cfg.MaxInconclusive < 0 || cfg.MaxInconclusive > 1:
+		return nil, fmt.Errorf("%w: harness: MaxInconclusive %v is outside [0, 1]", types.ErrInvalidConfig, cfg.MaxInconclusive)
+	}
+	return &Runner{Config: cfg}, nil
+}
 
 // Run executes all flows for each script. Scripts whose metrics file
 // already exists are skipped unless Force is set. Progress is logged to

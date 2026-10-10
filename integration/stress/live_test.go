@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // burstStats aggregates what one model's burst saw at the adapter.
@@ -42,7 +43,8 @@ type countingProvider struct {
 	retryAfter time.Duration
 }
 
-func (p *countingProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *countingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	now := time.Now()
 	p.stats.mu.Lock()
 	p.stats.attempts++
@@ -55,7 +57,7 @@ func (p *countingProvider) ChatStream(ctx context.Context, msgs []types.Message,
 	p.stats.mu.Unlock()
 	p.retryAfter = 0
 
-	ch, err := p.inner.ChatStream(ctx, msgs, tools)
+	ch, err := p.inner.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 	if err != nil {
 		p.record(err)
 		return nil, err
@@ -108,10 +110,10 @@ func TestLiveBurst(t *testing.T) {
 		build     func(key string) types.Provider
 	}{
 		{"gpt-6-luna", "OPENAI_API_KEY", func(key string) types.Provider {
-			return openai.NewAdapter(key, "gpt-6-luna", openai.WithMaxTokens(32), openai.WithReasoningEffort("none"))
+			return must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"}, openai.WithMaxTokens(32), openai.WithReasoningEffort("none")))
 		}},
 		{"claude-haiku-5-5", "ANTHROPIC_API_KEY", func(key string) types.Provider {
-			return anthropic.NewAdapter(key, "claude-haiku-5-5", anthropic.WithMaxTokens(32))
+			return must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: "claude-haiku-5-5"}, anthropic.WithMaxTokens(32)))
 		}},
 	}
 	cfg := retry.Config{MaxAttempts: 4, BaseDelay: 500 * time.Millisecond, MaxDelay: 8 * time.Second, MaxRetryAfter: 30 * time.Second}
@@ -132,7 +134,7 @@ func TestLiveBurst(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					p := retry.New(&countingProvider{inner: adapter, stats: stats}, cfg)
+					p := must.Get(retry.New(&countingProvider{inner: adapter, stats: stats}, cfg))
 					began := time.Now()
 					text, err := types.GenerateText(ctx, p, prompt)
 					stats.mu.Lock()

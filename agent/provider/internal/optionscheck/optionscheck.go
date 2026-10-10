@@ -23,14 +23,14 @@ func (e *unsupportedError) Is(target error) bool {
 	return target == types.ErrInvalidModelConfig || target == types.ErrOptionsUnsupported
 }
 
-// Unsupported reports that p does not implement types.OptionsProvider. The
+// Unsupported reports that p does not accept request options. The
 // error is permanent and matches types.ErrInvalidModelConfig.
 func Unsupported(p types.Provider) error {
 	return &types.ProviderError{
-		Provider: types.ProviderName(p),
+		Provider: types.NameOf(p),
 		Model:    types.ProviderModel(p),
 		Kind:     types.ErrorKindPermanent,
-		Err:      &unsupportedError{provider: types.ProviderName(p)},
+		Err:      &unsupportedError{provider: types.NameOf(p)},
 	}
 }
 
@@ -55,7 +55,7 @@ var optionOnly = []types.Capability{types.CapToolChoice, types.CapParallelToolCo
 // fail at call time.
 func Narrow(caps types.ModelCapabilities, members ...types.Provider) types.ModelCapabilities {
 	for _, p := range members {
-		if _, ok := p.(types.OptionsProvider); ok {
+		if types.AcceptsOptions(p) {
 			return caps
 		}
 	}

@@ -1,6 +1,9 @@
 package types
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestPricingBatch(t *testing.T) {
 	p := Pricing{InputPerMTok: 2, OutputPerMTok: 10, CachedInputPerMTok: 0.2, CacheWritePerMTok: 2.5,
@@ -14,7 +17,7 @@ func TestPricingBatch(t *testing.T) {
 	if b.CachedInputPerMTok != 0.2 {
 		t.Fatalf("cached = %v, want 0.2", b.CachedInputPerMTok)
 	}
-	if b.BatchDiscount != 0 || b.Batch() != b {
+	if b.BatchDiscount != 0 || !reflect.DeepEqual(b.Batch(), b) {
 		t.Fatal("Batch applied twice discounts twice")
 	}
 	p.BatchCachedInputPerMTok = 0.1

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func labels(t *testing.T, d Detector, text string) []string {
@@ -230,16 +231,16 @@ func TestToolRedactor(t *testing.T) {
 	r := NewToolRedactor(v)
 	def := types.ToolDef{Name: "lookup"}
 
-	res := r.TokenizeResult(ctx, def, types.ToolResult{
-		Text: "owner ada@example.com",
-		Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockText, Text: "ip 10.0.0.1"},
-			{Kind: types.ToolResultBlockJSON, JSON: json.RawMessage(`{"email":"ada@example.com"}`)},
-			{Kind: types.ToolResultBlockImage, Data: []byte("png")},
-		},
-	})
-	if res.Text != "owner <<EMAIL_1>>" || res.Blocks[0].Text != "ip <<IP_ADDRESS_1>>" ||
-		string(res.Blocks[1].JSON) != `{"email":"<<EMAIL_1>>"}` || string(res.Blocks[2].Data) != "png" {
+	res := r.TokenizeResult(ctx, def, types.ToolResult{Parts: []types.ToolOutputPart{
+		types.Text("owner ada@example.com"),
+		types.Text("ip 10.0.0.1"),
+		types.JSONPart{JSON: json.RawMessage(`{"email":"ada@example.com"}`)},
+		types.Image(types.Bytes(types.MediaPNG, []byte("png"))),
+	}})
+	if len(res.Parts) != 4 || res.Parts[0].(types.TextPart).Text != "owner <<EMAIL_1>>" ||
+		res.Parts[1].(types.TextPart).Text != "ip <<IP_ADDRESS_1>>" ||
+		string(res.Parts[2].(types.JSONPart).JSON) != `{"email":"<<EMAIL_1>>"}` ||
+		string(res.Parts[3].(types.ImagePart).Source.Inline) != "png" {
 		t.Fatalf("TokenizeResult = %+v", res)
 	}
 
@@ -253,12 +254,12 @@ func TestToolRedactor(t *testing.T) {
 	}
 
 	r.Skip = func(d types.ToolDef) bool { return d.Name == "trusted" }
-	if out := r.TokenizeResult(ctx, types.ToolDef{Name: "trusted"}, types.ToolResult{Text: "bob@example.com"}); out.Text != "bob@example.com" {
-		t.Fatalf("skipped tool was redacted: %q", out.Text)
+	if out := r.TokenizeResult(ctx, types.ToolDef{Name: "trusted"}, types.ToolResult{Parts: []types.ToolOutputPart{types.Text("bob@example.com")}}); out.Text() != "bob@example.com" {
+		t.Fatalf("skipped tool was redacted: %q", out.Text())
 	}
 
 	failing := NewToolRedactor(NewVault(DetectorFunc(func(context.Context, string) ([]Span, error) { return nil, errors.New("down") })))
-	if out := failing.TokenizeResult(ctx, def, types.ToolResult{Text: "ada@example.com"}); out.Text != WithheldResult || !out.IsError {
+	if out := failing.TokenizeResult(ctx, def, types.ToolResult{Parts: []types.ToolOutputPart{types.Text("ada@example.com")}}); out.Text() != WithheldResult || !out.IsError {
 		t.Fatalf("failed redaction passed through: %+v", out)
 	}
 }
@@ -270,7 +271,8 @@ type fakeProvider struct {
 	script []types.Delta
 }
 
-func (f *fakeProvider) ChatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (f *fakeProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs := req.Messages
 	f.mu.Lock()
 	f.got = msgs
 	f.mu.Unlock()
@@ -292,65 +294,67 @@ func collect(ch <-chan types.Delta) []types.Delta {
 
 func TestProviderDecorator(t *testing.T) {
 	inner := &fakeProvider{script: []types.Delta{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: "Sending to <<EMA"},
-		types.TextContentDelta{Content: "IL_1>> now"},
-		types.TextEndDelta{},
-		types.ToolCallStartDelta{ID: "c1", Name: "send"},
-		types.ToolCallArgumentDelta{ID: "c1", Content: `{"to":"<<EMAIL`},
-		types.ToolCallArgumentDelta{ID: "c1", Content: `_1>>"}`},
-		types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"to": "<<EMAIL_1>>"}},
-		types.ThinkingContentDelta{Content: "<<EMAIL_1>>"},
-		types.TextContentDelta{Content: "tail <<EMAIL_"},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: "Sending to <<EMA"},
+		types.PartDelta{Index: 0, Text: "IL_1>> now"},
+		types.PartEnd{Index: 0},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "send"},
+		types.PartDelta{Index: 1, Args: `{"to":"<<EMAIL`},
+		types.PartDelta{Index: 1, Args: `_1>>"}`},
+		types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "c1", Name: "send", Arguments: map[string]any{"to": "<<EMAIL_1>>"}}},
+		types.PartDelta{Index: 2, Thinking: "<<EMAIL_1>>"},
+		types.PartDelta{Index: 3, Text: "tail <<EMAIL_"},
 		types.DoneDelta{},
 	}}
 	v := NewVault(nil)
-	p := NewProvider(inner, v)
+	p := must.Get(New(inner, Config{Vault: v}))
 	msgs := []types.Message{
-		types.NewUserMessage("email ada@example.com please"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ToolUseContent{ID: "c0", Name: "lookup", Arguments: map[string]any{"q": "ada@example.com"}},
-			types.ThinkingContent{Thinking: "ada@example.com", Signature: "sig"},
+		types.UserMsg(types.Text("email ada@example.com please")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ToolCallPart{ID: "c0", Name: "lookup", Arguments: map[string]any{"q": "ada@example.com"}},
+			types.ThinkingPart{Text: "ada@example.com", Signature: "sig"},
 		}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "c0", Text: "found ada@example.com"}),
+		types.ToolResults(types.ToolResultPart{CallID: "c0", Parts: []types.ToolOutputPart{types.Text("found ada@example.com")}}),
 	}
-	ch, err := p.ChatStream(context.Background(), msgs, nil)
+	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := collect(ch)
 
 	sent := inner.got
-	if txt := sent[0].(types.UserMessage).Content[0].(types.TextContent).Text; txt != "email <<EMAIL_1>> please" {
+	if txt := sent[0].(types.UserMessage).Parts[0].(types.TextPart).Text; txt != "email <<EMAIL_1>> please" {
 		t.Fatalf("user text sent = %q", txt)
 	}
 	am := sent[1].(types.AssistantMessage)
-	if am.Content[0].(types.ToolUseContent).Arguments["q"] != "<<EMAIL_1>>" {
-		t.Fatalf("tool args sent = %v", am.Content[0])
+	if am.Parts[0].(types.ToolCallPart).Arguments["q"] != "<<EMAIL_1>>" {
+		t.Fatalf("tool args sent = %v", am.Parts[0])
 	}
-	if am.Content[1].(types.ThinkingContent).Thinking != "ada@example.com" {
+	if am.Parts[1].(types.ThinkingPart).Text != "ada@example.com" {
 		t.Fatal("thinking must not be rewritten")
 	}
-	if tr := sent[2].(types.SystemMessage).Content[0].(types.ToolResultContent).Text; tr != "found <<EMAIL_1>>" {
+	if tr := sent[2].(types.SystemMessage).Parts[0].(types.ToolResultPart).Text(); tr != "found <<EMAIL_1>>" {
 		t.Fatalf("tool result sent = %q", tr)
 	}
-	if msgs[0].(types.UserMessage).Content[0].(types.TextContent).Text != "email ada@example.com please" {
+	if msgs[0].(types.UserMessage).Parts[0].(types.TextPart).Text != "email ada@example.com please" {
 		t.Fatal("input messages were modified")
 	}
 
 	var text, args strings.Builder
-	var end types.ToolCallEndDelta
+	var end types.ToolCallPart
 	var thinking string
 	for _, d := range out {
 		switch x := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(x.Content)
-		case types.ToolCallArgumentDelta:
-			args.WriteString(x.Content)
-		case types.ToolCallEndDelta:
-			end = x
-		case types.ThinkingContentDelta:
-			thinking = x.Content
+		case types.PartDelta:
+			text.WriteString(x.Text)
+			args.WriteString(x.Args)
+			if x.Thinking != "" {
+				thinking = x.Thinking
+			}
+		case types.PartEnd:
+			if tc, ok := x.Part.(types.ToolCallPart); ok {
+				end = tc
+			}
 		}
 	}
 	if text.String() != "Sending to ada@example.com nowtail <<EMAIL_" {
@@ -368,11 +372,11 @@ func TestProviderDecorator(t *testing.T) {
 }
 
 func TestProviderRejectsUnsupportedControls(t *testing.T) {
-	p := NewProvider(&fakeProvider{}, NewVault(nil))
-	if _, err := p.ChatStreamWithOptions(context.Background(), nil, nil, types.RequestOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	p := must.Get(New(&fakeProvider{}, Config{Vault: NewVault(nil)}))
+	if _, err := p.Stream(context.Background(), types.Request{Options: &types.RequestOptions{}}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("options err = %v", err)
 	}
-	if _, err := p.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := p.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("schema err = %v", err)
 	}
 	if p.Unwrap() == nil || !strings.HasPrefix(p.Name(), "privacy(") {
@@ -382,8 +386,8 @@ func TestProviderRejectsUnsupportedControls(t *testing.T) {
 
 func TestProviderFailsClosedOnDetectorError(t *testing.T) {
 	inner := &fakeProvider{}
-	p := NewProvider(inner, NewVault(DetectorFunc(func(context.Context, string) ([]Span, error) { return nil, errors.New("down") })))
-	if _, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("x")}, nil); err == nil {
+	p := must.Get(New(inner, Config{Vault: NewVault(DetectorFunc(func(context.Context, string) ([]Span, error) { return nil, errors.New("down") }))}))
+	if _, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("x"))}}); err == nil {
 		t.Fatal("want error")
 	}
 	if inner.got != nil {

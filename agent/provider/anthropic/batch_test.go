@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchServer stubs the Message Batches API. The batch reports in_progress
@@ -94,17 +95,17 @@ func TestBatchSubmitPollResults(t *testing.T) {
 	stub := &batchServer{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL), WithMaxTokens(256))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL), WithMaxTokens(256)))
 
 	schema := &types.ParameterSchema{Type: "object", Required: []string{"label"},
 		Properties: map[string]types.PropertyDef{"label": {Type: "string"}}}
 	reqs := []types.BatchRequest{
-		{CustomID: "capital/fr", Messages: []types.Message{types.NewSystemMessage("Be brief."), types.NewUserMessage("Capital of France?")}},
-		{CustomID: "classify#1", Messages: []types.Message{types.NewUserMessage("Win a prize now")}, Schema: schema},
-		{CustomID: "too big", Messages: []types.Message{types.NewUserMessage("x")}},
-		{CustomID: "late", Messages: []types.Message{types.NewUserMessage("y")}},
+		{CustomID: "capital/fr", Messages: []types.Message{types.SystemMsg(types.Text("Be brief.")), types.UserMsg(types.Text("Capital of France?"))}},
+		{CustomID: "classify#1", Messages: []types.Message{types.UserMsg(types.Text("Win a prize now"))}, Schema: schema},
+		{CustomID: "too big", Messages: []types.Message{types.UserMsg(types.Text("x"))}},
+		{CustomID: "late", Messages: []types.Message{types.UserMsg(types.Text("y"))}},
 	}
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-anthropic", reqs)
 	if err != nil {
 		t.Fatal(err)
@@ -153,13 +154,13 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	seed := int64(7)
-	bad := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Options: types.RequestOptions{Seed: &seed}}}
+	bad := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{Seed: &seed}}}
 	if _, err := a.Submit(context.Background(), bad, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("seed err = %v, want ErrInvalidModelConfig", err)
 	}
-	badID := []types.BatchRequest{{CustomID: "has space", Messages: []types.Message{types.NewUserMessage("x")}}}
+	badID := []types.BatchRequest{{CustomID: "has space", Messages: []types.Message{types.UserMsg(types.Text("x"))}}}
 	if _, err := a.Submit(context.Background(), badID, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("custom id err = %v, want ErrInvalidModelConfig", err)
 	}
@@ -169,7 +170,7 @@ func TestBatchStatusCancelFind(t *testing.T) {
 	stub := &batchServer{ids: []string{"sbx-0"}}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	ctx := context.Background()
 	h := types.BatchHandle{ID: "msgbatch_1"}
 	if err := a.Cancel(ctx, h); err != nil || stub.cancels != 1 {
@@ -201,10 +202,10 @@ func TestBatchNativeSchema(t *testing.T) {
 	stub := &batchServer{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-sonnet-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-sonnet-5-5"}, WithBaseURL(server.URL)))
 	schema := &types.ParameterSchema{Type: "object", Required: []string{"label"},
 		Properties: map[string]types.PropertyDef{"label": {Type: "string"}}}
-	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.NewUserMessage("x")}, Schema: schema}}
+	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Schema: schema}}
 	if _, err := a.Submit(context.Background(), reqs, types.BatchSubmitOptions{}); err != nil {
 		t.Fatal(err)
 	}

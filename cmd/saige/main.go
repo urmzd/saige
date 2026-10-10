@@ -81,7 +81,12 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		newServeCmd(ctx),
 		newModelsCmd(),
 		newCatalogCmd(ctx),
+		newTreeCmd(ctx),
 		newAgentCmd(ctx),
+		newApprovalsCmd(),
+		newACPCmd(ctx),
+		newExportCmd(ctx),
+		newLaunchCmd(ctx),
 		newUpdateCmd(),
 		newVersionCmd(),
 	)

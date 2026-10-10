@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // recordingMetrics captures RecordTokenUsage calls for assertions. It embeds
@@ -45,12 +46,12 @@ type usageProvider struct {
 	completion int
 }
 
-func (p usageProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p usageProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 8)
 	ch <- types.UsageDelta{PromptTokens: p.prompt} // message_start half
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: "hi"}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: "hi"}
+	ch <- types.PartEnd{Index: 0}
 	ch <- types.UsageDelta{CompletionTokens: p.completion} // message_delta half
 	close(ch)
 	return ch, nil
@@ -59,11 +60,11 @@ func (p usageProvider) ChatStream(_ context.Context, _ []types.Message, _ []type
 // noUsageProvider streams text but never reports usage.
 type noUsageProvider struct{}
 
-func (noUsageProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (noUsageProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: "hi"}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: "hi"}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -93,13 +94,13 @@ func TestRecordTokenUsage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &recordingMetrics{}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:     tt.provider,
 				SystemPrompt: "s",
 				Metrics:      rec,
-			})
+			}))
 
-			deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")}))
+			deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 			if errs := collectDeltasByType[types.ErrorDelta](deltas); len(errs) != 0 {
 				t.Fatalf("unexpected error deltas: %v", errs)
 			}
@@ -130,13 +131,13 @@ func TestRecordTokenUsage(t *testing.T) {
 // record fresh token usage (no new tokens were produced).
 func TestRecordTokenUsage_CacheHitSkipped(t *testing.T) {
 	rec := &recordingMetrics{}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     cacheHitProvider{prompt: 100, completion: 42},
 		SystemPrompt: "s",
 		Metrics:      rec,
-	})
+	}))
 
-	_ = collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")}))
+	_ = collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 	if calls := rec.tokenCalls(); len(calls) != 0 {
 		t.Errorf("RecordTokenUsage fired %d times on a cache hit, want 0 (%+v)", len(calls), calls)
 	}
@@ -148,11 +149,11 @@ type cacheHitProvider struct {
 	completion int
 }
 
-func (p cacheHitProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p cacheHitProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 4)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: "hi"}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: "hi"}
+	ch <- types.PartEnd{Index: 0}
 	ch <- types.UsageDelta{PromptTokens: p.prompt, CompletionTokens: p.completion, CacheHit: true}
 	close(ch)
 	return ch, nil

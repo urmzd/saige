@@ -119,14 +119,14 @@ type OutputGuardrail struct {
 
 // WithInputGuardrails adds input guardrails. They run in order, after the
 // UserInput hooks; the first block stops the run.
-func WithInputGuardrails(gs ...InputGuardrail) AgentOption {
-	return func(c *AgentConfig) { c.InputGuardrails = append(c.InputGuardrails, gs...) }
+func WithInputGuardrails(gs ...InputGuardrail) Option {
+	return func(c *Config) { c.InputGuardrails = append(c.InputGuardrails, gs...) }
 }
 
 // WithOutputGuardrails adds output guardrails. They run in order; each sees
 // the previous one's rewrite, and the first block stops the run.
-func WithOutputGuardrails(gs ...OutputGuardrail) AgentOption {
-	return func(c *AgentConfig) { c.OutputGuardrails = append(c.OutputGuardrails, gs...) }
+func WithOutputGuardrails(gs ...OutputGuardrail) Option {
+	return func(c *Config) { c.OutputGuardrails = append(c.OutputGuardrails, gs...) }
 }
 
 // ErrGuardrailTripped is matched by the error of a run a guardrail blocked.
@@ -253,7 +253,7 @@ func (a *Agent) chargeGuardrail(ctx context.Context, stream *EventStream, rec ty
 // tripGuardrail reports and records a block and returns the run's error.
 func (a *Agent) tripGuardrail(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, phase string, rec types.HookRecord) error {
 	stream.send(types.GuardrailDelta{Guardrail: rec.Name, Phase: phase, Action: types.GuardrailActionBlock, Reason: rec.Reason, Canceled: rec.Canceled})
-	record := types.SystemMessage{Content: []types.SystemContent{types.GuardrailContent{
+	record := types.SystemMessage{Parts: []types.SystemPart{types.GuardrailPart{
 		Guardrail: rec.Name, Phase: phase, Action: types.GuardrailActionBlock, Reason: rec.Reason, Canceled: rec.Canceled,
 	}}}
 	tripped := &GuardrailTrippedError{Guardrail: rec.Name, Phase: phase, Reason: rec.Reason, Canceled: rec.Canceled}
@@ -316,7 +316,7 @@ func (a *Agent) admitUserMessage(ctx context.Context, stream *EventStream, tr *t
 	case types.GuardrailActionBlock:
 		return msg, a.tripGuardrail(ctx, stream, tr, branch, types.GuardrailPhaseInput, rec)
 	case types.GuardrailActionRewrite:
-		msg = types.UserMessage{Content: append(rewriteText(msg.Content, rec.Text), types.UserContent(types.GuardrailContent{
+		msg = types.UserMessage{Parts: append(rewriteText(msg.Parts, rec.Text), types.UserPart(types.GuardrailPart{
 			Guardrail: rec.Name, Phase: types.GuardrailPhaseInput, Action: rec.Action, Reason: rec.Reason,
 		}))}
 		stream.send(types.GuardrailDelta{Guardrail: rec.Name, Phase: types.GuardrailPhaseInput, Action: rec.Action, Reason: rec.Reason, Text: rec.Text})
@@ -331,7 +331,7 @@ func (a *Agent) guardOutput(ctx context.Context, stream *EventStream, tr *tree.T
 	if len(a.cfg.OutputGuardrails) == 0 || msg == nil {
 		return nil
 	}
-	text := contentText(msg.Content)
+	text := contentText(msg.Parts)
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -359,7 +359,7 @@ func (a *Agent) guardOutput(ctx context.Context, stream *EventStream, tr *tree.T
 	case types.GuardrailActionBlock:
 		return a.tripGuardrail(ctx, stream, tr, branch, types.GuardrailPhaseOutput, rec)
 	case types.GuardrailActionRewrite:
-		msg.Content = append(rewriteText(msg.Content, rec.Text), types.AssistantContent(types.GuardrailContent{
+		msg.Parts = append(rewriteText(msg.Parts, rec.Text), types.AssistantPart(types.GuardrailPart{
 			Guardrail: rec.Name, Phase: types.GuardrailPhaseOutput, Action: rec.Action, Reason: rec.Reason,
 		}))
 		stream.send(types.GuardrailDelta{Guardrail: rec.Name, Phase: types.GuardrailPhaseOutput, Action: rec.Action, Reason: rec.Reason, Text: rec.Text})
@@ -493,10 +493,10 @@ func (a *Agent) finishParallelGuard(ctx context.Context, stream *EventStream, tr
 
 // ── Text helpers ─────────────────────────────────────────────────────
 
-func contentText(content []types.AssistantContent) string {
+func contentText(content []types.AssistantPart) string {
 	var b strings.Builder
 	for _, c := range content {
-		if t, ok := c.(types.TextContent); ok {
+		if t, ok := c.(types.TextPart); ok {
 			b.WriteString(t.Text)
 		}
 	}
@@ -510,9 +510,9 @@ func rewriteText[C any](content []C, text string) []C {
 	out := make([]C, 0, len(content)+1)
 	placed := false
 	for _, c := range content {
-		if _, ok := any(c).(types.TextContent); ok {
+		if _, ok := any(c).(types.TextPart); ok {
 			if !placed {
-				out = append(out, any(types.TextContent{Text: text}).(C))
+				out = append(out, any(types.TextPart{Text: text}).(C))
 				placed = true
 			}
 			continue
@@ -520,7 +520,7 @@ func rewriteText[C any](content []C, text string) []C {
 		out = append(out, c)
 	}
 	if !placed {
-		out = append(out, any(types.TextContent{Text: text}).(C))
+		out = append(out, any(types.TextPart{Text: text}).(C))
 	}
 	return out
 }

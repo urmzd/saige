@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	agenttypes "github.com/urmzd/saige/agent/types"
+
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/chunker"
 	"github.com/urmzd/saige/rag/contextassembler"
@@ -199,7 +201,7 @@ func WithContextAssembler(a ragtypes.ContextAssembler) Option {
 // through ragtypes.StoreUnwrapper to find it (see ragtypes.AsStore). Otherwise, as
 // with memstore, the index lives in process memory and starts empty; over a
 // persistent store without keyword search, call RebuildIndex after
-// NewPipeline so documents ingested by an earlier process are found.
+// New so documents ingested by an earlier process are found.
 func WithBM25(cfg *bm25retriever.Config) Option {
 	return func(c *Config) {
 		if cfg == nil {
@@ -259,18 +261,20 @@ func WithCompression(llm ragtypes.LLM) Option {
 	return func(c *Config) { c.compressionLLM = llm }
 }
 
-// NewPipeline creates a new Pipeline using the provided options.
-func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
-	cfg := &Config{}
+// New creates a Pipeline from cfg and opts, which apply on top of it. A
+// configuration without a store or a content extractor is an error wrapping
+// agent/types.ErrInvalidConfig and ragtypes.ErrNoStore or
+// ragtypes.ErrNoExtractor.
+func New(cfg Config, opts ...Option) (ragtypes.Pipeline, error) {
 	for _, o := range opts {
-		o(cfg)
+		o(&cfg)
 	}
 
 	if cfg.Store == nil {
-		return nil, fmt.Errorf("%w", ragtypes.ErrNoStore)
+		return nil, fmt.Errorf("%w: %w", agenttypes.ErrInvalidConfig, ragtypes.ErrNoStore)
 	}
 	if cfg.ContentExtractor == nil {
-		return nil, fmt.Errorf("%w", ragtypes.ErrNoExtractor)
+		return nil, fmt.Errorf("%w: %w", agenttypes.ErrInvalidConfig, ragtypes.ErrNoExtractor)
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()

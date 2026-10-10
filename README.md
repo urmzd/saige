@@ -50,6 +50,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **Harness toolset**: `agent.WithHarnessTools` adds `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `execute_code` (shell, Python, Go behind a subprocess or Docker sandbox), `fetch_url`, and scratch tools, read-only unless you enable more, with approvals and automatic spilling of large results. See [harness tools](docs/harness-tools.md).
 - **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
 - **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
+- **Run your agent in other harnesses**: `saige export` and `saige launch` set up Claude Code, Codex, Gemini CLI, opencode and the Cursor agent with an agent definition as an MCP tool, its skills and a native agent file. `saige acp` runs it as an Agent Client Protocol agent for Zed, JetBrains and other editors, and `saige approvals` decides approvals for clients that cannot ask you. See [harnesses](docs/harnesses.md).
 - **Agent definitions**: an agent as a versioned Markdown file with YAML frontmatter (model, tools, skills, memory, sub-agents, approval rules in Claude Code syntax, compaction, guardrails, limits), loaded from directories, HTTPS or Postgres, resolved by `name@range` and pinned by digest. Run one with `saige ask --agent`. See [agent definitions](docs/agent-definitions.md).
 - **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
 - **MCP client** with pooled sessions, safe retries, catalog drift detection, and `.mcp.json` loading. See [MCP client](docs/mcp-client.md).
@@ -157,10 +158,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
-	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("What is RAG?")}))
+	a, err := agent.New(agent.Config{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
+	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is RAG?"))}))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -200,15 +204,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
 	weather := agent.Func("weather", "Current weather for a city",
 		func(rc agent.RunContext[agent.NoDeps], in WeatherIn) (string, error) {
 			return "18C and sunny in " + in.City, nil
 		})
 
-	a := agent.NewAgent(agent.AgentConfig{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
-	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("What's the weather in Lisbon?")}))
+	a, err := agent.New(agent.Config{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
+	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What's the weather in Lisbon?"))}))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -250,10 +257,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
-	ticket := []types.Message{types.NewUserMessage("Checkout returns HTTP 500 for every customer.")}
+	a, err := agent.New(agent.Config{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ticket := []types.Message{types.UserMsg(types.Text("Checkout returns HTTP 500 for every customer."))}
 	out, _, err := agent.Structured(ctx, a, ticket, agent.OutputSpec[Triage]{Repair: 1})
 	if err != nil {
 		log.Fatal(err)
@@ -262,6 +272,16 @@ func main() {
 }
 ```
 <!-- /fsrc -->
+
+### Images and documents
+
+A message is an ordered list of typed parts. Media is a part whose `Source` holds bytes, an `https` URL, a workspace reference or a vendor upload:
+
+```go
+msg := types.UserMsg(types.Text("What is in this image?"), types.Image(types.Bytes(types.MediaPNG, data)))
+```
+
+A part the serving model cannot take is rejected unless you permit a conversion, such as extracting a PDF's text. Full programs: [`examples/parts`](examples/parts/). See [message parts](docs/parts.md) and [modality conversion](docs/modality-conversion.md).
 
 ### Dials
 
@@ -319,9 +339,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	emb := ollama.NewEmbedder(ollama.NewClient("http://localhost:11434", "", "nomic-embed-text"))
-	pipe, err := rag.NewPipeline(
-		rag.WithStore(pgstore.NewStore(pool, nil)),
+	client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := pgstore.New(pgstore.Config{Pool: pool})
+	if err != nil {
+		log.Fatal(err)
+	}
+	emb := ollama.NewEmbedder(client)
+	pipe, err := rag.New(rag.Config{Store: store},
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
 		rag.WithRecursiveChunker(512, 64),
@@ -356,6 +383,7 @@ Run any of these with `go run ./examples/quickstart/<name>` from a clone.
 | **Agent** | The loop: model turn, tool calls, results, repeat | [agent](agent/README.md) |
 | **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/concepts.md#vendors-runtimes-and-adapters) |
 | **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/catalog.md) |
+| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/parts.md) |
 | **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
 | **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
 | **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |

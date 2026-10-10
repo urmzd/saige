@@ -7,20 +7,22 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // plainProvider hides the ScriptedProvider's options method, standing in for a
 // provider that cannot receive request options.
 type plainProvider struct{ p *agenttest.ScriptedProvider }
 
-func (p plainProvider) ChatStream(ctx context.Context, m []types.Message, t []types.ToolDef) (<-chan types.Delta, error) {
-	return p.p.ChatStream(ctx, m, t)
+func (p plainProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, t := req.Messages, req.Tools
+	return p.p.Stream(ctx, types.Request{Messages: m, Tools: t})
 }
 
 func runAgent(t *testing.T, a *Agent, input ...types.Message) ([]types.Delta, error) {
 	t.Helper()
 	if len(input) == 0 {
-		input = []types.Message{types.NewUserMessage("go")}
+		input = []types.Message{types.UserMsg(types.Text("go"))}
 	}
 	stream := a.Invoke(context.Background(), input)
 	deltas := agenttest.CollectDeltas(stream.Deltas())
@@ -59,10 +61,10 @@ func TestOnMaxIter(t *testing.T) {
 			responses[1] = agenttest.ToolCallResponse("call-b", "step", map[string]any{"n": 2})
 			script := &agenttest.ScriptedProvider{Responses: responses}
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "step"}, Result: "ok"}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool),
 				MaxIter: 2, OnMaxIter: tt.policy,
-			})
+			}))
 			_, err := runAgent(t, a)
 			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
@@ -122,9 +124,9 @@ func TestStopAtTools(t *testing.T) {
 				agenttest.TextResponse("after"),
 			}}
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "finish"}, Result: "final output", Err: tt.toolErr}
-			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)},
-				WithStopAtTools("finish"))
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)},
+				WithStopAtTools("finish")))
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)
@@ -144,9 +146,9 @@ func TestStopAtToolsSubAgentOutput(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "submit", map[string]any{}),
 	}}
 	registry := types.NewToolRegistry(&agenttest.MockTool{Def: types.ToolDef{Name: "submit"}, Result: `{"id":7}`})
-	a := NewAgent(AgentConfig{Name: "parent", SubAgents: []SubAgentDef{{
-		Name: "child", Provider: child, Tools: registry, Options: []AgentOption{WithStopAtTools("submit")},
-	}}})
+	a := must.Get(New(Config{Name: "parent", SubAgents: []SubAgentDef{{
+		Name: "child", Provider: child, Tools: registry, Options: []Option{WithStopAtTools("submit")},
+	}}}))
 	stream, err := a.InvokeSubAgent(context.Background(), "child", "task")
 	if err != nil {
 		t.Fatal(err)
@@ -194,10 +196,10 @@ func TestMaxConsecutiveErrors(t *testing.T) {
 				&agenttest.MockTool{Def: types.ToolDef{Name: "bad"}, Err: failing},
 				&agenttest.MockTool{Def: types.ToolDef{Name: "good"}, Result: "ok"},
 			)
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: script, SystemPrompt: "sys", Tools: tools, MaxIter: 10,
 				MaxConsecutiveErrors: tt.limit, OnMaxIter: tt.policy,
-			})
+			}))
 			_, err := runAgent(t, a)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
@@ -247,10 +249,10 @@ func TestRefusedCallsAreNotToolFaults(t *testing.T) {
 				&agenttest.MockTool{Def: types.ToolDef{Name: "denied"}, Result: "ok"},
 				&agenttest.MockTool{Def: types.ToolDef{Name: "ask"}, Result: "ok"},
 			)
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: script, SystemPrompt: "sys", Tools: tools, MaxIter: 10, ToolGate: gate,
-			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			}))
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for d := range stream.Deltas() {
 				if m, ok := d.(types.MarkerDelta); ok {
 					stream.ResolveMarkerWithMessage(m.ToolCallID, false, nil, "no")
@@ -287,10 +289,10 @@ func TestMaxRepeatIterations(t *testing.T) {
 			responses := append(toolCalls(3, "poll", map[string]any{"q": "same"}), agenttest.TextResponse("done"))
 			script := &agenttest.ScriptedProvider{Responses: responses}
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "poll"}, Result: "pending"}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool),
 				MaxRepeatIterations: tt.limit,
-			})
+			}))
 			_, err := runAgent(t, a)
 			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
@@ -320,7 +322,7 @@ func TestToolChoice(t *testing.T) {
 	tests := []struct {
 		name        string
 		configured  *types.ToolChoice
-		inline      *types.ToolChoice // sent as ConfigContent with the input
+		inline      *types.ToolChoice // sent as ConfigPart with the input
 		plain       bool              // provider without request options
 		wantErr     error
 		wantOptions []*types.ToolChoice // per call; nil means no options sent
@@ -357,13 +359,13 @@ func TestToolChoice(t *testing.T) {
 			if tt.plain {
 				provider = plainProvider{script}
 			}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: provider, SystemPrompt: "sys", ToolChoice: tt.configured,
 				Tools: types.NewToolRegistry(&agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "r"}),
-			})
-			input := types.UserMessage{Content: []types.UserContent{types.TextContent{Text: "go"}}}
+			}))
+			input := types.UserMessage{Parts: []types.UserPart{types.TextPart{Text: "go"}}}
 			if tt.inline != nil {
-				input.Content = append(input.Content, types.ConfigContent{ToolChoice: tt.inline})
+				input.Parts = append(input.Parts, types.ConfigPart{ToolChoice: tt.inline})
 			}
 			_, err := runAgent(t, a, input)
 			if tt.wantErr != nil {

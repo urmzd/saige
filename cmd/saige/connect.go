@@ -61,7 +61,10 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 
 	switch name {
 	case providerOllama:
-		client := ollamaProvider.NewClient(*cf.ollamaHost, "", embedModel)
+		client, err := ollamaProvider.NewClient(ollamaProvider.Config{Host: *cf.ollamaHost, EmbeddingModel: agenttypes.ModelID(embedModel)})
+		if err != nil {
+			return nil, nil, err
+		}
 		emb := ollamaProvider.NewEmbedder(client)
 		return embedderregistry.NewBatching(embedderregistry.Text(emb)), emb, nil
 
@@ -76,7 +79,10 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		if *cf.baseURL != "" {
 			opts = append(opts, openaiProvider.WithBaseURL(*cf.baseURL))
 		}
-		emb := openaiProvider.NewEmbedder(apiKey, embedModel, opts...)
+		emb, err := openaiProvider.NewEmbedder(openaiProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)}, opts...)
+		if err != nil {
+			return nil, nil, err
+		}
 		return hostedEmbedder(emb.Embed), emb, nil
 
 	case providerVertex, providerGoogle:
@@ -85,7 +91,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 			if v.Project == "" {
 				return nil, nil, fmt.Errorf("%s is required for vertex embeddings", provider.EnvCloudProject)
 			}
-			emb, err := googleProvider.NewEmbedder(ctx, "", embedModel, googleProvider.WithEmbedVertex(v.Project, v.Location))
+			emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{Model: agenttypes.ModelID(embedModel)}, googleProvider.WithEmbedVertex(v.Project, v.Location))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -95,7 +101,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("GOOGLE_API_KEY is required")
 		}
-		emb, err := googleProvider.NewEmbedder(ctx, apiKey, embedModel)
+		emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -121,7 +127,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 //
 // withEmbedder is false for commands that never embed (lookup, delete), so
 // they work with any --provider, including one with no embedding API.
-func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, withEmbedder bool) (ragtypes.Pipeline, error) {
+func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, withEmbedder bool, extra ...rag.Option) (ragtypes.Pipeline, error) {
 	var variantEmb ragtypes.VariantEmbedder
 	if withEmbedder {
 		var err error
@@ -130,7 +136,11 @@ func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, wi
 			return nil, fmt.Errorf("rag embedder: %w", err)
 		}
 	}
-	pipeline, err := rag.NewPipeline(ragPipelineOptions(pgstore.NewStore(pool, nil), variantEmb)...)
+	store, err := pgstore.New(pgstore.Config{Pool: pool})
+	if err != nil {
+		return nil, fmt.Errorf("rag store: %w", err)
+	}
+	pipeline, err := rag.New(rag.Config{}, append(ragPipelineOptions(store, variantEmb), extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rag pipeline: %w", err)
 	}
@@ -162,7 +172,7 @@ func newKnowledgeGraph(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags,
 	if err != nil {
 		return nil, err
 	}
-	graph, err := knowledge.NewGraph(ctx, append(opts, knowledge.WithPostgres(pool))...)
+	graph, err := knowledge.New(knowledge.Config{}, append(opts, knowledge.WithPostgres(pool))...)
 	if err != nil {
 		return nil, fmt.Errorf("kg graph: %w", err)
 	}

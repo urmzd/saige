@@ -1,5 +1,5 @@
 // Package retry decorates a Provider with configurable retry and backoff,
-// re-issuing failed ChatStream calls before surfacing an error. Compose with
+// re-issuing failed Stream calls before surfacing an error. Compose with
 // package fallback for multi-provider resilience.
 //
 // This decorator is meant to be the only retry layer. The anthropic and openai

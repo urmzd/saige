@@ -150,7 +150,7 @@ type resolution struct {
 }
 
 // reconcilePayload is the event record Reconcile writes. Result and Receipt
-// are gob. An empty Result permits a retry.
+// are durablecodec records. An empty Result permits a retry.
 type reconcilePayload struct {
 	Result  []byte `json:"result,omitempty"`
 	Receipt []byte `json:"receipt,omitempty"`
@@ -222,18 +222,18 @@ func safeStep(ctx context.Context, fn func(context.Context) (types.StepResult, e
 }
 
 // truncatedLLM reports whether result is a provider turn committed before it
-// finished, marked with TruncationContent. A turn that still holds tool calls
+// finished, marked with TruncationPart. A turn that still holds tool calls
 // does not qualify: their arguments may be incomplete.
 func truncatedLLM(result types.StepResult) bool {
 	if result.Kind != types.StepKindLLM || result.Message == nil {
 		return false
 	}
 	marked := false
-	for _, c := range result.Message.Content {
+	for _, c := range result.Message.Parts {
 		switch c.(type) {
-		case types.TruncationContent:
+		case types.TruncationPart:
 			marked = true
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			return false
 		}
 	}

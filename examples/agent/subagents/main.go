@@ -16,8 +16,10 @@ import (
 
 func main() {
 	// Shared provider for both parent and child.
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Mock search tool for the researcher sub-agent.
 	searchTool := &types.ToolFunc{
@@ -40,7 +42,7 @@ func main() {
 	}
 
 	// Build the parent agent with a researcher sub-agent.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "coordinator",
 		SystemPrompt: "You coordinate research tasks. Delegate research to the researcher.",
 		Provider:     adapter,
@@ -54,22 +56,25 @@ func main() {
 			},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Invoke with a research request.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Research the latest Go features"),
+		types.UserMsg(types.Text("Research the latest Go features")),
 	})
 
 	// Consume deltas, showing sub-agent attribution.
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.ToolExecStartDelta:
 			fmt.Printf("\n[tool-start] %s (id=%s)\n", d.Name, d.ToolCallID)
 		case types.ToolExecDelta:
-			if inner, ok := d.Inner.(types.TextContentDelta); ok {
-				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Content)
+			if inner, ok := d.Inner.(types.PartDelta); ok {
+				fmt.Printf("  [sub-agent %s] %s", d.ToolCallID, inner.Text)
 			}
 		case types.ToolExecEndDelta:
 			fmt.Printf("\n[tool-end] id=%s\n", d.ToolCallID)

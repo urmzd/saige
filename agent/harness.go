@@ -33,10 +33,10 @@ import (
 //
 //	set, err := tools.Harness(ctx, opts)
 //	deferred := selector.NewDeferredTools(set.Core()...)
-//	a := agent.NewAgent(cfg, agent.WithToolset(set),
+//	a := agent.New(cfg, agent.WithToolset(set),
 //		agent.WithToolPolicy(deferred), agent.WithTools(deferred.Tool()))
-func WithHarnessTools(opts tools.HarnessOptions) AgentOption {
-	return func(c *AgentConfig) {
+func WithHarnessTools(opts tools.HarnessOptions) Option {
+	return func(c *Config) {
 		set, err := tools.Harness(context.Background(), opts)
 		if err != nil {
 			c.optionErr = errors.Join(c.optionErr, fmt.Errorf("agent: harness tools: %w", err))
@@ -48,8 +48,8 @@ func WithHarnessTools(opts tools.HarnessOptions) AgentOption {
 
 // WithToolset adds a toolset built with tools.Harness, and uses its
 // workspace when the agent has none.
-func WithToolset(set *tools.Toolset) AgentOption {
-	return func(c *AgentConfig) {
+func WithToolset(set *tools.Toolset) Option {
+	return func(c *Config) {
 		if set == nil {
 			return
 		}
@@ -61,10 +61,10 @@ func WithToolset(set *tools.Toolset) AgentOption {
 }
 
 // WithTools adds tools to the agent's registry. A tool with the name of one
-// already registered replaces it. The registry in AgentConfig.Tools is
+// already registered replaces it. The registry in Config.Tools is
 // copied, not changed.
-func WithTools(ts ...types.Tool) AgentOption {
-	return func(c *AgentConfig) {
+func WithTools(ts ...types.Tool) Option {
+	return func(c *Config) {
 		var existing []types.Tool
 		if c.Tools != nil {
 			existing = c.Tools.All()

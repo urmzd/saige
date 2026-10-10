@@ -239,11 +239,22 @@ func newAgentHost(ctx context.Context, cmd *cobra.Command, cf *commonFlags, harn
 
 // bind resolves ref against the registry as it is now and binds it.
 func (h *agentHost) bind(ctx context.Context, ref string) (*bind.Bound, error) {
+	return h.bindWith(ctx, ref, nil)
+}
+
+// bindWith is bind with the environment adjusted by edit first, for a host
+// that sets the workspace, MCP servers or model per session.
+func (h *agentHost) bindWith(ctx context.Context, ref string, edit func(*bind.Env) error) (*bind.Bound, error) {
 	res, err := h.reg.Resolve(ref)
 	if err != nil {
 		return nil, invalidInput(fmt.Errorf("--agent %s: %w", ref, err))
 	}
 	env := h.env
+	if edit != nil {
+		if err := edit(&env); err != nil {
+			return nil, err
+		}
+	}
 	if env.Preset == nil && res.Model == nil {
 		if env.Preset, err = h.defaultPreset(); err != nil {
 			return nil, err
@@ -270,7 +281,7 @@ func bindCLIAgent(ctx context.Context, cmd *cobra.Command, cf *commonFlags, ref 
 		h.cleanup()
 		return nil, err
 	}
-	return &agentRun{bound: b, cleanup: func() { _ = b.Close(); h.cleanup() }}, nil
+	return &agentRun{bound: b, cleanup: func() { _ = b.Close(ctx); h.cleanup() }}, nil
 }
 
 // cliHarness is the harness configuration of ask and chat.

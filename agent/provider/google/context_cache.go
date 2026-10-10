@@ -39,7 +39,10 @@ func (a *Adapter) CreateContextCache(ctx context.Context, prefix []types.Message
 	if !a.Capabilities().Supports(types.CapExplicitContextCache) {
 		return ContextCache{}, fmt.Errorf("google: model %s does not declare explicit context caching", a.model)
 	}
-	contents, config := a.buildRequest(prefix, tools)
+	contents, config, err := a.buildRequest(prefix, 0, tools)
+	if err != nil {
+		return ContextCache{}, err
+	}
 	fingerprint, err := cacheFingerprint(contents, config)
 	if err != nil {
 		return ContextCache{}, err
@@ -68,6 +71,7 @@ func (a *Adapter) RefreshContextCache(ctx context.Context, cache ContextCache, t
 	return cache, nil
 }
 
+// DeleteContextCache deletes a context cache the adapter created.
 func (a *Adapter) DeleteContextCache(ctx context.Context, cache ContextCache) error {
 	if cache.Model != a.model || cache.Name == "" {
 		return fmt.Errorf("google: invalid cache deletion")
@@ -95,8 +99,7 @@ func cacheFingerprint(contents []*genai.Content, config *genai.GenerateContentCo
 func (a *Adapter) cachedRequest(messages []types.Message, tools []types.ToolDef) ([]*genai.Content, *genai.GenerateContentConfig, error) {
 	cache := a.contextCache
 	if cache == nil {
-		contents, config := a.buildRequest(messages, tools)
-		return contents, config, nil
+		return a.buildRequest(messages, 0, tools)
 	}
 	if cache.Name == "" || cache.Model != a.model || cache.PrefixCount <= 0 || cache.PrefixCount > len(messages) {
 		return nil, nil, fmt.Errorf("google: context cache does not match this model or prefix")
@@ -104,7 +107,10 @@ func (a *Adapter) cachedRequest(messages []types.Message, tools []types.ToolDef)
 	if !cache.ExpiresAt.IsZero() && !time.Now().Before(cache.ExpiresAt) {
 		return nil, nil, fmt.Errorf("google: context cache has expired")
 	}
-	prefix, prefixConfig := a.buildRequest(messages[:cache.PrefixCount], tools)
+	prefix, prefixConfig, err := a.buildRequest(messages[:cache.PrefixCount], 0, tools)
+	if err != nil {
+		return nil, nil, err
+	}
 	fingerprint, err := cacheFingerprint(prefix, prefixConfig)
 	if err != nil {
 		return nil, nil, err
@@ -112,7 +118,10 @@ func (a *Adapter) cachedRequest(messages []types.Message, tools []types.ToolDef)
 	if fingerprint != cache.Fingerprint {
 		return nil, nil, fmt.Errorf("google: context cache prefix or tools changed")
 	}
-	contents, config := a.buildRequest(messages[cache.PrefixCount:], nil)
+	contents, config, err := a.buildRequest(messages, cache.PrefixCount, nil)
+	if err != nil {
+		return nil, nil, err
+	}
 	if config.SystemInstruction != nil {
 		return nil, nil, fmt.Errorf("google: system instructions cannot change after the cached prefix")
 	}

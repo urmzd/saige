@@ -12,7 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // event renders one Responses API SSE event from its JSON body.
@@ -44,7 +46,7 @@ var incompleteFiltered = event(`{"type":"response.incomplete","sequence_number":
 
 func runResponses(t *testing.T, a *ResponsesAdapter, schema *types.ParameterSchema) streamResult {
 	t.Helper()
-	ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("go")}, nil, schema)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +54,17 @@ func runResponses(t *testing.T, a *ResponsesAdapter, schema *types.ParameterSche
 	for d := range ch {
 		r.deltas = append(r.deltas, d)
 		switch v := d.(type) {
-		case types.ToolCallEndDelta:
-			r.ends = append(r.ends, v)
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok {
+				r.ends = append(r.ends, tc)
+			}
 		case types.UsageDelta:
 			r.usage = true
 		case types.ErrorDelta:
 			r.errs = append(r.errs, v.Error)
 		}
 	}
+	streamcheck.RunPartConformance(t, r.deltas)
 	return r
 }
 
@@ -149,7 +154,7 @@ func TestResponsesStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewResponsesAdapter("test", testModel, WithBaseURL(sseServer(t, false, tt.body...).URL))
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, tt.body...).URL)))
 			var schema *types.ParameterSchema
 			if tt.structured {
 				schema = &types.ParameterSchema{Type: types.SchemaObject, Properties: map[string]types.PropertyDef{"a": {Type: types.SchemaString}}, Required: []string{"a"}}
@@ -158,8 +163,8 @@ func TestResponsesStream(t *testing.T) {
 
 			var text strings.Builder
 			for _, d := range r.deltas {
-				if v, ok := d.(types.TextContentDelta); ok {
-					text.WriteString(v.Content)
+				if v, ok := d.(types.PartDelta); ok {
+					text.WriteString(v.Text)
 				}
 			}
 			if text.String() != tt.wantText {
@@ -220,22 +225,22 @@ func TestResponsesRequest(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	a := NewResponsesAdapter("test", testModel, WithBaseURL(server.URL), WithMaxTokens(64),
-		WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
+	a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)},
+		WithBaseURL(server.URL), WithMaxTokens(64), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
 	msgs := []types.Message{
-		types.NewSystemMessage("be brief"),
-		types.NewUserMessage("read a.txt"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "reading"},
-			types.ToolUseContent{ID: "call_a", Name: "read", Arguments: map[string]any{"path": "a.txt"}},
+		types.SystemMsg(types.Text("be brief")),
+		types.UserMsg(types.Text("read a.txt")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "reading"},
+			types.ToolCallPart{ID: "call_a", Name: "read", Arguments: map[string]any{"path": "a.txt"}},
 		}},
-		types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "call_a", Text: "contents"}}},
+		types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "call_a", Parts: []types.ToolOutputPart{types.Text("contents")}}}},
 	}
 	tools := []types.ToolDef{{Name: "read", Description: "Read a file", Parameters: types.ParameterSchema{
 		Type: types.SchemaObject, Required: []string{"path"},
 		Properties: map[string]types.PropertyDef{"path": {Type: types.SchemaString}},
 	}}}
-	ch, err := a.ChatStream(context.Background(), msgs, tools)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: msgs, Tools: tools})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +315,8 @@ func TestResponsesRejectsUnsupportedControls(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 			t.Cleanup(server.Close)
-			a := NewResponsesAdapter("test", testModel, WithBaseURL(server.URL), tt.opt)
-			_, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), tt.opt))
+			_, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if !errors.Is(err, types.ErrInvalidModelConfig) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want an invalid config error naming %s", err, tt.want)
 			}
@@ -334,8 +339,8 @@ func TestResponsesPromptCacheRetention(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.retention, func(t *testing.T) {
-			a := NewResponsesAdapter("test", testModel, WithPromptCache("k", tt.retention))
-			params, err := a.buildParams([]types.Message{types.NewUserMessage("go")}, nil, nil)
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithPromptCache("k", tt.retention)))
+			params, err := a.buildParams([]types.Message{types.UserMsg(types.Text("go"))}, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

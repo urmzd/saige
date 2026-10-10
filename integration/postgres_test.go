@@ -12,6 +12,7 @@ import (
 	agentpgstore "github.com/urmzd/saige/agent/pgstore"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
@@ -29,15 +30,15 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 10*time.Minute)
 
-	store := agentpgstore.NewStore(pool, uuid.NewString(), nil)
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	store := must.Get(agentpgstore.New(agentpgstore.Config{Pool: pool, ConversationID: uuid.NewString()}))
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "persistent",
 		SystemPrompt: "You are a concise assistant.",
-		Provider:     ollama.NewAdapter(client),
-	}, agentsdk.WithStore(store))
+		Provider:     must.Get(ollama.New(ollama.Config{Client: client})),
+	}, agentsdk.WithStore(store)))
 
 	const question = "Reply with exactly one word: pong"
-	stream := agent.Invoke(ctx, []types.Message{types.NewUserMessage(question)})
+	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
 	text, _, err := drainStream(stream)
 	if err != nil {
 		t.Fatalf("agent run: %v", err)
@@ -64,8 +65,8 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if tc, ok := c.(types.TextContent); ok && strings.Contains(tc.Text, question) {
+			for _, c := range v.Parts {
+				if tc, ok := c.(types.TextPart); ok && strings.Contains(tc.Text, question) {
 					sawUser = true
 				}
 			}
@@ -106,8 +107,8 @@ func TestRAGPipelinePostgres(t *testing.T) {
 	requireEmbedDim(t, ctx, embedder)
 	truncate(t, pool, "rag_document", "rag_original", "rag_section", "rag_variant")
 
-	pipe, err := rag.NewPipeline(
-		rag.WithStore(ragpgstore.NewStore(pool, nil)),
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))),
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithEmbedders(embedderregistry.NewTextOnly(variantTextEmbedder{embedder})),
 		rag.WithRecursiveChunker(256, 25),
@@ -180,7 +181,7 @@ func TestKnowledgeGraphPostgres(t *testing.T) {
 	requireEmbedDim(t, ctx, ollama.NewEmbedder(client))
 	truncate(t, pool, "kg_entity", "kg_relation", "kg_episode", "kg_mention")
 
-	graph, err := knowledge.NewGraph(ctx,
+	graph, err := knowledge.New(knowledge.Config{},
 		knowledge.WithPostgres(pool),
 		knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),
 		knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)),

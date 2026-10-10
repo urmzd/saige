@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/urmzd/saige/cmd/internal/approvals"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -41,7 +43,10 @@ func main() {
 	agentSystem := flag.String("agent-system", "", "System prompt of the agent")
 	agentSchema := flag.String("agent-schema", "", "JSON schema file; the agent then answers with a structured result")
 	agentMaxIter := flag.Int("agent-max-iter", 10, "Most model turns one agent call may take")
-	agentTimeout := flag.Duration("agent-timeout", 5*time.Minute, "Time limit of one agent call")
+	agentTimeout := flag.Duration("agent-timeout", 5*time.Minute, "Time limit of one agent call, not counting time held for an approval")
+	approvalsDir := flag.String("approvals-dir", approvals.DefaultDir(os.Getenv), "Where held approvals wait for saige approvals, for clients without elicitation [$"+approvals.EnvDir+"]")
+	approvalTimeout := flag.Duration("approval-timeout", 15*time.Minute, "How long a held approval waits for a decision before its run ends")
+	approvalWait := flag.Duration("approval-wait", 30*time.Second, "How long one resume call waits for a decision before it reports the approval still pending")
 
 	transport := flag.String("transport", transportStdio, "Transport: stdio or http (streamable HTTP)")
 	addr := flag.String("addr", defaultAddr, "Listen address for --transport http")
@@ -94,6 +99,14 @@ func main() {
 	defer cleanup()
 
 	b := bridge{approval: mode}
+	if mode == approvalElicit && *agentRef != "" {
+		held, err := newHeldApprovals(ctx, *approvalsDir, *approvalTimeout, *approvalWait)
+		if err != nil {
+			log.Fatalf("saige-mcp: %v", err)
+		}
+		b.held = held
+		defer b.held.close()
+	}
 	server := newServer(version)
 	defs := registry.Definitions()
 	for _, def := range defs {
@@ -120,6 +133,11 @@ func main() {
 		if !found {
 			if at, err = newAgentTool(ctx, af, registry); err != nil {
 				log.Fatalf("saige-mcp: %v", err)
+			}
+		}
+		if at.gated && b.held != nil {
+			if _, clash := registry.Get(at.name + resumeSuffix); clash {
+				log.Fatalf("saige-mcp: the resume tool %s collides with a pack tool; set --agent-tool", at.name+resumeSuffix)
 			}
 		}
 		b.registerAgent(server, at)

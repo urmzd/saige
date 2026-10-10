@@ -26,8 +26,10 @@ const (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	addTool := &types.ToolFunc{
 		Def: types.ToolDef{
@@ -49,31 +51,43 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "streaming-demo",
 		SystemPrompt: "You are a helpful calculator. Use the add tool when asked to add numbers.",
 		Provider:     adapter,
 		Tools:        types.NewToolRegistry(addTool),
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("What is 10 + 25? Please use the tool."),
+		types.UserMsg(types.Text("What is 10 + 25? Please use the tool.")),
 	})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextStartDelta:
-			fmt.Printf("%s[text-start]%s ", colorDim, colorReset)
-		case types.TextContentDelta:
-			fmt.Printf("%s%s%s", colorGreen, d.Content, colorReset)
-		case types.TextEndDelta:
-			fmt.Printf(" %s[text-end]%s\n", colorDim, colorReset)
-		case types.ToolCallStartDelta:
-			fmt.Printf("%s[tool-call-start] name=%s id=%s%s\n", colorYellow, d.Name, d.ID, colorReset)
-		case types.ToolCallArgumentDelta:
-			fmt.Printf("%s  args: %s%s\n", colorYellow, d.Content, colorReset)
-		case types.ToolCallEndDelta:
-			fmt.Printf("%s[tool-call-end] args=%v%s\n", colorYellow, d.Arguments, colorReset)
+		case types.PartStart:
+			switch d.Kind {
+			case types.KindText:
+				fmt.Printf("%s[text-start #%d]%s ", colorDim, d.Index, colorReset)
+			case types.KindToolCall:
+				fmt.Printf("%s[tool-call-start #%d] name=%s id=%s%s\n", colorYellow, d.Index, d.Name, d.ID, colorReset)
+			}
+		case types.PartDelta:
+			switch {
+			case d.Text != "":
+				fmt.Printf("%s%s%s", colorGreen, d.Text, colorReset)
+			case d.Args != "":
+				fmt.Printf("%s  args: %s%s\n", colorYellow, d.Args, colorReset)
+			}
+		case types.PartEnd:
+			switch p := d.Part.(type) {
+			case types.ToolCallPart:
+				fmt.Printf("%s[tool-call-end #%d] args=%v%s\n", colorYellow, d.Index, p.Arguments, colorReset)
+			default:
+				fmt.Printf(" %s[part-end #%d]%s\n", colorDim, d.Index, colorReset)
+			}
 		case types.ToolExecStartDelta:
 			fmt.Printf("%s[exec-start] %s (id=%s)%s\n", colorCyan, d.Name, d.ToolCallID, colorReset)
 		case types.ToolExecDelta:

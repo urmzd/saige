@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/urmzd/saige/internal/must"
 )
 
 func writeTurns(t *testing.T, dir string, prompts ...string) {
@@ -46,11 +48,11 @@ func TestRunnerContinueOnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{
+	runner := must.Get(New(Config{
 		Client:          NewClient(server.URL, "test-key", "mock"),
 		Flows:           []Flow{BaseFlow{}, StatelessFlow{}},
 		ContinueOnError: true,
-	}
+	}))
 	err = runner.Run(context.Background(), experiments)
 	if err == nil || !strings.Contains(err.Error(), "b:") {
 		t.Fatalf("expected joined error naming b, got %v", err)
@@ -138,7 +140,7 @@ func TestRunnerStopsOnErrorByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}}
+	runner := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}}))
 	if err := runner.Run(context.Background(), experiments); err == nil {
 		t.Fatal("expected an error")
 	}
@@ -349,7 +351,7 @@ func TestAssembleDefaultIgnoresFailedTurnSavings(t *testing.T) {
 			{Turn: 2, LatencyMS: 4000, Failed: true, FailureReason: &reason},
 		}},
 	}
-	doc := AssembleDefault("mock", []Flow{BaseFlow{}, StatelessFlow{}}, Experiment{ID: "x"}, results)
+	doc := AssembleDefault("mock", []Flow{BaseFlow{}, StatelessFlow{}}, Script{ID: "x"}, results)
 
 	stateless := doc.Flows["stateless"]
 	if stateless.Reliability == nil || stateless.Reliability.RequestFailureCount != 1 {

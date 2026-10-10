@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestLiveCrossSessionRecall runs a real model and a real embedder: the
@@ -42,7 +43,8 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
 	}
-	store, err := New(pool, Config{Embedder: ollama.NewEmbedder(ollama.NewClient(host, "", embedModel))})
+	client := must.Get(ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: types.ModelID(embedModel)}))
+	store, err := New(Config{Pool: pool, Embedder: ollama.NewEmbedder(client)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,24 +53,24 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 		AutoApprove: true,
 		Scope:       func(context.Context, string) (memory.Scope, error) { return scope, nil },
 	}
-	provider := anthropic.NewAdapter(key, model)
+	provider := must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)}))
 
 	run := func(name, conversation string, tools []types.Tool, input ...types.Message) string {
 		t.Helper()
-		cfg := agentsdk.AgentConfig{
+		cfg := agentsdk.Config{
 			Name:         "assistant",
 			SystemPrompt: "You are a concise assistant with long-term memory. Save facts the user asks you to remember with the remember tool. Look facts up with your recall tools before saying you do not know.",
 			Provider:     provider,
 			Tools:        types.NewToolRegistry(tools...),
 		}
 		if conversation != "" {
-			conv, err := agentpg.NewScopedStore(pool, scope.Tenant, conversation, nil)
+			conv, err := agentpg.New(agentpg.Config{Pool: pool, Scope: scope.Tenant, ConversationID: conversation})
 			if err != nil {
 				t.Fatal(err)
 			}
 			cfg.Store = conv
 		}
-		stream := agentsdk.NewAgent(cfg, agentsdk.WithMaxIter(6)).Invoke(ctx, input)
+		stream := must.Get(agentsdk.New(cfg, agentsdk.WithMaxIter(6))).Invoke(ctx, input)
 		text := agenttest.CollectText(stream.Deltas())
 		if err := stream.Wait(); err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -79,7 +81,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 
 	// Session 1: remember a fact.
 	run("session 1", "session-1", memory.Tools(store, policy),
-		types.NewUserMessage("Please remember for future sessions: our deploy window is Thursdays at 14:00 UTC."))
+		types.UserMsg(types.Text("Please remember for future sessions: our deploy window is Thursdays at 14:00 UTC.")))
 	recs, err := store.Recall(ctx, scope, "", 0)
 	if err != nil || len(recs) == 0 || !strings.Contains(strings.ToLower(recs[0].Content), "thursday") {
 		t.Fatalf("session 1 stored %q, %v", contents(recs), err)
@@ -91,7 +93,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 
 	// Session 2: a fresh agent recalls it through the recall tool.
 	answer := run("session 2", "", memory.Tools(store, policy),
-		types.NewUserMessage("When is our deploy window?"))
+		types.UserMsg(types.Text("When is our deploy window?")))
 	if !strings.Contains(strings.ToLower(answer), "thursday") {
 		t.Fatalf("session 2 answer %q does not mention Thursday", answer)
 	}
@@ -104,7 +106,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
 	answer = run("session 3", "", nil, msg,
-		types.NewUserMessage("Based on our earlier conversation, what did we say about deployments?"))
+		types.UserMsg(types.Text("Based on our earlier conversation, what did we say about deployments?")))
 	if !strings.Contains(strings.ToLower(answer), "thursday") {
 		t.Fatalf("session 3 answer %q does not mention Thursday", answer)
 	}

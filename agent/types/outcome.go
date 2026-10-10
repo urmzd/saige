@@ -9,16 +9,16 @@ import (
 type OutcomeKind string
 
 const (
-	// OutcomeSchemaInvalid: structured output still failed its schema or
+	// OutcomeSchemaInvalid means structured output still failed its schema or
 	// validator after every repair attempt.
 	OutcomeSchemaInvalid OutcomeKind = "schema_invalid"
-	// OutcomeSubagentFailed: a delegated sub-agent returned an error.
+	// OutcomeSubagentFailed means a delegated sub-agent returned an error.
 	OutcomeSubagentFailed OutcomeKind = "subagent_failed"
-	// OutcomeEvalScore: an evaluator scored the answer below the host's bar.
+	// OutcomeEvalScore means an evaluator scored the answer below the host's bar.
 	OutcomeEvalScore OutcomeKind = "eval_score"
-	// OutcomeRefusal: the model declined to answer.
+	// OutcomeRefusal means the model declined to answer.
 	OutcomeRefusal OutcomeKind = "refusal"
-	// OutcomeContextLength: the request did not fit the model's window.
+	// OutcomeContextLength means the request did not fit the model's window.
 	OutcomeContextLength OutcomeKind = "context_length"
 )
 
@@ -42,9 +42,9 @@ type Outcome struct {
 }
 
 // Switch asks the agent to continue on another model, or with other dials.
-// Model is passed to ConfigContent.Model, so for a routing session it names
+// Model is passed to ConfigPart.Model, so for a routing session it names
 // a profile ID; empty keeps the model. Dials are passed to
-// ConfigContent.Dials, so a policy can raise reasoning depth on the same
+// ConfigPart.Dials, so a policy can raise reasoning depth on the same
 // model before it moves to another one.
 type Switch struct {
 	Model  string
@@ -54,7 +54,7 @@ type Switch struct {
 
 // OutcomePolicy decides whether an outcome moves the conversation to another
 // model. A nil Switch keeps the current model. The agent records an accepted
-// switch as ConfigContent in the tree, so it holds for later turns and
+// switch as ConfigPart in the tree, so it holds for later turns and
 // survives a reload. Implementations should be deterministic: a durable run
 // that replays the same outcome must reach the same decision.
 type OutcomePolicy interface {

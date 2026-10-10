@@ -227,10 +227,21 @@ type WAL struct {
 	reads int
 }
 
-// New opens (creating if necessary) the JSONL WAL at path. A torn final line
-// left by a crash mid-Commit is truncated away so later appends start on a
-// fresh line; the torn transaction was never acknowledged, so nothing is lost.
-func New(path string) (*WAL, error) {
+// Config names the WAL's file.
+type Config struct {
+	// Path is the JSONL log file, created when missing. Required.
+	Path string
+}
+
+// New opens (creating if necessary) the JSONL WAL at cfg.Path. A torn final
+// line left by a crash mid-Commit is truncated away so later appends start
+// on a fresh line; the torn transaction was never acknowledged, so nothing
+// is lost. An empty path is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config) (*WAL, error) {
+	path := cfg.Path
+	if path == "" {
+		return nil, fmt.Errorf("%w: filewal: Config.Path is required", types.ErrInvalidConfig)
+	}
 	if err := repairTail(path); err != nil {
 		return nil, fmt.Errorf("filewal: repair %s: %w", path, err)
 	}
@@ -271,12 +282,13 @@ func repairTail(path string) error {
 
 // Close closes the underlying file. In-flight (uncommitted) transactions are
 // discarded, matching crash semantics.
-func (w *WAL) Close() error {
+func (w *WAL) Close(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.f.Close()
 }
 
+// Begin implements types.WAL.
 func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -285,6 +297,7 @@ func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	return id, nil
 }
 
+// Append implements types.WAL.
 func (w *WAL) Append(_ context.Context, txID types.TxID, op types.TxOp) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -320,6 +333,7 @@ func (w *WAL) Commit(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Abort implements types.WAL.
 func (w *WAL) Abort(_ context.Context, txID types.TxID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -392,8 +406,8 @@ func (w *WAL) writeRecords(recs ...record) error {
 	}
 	if werr != nil {
 		if terr := w.f.Truncate(goodSize); terr != nil {
-			w.failed = fmt.Errorf("write: %v; rollback truncate to %d: %v", werr, goodSize, terr)
-			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %v; wal disabled)", werr, terr)
+			w.failed = fmt.Errorf("write: %w; rollback truncate to %d: %w", werr, goodSize, terr)
+			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %w; wal disabled)", werr, terr)
 		}
 		// The handle is O_APPEND, so the next write lands at the restored end
 		// of file: no seek needed.
@@ -433,6 +447,56 @@ func (w *WAL) Compact(_ context.Context) error {
 		}
 	}
 
+	var keep []record
+	for _, r := range recs {
+		if r.Kind == recordCommit && !applied[r.Tx] {
+			keep = append(keep, r)
+		}
+	}
+	return w.rewrite(keep)
+}
+
+// MigrateMessages rewrites the node messages in the log that an older
+// release stored, in the current format (tree.MessageFormatVersion), and
+// returns how many it rewrote, or with dryRun would rewrite. Reads convert
+// older messages on the fly, so this is optional. Every record is kept;
+// only messages change. The rewrite is atomic, like Compact's. There is no
+// way back to the older format, so copy the file first.
+func (w *WAL) MigrateMessages(_ context.Context, dryRun bool) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failed != nil {
+		return 0, fmt.Errorf("filewal: wal disabled by unrecoverable write failure: %w", w.failed)
+	}
+	recs, err := w.readRecords()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range recs {
+		for _, op := range r.Ops {
+			if op.Node == nil {
+				continue
+			}
+			msg, changed, err := tree.MigrateMessage(types.Role(op.Node.Role), op.Node.Message)
+			if err != nil {
+				return 0, fmt.Errorf("filewal: node %s: %w", op.Node.ID, err)
+			}
+			if changed {
+				op.Node.Message = msg
+				n++
+			}
+		}
+	}
+	if dryRun || n == 0 {
+		return n, nil
+	}
+	return n, w.rewrite(recs)
+}
+
+// rewrite atomically replaces the log with recs and reopens the append
+// handle on it. Caller must hold the lock.
+func (w *WAL) rewrite(recs []record) error {
 	dir := filepath.Dir(w.path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(w.path)+".compact-*")
 	if err != nil {
@@ -445,9 +509,6 @@ func (w *WAL) Compact(_ context.Context) error {
 		return fmt.Errorf("filewal: %s: %w", step, err)
 	}
 	for _, r := range recs {
-		if r.Kind != recordCommit || applied[r.Tx] {
-			continue
-		}
 		line, err := json.Marshal(r)
 		if err != nil {
 			return fail("marshal record", err)
@@ -479,7 +540,7 @@ func (w *WAL) Compact(_ context.Context) error {
 	_ = w.f.Close()
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path is the caller-chosen WAL location
 	if err != nil {
-		w.failed = fmt.Errorf("reopen after compact: %v", err)
+		w.failed = fmt.Errorf("reopen after compact: %w", err)
 		return fmt.Errorf("filewal: reopen after compact: %w (wal disabled)", err)
 	}
 	w.f = f

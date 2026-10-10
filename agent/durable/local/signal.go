@@ -53,12 +53,12 @@ func signal(ctx context.Context, n types.Notifier, sig Signal) error {
 	}
 	raw, err := json.Marshal(sig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSignal, err)
+		return fmt.Errorf("%w: %w", ErrSignal, err)
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signalTimeout)
 	defer cancel()
 	if err := n.Publish(ctx, SignalChannel, raw); err != nil {
-		return fmt.Errorf("%w: %v", ErrSignal, err)
+		return fmt.Errorf("%w: %w", ErrSignal, err)
 	}
 	return nil
 }

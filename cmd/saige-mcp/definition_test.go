@@ -13,6 +13,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func writeDefinition(t *testing.T, dir, name, extra string) {
@@ -42,17 +43,17 @@ func TestDefinitionTool(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("got %v %v", ok, err)
 	}
-	if at.name != "searcher" || at.description != "The searcher agent." || at.gated || at.newBound == nil {
+	if at.name != "searcher" || at.description != "The searcher agent." || at.gated || at.newSession == nil {
 		t.Fatalf("tool %+v", at)
 	}
-	a, release, err := at.newBound(context.Background())
+	ag, err := at.newSession(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info := a.Info(); info.Name != "searcher" || len(info.Tools) != 1 || info.Tools[0] != "kg_search" {
+	if info := ag.Agent.Info(); info.Name != "searcher" || len(info.Tools) != 1 || info.Tools[0] != "kg_search" {
 		t.Fatalf("agent %+v", info)
 	}
-	release()
+	ag.Release()
 
 	// Writes carry markers, so the tool is published as gated.
 	at, _, err = newDefinitionTool(context.Background(), flags("editor@^1"), packs)
@@ -89,7 +90,7 @@ func TestAgentToolBindsPerCall(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]agenttypes.Delta{agenttest.TextResponse("one"), agenttest.TextResponse("two")}}
 	at := agentTool{name: defaultAgentTool, description: "test", newBound: func(context.Context) (*agentsdk.Agent, func(), error) {
 		binds.Add(1)
-		return agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}), func() { releases.Add(1) }, nil
+		return must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})), func() { releases.Add(1) }, nil
 	}}
 	cs := agentSession(t, bridge{approval: approvalElicit}, at, nil)
 	for _, want := range []string{"one", "two"} {

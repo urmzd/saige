@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestChatStreamWithOptions(t *testing.T) {
@@ -34,8 +35,8 @@ func TestChatStreamWithOptions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
-			a := NewAdapter("k", testModel, append(tc.configured, WithBaseURL(server.URL))...)
-			ch, err := a.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("go")}, testTools, tc.opts)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, append(tc.configured, WithBaseURL(server.URL))...))
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: testTools, Options: new(tc.opts)})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 					t.Fatalf("err = %v with %d requests, want a local rejection", err, len(*bodies))
@@ -76,7 +77,7 @@ func TestPrefillCapability(t *testing.T) {
 		{"unknown model", "claude-unknown", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := NewAdapter("k", tc.model, tc.opts...).Capabilities().Supports(types.CapAssistantPrefill)
+			got := must.Get(New(Config{APIKey: "k", Model: types.ModelID(tc.model)}, tc.opts...)).Capabilities().Supports(types.CapAssistantPrefill)
 			if got != tc.want {
 				t.Fatalf("prefill = %v, want %v", got, tc.want)
 			}
@@ -91,12 +92,12 @@ func TestTrimPrefill(t *testing.T) {
 		wantLen  int
 		wantText string
 	}{
-		{"trailing whitespace removed", []types.Message{types.NewUserMessage("q"), types.NewAssistantMessage("partial answer \n")}, 2, "partial answer"},
-		{"whitespace-only turn dropped", []types.Message{types.NewUserMessage("q"), types.NewAssistantMessage("  ")}, 1, ""},
-		{"user last untouched", []types.Message{types.NewUserMessage("q ")}, 1, "q "},
+		{"trailing whitespace removed", []types.Message{types.UserMsg(types.Text("q")), types.AssistantMsg(types.Text("partial answer \n"))}, 2, "partial answer"},
+		{"whitespace-only turn dropped", []types.Message{types.UserMsg(types.Text("q")), types.AssistantMsg(types.Text("  "))}, 1, ""},
+		{"user last untouched", []types.Message{types.UserMsg(types.Text("q "))}, 1, "q "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, out := toAnthropicParams(tc.msgs)
+			_, out := toParams(tc.msgs)
 			if len(out) != tc.wantLen {
 				t.Fatalf("messages = %d, want %d", len(out), tc.wantLen)
 			}

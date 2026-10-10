@@ -1,0 +1,8 @@
+{
+  "id": "run-legacy",
+  "suite": "legacy",
+  "status": "succeeded",
+  "started_at": "2026-09-01T12:00:00Z",
+  "finished_at": "2026-09-01T12:01:00Z",
+  "units": 0
+}

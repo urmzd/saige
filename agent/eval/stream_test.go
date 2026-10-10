@@ -13,12 +13,12 @@ func TestCollectStreamTimingBasic(t *testing.T) {
 
 	// Simulate a stream with text chunks.
 	go func() {
-		ch <- types.TextStartDelta{}
-		ch <- types.TextContentDelta{Content: "Hello"}
+		ch <- types.PartStart{Index: 0, Kind: types.KindText}
+		ch <- types.PartDelta{Index: 0, Text: "Hello"}
 		time.Sleep(5 * time.Millisecond)
-		ch <- types.TextContentDelta{Content: " world"}
+		ch <- types.PartDelta{Index: 0, Text: " world"}
 		ch <- types.UsageDelta{PromptTokens: 10, CompletionTokens: 5}
-		ch <- types.TextEndDelta{}
+		ch <- types.PartEnd{Index: 0}
 		ch <- types.DoneDelta{}
 		close(ch)
 	}()
@@ -103,7 +103,7 @@ func TestCollectStreamTimingFrom(t *testing.T) {
 			ch := make(chan types.Delta, 4)
 			start := time.Now()
 			time.Sleep(tt.delay)
-			ch <- types.TextContentDelta{Content: "x"}
+			ch <- types.PartDelta{Index: 0, Text: "x"}
 			for range tt.errs {
 				ch <- types.ErrorDelta{Error: errors.New("boom")}
 			}

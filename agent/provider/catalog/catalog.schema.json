@@ -1,10 +1,44 @@
 {
   "$defs": {
+    "AuthSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "secret": {
+          "description": "a secret reference, never the secret",
+          "pattern": "^(env:|op://|file:).+",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "api_key",
+            "adc",
+            "none"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "CacheDialSpec": {
       "additionalProperties": false,
       "properties": {
         "on": {
           "$ref": "#/$defs/PromptCacheSpec"
+        }
+      },
+      "type": "object"
+    },
+    "CapacitySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrency": {
+          "type": "integer"
+        },
+        "requests_per_minute": {
+          "type": "integer"
+        },
+        "tokens_per_minute": {
+          "type": "integer"
         }
       },
       "type": "object"
@@ -70,6 +104,66 @@
       ],
       "type": "object"
     },
+    "CondValue": {
+      "additionalProperties": false,
+      "properties": {
+        "bool": {
+          "type": "boolean"
+        },
+        "in": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "not": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "set": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Constraint": {
+      "additionalProperties": false,
+      "properties": {
+        "exclusive": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbid": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "require": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "when": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CondValue"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "CreativityDialSpec": {
       "additionalProperties": false,
       "properties": {
@@ -94,6 +188,24 @@
       },
       "type": "object"
     },
+    "DataSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "pii_ok": {
+          "type": "boolean"
+        },
+        "residency": {
+          "type": "string"
+        },
+        "store": {
+          "type": "boolean"
+        },
+        "zero_retention": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "Dials": {
       "additionalProperties": false,
       "properties": {
@@ -111,6 +223,9 @@
         },
         "max_output": {
           "type": "integer"
+        },
+        "modality": {
+          "$ref": "#/$defs/ModalityDial"
         },
         "parallel": {
           "type": "boolean"
@@ -145,6 +260,155 @@
       },
       "type": "object"
     },
+    "EndpointSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capacity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapacitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DataSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_offering_template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FilesSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inherit_offerings": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocationSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_ids": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModesSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overrides": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OfferingSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serves": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "surface": {
+          "description": "one of anthropic.messages, openai.chat, openai.responses, openai.compatible, gemini.api, vertex, ollama.native, or a custom surface",
+          "type": "string"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TransportSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "surface"
+      ],
+      "type": "object"
+    },
     "EntrySpec": {
       "additionalProperties": false,
       "properties": {
@@ -161,6 +425,9 @@
         "dials": {
           "$ref": "#/$defs/Dials"
         },
+        "endpoint": {
+          "type": "string"
+        },
         "id": {
           "type": "string"
         },
@@ -175,6 +442,9 @@
           "type": "boolean"
         },
         "model": {
+          "type": "string"
+        },
+        "offering": {
           "type": "string"
         },
         "optional": {
@@ -221,10 +491,24 @@
           "$ref": "#/$defs/VertexSpec"
         }
       },
-      "required": [
-        "provider",
-        "model"
-      ],
+      "type": "object"
+    },
+    "FallbackSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "equivalents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "larger_context": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "Fee": {
@@ -248,17 +532,36 @@
       ],
       "type": "object"
     },
-    "LimitsSpec": {
+    "FilesSpec": {
       "additionalProperties": false,
       "properties": {
-        "context_window": {
+        "api": {
+          "type": "boolean"
+        },
+        "max_bytes": {
           "type": "integer"
         },
-        "default_max_output_tokens": {
-          "type": "integer"
+        "ttl": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
         },
-        "max_output_tokens": {
-          "type": "integer"
+        "uri_schemes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LocationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
         }
       },
       "type": "object"
@@ -288,6 +591,220 @@
       ],
       "type": "object"
     },
+    "ModalitiesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModalityLimitSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "propertyNames": {
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "out": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModalityLimitSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "propertyNames": {
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "tool_result": {
+          "additionalProperties": {
+            "enum": [
+              "",
+              "inline",
+              "follow_up_user",
+              "none"
+            ],
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ModalityDial": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "per": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ModalityLimitSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "fps": {
+          "$ref": "#/$defs/ParamSpec"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "max_count": {
+          "type": "integer"
+        },
+        "max_duration": {
+          "type": "integer"
+        },
+        "max_pages": {
+          "type": "integer"
+        },
+        "max_pixels": {
+          "type": "integer"
+        },
+        "media": {
+          "items": {
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/gif",
+              "image/webp",
+              "application/pdf",
+              "text/csv",
+              "audio/mpeg",
+              "audio/wav",
+              "video/mp4",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              "text/html",
+              "text/plain",
+              "application/json"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "enum": [
+              "inline",
+              "uri",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tokens": {
+          "$ref": "#/$defs/TokenRule"
+        }
+      },
+      "type": "object"
+    },
+    "ModalityRate": {
+      "additionalProperties": false,
+      "properties": {
+        "input_per_mtok": {
+          "type": "number"
+        },
+        "output_per_mtok": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ModelLimitsSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "context_window": {
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ModelModalitiesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "items": {
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "out": {
+          "items": {
+            "enum": [
+              "text",
+              "image",
+              "audio",
+              "video",
+              "document",
+              "file"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ModelSpec": {
       "additionalProperties": false,
       "properties": {
@@ -311,106 +828,174 @@
             }
           ]
         },
-        "add_capabilities": {
-          "anyOf": [
-            {
-              "items": {
-                "enum": [
-                  "assistant_prefill",
-                  "automatic_prompt_cache",
-                  "citations",
-                  "code_execution",
-                  "context_window_override",
-                  "embeddings",
-                  "explicit_context_cache",
-                  "frequency_penalty",
-                  "max_output_tokens",
-                  "parallel_tool_control",
-                  "parallel_tools",
-                  "presence_penalty",
-                  "prompt_cache_markers",
-                  "prompt_caching",
-                  "reasoning",
-                  "reasoning_budget",
-                  "reasoning_effort",
-                  "reasoning_signature",
-                  "reasoning_toggle",
-                  "remote_mcp",
-                  "safety_settings",
-                  "seed",
-                  "server_tools",
-                  "stop_sequences",
-                  "streaming",
-                  "structured_output",
-                  "system_prompt",
-                  "temperature",
-                  "tool_choice",
-                  "tools",
-                  "top_k",
-                  "top_p",
-                  "web_search"
-                ],
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "capabilities": {
-          "anyOf": [
-            {
-              "items": {
-                "enum": [
-                  "assistant_prefill",
-                  "automatic_prompt_cache",
-                  "citations",
-                  "code_execution",
-                  "context_window_override",
-                  "embeddings",
-                  "explicit_context_cache",
-                  "frequency_penalty",
-                  "max_output_tokens",
-                  "parallel_tool_control",
-                  "parallel_tools",
-                  "presence_penalty",
-                  "prompt_cache_markers",
-                  "prompt_caching",
-                  "reasoning",
-                  "reasoning_budget",
-                  "reasoning_effort",
-                  "reasoning_signature",
-                  "reasoning_toggle",
-                  "remote_mcp",
-                  "safety_settings",
-                  "seed",
-                  "server_tools",
-                  "stop_sequences",
-                  "streaming",
-                  "structured_output",
-                  "system_prompt",
-                  "temperature",
-                  "tool_choice",
-                  "tools",
-                  "top_k",
-                  "top_p",
-                  "web_search"
-                ],
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "chat_completions_tools": {
+        "extends": {
           "anyOf": [
             {
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelLimitsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modalities": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelModalitiesSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "enum": [
+                "frontier",
+                "standard",
+                "economy"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ModesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "batch": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "OfferingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "$delete": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "$replace": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "add_features": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "assistant_prefill",
+                  "automatic_prompt_cache",
+                  "citations",
+                  "code_execution",
+                  "context_window_override",
+                  "embeddings",
+                  "explicit_context_cache",
+                  "frequency_penalty",
+                  "max_output_tokens",
+                  "parallel_tool_control",
+                  "parallel_tools",
+                  "presence_penalty",
+                  "prompt_cache_markers",
+                  "prompt_caching",
+                  "reasoning",
+                  "reasoning_budget",
+                  "reasoning_effort",
+                  "reasoning_signature",
+                  "reasoning_toggle",
+                  "remote_mcp",
+                  "safety_settings",
+                  "seed",
+                  "server_tools",
+                  "stop_sequences",
+                  "streaming",
+                  "structured_output",
+                  "system_prompt",
+                  "temperature",
+                  "tool_choice",
+                  "tools",
+                  "top_k",
+                  "top_p",
+                  "web_search"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "constraints": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Constraint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
             },
             {
               "type": "null"
@@ -437,6 +1022,9 @@
             }
           ]
         },
+        "endpoint": {
+          "type": "string"
+        },
         "extends": {
           "anyOf": [
             {
@@ -447,36 +1035,54 @@
             }
           ]
         },
-        "limits": {
+        "fallback": {
           "anyOf": [
             {
-              "$ref": "#/$defs/LimitsSpec"
+              "$ref": "#/$defs/FallbackSpec"
             },
             {
               "type": "null"
             }
           ]
         },
-        "media": {
+        "features": {
           "anyOf": [
             {
               "items": {
                 "enum": [
-                  "image/jpeg",
-                  "image/png",
-                  "image/gif",
-                  "image/webp",
-                  "application/pdf",
-                  "text/csv",
-                  "audio/mpeg",
-                  "audio/wav",
-                  "video/mp4",
-                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                  "text/html",
-                  "text/plain",
-                  "application/json"
+                  "assistant_prefill",
+                  "automatic_prompt_cache",
+                  "citations",
+                  "code_execution",
+                  "context_window_override",
+                  "embeddings",
+                  "explicit_context_cache",
+                  "frequency_penalty",
+                  "max_output_tokens",
+                  "parallel_tool_control",
+                  "parallel_tools",
+                  "presence_penalty",
+                  "prompt_cache_markers",
+                  "prompt_caching",
+                  "reasoning",
+                  "reasoning_budget",
+                  "reasoning_effort",
+                  "reasoning_signature",
+                  "reasoning_toggle",
+                  "remote_mcp",
+                  "safety_settings",
+                  "seed",
+                  "server_tools",
+                  "stop_sequences",
+                  "streaming",
+                  "structured_output",
+                  "system_prompt",
+                  "temperature",
+                  "tool_choice",
+                  "tools",
+                  "top_k",
+                  "top_p",
+                  "web_search"
                 ],
                 "type": "string"
               },
@@ -486,6 +1092,60 @@
               "type": "null"
             }
           ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelLimitsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modalities": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModalitiesSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modality_pricing": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ModalityRate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "text",
+                  "image",
+                  "audio",
+                  "video",
+                  "document",
+                  "file"
+                ],
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
         },
         "notes": {
           "anyOf": [
@@ -500,8 +1160,45 @@
             }
           ]
         },
-        "prefix": {
-          "type": "string"
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ParamSpec"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "temperature",
+                  "top_p",
+                  "top_k",
+                  "frequency_penalty",
+                  "presence_penalty",
+                  "seed",
+                  "max_output_tokens",
+                  "stop",
+                  "parallel_tools",
+                  "tool_choice",
+                  "reasoning.enabled",
+                  "reasoning.effort",
+                  "reasoning.budget",
+                  "service_tier",
+                  "prompt_cache.retention"
+                ],
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pricing": {
           "anyOf": [
@@ -513,20 +1210,7 @@
             }
           ]
         },
-        "provider": {
-          "type": "string"
-        },
-        "reasoning": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ReasoningSpec"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "remove_capabilities": {
+        "remove_features": {
           "anyOf": [
             {
               "items": {
@@ -628,25 +1312,28 @@
             }
           ]
         },
-        "superseded_by": {
+        "tiers": {
           "anyOf": [
             {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "tier": {
-          "anyOf": [
-            {
-              "enum": [
-                "frontier",
-                "standard",
-                "economy"
-              ],
-              "type": "string"
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TierSpec"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "enum": [
+                  "priority",
+                  "flex",
+                  "batch"
+                ],
+                "type": "string"
+              },
+              "type": "object"
             },
             {
               "type": "null"
@@ -711,6 +1398,50 @@
       },
       "type": "object"
     },
+    "ParamSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "default": {},
+        "max": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "special": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "type": {
+          "enum": [
+            "number",
+            "integer",
+            "boolean",
+            "enum",
+            "string_list"
+          ],
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "wire": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "PresetSpec": {
       "additionalProperties": false,
       "properties": {
@@ -769,12 +1500,6 @@
       "properties": {
         "as_of": {
           "type": "string"
-        },
-        "batch_cached_input_per_mtok": {
-          "type": "number"
-        },
-        "batch_discount": {
-          "type": "number"
         },
         "cache_write_per_mtok": {
           "type": "number"
@@ -931,83 +1656,6 @@
       },
       "type": "object"
     },
-    "ReasoningSpec": {
-      "additionalProperties": false,
-      "properties": {
-        "default_effort": {
-          "type": "string"
-        },
-        "default_enabled": {
-          "type": "boolean"
-        },
-        "dynamic_budget": {
-          "type": "boolean"
-        },
-        "efforts": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "forced_tool_choice": {
-          "type": "boolean"
-        },
-        "max_budget": {
-          "type": "integer"
-        },
-        "min_budget": {
-          "type": "integer"
-        },
-        "required": {
-          "type": "boolean"
-        },
-        "sampling_requires_no_reasoning": {
-          "items": {
-            "enum": [
-              "assistant_prefill",
-              "automatic_prompt_cache",
-              "citations",
-              "code_execution",
-              "context_window_override",
-              "embeddings",
-              "explicit_context_cache",
-              "frequency_penalty",
-              "max_output_tokens",
-              "parallel_tool_control",
-              "parallel_tools",
-              "presence_penalty",
-              "prompt_cache_markers",
-              "prompt_caching",
-              "reasoning",
-              "reasoning_budget",
-              "reasoning_effort",
-              "reasoning_signature",
-              "reasoning_toggle",
-              "remote_mcp",
-              "safety_settings",
-              "seed",
-              "server_tools",
-              "stop_sequences",
-              "streaming",
-              "structured_output",
-              "system_prompt",
-              "temperature",
-              "tool_choice",
-              "tools",
-              "top_k",
-              "top_p",
-              "web_search"
-            ],
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "zero_budget": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
     "RetrySpec": {
       "additionalProperties": false,
       "properties": {
@@ -1139,6 +1787,58 @@
       ],
       "type": "object"
     },
+    "TierSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "cached_input_per_mtok": {
+          "type": "number"
+        },
+        "discount": {
+          "type": "number"
+        },
+        "pricing": {
+          "$ref": "#/$defs/PricingSpec"
+        },
+        "transport": {
+          "enum": [
+            "",
+            "batch"
+          ],
+          "type": "string"
+        },
+        "wire": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TokenRule": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "type": "integer"
+        },
+        "per_image": {
+          "type": "integer"
+        },
+        "per_page": {
+          "type": "integer"
+        },
+        "per_pixels": {
+          "type": "integer"
+        },
+        "per_second": {
+          "type": "integer"
+        },
+        "per_tile": {
+          "type": "integer"
+        },
+        "tile": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ToolChoice": {
       "additionalProperties": false,
       "properties": {
@@ -1158,6 +1858,19 @@
       "required": [
         "mode"
       ],
+      "type": "object"
+    },
+    "TransportSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "base_url": {
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Go duration, for example \"500ms\" or \"2m\"",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "VertexSpec": {
@@ -1180,24 +1893,70 @@
     "$schema": {
       "type": "string"
     },
-    "baselines": {
-      "additionalProperties": {
-        "$ref": "#/$defs/ModelSpec"
-      },
-      "type": "object"
-    },
     "default_preset": {
       "type": "string"
     },
     "dials": {
       "$ref": "#/$defs/Dials"
     },
+    "endpoints": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/EndpointSpec"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    },
     "inherit_default": {
       "type": "boolean"
     },
+    "model_templates": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelSpec"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    },
     "models": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelSpec"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    },
+    "offering_templates": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/OfferingSpec"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    },
+    "offerings": {
       "items": {
-        "$ref": "#/$defs/ModelSpec"
+        "$ref": "#/$defs/OfferingSpec"
       },
       "type": "array"
     },
@@ -1216,12 +1975,6 @@
     },
     "revision": {
       "type": "string"
-    },
-    "templates": {
-      "additionalProperties": {
-        "$ref": "#/$defs/ModelSpec"
-      },
-      "type": "object"
     },
     "version": {
       "type": "integer"

@@ -59,6 +59,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	}, nil
 }
 
+// RecordTokenUsage implements types.Metrics.
 func (m *Metrics) RecordTokenUsage(ctx context.Context, operationName, provider string, input, output int) {
 	baseAttrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", operationName),
@@ -104,6 +105,7 @@ func (m *Metrics) RecordTimeToFirstChunk(ctx context.Context, operationName, pro
 	))
 }
 
+// RecordToolCall implements types.Metrics.
 func (m *Metrics) RecordToolCall(ctx context.Context, toolName string, duration time.Duration, err error) {
 	attrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", "execute_tool"),
@@ -115,6 +117,7 @@ func (m *Metrics) RecordToolCall(ctx context.Context, toolName string, duration 
 	m.operationDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 }
 
+// RecordProviderCall implements types.Metrics.
 func (m *Metrics) RecordProviderCall(ctx context.Context, operationName, provider string, duration time.Duration, err error) {
 	attrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", operationName),
@@ -126,6 +129,7 @@ func (m *Metrics) RecordProviderCall(ctx context.Context, operationName, provide
 	m.operationDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 }
 
+// RecordAgentInvocation implements types.Metrics.
 func (m *Metrics) RecordAgentInvocation(ctx context.Context, agentID string, duration time.Duration) {
 	m.RecordAgentOutcome(ctx, agentID, duration, nil)
 }

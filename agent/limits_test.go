@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // ===================================================================
 // (a) Per-call timeouts
 // ===================================================================
 
-// hangingProvider blocks inside ChatStream until ctx is cancelled, then closes
+// hangingProvider blocks inside Stream until ctx is cancelled, then closes
 // the channel without emitting any delta. A well-behaved provider that observes
 // the deadline behaves exactly like this.
 type hangingProvider struct {
@@ -25,7 +26,7 @@ type hangingProvider struct {
 	once    sync.Once
 }
 
-func (p *hangingProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *hangingProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	go func() {
 		defer close(ch)
@@ -40,13 +41,13 @@ func (p *hangingProvider) ChatStream(ctx context.Context, _ []types.Message, _ [
 func TestLLMTimeoutSurfacesError(t *testing.T) {
 	provider := &hangingProvider{started: make(chan struct{})}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	}, WithLLMTimeout(50*time.Millisecond))
+	}, WithLLMTimeout(50*time.Millisecond)))
 
 	start := time.Now()
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 	elapsed := time.Since(start)
@@ -74,9 +75,9 @@ func TestLLMTimeoutSurfacesError(t *testing.T) {
 func TestLLMTimeoutDisabledByDefault(t *testing.T) {
 	// With no timeout configured, a normal fast provider completes cleanly.
 	provider := &mockProvider{response: "hello"}
-	agent := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
+	agent := must.Get(New(Config{Provider: provider, SystemPrompt: "sys"}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,14 +115,14 @@ func TestToolTimeoutSurfacesError(t *testing.T) {
 		response: "done after tool",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(&hangingTool{name: "hang"}),
-	}, WithToolTimeout(50*time.Millisecond))
+	}, WithToolTimeout(50*time.Millisecond)))
 
 	start := time.Now()
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("run it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("run it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 	elapsed := time.Since(start)
@@ -166,13 +167,13 @@ func TestToolTimeoutCatchesDeadlineIgnoringTool(t *testing.T) {
 		response: "done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(&ignoresCtxSlowTool{name: "slow", sleep: 30 * time.Millisecond}),
-	}, WithToolTimeout(5*time.Millisecond))
+	}, WithToolTimeout(5*time.Millisecond)))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("run it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("run it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -199,13 +200,13 @@ func TestToolTimeoutFastToolUnaffected(t *testing.T) {
 	}
 	provider := &toolCallProvider{toolName: "fast", toolID: "c1", toolArgs: map[string]any{}, response: "ok"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	}, WithToolTimeout(time.Second))
+	}, WithToolTimeout(time.Second)))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -276,13 +277,13 @@ func TestMaxParallelToolsCapsConcurrency(t *testing.T) {
 	probe := &concurrencyProbeTool{name: "probe", hold: 40 * time.Millisecond}
 	provider := manyToolCallProvider("probe", 6)
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(probe),
-	}, WithMaxParallelTools(cap))
+	}, WithMaxParallelTools(cap)))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -300,13 +301,13 @@ func TestUnlimitedToolsRunFullyParallel(t *testing.T) {
 	provider := manyToolCallProvider("probe", n)
 
 	// MaxParallelTools = 0 (unlimited): all n should overlap.
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(probe),
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -319,13 +320,13 @@ func TestMaxParallelToolsAllResultsReturned(t *testing.T) {
 	probe := &concurrencyProbeTool{name: "probe", hold: 5 * time.Millisecond}
 	provider := manyToolCallProvider("probe", 4)
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(probe),
-	}, WithMaxParallelTools(1)) // fully serial, still correct
+	}, WithMaxParallelTools(1))) // fully serial, still correct
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -348,8 +349,8 @@ func infiniteToolProvider(toolName string) *sequenceProvider {
 	for i := range p.responses {
 		i := i
 		p.responses[i] = func(ch chan<- types.Delta) {
-			ch <- types.ToolCallStartDelta{ID: fmt.Sprintf("call-%d", i), Name: toolName}
-			ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+			ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: fmt.Sprintf("call-%d", i), Name: toolName}
+			ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: fmt.Sprintf("call-%d", i), Name: toolName, Arguments: map[string]any{}}}
 		}
 	}
 	return p
@@ -365,14 +366,14 @@ func TestMaxIterationsEmitsErrMaxIterationsWhenTruncated(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     infiniteToolProvider("loop"),
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
 		MaxIter:      3,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("loop")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("loop"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -395,13 +396,13 @@ func TestMaxIterationsEmitsErrMaxIterationsWhenTruncated(t *testing.T) {
 
 func TestCleanFinishDoesNotEmitErrMaxIterations(t *testing.T) {
 	// Provider responds with text immediately -> natural finish, well within cap.
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "all done"},
 		SystemPrompt: "sys",
 		MaxIter:      5,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -422,14 +423,14 @@ func TestMaxIterationsCleanFinishOnLastTurnNoError(t *testing.T) {
 	// iter 0: tool call, iter 1: text finish. MaxIter=2 lets both run.
 	provider := &multiTurnToolProvider{toolTurns: 1, toolName: "step", finalMessage: "finished cleanly"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
 		MaxIter:      2,
-	})
+	}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 

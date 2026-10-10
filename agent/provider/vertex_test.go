@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -89,7 +90,7 @@ func TestBuildVertexTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err == nil {
 		for range ch {
 		}
@@ -110,11 +111,11 @@ func TestBuildVertexTarget(t *testing.T) {
 // Completions.
 func TestBuildRoutesResponsesOnlyModels(t *testing.T) {
 	for model, wantResponses := range map[string]bool{"gpt-6.1-sol": true, "gpt-6-astra": true, "gpt-6-luna": false} {
-		p, err := Build(context.Background(), Config{Provider: OpenAI, Model: model, APIKey: "k", Getenv: env(nil)})
+		p, err := Build(context.Background(), Config{Provider: OpenAI, Model: types.ModelID(model), APIKey: "k", Getenv: env(nil)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, isResponses := p.(*openai.ResponsesAdapter)
+		_, isResponses := wrapper.As[*openai.ResponsesAdapter](p)
 		if isResponses != wantResponses {
 			t.Errorf("%s: adapter %T, want Responses=%v", model, p, wantResponses)
 		}

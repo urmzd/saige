@@ -58,8 +58,8 @@ type SubAgentDef struct {
 	// Options are applied last, after inheritance and after the fields above,
 	// so any inherited value can be overridden per sub-agent. This is the
 	// escape hatch that keeps SubAgentDef from having to mirror every field of
-	// AgentConfig.
-	Options []AgentOption
+	// Config.
+	Options []Option
 
 	// ResponseSchema makes the child answer with JSON that matches it. The
 	// child uses its provider's structured output when the provider supports
@@ -105,11 +105,11 @@ type SubAgentDef struct {
 	References SubAgentReferences
 }
 
-// inheritConfig builds a sub-agent's AgentConfig from its definition and its
+// inheritConfig builds a sub-agent's Config from its definition and its
 // parent's config. The split is deliberate:
 //
 //   - Inherited (operational): Logger, Metrics, LLMTimeout, ToolTimeout,
-//     MaxParallelTools, CompactCfg, CompactProvider, Resolvers, Extractors, ToolGate,
+//     MaxParallelTools, CompactCfg, CompactProvider, Resolvers, Extractors, Conversion, ToolGate,
 //     ToolPolicy, ApprovalPolicy, Deps, ToolContext, Tokenizer, ToolRedactor,
 //     OnMaxIter, ForceFinalPrompt, MaxConsecutiveErrors, MaxRepeatIterations,
 //     InterruptTTL, InterruptPolicy, Dials and DialPolicy. These describe how
@@ -143,7 +143,7 @@ type SubAgentDef struct {
 //
 // StepRunner is passed separately: the parent's effective runner is only known
 // at invocation time, since RunDurable injects one after registration.
-func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) AgentConfig {
+func inheritConfig(parent Config, sa SubAgentDef, runner types.StepRunner) Config {
 	provider := sa.Provider
 	if provider == nil {
 		provider = parent.Provider
@@ -152,7 +152,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		provider = sessions.NewSession()
 	}
 	maxIter, wrapUpAt := childIterBudget(parent.MaxIter, sa)
-	return AgentConfig{
+	return Config{
 		Name:         sa.Name,
 		SystemPrompt: sa.SystemPrompt,
 		Provider:     provider,
@@ -177,6 +177,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		CompactProvider:  parent.CompactProvider,
 		Resolvers:        parent.Resolvers,
 		Extractors:       parent.Extractors,
+		Conversion:       parent.Conversion,
 		ToolGate:         parent.ToolGate,
 		ToolPolicy:       parent.ToolPolicy,
 		ApprovalPolicy:   parent.ApprovalPolicy,
@@ -448,7 +449,7 @@ func childOutputMode(provider types.Provider, schema *types.ParameterSchema) Out
 
 // resolveChildOutputMode is the last option applied to a sub-agent. It
 // resolves OutputAuto for the final provider and keeps a mode an option set.
-func resolveChildOutputMode(c *AgentConfig) {
+func resolveChildOutputMode(c *Config) {
 	if c.OutputMode == OutputAuto {
 		c.OutputMode = childOutputMode(c.Provider, c.ResponseSchema)
 	}

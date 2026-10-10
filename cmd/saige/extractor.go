@@ -68,17 +68,13 @@ func (e *providerExtractor) Extract(ctx context.Context, text string) ([]kgtypes
 	}
 
 	msgs := []agenttypes.Message{
-		agenttypes.NewUserMessage(extractionInstructions + "\n\nText:\n" + text),
+		agenttypes.UserMsg(agenttypes.Text(extractionInstructions + "\n\nText:\n" + text)),
 	}
-	var (
-		ch  <-chan agenttypes.Delta
-		err error
-	)
-	if sp, ok := e.provider.(agenttypes.StructuredOutputProvider); ok {
-		ch, err = sp.ChatStreamWithSchema(ctx, msgs, nil, extractionSchema)
-	} else {
-		ch, err = e.provider.ChatStream(ctx, msgs, nil)
+	req := agenttypes.Request{Messages: msgs}
+	if agenttypes.AcceptsSchema(e.provider) {
+		req.Schema = extractionSchema
 	}
+	ch, err := e.provider.Stream(ctx, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("extraction: %w", err)
 	}
@@ -96,8 +92,8 @@ func collectText(ch <-chan agenttypes.Delta) (string, error) {
 	var streamErr error
 	for d := range ch {
 		switch d := d.(type) {
-		case agenttypes.TextContentDelta:
-			b.WriteString(d.Content)
+		case agenttypes.PartDelta:
+			b.WriteString(d.Text)
 		case agenttypes.ErrorDelta:
 			if streamErr == nil {
 				streamErr = d.Error

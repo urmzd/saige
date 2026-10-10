@@ -27,6 +27,7 @@ import (
 	"github.com/urmzd/saige/agent/durable/duraturo"
 	"github.com/urmzd/saige/agent/notify"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 	"github.com/urmzd/saige/rag/fusion"
 	"github.com/urmzd/saige/rag/pgstore"
@@ -62,10 +63,10 @@ func TestNotifierFanOut(t *testing.T) {
 			OnReconnect:     func() { reconnects.Add(1) },
 			Logger:          quietLogger,
 		})
-		t.Cleanup(func() { _ = ns[i].Close() })
+		t.Cleanup(func() { _ = ns[i].Close(context.Background()) })
 	}
 	pub := postgres.NewNotifier(pool, postgres.NotifierOptions{ApplicationName: "saige-stress-publisher"})
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	// Each subscriber counts the payloads it receives.
 	counts := make([]map[string]int, subscribers)
@@ -198,7 +199,7 @@ func TestCacheCoherence(t *testing.T) {
 	caches := make([]*notify.Cache[[]byte], processes)
 	for i := range caches {
 		n := postgres.NewNotifier(pool, postgres.NotifierOptions{Logger: quietLogger})
-		t.Cleanup(func() { _ = n.Close() })
+		t.Cleanup(func() { _ = n.Close(context.Background()) })
 		c, err := notify.NewCache(ctx, notify.CacheConfig[[]byte]{
 			Local:    memcache.New[[]byte](),
 			Shared:   store,
@@ -208,7 +209,7 @@ func TestCacheCoherence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = c.Close() })
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
 		caches[i] = c
 	}
 
@@ -319,7 +320,7 @@ func TestPgstoreIngestAndHybridSearch(t *testing.T) {
 	)
 	pool := pgPool(t, 32)
 	ctx := testContext(t, 3*time.Minute)
-	s := pgstore.NewStore(pool, quietLogger)
+	s := must.Get(pgstore.New(pgstore.Config{Pool: pool, Logger: quietLogger}))
 
 	doc := func(k int) *ragtypes.Document {
 		id := fmt.Sprintf("doc-%04d", k)
@@ -441,7 +442,8 @@ type durableProvider struct {
 	calls *sync.Map // run ID -> *atomic.Int32
 }
 
-func (p durableProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p durableProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	counter(p.calls, p.run).Add(1)
 	deltas := agenttest.TextResponse("done " + p.run)
 	if !hasResult(messages) {
@@ -458,8 +460,8 @@ func (p durableProvider) ChatStream(_ context.Context, messages []types.Message,
 func hasResult(messages []types.Message) bool {
 	for _, m := range messages {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if _, ok := c.(types.ToolResultContent); ok {
+			for _, c := range sm.Parts {
+				if _, ok := c.(types.ToolResultPart); ok {
 					return true
 				}
 			}
@@ -515,11 +517,11 @@ func TestDurableWorkersCompete(t *testing.T) {
 		}
 		write := types.WithMarkers(&types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: run}, types.Marker{Kind: "approval"})
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: run}
-		return agent.NewAgent(agent.AgentConfig{
+		return must.Get(agent.New(agent.Config{
 			Provider:     durableProvider{run: runID, tool: tool, calls: &modelCalls},
 			SystemPrompt: "stress",
 			Tools:        types.NewToolRegistry(write, read),
-		})
+		}))
 	})
 
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
@@ -558,7 +560,7 @@ func TestDurableWorkersCompete(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			began := time.Now()
-			input := []types.Message{types.NewUserMessage("go " + id)}
+			input := []types.Message{types.UserMsg(types.Text("go " + id))}
 			_, err := e.Run(ctx, wf, id, input)
 			if strings.HasSuffix(id, "-approve") {
 				if !errors.Is(err, types.ErrSuspended) {

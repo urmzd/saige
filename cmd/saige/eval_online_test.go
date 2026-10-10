@@ -181,20 +181,20 @@ func TestEvalOnlineSweepsStoredConversations(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	st, err := agentpg.NewScopedStore(pool, "acme", "conv-1", nil)
+	st, err := agentpg.New(agentpg.Config{Pool: pool, Scope: "acme", ConversationID: "conv-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := tree.New(types.NewSystemMessage("sys"), tree.WithStore(st))
+	tr, err := tree.New(types.SystemMsg(types.Text("sys")), tree.WithStore(st))
 	if err != nil {
 		t.Fatal(err)
 	}
 	parent := tr.Root().ID
 	for _, msg := range []types.Message{
-		types.NewUserMessage("Cancel order 42; my email is jane.doe@example.com"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "c1", Name: "cancel_order", Arguments: map[string]any{}}}},
-		types.SystemMessage{Content: []types.SystemContent{types.ToolResultContent{ToolCallID: "c1", Text: "unavailable", IsError: true}}},
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "Sorry, I could not cancel it."}}},
+		types.UserMsg(types.Text("Cancel order 42; my email is jane.doe@example.com")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "c1", Name: "cancel_order", Arguments: map[string]any{}}}},
+		types.SystemMessage{Parts: []types.SystemPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("unavailable")}, IsError: true}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "Sorry, I could not cancel it."}}},
 	} {
 		n, err := tr.AddChild(ctx, parent, msg)
 		if err != nil {

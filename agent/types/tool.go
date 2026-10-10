@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -92,39 +91,14 @@ type Tool interface {
 
 // ── Rich (multi-modal) tool output ──────────────────────────────────
 
-// ToolResultBlockKind enumerates the kinds of a ToolResultBlock.
-type ToolResultBlockKind string
-
-const (
-	ToolResultBlockText  ToolResultBlockKind = "text"
-	ToolResultBlockImage ToolResultBlockKind = "image"
-	ToolResultBlockFile  ToolResultBlockKind = "file" // non-image binary (e.g. PDF, CSV)
-	ToolResultBlockJSON  ToolResultBlockKind = "json" // structured data; serialized to text for the LLM
-)
-
-// ToolResultBlock is one content block inside a ToolResult. Exactly one payload
-// field is meaningful per Kind. Data is tagged json:"-" (like FileContent.Data)
-// so tree serialization persists only metadata + URI, never large raw bytes.
-type ToolResultBlock struct {
-	Kind      ToolResultBlockKind `json:"kind"`
-	Text      string              `json:"text,omitempty"`       // Kind == text
-	MediaType MediaType           `json:"media_type,omitempty"` // Kind == image|file
-	URI       string              `json:"uri,omitempty"`        // Kind == image|file: re-resolvable source location
-	Filename  string              `json:"filename,omitempty"`   // Kind == image|file: display name
-	Data      []byte              `json:"-"`                    // Kind == image|file: raw bytes (NOT persisted)
-	JSON      json.RawMessage     `json:"json,omitempty"`       // Kind == json: structured payload
-}
-
 // ToolResult is the structured, multi-modal output of a tool execution and the
-// return value of the optional RichTool interface. Text is the MANDATORY
-// plain-text projection: it is what text-only providers send to the LLM and what
-// humans see in ToolExecEndDelta.Result. Blocks carries the full multi-modal
-// payload for providers that support it; nil Blocks behaves exactly like a plain
-// string result.
+// return value of the optional RichTool interface. Parts is the output in
+// order; its text projection (Text) is what humans see in
+// ToolExecEndDelta.Result. A result whose parts a model cannot take natively
+// is handled by the modality conversion policy, which rejects it by default.
 type ToolResult struct {
-	Text    string            // required human/LLM text projection (never empty for a successful result)
-	Blocks  []ToolResultBlock // optional rich content
-	IsError bool              // true when this result represents a tool error
+	Parts   []ToolOutputPart
+	IsError bool // true when this result represents a tool error
 	// Citations attributes this result to its sources. A search or retrieval
 	// tool fills it so its sources land in the same run-wide registry, and get
 	// the same numbering, as sources the provider found through its own
@@ -132,28 +106,29 @@ type ToolResult struct {
 	Citations []Citation
 }
 
+// Text is the text projection of the result: its text and JSON parts joined
+// by newlines.
+func (r ToolResult) Text() string { return outputText(r.Parts) }
+
+// HasMedia reports whether the result carries a media part.
+func (r ToolResult) HasMedia() bool { return outputHasMedia(r.Parts) }
+
 // RichTool is an OPTIONAL extension interface. A tool that implements it can
 // return structured multi-modal output. The agent loop prefers ExecuteRich when
 // a tool implements RichTool; otherwise it calls Execute and wraps the string.
 // RichTool embeds Tool, so a RichTool is always a valid Tool: Execute remains
-// the text-only fallback (typically `r, err := ExecuteRich(...); return r.Text, err`).
+// the text-only fallback (typically `r, err := ExecuteRich(...); return r.Text(), err`).
 type RichTool interface {
 	Tool
 	ExecuteRich(ctx context.Context, args map[string]any) (ToolResult, error)
 }
 
-// TextResult builds a plain-text ToolResult (no rich blocks).
-func TextResult(text string) ToolResult { return ToolResult{Text: text} }
+// TextResult builds a plain-text ToolResult.
+func TextResult(text string) ToolResult { return ToolResult{Parts: []ToolOutputPart{Text(text)}} }
 
-// ImageResult builds a ToolResult carrying a text projection plus one image block.
+// ImageResult builds a ToolResult carrying text followed by one image.
 func ImageResult(text string, mediaType MediaType, data []byte) ToolResult {
-	return ToolResult{
-		Text: text,
-		Blocks: []ToolResultBlock{
-			{Kind: ToolResultBlockText, Text: text},
-			{Kind: ToolResultBlockImage, MediaType: mediaType, Data: data},
-		},
-	}
+	return ToolResult{Parts: []ToolOutputPart{Text(text), Image(Bytes(mediaType, data))}}
 }
 
 // ToolFunc adapts a plain function into a Tool.
@@ -162,15 +137,18 @@ type ToolFunc struct {
 	Fn  func(ctx context.Context, args map[string]any) (string, error)
 }
 
+// Definition calls f.
 func (t *ToolFunc) Definition() ToolDef {
 	return t.Def
 }
 
+// Execute calls f.
 func (t *ToolFunc) Execute(ctx context.Context, args map[string]any) (string, error) {
 	return t.Fn(ctx, args)
 }
 
-// ToolRegistry holds named tools. It is safe for concurrent use.
+// ToolRegistry holds named tools. It is safe for concurrent use, and its
+// zero value is an empty registry ready to use.
 type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
@@ -197,6 +175,9 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 func (r *ToolRegistry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.tools == nil {
+		r.tools = map[string]Tool{}
+	}
 	r.tools[t.Definition().Name] = t
 }
 
@@ -213,6 +194,9 @@ func (r *ToolRegistry) RegisterUnique(t Tool) error {
 	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; ok {
 		return fmt.Errorf("%w: %s", ErrToolExists, name)
+	}
+	if r.tools == nil {
+		r.tools = map[string]Tool{}
 	}
 	r.tools[name] = t
 	return nil

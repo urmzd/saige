@@ -11,6 +11,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/retry"
+	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval/harness"
 )
 
@@ -247,7 +248,11 @@ func buildEvalClient(ctx context.Context, cfg evalClientConfig, dryRun bool) (*h
 	rc.MaxAttempts = 6
 	rc.MaxDelay = 16 * time.Second
 	rc.MaxRetryAfter = harness.MaxRetryAfter
-	return harness.NewProviderClient(retry.New(p, rc)), tr, nil
+	rp, err := retry.New(p, rc)
+	if err != nil {
+		return nil, tr, err
+	}
+	return harness.NewProviderClient(rp), tr, nil
 }
 
 func buildEvalHTTPClient(cfg evalClientConfig, dryRun bool) (*harness.Client, evalTransport, error) {
@@ -282,11 +287,11 @@ func checkEvalModel(provider, model string, allow bool) error {
 	if allow || provider == providerOllama {
 		return nil
 	}
-	entry, ok := catalog.Describe(provider, model)
+	entry, ok := catalog.Describe(types.ProviderName(provider), model)
 	if !ok {
 		return fmt.Errorf("model %q is not in the %s catalog; check the name, or pass --allow-unknown-model to run it anyway", model, provider)
 	}
-	if !strings.EqualFold(entry.Prefix, model) {
+	if !strings.EqualFold(string(entry.Prefix), model) {
 		fmt.Fprintf(os.Stderr, "note: model %q is not declared in the %s catalog; using the capabilities of family %q\n", model, provider, entry.Prefix)
 	}
 	return nil

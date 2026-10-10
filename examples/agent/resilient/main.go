@@ -19,39 +19,52 @@ import (
 
 func main() {
 	// Primary provider: llama3.2 with retry.
-	primaryClient := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	primaryAdapter := ollama.NewAdapter(primaryClient)
+	primaryAdapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	retryProvider := retry.New(primaryAdapter, retry.Config{
+	retryProvider, err := retry.New(primaryAdapter, retry.Config{
 		MaxAttempts: 3,
 		BaseDelay:   500 * time.Millisecond,
 		MaxDelay:    5 * time.Second,
 		Multiplier:  2.0,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Secondary provider: different model as fallback.
-	secondaryClient := ollama.NewClient("http://localhost:11434", "mistral", "")
-	secondaryAdapter := ollama.NewAdapter(secondaryClient)
+	secondaryAdapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "mistral"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Compose: retry the primary, then fall back to the secondary.
-	composed := fallback.New(retryProvider, secondaryAdapter)
+	composed, err := fallback.Of(retryProvider, secondaryAdapter)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Build agent with the composed provider.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "resilient-agent",
 		SystemPrompt: "You are a helpful assistant.",
 		Provider:     composed,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Invoke and stream the response.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Explain the benefits of retry and fallback patterns in distributed systems."),
+		types.UserMsg(types.Text("Explain the benefits of retry and fallback patterns in distributed systems.")),
 	})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.UsageDelta:
 			fmt.Printf("\n[usage] prompt=%d completion=%d latency=%s\n",
 				d.PromptTokens, d.CompletionTokens, d.Latency)

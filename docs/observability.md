@@ -5,7 +5,7 @@
 ## Enable tracing
 
 ```go
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Provider:  provider,
     Tools:     tools,
     SubAgents: []agent.SubAgentDef{researcher},
@@ -15,6 +15,9 @@ a := agent.NewAgent(agent.AgentConfig{
     MeterProvider:  mp,
     Redactor:       maskEmails, // optional
 }))
+if err != nil {
+    return err
+}
 ```
 
 `WithTracing` wraps the provider and tools. It also wraps the provider and tools of sub-agents and handoff members that are set when the option runs. Put `WithSubAgents` and `WithHandoffs` before it, or set them on the base config.
@@ -39,7 +42,7 @@ A call with [dials](dials.md) also records how they compiled: `saige.dials.reque
 
 `gen_ai.response.time_to_first_chunk` is measured from before the provider call to the first text chunk, so it includes connection setup.
 
-`WithTracing` also sets `AgentConfig.RunTracer`, so each run opens an `invoke_agent` span. Every chat and tool span of the run, including those of its sub-agents, shares one trace under it, and the span is marked failed when the run fails. To trace a run of an agent built without `WithTracing`, set `RunTracer: otel.NewAgentTracer(cfg)` on its config.
+`WithTracing` also sets `agent.Config.RunTracer`, so each run opens an `invoke_agent` span. Every chat and tool span of the run, including those of its sub-agents, shares one trace under it, and the span is marked failed when the run fails. To trace a run of an agent built without `WithTracing`, set `RunTracer: otel.NewAgentTracer(cfg)` on its config.
 
 ## Errors
 
@@ -65,7 +68,7 @@ The agent loop records `input` and `output` token usage, `cache_read` and `cache
 
 ## Wrappers keep tool behavior
 
-The agent loop looks for optional interfaces on a tool: markers for approval, `RichTool` for blocks and citations, `Cacheable`, `Configurable`, and the handoff and sub-agent interfaces. `otel.WrapTool` keeps each of them:
+The agent loop looks for optional interfaces on a tool: markers for approval, `RichTool` for typed parts and citations, `Cacheable`, `Configurable`, and the handoff and sub-agent interfaces. `otel.WrapTool` keeps each of them:
 
 | Tool | Result |
 |------|--------|

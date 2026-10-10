@@ -154,7 +154,7 @@ func connect(t *testing.T, spec ServerSpec) *Client {
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
 	return c
 }
 
@@ -184,30 +184,31 @@ func TestEndToEndCallsConvertEveryContentKind(t *testing.T) {
 		wantError bool
 	}{
 		{tool: "t_echo", check: func(t *testing.T, r types.ToolResult) {
-			if r.Text != "hi" {
-				t.Errorf("text = %q", r.Text)
+			if r.Text() != "hi" {
+				t.Errorf("text = %q", r.Text())
 			}
 		}},
 		{tool: "t_media", check: func(t *testing.T, r types.ToolResult) {
-			kinds := map[types.ToolResultBlockKind]int{}
-			for _, b := range r.Blocks {
-				kinds[b.Kind]++
+			kinds := map[types.PartKind]int{}
+			for _, p := range r.Parts {
+				kinds[p.Kind()]++
 			}
-			if kinds[types.ToolResultBlockImage] != 1 || kinds[types.ToolResultBlockFile] != 1 || kinds[types.ToolResultBlockText] != 2 {
-				t.Errorf("blocks = %v", kinds)
+			// Two text contents plus the resource link's text part.
+			if kinds[types.KindImage] != 1 || kinds[types.KindAudio] != 1 || kinds[types.KindText] != 3 {
+				t.Errorf("parts = %v", kinds)
 			}
 			if len(r.Citations) != 2 || r.Citations[0].URI != "https://example.com/doc" || r.Citations[0].Producer != "t_media" {
 				t.Errorf("citations = %+v", r.Citations)
 			}
 		}},
 		{tool: "t_structured", check: func(t *testing.T, r types.ToolResult) {
-			if r.Text != `{"n":1}` || len(r.Blocks) != 1 || r.Blocks[0].Kind != types.ToolResultBlockJSON {
+			if r.Text() != `{"n":1}` || len(r.Parts) != 1 || r.Parts[0].Kind() != types.KindJSON {
 				t.Errorf("result = %+v", r)
 			}
 		}},
 		{tool: "t_fails", wantError: true, check: func(t *testing.T, r types.ToolResult) {
-			if r.Text != "bad input" {
-				t.Errorf("text = %q", r.Text)
+			if r.Text() != "bad input" {
+				t.Errorf("text = %q", r.Text())
 			}
 		}},
 	}
@@ -218,7 +219,7 @@ func TestEndToEndCallsConvertEveryContentKind(t *testing.T) {
 				t.Fatalf("a tool failure must be a result, not a Go error: %v", err)
 			}
 			if res.IsError != tt.wantError {
-				t.Errorf("IsError = %v, want %v (%s)", res.IsError, tt.wantError, res.Text)
+				t.Errorf("IsError = %v, want %v (%s)", res.IsError, tt.wantError, res.Text())
 			}
 			tt.check(t, res)
 		})
@@ -263,14 +264,14 @@ func TestCloseDuringCallReturnsClosedError(t *testing.T) {
 	}()
 	time.Sleep(50 * time.Millisecond)
 	start := time.Now()
-	_ = c.Close() // may report that the hung server kept its session
+	_ = c.Close(context.Background()) // may report that the hung server kept its session
 	if time.Since(start) > closeTimeout+time.Second {
 		t.Errorf("Close took %v; it must be bounded", time.Since(start))
 	}
 	wg.Wait()
 
 	res, err := echo.ExecuteRich(context.Background(), map[string]any{"text": "x"})
-	if err != nil || !res.IsError || !strings.Contains(res.Text, "is closed") {
+	if err != nil || !res.IsError || !strings.Contains(res.Text(), "is closed") {
 		t.Errorf("call after Close: res=%+v err=%v", res, err)
 	}
 }
@@ -284,32 +285,31 @@ func TestResultLimits(t *testing.T) {
 		check func(t *testing.T, r types.ToolResult)
 	}{
 		{"default text cap", func(s ServerSpec) ServerSpec { return s }, "t_big", func(t *testing.T, r types.ToolResult) {
-			if len(r.Text) > DefaultMaxResultBytes+64 || !strings.HasSuffix(r.Text, "[truncated 10223616 bytes]") {
-				t.Errorf("len=%d suffix=%q", len(r.Text), r.Text[len(r.Text)-40:])
+			if len(r.Text()) > DefaultMaxResultBytes+64 || !strings.HasSuffix(r.Text(), "[truncated 10223616 bytes]") {
+				t.Errorf("len=%d suffix=%q", len(r.Text()), r.Text()[len(r.Text())-40:])
 			}
 		}},
 		{"unlimited", func(s ServerSpec) ServerSpec { s.MaxResultBytes = -1; return s }, "t_big", func(t *testing.T, r types.ToolResult) {
-			if len(r.Text) != 10<<20 {
-				t.Errorf("len=%d, want the full payload", len(r.Text))
+			if len(r.Text()) != 10<<20 {
+				t.Errorf("len=%d, want the full payload", len(r.Text()))
 			}
 		}},
 		{"binary over cap becomes a note", func(s ServerSpec) ServerSpec { s.MaxBinaryBytes = 2; return s }, "t_media", func(t *testing.T, r types.ToolResult) {
-			if !strings.Contains(r.Text, "[dropped image: image/png, 3 bytes]") {
-				t.Errorf("text = %q", r.Text)
+			if !strings.Contains(r.Text(), "[dropped image: image/png, 3 bytes]") {
+				t.Errorf("text = %q", r.Text())
 			}
 			noted := false
-			for _, b := range r.Blocks {
-				if b.Kind == types.ToolResultBlockImage {
+			for _, p := range r.Parts {
+				if p.Kind() == types.KindImage {
 					t.Error("oversized image kept")
 				}
-				if b.Kind == types.ToolResultBlockText && b.Text == "[dropped image: image/png, 3 bytes]" {
+				if tp, ok := p.(types.TextPart); ok && tp.Text == "[dropped image: image/png, 3 bytes]" {
 					noted = true
 				}
 			}
-			// The result also has a text block, so providers send the blocks
-			// and the note must be among them.
+			// The note must be a part of its own, so every provider sends it.
 			if !noted {
-				t.Errorf("blocks carry no dropped-image note: %+v", r.Blocks)
+				t.Errorf("parts carry no dropped-image note: %+v", r.Parts)
 			}
 			if r.IsError {
 				t.Error("a dropped block is not a tool error")
@@ -318,11 +318,11 @@ func TestResultLimits(t *testing.T) {
 		{"structured over cap is dropped whole", func(s ServerSpec) ServerSpec { s.MaxResultBytes = 10; return s }, "t_structured", func(t *testing.T, r types.ToolResult) {
 			// {"n":1} is 7 bytes, but as the only content it is also the text
 			// projection, so it costs 14.
-			if !strings.Contains(r.Text, "dropped structured content") {
-				t.Errorf("text = %q", r.Text)
+			if !strings.Contains(r.Text(), "dropped structured content") {
+				t.Errorf("text = %q", r.Text())
 			}
-			if len(r.Blocks) != 1 || r.Blocks[0].Kind != types.ToolResultBlockText || !strings.Contains(r.Blocks[0].Text, "dropped structured content") {
-				t.Errorf("blocks = %+v, want only the note", r.Blocks)
+			if tp, ok := r.Parts[0].(types.TextPart); len(r.Parts) != 1 || !ok || !strings.Contains(tp.Text, "dropped structured content") {
+				t.Errorf("parts = %+v, want only the note", r.Parts)
 			}
 		}},
 	}
@@ -395,8 +395,8 @@ func TestArgTransformCoercesScalars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, `"tags":["go"]`) || !strings.Contains(res.Text, `"other":"x"`) {
-		t.Errorf("server received %s", res.Text)
+	if !strings.Contains(res.Text(), `"tags":["go"]`) || !strings.Contains(res.Text(), `"other":"x"`) {
+		t.Errorf("server received %s", res.Text())
 	}
 }
 
@@ -426,7 +426,7 @@ func TestMaxConcurrentBoundsInFlightCalls(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			if res, _ := work.ExecuteRich(context.Background(), nil); res.IsError {
-				t.Error(res.Text)
+				t.Error(res.Text())
 			}
 		}()
 	}
@@ -503,7 +503,7 @@ func TestToolListChangeRemovesTools(t *testing.T) {
 	}
 
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	c, err := pool.Acquire(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -523,7 +523,7 @@ func TestToolListChangeRemovesTools(t *testing.T) {
 	assertRefused := func(when string) {
 		t.Helper()
 		res, _ := wipe.(types.RichTool).ExecuteRich(context.Background(), nil)
-		if !res.IsError || !strings.Contains(res.Text, "no longer offers") {
+		if !res.IsError || !strings.Contains(res.Text(), "no longer offers") {
 			t.Errorf("%s: stale tool call: %+v", when, res)
 		}
 	}
@@ -571,7 +571,7 @@ func TestToolListChangeRemovesTools(t *testing.T) {
 	}
 	assertGated("after re-adding")
 	if res, _ := wipe.(types.RichTool).ExecuteRich(context.Background(), nil); res.IsError {
-		t.Errorf("restored tool call: %s", res.Text)
+		t.Errorf("restored tool call: %s", res.Text())
 	}
 }
 
@@ -581,7 +581,7 @@ func TestCloseCancelsHungListing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
 
 	inner := *ts.handler.Load()
 	entered := make(chan struct{}, 1)
@@ -619,7 +619,7 @@ func TestCloseCancelsHungListing(t *testing.T) {
 	}
 
 	closed := make(chan error, 1)
-	go func() { closed <- c.Close() }()
+	go func() { closed <- c.Close(context.Background()) }()
 	select {
 	case err := <-closed:
 		if err != nil {
@@ -702,14 +702,14 @@ func TestDeadSessionReconnects(t *testing.T) {
 
 	ts.resetSessions()
 	res, err := echo.ExecuteRich(context.Background(), map[string]any{"text": "again"})
-	if err != nil || res.IsError || res.Text != "again" {
+	if err != nil || res.IsError || res.Text() != "again" {
 		t.Fatalf("read-only call after server restart: res=%+v err=%v", res, err)
 	}
 
 	ts.resetSessions()
 	before := ts.count("wipe")
 	res, err = wipe.ExecuteRich(context.Background(), nil)
-	if err != nil || !res.IsError || !strings.Contains(res.Text, "not retried") {
+	if err != nil || !res.IsError || !strings.Contains(res.Text(), "not retried") {
 		t.Fatalf("destructive call after restart: res=%+v err=%v", res, err)
 	}
 	if ts.count("wipe") != before {
@@ -717,7 +717,7 @@ func TestDeadSessionReconnects(t *testing.T) {
 	}
 	// The reconnect itself succeeded, so the next call goes through.
 	if res, _ := wipe.ExecuteRich(context.Background(), nil); res.IsError {
-		t.Errorf("call after reconnect: %s", res.Text)
+		t.Errorf("call after reconnect: %s", res.Text())
 	}
 }
 
@@ -743,7 +743,7 @@ func TestUntrustedReadHintIsNotRetriedAfterReconnect(t *testing.T) {
 			before := ts.count("echo")
 			res, _ := echo.ExecuteRich(context.Background(), map[string]any{"text": "x"})
 			if retried := !res.IsError; retried != tt.wantRetry {
-				t.Errorf("retried=%v (%s), want %v", retried, res.Text, tt.wantRetry)
+				t.Errorf("retried=%v (%s), want %v", retried, res.Text(), tt.wantRetry)
 			}
 			if got := ts.count("echo") - before; tt.wantRetry != (got == 1) {
 				t.Errorf("echo reached the server %d times", got)
@@ -755,7 +755,7 @@ func TestUntrustedReadHintIsNotRetriedAfterReconnect(t *testing.T) {
 func TestPoolHealthAndProbe(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	if _, err := pool.Acquire(context.Background(), ts.spec()); err != nil {
 		t.Fatal(err)
 	}
@@ -817,7 +817,7 @@ func TestPoolAcquireSharesOneHandshake(t *testing.T) {
 	})
 
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	var wg sync.WaitGroup
 	clients := make([]*Client, 8)
 	for i := range clients {
@@ -855,7 +855,7 @@ func TestPoolAcquireSharesOneHandshake(t *testing.T) {
 func TestAddAllKeepsEarlierClients(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	first, err := pool.Add(context.Background(), ts.spec())
 	if err != nil {
 		t.Fatal(err)
@@ -879,7 +879,7 @@ func TestAddAllKeepsEarlierClients(t *testing.T) {
 		t.Error("the earlier client's gate routing was wiped")
 	}
 	if res, _ := toolNamed(t, first, "t_echo").ExecuteRich(context.Background(), map[string]any{"text": "ok"}); res.IsError {
-		t.Errorf("earlier client was closed: %s", res.Text)
+		t.Errorf("earlier client was closed: %s", res.Text())
 	}
 }
 
@@ -895,7 +895,7 @@ func TestRegistrationRefusesToReplaceLocalTools(t *testing.T) {
 	}{
 		{"pool", func(reg *types.ToolRegistry) error {
 			pool := NewPool()
-			t.Cleanup(func() { _ = pool.Close() })
+			t.Cleanup(func() { _ = pool.Close(context.Background()) })
 			if _, err := pool.Add(context.Background(), spec); err != nil {
 				return err
 			}

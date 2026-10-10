@@ -540,7 +540,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // Close ends the session and, for a local server, waits for the child process
 // to exit. Safe to call more than once.
-func (c *Client) Close() error {
+func (c *Client) Close(ctx context.Context) error {
 	// Guarded: Close races a concurrent CallTool, which reads c.session on the
 	// same mutex that protects the tool map.
 	c.mu.Lock()
@@ -565,6 +565,8 @@ func (c *Client) Close() error {
 	case <-unwound:
 	case <-deadline.C:
 		return fmt.Errorf("mcp: close %q: in-flight calls did not stop within %v", c.spec.Name, closeTimeout)
+	case <-ctx.Done():
+		return fmt.Errorf("mcp: close %q: %w", c.spec.Name, ctx.Err())
 	}
 
 	// Closing the session closes the transport, and for a local server the
@@ -576,6 +578,8 @@ func (c *Client) Close() error {
 		return err
 	case <-deadline.C:
 		return fmt.Errorf("mcp: close %q: server did not release its session within %v", c.spec.Name, closeTimeout)
+	case <-ctx.Done():
+		return fmt.Errorf("mcp: close %q: %w", c.spec.Name, ctx.Err())
 	}
 }
 
@@ -665,7 +669,7 @@ func (t *serverTool) Definition() types.ToolDef { return t.def }
 
 func (t *serverTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	res, err := t.ExecuteRich(ctx, args)
-	return res.Text, err
+	return res.Text(), err
 }
 
 // ExecuteRich calls the tool and converts its content blocks. An MCP tool that
@@ -704,7 +708,7 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 
 	session, err := t.client.beginCall()
 	if err != nil {
-		return types.ToolResult{Text: err.Error(), IsError: true}, nil
+		return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(err.Error())}, IsError: true}, nil
 	}
 	defer t.client.calls.Done()
 
@@ -728,7 +732,7 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 }
 
 func errorResult(format string, args ...any) types.ToolResult {
-	return types.ToolResult{Text: fmt.Sprintf(format, args...), IsError: true}
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(fmt.Sprintf(format, args...))}, IsError: true}
 }
 
 // isDeadSession reports whether an error means the session itself is
@@ -757,27 +761,36 @@ func cloneArgs(args map[string]any) map[string]any {
 func (t *serverTool) convert(res *mcpsdk.CallToolResult) types.ToolResult {
 	out := types.ToolResult{IsError: res.IsError}
 	lim := newResultLimits(t.client.spec)
-	var text []string
+	hasText := false
 
 	addText := func(s string) {
-		s = lim.text(s)
-		text = append(text, s)
-		out.Blocks = append(out.Blocks, types.ToolResultBlock{Kind: types.ToolResultBlockText, Text: s})
+		out.Parts = append(out.Parts, types.Text(lim.text(s)))
+		hasText = true
 	}
-	// addNote records dropped content in both projections. Providers send the
-	// blocks whenever there are any, so a note only in the text would never
-	// reach the model.
+	// addNote records dropped content as a text part, so the model learns
+	// that something was left out.
 	addNote := func(note string) {
-		text = append(text, note)
-		out.Blocks = append(out.Blocks, types.ToolResultBlock{Kind: types.ToolResultBlockText, Text: note})
+		out.Parts = append(out.Parts, types.Text(note))
+		hasText = true
 	}
-	addBinary := func(kind types.ToolResultBlockKind, label, mime string, data []byte) {
+	addBinary := func(label, mime string, data []byte) {
 		if !lim.binary(len(data)) {
 			addNote(fmt.Sprintf("[dropped %s: %s, %d bytes]", label, mime, len(data)))
 			return
 		}
-		out.Blocks = append(out.Blocks, types.ToolResultBlock{Kind: kind, MediaType: types.MediaType(mime), Data: data})
-		text = append(text, "["+label+": "+mime+"]")
+		src := types.Bytes(types.MediaType(mime), data)
+		switch label {
+		case "image":
+			out.Parts = append(out.Parts, types.Image(src))
+		case "audio":
+			out.Parts = append(out.Parts, types.Audio(src))
+		default:
+			if p, ok := types.Media(src).(types.ToolOutputPart); ok {
+				out.Parts = append(out.Parts, p)
+			} else {
+				out.Parts = append(out.Parts, types.File(src))
+			}
+		}
 	}
 
 	for _, content := range res.Content {
@@ -785,9 +798,9 @@ func (t *serverTool) convert(res *mcpsdk.CallToolResult) types.ToolResult {
 		case *mcpsdk.TextContent:
 			addText(c.Text)
 		case *mcpsdk.ImageContent:
-			addBinary(types.ToolResultBlockImage, "image", c.MIMEType, c.Data)
+			addBinary("image", c.MIMEType, c.Data)
 		case *mcpsdk.AudioContent:
-			addBinary(types.ToolResultBlockFile, "audio", c.MIMEType, c.Data)
+			addBinary("audio", c.MIMEType, c.Data)
 		case *mcpsdk.ResourceLink:
 			title := c.Title
 			if title == "" {
@@ -796,7 +809,8 @@ func (t *serverTool) convert(res *mcpsdk.CallToolResult) types.ToolResult {
 			cite := types.NewCitation(types.CitationTool, c.URI, title)
 			cite.Producer = t.def.Name
 			out.Citations = append(out.Citations, cite)
-			text = append(text, "[resource: "+title+" "+c.URI+"]")
+			out.Parts = append(out.Parts, types.Text("[resource: "+title+" "+c.URI+"]"))
+			hasText = true
 		case *mcpsdk.EmbeddedResource:
 			if c.Resource == nil {
 				continue
@@ -805,7 +819,7 @@ func (t *serverTool) convert(res *mcpsdk.CallToolResult) types.ToolResult {
 				addText(c.Resource.Text)
 			}
 			if len(c.Resource.Blob) > 0 {
-				addBinary(types.ToolResultBlockFile, "resource", c.Resource.MIMEType, c.Resource.Blob)
+				addBinary("resource", c.Resource.MIMEType, c.Resource.Blob)
 			}
 			if c.Resource.URI != "" {
 				cite := types.NewCitation(types.CitationTool, c.Resource.URI, c.Resource.URI)
@@ -816,32 +830,26 @@ func (t *serverTool) convert(res *mcpsdk.CallToolResult) types.ToolResult {
 	}
 
 	// StructuredContent is the machine-readable answer when the server provides
-	// one; it is added as a JSON block so providers that accept structured tool
+	// one; it is added as a JSON part so providers that accept structured tool
 	// results get the real shape rather than a stringified copy. It is never
 	// cut: a truncated JSON document is not JSON, so an oversized one is
 	// dropped whole. When it doubles as the text projection it costs twice.
 	if res.StructuredContent != nil {
 		if raw, err := json.Marshal(res.StructuredContent); err == nil {
 			cost := len(raw)
-			if len(text) == 0 {
+			if !hasText {
 				cost *= 2
 			}
 			if lim.take(cost) {
-				out.Blocks = append(out.Blocks, types.ToolResultBlock{
-					Kind: types.ToolResultBlockJSON, JSON: raw,
-				})
-				if len(text) == 0 {
-					text = append(text, string(raw))
-				}
+				out.Parts = append(out.Parts, types.JSONPart{JSON: raw})
 			} else {
 				addNote(fmt.Sprintf("[dropped structured content: %d bytes over the result limit]", len(raw)))
 			}
 		}
 	}
 
-	out.Text = strings.Join(text, "\n")
-	if out.Text == "" {
-		out.Text = "(no content)"
+	if out.Text() == "" && !out.HasMedia() {
+		out.Parts = append(out.Parts, types.Text("(no content)"))
 	}
 	return out
 }

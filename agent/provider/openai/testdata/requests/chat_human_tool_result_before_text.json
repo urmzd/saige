@@ -1,0 +1,41 @@
+{
+  "messages": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "function": {
+            "arguments": "{\"q\":\"x\"}",
+            "name": "snapshot"
+          },
+          "type": "function"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": "approved",
+      "tool_call_id": "call_1",
+      "role": "tool"
+    },
+    {
+      "content": "and summarize",
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "reasoning_effort": "none",
+  "tools": [
+    {
+      "function": {
+        "name": "snapshot",
+        "description": "Takes a snapshot",
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

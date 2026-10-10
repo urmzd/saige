@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pricedScripted is a ScriptedProvider with a rate card, so budget charges
@@ -69,7 +70,7 @@ func TestTokenPressureCompaction(t *testing.T) {
 			script := &agenttest.ScriptedProvider{Responses: responses}
 			budget := types.NewBudget(types.BudgetPolicy{})
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "found"}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:     pricedScripted{script},
 				SystemPrompt: "sys",
 				Tools:        types.NewToolRegistry(tool),
@@ -77,9 +78,9 @@ func TestTokenPressureCompaction(t *testing.T) {
 				MaxIter:    2,
 				CompactCfg: &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: tt.maxInputTokens},
 				Budget:     budget,
-			})
+			}))
 			before := a.Tree().Active()
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("look it up")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("look it up"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatalf("run failed: %v", err)
@@ -127,15 +128,15 @@ func TestClearToolResultsUnderPressure(t *testing.T) {
 		withUsage(agenttest.TextResponse("done"), usage(300, 5)),
 	}}
 	tool := &agenttest.MockTool{Def: types.ToolDef{Name: "fetch"}, Result: big}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     script,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
 		CompactCfg: &types.CompactConfig{
 			Strategy: types.CompactClearToolResults, MaxInputTokens: 1_500, KeepToolResults: 1,
 		},
-	})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("fetch twice")})
+	}))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fetch twice"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -162,9 +163,9 @@ func TestContextLengthRecovery(t *testing.T) {
 	history := func() []types.Message {
 		var msgs []types.Message
 		for i := range 8 {
-			msgs = append(msgs, types.NewUserMessage(fmt.Sprintf("question %d", i)), types.NewAssistantMessage(fmt.Sprintf("answer %d", i)))
+			msgs = append(msgs, types.UserMsg(types.Text(fmt.Sprintf("question %d", i))), types.AssistantMsg(types.Text(fmt.Sprintf("answer %d", i))))
 		}
-		return append(msgs, types.NewUserMessage("final question"))
+		return append(msgs, types.UserMsg(types.Text("final question")))
 	}
 	summary := withUsage(agenttest.TextResponse("summary"), usage(10, 5))
 	tests := []struct {
@@ -223,7 +224,7 @@ func TestContextLengthRecovery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			script := &agenttest.ScriptedProvider{Responses: tt.responses, Errors: tt.errors}
-			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: tt.compact})
+			a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: tt.compact}))
 			stream := a.Invoke(context.Background(), history())
 			agenttest.CollectDeltas(stream.Deltas())
 			err := stream.Wait()
@@ -250,18 +251,18 @@ func TestCompactionKeepsToolPairs(t *testing.T) {
 		agenttest.TextResponse("summary of the first lookup"),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     script,
 		SystemPrompt: "sys",
 		MaxIter:      1,
 		CompactCfg:   &types.CompactConfig{MaxInputTokens: 1},
-	})
+	}))
 	input := []types.Message{
-		types.NewUserMessage("go"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "a", Name: "t"}}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "a", Text: "1"}),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "b", Name: "t"}}},
-		types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "b", Text: "2"}),
+		types.UserMsg(types.Text("go")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "a", Name: "t"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "a", Parts: []types.ToolOutputPart{types.Text("1")}}),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "b", Name: "t"}}},
+		types.ToolResults(types.ToolResultPart{CallID: "b", Parts: []types.ToolOutputPart{types.Text("2")}}),
 	}
 	before := a.Tree().Active()
 	stream := a.Invoke(context.Background(), input)
@@ -297,10 +298,10 @@ func TestCompactionKeepsToolPairs(t *testing.T) {
 
 func TestCheckCompactionSplit(t *testing.T) {
 	call := func(id string) types.Message {
-		return types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: id, Name: "t"}}}
+		return types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: id, Name: "t"}}}
 	}
 	result := func(id string) types.Message {
-		return types.NewToolResultMessage(types.ToolResultContent{ToolCallID: id, Text: "r"})
+		return types.ToolResults(types.ToolResultPart{CallID: id, Parts: []types.ToolOutputPart{types.Text("r")}})
 	}
 	tests := []struct {
 		name      string
@@ -308,18 +309,18 @@ func TestCheckCompactionSplit(t *testing.T) {
 		wantSplit bool
 	}{
 		{name: "text only", history: []types.Message{
-			types.NewUserMessage("a"), types.NewAssistantMessage("b"), types.NewUserMessage("c"), types.NewAssistantMessage("d"),
+			types.UserMsg(types.Text("a")), types.AssistantMsg(types.Text("b")), types.UserMsg(types.Text("c")), types.AssistantMsg(types.Text("d")),
 		}},
 		{name: "boundary between pairs", history: []types.Message{
 			call("a"), result("a"), call("b"), result("b"),
 		}},
 		{name: "half falls inside a pair", history: []types.Message{
-			types.NewUserMessage("go"), call("a"), result("a"), call("b"), result("b"),
+			types.UserMsg(types.Text("go")), call("a"), result("a"), call("b"), result("b"),
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}, SystemPrompt: "sys"})
+			a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}, SystemPrompt: "sys"}))
 			tr := a.Tree()
 			branch := tr.Active()
 			for _, m := range tt.history {
@@ -360,15 +361,15 @@ func TestCompactionIsAdmittedByTheBudget(t *testing.T) {
 		withUsage(agenttest.TextResponse("done"), usage(100, 10)),
 	}}
 	budget := types.NewBudget(types.BudgetPolicy{MaxRequests: 2})
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     pricedScripted{script},
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(reservingTool{budget: budget}),
 		MaxIter:      2,
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: 1_000},
 		Budget:       budget,
-	})
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("spawn one")})
+	}))
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("spawn one"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	err := stream.Wait()
 	if !errors.Is(err, types.ErrBudgetAdmission) || !errors.Is(err, types.ErrBudgetBusy) {
@@ -405,8 +406,8 @@ func TestOutputTruncation(t *testing.T) {
 		{
 			name: "open tool call is not run",
 			response: []types.Delta{
-				types.ToolCallStartDelta{ID: "c1", Name: "act"},
-				types.ToolCallArgumentDelta{ID: "c1", Content: `{"x":`},
+				types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "act"},
+				types.PartDelta{Index: 0, Args: `{"x":`},
 				usage(10, 100, "MAX_TOKENS"),
 			},
 			wantErr: true,
@@ -416,8 +417,8 @@ func TestOutputTruncation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{tt.response, agenttest.TextResponse("never")}}
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "act"}, Result: "acted"}
-			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)}))
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			err := stream.Wait()
 			if tt.wantErr {
@@ -462,8 +463,8 @@ func TestOutputTruncation(t *testing.T) {
 			if !ok {
 				t.Fatalf("tip is %T", tip.Message)
 			}
-			for _, c := range am.Content {
-				if _, ok := c.(types.ToolUseContent); ok {
+			for _, c := range am.Parts {
+				if _, ok := c.(types.ToolCallPart); ok {
 					t.Fatal("a truncated tool call must not be committed")
 				}
 			}

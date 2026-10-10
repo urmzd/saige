@@ -16,8 +16,8 @@
 // provider-side cache.
 //
 // Groups name ordered sets of profiles, such as the chain of one catalog
-// preset. Pinning a group through ConfigContent.Model restricts a request to
-// its members, and DefaultGroup restricts unpinned requests, so the chain a
+// preset. Pinning a group through a ConfigPart preset target restricts a
+// request to its members, and DefaultGroup restricts unpinned requests, so the chain a
 // caller picked is exactly the failover order.
 package router
 
@@ -30,20 +30,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
+// ErrSessionBusy reports a request on a routing session that is already
+// serving one. A session is single-flight; use NewSession per caller.
 var ErrSessionBusy = errors.New("routing session already has an active request")
 
-// ErrUnknownProfile reports a profile ID that the router does not define.
+// ErrUnknownProfile reports a profile ID that the router does not define,
+// including one a routing policy returned.
 var ErrUnknownProfile = errors.New("unknown routing profile")
+
+// ErrNoEligibleProfile reports a request no profile can serve: every
+// candidate lacks a required capability, cannot take the request's schema,
+// options or parts, or the policy chose none. It joins each candidate's
+// reason when there is one.
+var ErrNoEligibleProfile = errors.New("no eligible routing profile")
 
 // Route reasons reported on types.RouteDelta.Reason. An empty reason means the
 // policy's first choice.
 const (
-	ReasonPinned           = "pinned"            // ConfigContent.Model selected the profile
+	ReasonPinned           = "pinned"            // a ConfigPart target selected the profile
 	ReasonFailover         = "failover"          // the previous attempt failed with a transient error
 	ReasonContextLength    = "context_length"    // the previous attempt did not fit its context window
 	ReasonContentFilter    = "content_filter"    // the previous attempt was refused by a content filter
@@ -60,24 +70,28 @@ const (
 // the same model with different reasoning, sampling, cache, or endpoint options.
 // Providers and their configuration must remain immutable after New.
 type Profile struct {
-	ID       string
+	ID       types.ProfileID
 	Provider types.Provider
 	// ConfigHash, Preset and CatalogRevision identify a profile built from a
 	// declared catalog preset. They are copied onto every RouteDelta.
 	ConfigHash      string
-	Preset          string
+	Preset          types.PresetName
 	CatalogRevision string
 }
 
 // Candidate is the detached capability record visible to a routing policy.
 type Candidate struct {
-	ID           string
+	ID           types.ProfileID
 	Capabilities types.ModelCapabilities
 	// Options are the profile's configured options, when its provider
 	// reports them (types.OptionsReporter).
 	Options    types.RequestOptions
 	ConfigHash string
-	Preset     string
+	Preset     types.PresetName
+	// EstimatedTokens approximates the prompt size on this profile's
+	// offering: media is priced by the offering's token rules
+	// (types.EstimateTokensFor). Set on RouteContext.Candidates only.
+	EstimatedTokens int
 }
 
 // Headroom is the budget left when the request is routed. Known is false when
@@ -99,11 +113,14 @@ type RouteContext struct {
 	Messages   []types.Message
 	Tools      []types.ToolDef
 	Schema     bool
-	// EstimatedTokens approximates the prompt size with types.EstimateTokens.
+	// EstimatedTokens approximates the prompt size: the largest of the
+	// candidates' offering-aware estimates (Candidate.EstimatedTokens), so
+	// a policy that reads one number does not underestimate, or the flat
+	// types.EstimateTokens when there is no candidate.
 	EstimatedTokens int
 	Headroom        Headroom
-	// Pinned is the profile selected through ConfigContent.Model, if any. The
-	// router places it first regardless of the policy's order.
+	// Pinned is the profile ID or group name a ConfigPart target selected,
+	// if any. The router places it first regardless of the policy's order.
 	Pinned string
 	// Locks are the route locks in force for this request. See LockToolLoop.
 	Locks []string
@@ -113,7 +130,7 @@ type RouteContext struct {
 // required capabilities. PreviousFailed includes failures after partial output.
 type Request struct {
 	Candidates     []Candidate
-	Previous       string
+	Previous       types.ProfileID
 	PreviousFailed bool
 	// Route carries the request facts. Route.Candidates equals Candidates.
 	Route RouteContext
@@ -123,19 +140,24 @@ type Request struct {
 // An empty order, duplicate, or unknown ID fails before provider execution.
 // Implementations shared across sessions must support concurrent calls.
 type Policy interface {
-	Order(context.Context, Request) ([]string, error)
+	Order(context.Context, Request) ([]types.ProfileID, error)
 }
 
-type PolicyFunc func(context.Context, Request) ([]string, error)
+// PolicyFunc adapts a function to a Policy.
+type PolicyFunc func(context.Context, Request) ([]types.ProfileID, error)
 
-func (f PolicyFunc) Order(ctx context.Context, r Request) ([]string, error) { return f(ctx, r) }
+// Order calls f.
+func (f PolicyFunc) Order(ctx context.Context, r Request) ([]types.ProfileID, error) {
+	return f(ctx, r)
+}
 
 // Sticky keeps the selected profile first until it fails. After a failure it
 // rotates to the next eligible profile. It never probes the primary on recovery.
 // Use Affinity for a failure threshold and recovery probes.
 type Sticky struct{}
 
-func (Sticky) Order(_ context.Context, r Request) ([]string, error) {
+// Order implements Policy.
+func (Sticky) Order(_ context.Context, r Request) ([]types.ProfileID, error) {
 	start := 0
 	for i, candidate := range r.Candidates {
 		if candidate.ID == r.Previous {
@@ -146,24 +168,26 @@ func (Sticky) Order(_ context.Context, r Request) ([]string, error) {
 			break
 		}
 	}
-	order := make([]string, len(r.Candidates))
+	order := make([]types.ProfileID, len(r.Candidates))
 	for i := range order {
 		order[i] = r.Candidates[(start+i)%len(r.Candidates)].ID
 	}
 	return order, nil
 }
 
+// Config lists a router's profiles and how it orders them.
 type Config struct {
+	// Profiles are the provider configurations the router can serve. At
+	// least one is required, each with a unique ID and a provider.
 	Profiles []Profile
 	// Groups name ordered sets of profile IDs, such as the chain of one
-	// preset. WithModel accepts a group name and then restricts candidates to
-	// its members, in group order. Group names and profile IDs share one
-	// namespace; a group may reuse a profile's ID only when that profile is
-	// its sole member.
-	Groups map[string][]string
+	// preset. A preset target names a group and then restricts candidates
+	// to its members, in group order. A group may reuse a profile's ID only
+	// when that profile is its sole member.
+	Groups map[types.PresetName][]types.ProfileID
 	// DefaultGroup, when set, restricts unpinned requests to that group's
 	// members, so profiles in other groups are reachable only through a pin.
-	DefaultGroup string
+	DefaultGroup types.PresetName
 	// Policy orders profiles per request. Nil uses Sticky. SessionPolicy, when
 	// set, takes precedence.
 	Policy Policy
@@ -199,41 +223,60 @@ func DefaultFailoverOn(err error) bool {
 	return types.IsTransient(err) || types.IsContextLength(err)
 }
 
+// Router holds a validated routing configuration. It serves requests
+// through sessions (see Session), which keep the per-conversation routing
+// state.
 type Router struct{ cfg Config }
 
-func New(cfg Config) (*Router, error) {
-	if len(cfg.Profiles) == 0 {
-		return nil, errors.New("router requires at least one profile")
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithPolicy sets Config.Policy.
+func WithPolicy(p Policy) Option { return func(c *Config) { c.Policy = p } }
+
+// WithSessionPolicy sets Config.SessionPolicy.
+func WithSessionPolicy(p SessionRouterPolicy) Option {
+	return func(c *Config) { c.SessionPolicy = p }
+}
+
+// New validates cfg and returns a router. An invalid configuration is an
+// error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Router, error) {
+	for _, o := range opts {
+		o(&cfg)
 	}
-	names := map[string]bool{}
+	if len(cfg.Profiles) == 0 {
+		return nil, fmt.Errorf("%w: router requires at least one profile", types.ErrInvalidConfig)
+	}
+	names := map[types.ProfileID]bool{}
 	for _, p := range cfg.Profiles {
 		if p.ID == "" || p.Provider == nil || names[p.ID] {
-			return nil, fmt.Errorf("invalid or duplicate routing profile %q", p.ID)
+			return nil, fmt.Errorf("%w: invalid or duplicate routing profile %q", types.ErrInvalidConfig, p.ID)
 		}
 		names[p.ID] = true
 	}
-	groups := make(map[string][]string, len(cfg.Groups))
+	groups := make(map[types.PresetName][]types.ProfileID, len(cfg.Groups))
 	for name, members := range cfg.Groups {
 		// A group may share its name with a profile only when it is that
 		// one profile, as for a preset built from a single model.
-		if name == "" || (names[name] && (len(members) != 1 || members[0] != name)) {
-			return nil, fmt.Errorf("routing group %q is empty or collides with a profile ID", name)
+		if name == "" || (names[types.ProfileID(name)] && (len(members) != 1 || members[0] != types.ProfileID(name))) {
+			return nil, fmt.Errorf("%w: routing group %q is empty or collides with a profile ID", types.ErrInvalidConfig, name)
 		}
 		if len(members) == 0 {
-			return nil, fmt.Errorf("routing group %q has no members", name)
+			return nil, fmt.Errorf("%w: routing group %q has no members", types.ErrInvalidConfig, name)
 		}
-		seen := map[string]bool{}
+		seen := map[types.ProfileID]bool{}
 		for _, id := range members {
 			if !names[id] || seen[id] {
-				return nil, fmt.Errorf("routing group %q: unknown or duplicate profile %q", name, id)
+				return nil, fmt.Errorf("%w: routing group %q: unknown or duplicate profile %q", types.ErrInvalidConfig, name, id)
 			}
 			seen[id] = true
 		}
-		groups[name] = append([]string(nil), members...)
+		groups[name] = append([]types.ProfileID(nil), members...)
 	}
 	cfg.Groups = groups
 	if cfg.DefaultGroup != "" && cfg.Groups[cfg.DefaultGroup] == nil {
-		return nil, fmt.Errorf("default routing group %q is not defined", cfg.DefaultGroup)
+		return nil, fmt.Errorf("%w: default routing group %q is not defined", types.ErrInvalidConfig, cfg.DefaultGroup)
 	}
 	cfg.Profiles = append([]Profile(nil), cfg.Profiles...)
 	cfg.Required = append([]types.Capability(nil), cfg.Required...)
@@ -254,17 +297,17 @@ func New(cfg Config) (*Router, error) {
 
 // Close implements types.Closer by closing every profile's provider. Sessions
 // share these providers, so close the router only after its last session.
-func (r *Router) Close() error {
+func (r *Router) Close(ctx context.Context) error {
 	var errs []error
 	for _, p := range r.cfg.Profiles {
-		if err := types.CloseProvider(p.Provider); err != nil {
+		if err := types.CloseProvider(ctx, p.Provider); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (r *Router) hasProfile(id string) bool {
+func (r *Router) hasProfile(id types.ProfileID) bool {
 	for _, p := range r.cfg.Profiles {
 		if p.ID == id {
 			return true
@@ -275,12 +318,12 @@ func (r *Router) hasProfile(id string) bool {
 
 // hasTarget reports whether name is a profile ID or a group.
 func (r *Router) hasTarget(name string) bool {
-	return r.hasProfile(name) || r.cfg.Groups[name] != nil
+	return r.hasProfile(types.ProfileID(name)) || r.cfg.Groups[types.PresetName(name)] != nil
 }
 
 // Groups returns the group names, sorted.
-func (r *Router) Groups() []string {
-	out := make([]string, 0, len(r.cfg.Groups))
+func (r *Router) Groups() []types.PresetName {
+	out := make([]types.PresetName, 0, len(r.cfg.Groups))
 	for name := range r.cfg.Groups {
 		out = append(out, name)
 	}
@@ -289,9 +332,11 @@ func (r *Router) Groups() []string {
 }
 
 // Group returns a group's members in order.
-func (r *Router) Group(name string) []string { return append([]string(nil), r.cfg.Groups[name]...) }
+func (r *Router) Group(name types.PresetName) []types.ProfileID {
+	return append([]types.ProfileID(nil), r.cfg.Groups[name]...)
+}
 
-// sessionState is shared by a session and the pinned views WithModel returns,
+// sessionState is shared by a session and the pinned views WithTarget returns,
 // so a pin keeps the session's affinity and failure history.
 type sessionState struct {
 	mu    sync.Mutex
@@ -299,32 +344,32 @@ type sessionState struct {
 	state RouteState
 	// sent holds the options last sent to each profile, so a reasoning
 	// change that resets a provider's prompt cache can be reported.
-	sent map[string]types.RequestOptions
+	sent map[types.ProfileID]types.RequestOptions
 }
 
 // Session owns routing state. A session rejects overlapping requests rather
 // than letting completion order decide its sticky route. Separate sessions can
 // call the same immutable profiles in parallel.
 type Session struct {
-	router  *Router
-	shared  *sessionState
-	pin     string
-	initErr error
+	router *Router
+	shared *sessionState
+	// pin is the profile ID or group name a WithTarget view pins.
+	pin string
 }
 
 var (
 	_ types.Provider                 = (*Session)(nil)
 	_ types.NamedProvider            = (*Session)(nil)
 	_ types.ModelProvider            = (*Session)(nil)
-	_ types.ModelSwitcher            = (*Session)(nil)
+	_ types.TargetSwitcher           = (*Session)(nil)
 	_ types.CapabilityReporter       = (*Session)(nil)
-	_ types.ContentNegotiator        = (*Session)(nil)
 	_ types.StructuredOutputProvider = (*Session)(nil)
 	_ types.OptionsProvider          = (*Session)(nil)
 	_ types.SessionProvider          = (*Session)(nil)
 	_ wrapper.MultiWrapper           = (*Session)(nil)
 )
 
+// Session returns a new routing session, which keeps its own route state.
 func (r *Router) Session() *Session {
 	return &Session{router: r, shared: &sessionState{state: RouteState{Revision: r.cfg.Revision}}}
 }
@@ -333,11 +378,12 @@ func (r *Router) Session() *Session {
 // The child starts with empty routing state and keeps this session's pin.
 func (s *Session) NewSession() types.Provider {
 	child := s.router.Session()
-	child.pin, child.initErr = s.pin, s.initErr
+	child.pin = s.pin
 	child.shared.state.Pin = s.currentPin()
 	return child
 }
 
+// Name implements types.NamedProvider.
 func (s *Session) Name() string { return "router" }
 
 // Model is the profile ID, not a model name with settings copied across vendors.
@@ -348,31 +394,62 @@ func (s *Session) Model() string {
 	}
 	s.shared.mu.Lock()
 	defer s.shared.mu.Unlock()
-	return s.shared.state.Last
+	return string(s.shared.state.Last)
 }
 
-// WithModel selects a complete named profile, or a group of them. Unknown
-// names fail on use with ErrUnknownProfile. It never
-// copies one model's temperature, reasoning, or cache handle onto another model.
+// WithTarget implements types.TargetSwitcher. A profile target pins one
+// profile and a preset target pins the group of that name. A model target
+// pins the profile or group whose name it is, since the router reports
+// profile IDs as its model, and otherwise the first profile in
+// configuration order whose provider serves that model. A target the
+// router does not define is an error wrapping ErrUnknownProfile and
+// types.ErrUnknownTarget. It never copies one model's temperature,
+// reasoning, or cache handle onto another model.
 //
 // The returned provider shares this session's state, so a pin keeps the
 // session's sticky history, failure counts, and failover to other profiles.
 // Using it records the pin in RouteState, and the session then keeps that
 // profile first on later requests made through either value. The agent loop
-// re-applies ConfigContent.Model on every turn, and the pin must survive the
-// turns where the provider already reports the pinned profile and the loop
-// skips the switch. Another WithModel or Unpin changes it.
-func (s *Session) WithModel(id string) types.Provider {
-	if !s.router.hasTarget(id) {
-		return &Session{router: s.router, shared: s.shared, initErr: fmt.Errorf("%w %q", ErrUnknownProfile, id)}
+// re-applies a ConfigPart target on every turn, and the pin must survive
+// the turns where the provider already reports the pinned profile. Another
+// WithTarget or Unpin changes it.
+func (s *Session) WithTarget(t types.Target) (types.Provider, error) {
+	if t.IsZero() {
+		return s, nil
 	}
-	if s.pin == id {
-		return s
+	if err := t.Validate(); err != nil {
+		return nil, err
 	}
-	return &Session{router: s.router, shared: s.shared, pin: id, initErr: s.initErr}
+	pin, ok := s.router.resolveTarget(t)
+	if !ok {
+		return nil, fmt.Errorf("%w %q: %w", ErrUnknownProfile, t.String(), types.ErrUnknownTarget)
+	}
+	if s.pin == pin {
+		return s, nil
+	}
+	return &Session{router: s.router, shared: s.shared, pin: pin}, nil
 }
 
-// Unpin clears the pin recorded by a WithModel view, returning the session to
+// resolveTarget names the profile or group a target pins.
+func (r *Router) resolveTarget(t types.Target) (string, bool) {
+	switch {
+	case t.Profile != "":
+		return string(t.Profile), r.hasProfile(t.Profile)
+	case t.Preset != "":
+		return string(t.Preset), r.cfg.Groups[t.Preset] != nil
+	}
+	if r.hasTarget(string(t.Model)) {
+		return string(t.Model), true
+	}
+	for _, p := range r.cfg.Profiles {
+		if types.ProviderModel(p.Provider) == string(t.Model) {
+			return string(p.ID), true
+		}
+	}
+	return "", false
+}
+
+// Unpin clears the pin recorded by a WithTarget view, returning the session to
 // its policy's order.
 func (s *Session) Unpin() {
 	s.shared.mu.Lock()
@@ -431,54 +508,19 @@ func (s *Session) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(out, members...)
 }
 
-// reachable returns the profiles a request may currently use: the pinned or
-// default group, or every profile.
-func (s *Session) reachable() []Profile {
-	ids, _ := s.router.members(s.currentPin())
-	if ids == nil {
-		return s.router.cfg.Profiles
-	}
-	var out []Profile
-	for _, p := range s.router.cfg.Profiles {
-		if slices.Contains(ids, p.ID) {
-			out = append(out, p)
-		}
-	}
-	return out
+// Stream implements types.Provider. A request with options is eligible
+// only on profiles that accept request options and whose capabilities
+// validate them, so a forced tool choice never reaches a profile that would
+// drop it; a request with a schema only on profiles that can enforce one.
+func (s *Session) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return s.stream(ctx, request{messages: req.Messages, tools: req.Tools, schema: req.Schema, opts: req.Options})
 }
 
-// ContentSupport implements types.ContentNegotiator as the intersection over
-// the profiles, because any profile may serve the request.
-func (s *Session) ContentSupport() types.ContentSupport {
-	profiles := s.reachable()
-	out := types.ProviderContentSupport(profiles[0].Provider)
-	for _, p := range profiles[1:] {
-		next := types.ProviderContentSupport(p.Provider)
-		merged := map[types.MediaType]bool{}
-		for mt, ok := range out.NativeTypes {
-			if ok && next.NativeTypes[mt] {
-				merged[mt] = true
-			}
-		}
-		out = types.ContentSupport{NativeTypes: merged}
-	}
-	return out
-}
+// SupportsSchema implements types.StructuredOutputProvider.
+func (s *Session) SupportsSchema() bool { return true }
 
-func (s *Session) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools})
-}
-
-func (s *Session) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, schema: schema})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. Only profiles that
-// accept request options and whose capabilities validate them are eligible,
-// so a forced tool choice never reaches a profile that would drop it.
-func (s *Session) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, opts: &opts})
-}
+// SupportsOptions implements types.OptionsProvider.
+func (s *Session) SupportsOptions() bool { return true }
 
 // request is one provider call as the caller made it.
 type request struct {
@@ -489,18 +531,10 @@ type request struct {
 }
 
 func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta, error) {
-	switch {
-	case q.opts != nil:
-		op, ok := p.(types.OptionsProvider)
-		if !ok {
-			return nil, optionscheck.Unsupported(p)
-		}
-		return op.ChatStreamWithOptions(ctx, q.messages, q.tools, *q.opts)
-	case q.schema != nil:
-		return p.(types.StructuredOutputProvider).ChatStreamWithSchema(ctx, q.messages, q.tools, q.schema)
-	default:
-		return p.ChatStream(ctx, q.messages, q.tools)
+	if q.opts != nil && !types.AcceptsOptions(p) {
+		return nil, optionscheck.Unsupported(p)
 	}
+	return p.Stream(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
 }
 
 // compiled is what a profile sends for one request: its configured options
@@ -508,6 +542,8 @@ func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta
 type compiled struct {
 	opts   types.RequestOptions
 	report *types.DialReport
+	// conversions is the member's conversion plan, when it converts media.
+	conversions *types.ConversionReport
 }
 
 // dialSurface names the API the profile's adapter serves, for dials whose
@@ -522,25 +558,25 @@ func dialSurface(p types.Provider) string {
 // eligible reports why a profile cannot serve q, or nil, and what it would
 // send. Dials compile here, per candidate: a contractual dial the model
 // cannot honor filters the profile out, while an advisory dial that is
-// mapped or dropped never does.
-func (q request) eligible(c Candidate, p types.Provider, want []types.Capability, prev *types.RequestOptions) (compiled, error) {
+// mapped or dropped never does. The member's conversion plan is made here
+// too: a part no permitted action can fit to the member's offering filters
+// it out, while a planned conversion never does.
+func (q request) eligible(ctx context.Context, c Candidate, p types.Provider, want []types.Capability, prev *types.RequestOptions) (compiled, error) {
 	if missing := c.Capabilities.Missing(want...); len(missing) > 0 {
 		return compiled{}, fmt.Errorf("profile %s: %w: missing %v", c.ID, types.ErrInvalidModelConfig, missing)
 	}
-	if q.schema != nil {
-		if _, ok := p.(types.StructuredOutputProvider); !ok {
-			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrSchemaUnsupported)
-		}
+	if q.schema != nil && !types.AcceptsSchema(p) {
+		return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrSchemaUnsupported)
 	}
 	merged := c.Options
 	if q.opts != nil {
-		if _, ok := p.(types.OptionsProvider); !ok {
+		if !types.AcceptsOptions(p) {
 			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrOptionsUnsupported)
 		}
 		merged = merged.Merge(*q.opts)
 	}
-	ctx := types.DialContext{Tools: len(q.tools) > 0, Schema: q.schema != nil, Surface: dialSurface(p), Previous: prev}
-	eff, rep, err := types.CompileOptions(c.Capabilities, merged, ctx)
+	dctx := types.DialContext{Tools: len(q.tools) > 0, Schema: q.schema != nil, Surface: dialSurface(p), Previous: prev}
+	eff, rep, err := types.CompileOptions(c.Capabilities, merged, dctx)
 	if err != nil {
 		return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
 	}
@@ -551,22 +587,42 @@ func (q request) eligible(c Candidate, p types.Provider, want []types.Capability
 			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
 		}
 	}
-	return compiled{opts: eff, report: rep}, nil
+	out := compiled{opts: eff, report: rep}
+	if planner, ok := wrapper.As[types.ConversionPlanner](p); ok {
+		plan, _, err := planner.PlanConversions(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
+		if err != nil {
+			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, err)
+		}
+		if converts(plan) {
+			out.conversions = &plan
+		}
+	}
+	return out, nil
+}
+
+// converts reports whether a plan does more than send its parts natively.
+func converts(r types.ConversionReport) bool {
+	for _, d := range r.Decisions {
+		if d.Action != types.DecisionNative && d.Action != types.DecisionLowered {
+			return true
+		}
+	}
+	return false
 }
 
 // plan is the validated attempt order for one request.
 type plan struct {
-	order      []string
+	order      []types.ProfileID
 	reason     string
-	candidates map[string]Candidate
-	providers  map[string]types.Provider
-	compiled   map[string]compiled
+	candidates map[types.ProfileID]Candidate
+	providers  map[types.ProfileID]types.Provider
+	compiled   map[types.ProfileID]compiled
 	// home is the sticky profile once this request's decision applies.
-	home string
+	home types.ProfileID
 	// switchTo, when set, makes home a different profile before the request.
-	switchTo string
+	switchTo types.ProfileID
 	// probe is tried first; it becomes home only if it serves the request.
-	probe string
+	probe types.ProfileID
 	// followServed makes home whichever profile serves the request, which is
 	// how a plain Policy such as Sticky keeps affinity.
 	followServed bool
@@ -576,9 +632,6 @@ type plan struct {
 }
 
 func (s *Session) stream(ctx context.Context, q request) (<-chan types.Delta, error) {
-	if s.initErr != nil {
-		return nil, s.initErr
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -617,7 +670,7 @@ func (s *Session) stream(ctx context.Context, q request) (<-chan types.Delta, er
 
 // plan filters the profiles, asks the policy for an order, and applies the
 // pin and the route locks.
-func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[string]types.RequestOptions) (plan, error) {
+func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[types.ProfileID]types.RequestOptions) (plan, error) {
 	cfg := s.router.cfg
 	want := append([]types.Capability(nil), cfg.Required...)
 	if len(q.tools) > 0 {
@@ -626,14 +679,16 @@ func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[s
 	if q.schema != nil {
 		want = append(want, types.CapStructuredOutput)
 	}
-	p := plan{candidates: map[string]Candidate{}, providers: map[string]types.Provider{}, compiled: map[string]compiled{}, messages: len(q.messages)}
+	p := plan{candidates: map[types.ProfileID]Candidate{}, providers: map[types.ProfileID]types.Provider{}, compiled: map[types.ProfileID]compiled{}, messages: len(q.messages)}
 	rc := RouteContext{
 		Messages: q.messages, Tools: q.tools, Schema: q.schema != nil,
-		EstimatedTokens: types.EstimateTokens(q.messages),
-		Pinned:          st.Pin,
+		Pinned: st.Pin,
 	}
 	members, group := s.router.members(st.Pin)
-	skippedFirst, reasons := s.collectCandidates(q, want, st, members, sent, &p, &rc)
+	skippedFirst, reasons := s.collectCandidates(ctx, q, want, st, members, sent, &p, &rc)
+	if len(rc.Candidates) == 0 {
+		rc.EstimatedTokens = types.EstimateTokens(q.messages)
+	}
 	if cfg.Budget != nil {
 		rc.Headroom = Headroom{Known: true, Remaining: cfg.Budget.Remaining(), Status: cfg.Budget.Status()}
 	}
@@ -652,24 +707,24 @@ func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[s
 		p.followServed = true
 	}
 	if err == nil && len(decision.Order) == 0 {
-		err = errors.New("no eligible routing profile")
+		err = ErrNoEligibleProfile
 		if len(rc.Candidates) == 0 && len(reasons) > 0 {
 			// Each member's own reason, so a raw option every member
 			// rejects reads as a configuration error, not an outage.
-			err = fmt.Errorf("no eligible routing profile: %w", errors.Join(reasons...))
+			err = fmt.Errorf("%w: %w", ErrNoEligibleProfile, errors.Join(reasons...))
 		}
 	}
-	seen := map[string]bool{}
+	seen := map[types.ProfileID]bool{}
 	for _, id := range decision.Order {
 		if p.providers[id] == nil || seen[id] {
-			err = fmt.Errorf("routing policy returned invalid profile %q", id)
+			err = fmt.Errorf("%w: routing policy returned invalid profile %q", ErrUnknownProfile, id)
 			break
 		}
 		seen[id] = true
 	}
-	for _, id := range []string{decision.Profile, decision.Probe} {
+	for _, id := range []types.ProfileID{decision.Profile, decision.Probe} {
 		if err == nil && id != "" && !seen[id] {
-			err = fmt.Errorf("routing policy selected profile %q outside its order", id)
+			err = fmt.Errorf("%w: routing policy selected profile %q outside its order", ErrUnknownProfile, id)
 		}
 	}
 	if err != nil {
@@ -706,10 +761,10 @@ func (p *plan) applyPinsAndLocks(st RouteState, locks []string, group string) {
 		// The previous profile produced state another model cannot accept.
 		// This outranks a pin: the pin stays in the state and takes effect on
 		// the next turn that is not locked.
-		p.order, p.reason, p.switchTo, p.probe, p.hardLocked = []string{st.Last}, ReasonLocked, st.Last, "", true
-	case st.Pin != "" && p.providers[st.Pin] != nil:
-		p.order = moveFirst(p.order, st.Pin)
-		p.reason, p.switchTo, p.probe = ReasonPinned, st.Pin, ""
+		p.order, p.reason, p.switchTo, p.probe, p.hardLocked = []types.ProfileID{st.Last}, ReasonLocked, st.Last, "", true
+	case st.Pin != "" && p.providers[types.ProfileID(st.Pin)] != nil:
+		p.order = moveFirst(p.order, types.ProfileID(st.Pin))
+		p.reason, p.switchTo, p.probe = ReasonPinned, types.ProfileID(st.Pin), ""
 	case group != "" && group == st.Pin:
 		// A group pin selects the group's first eligible member.
 		p.reason, p.switchTo, p.probe = ReasonPinned, p.order[0], ""
@@ -723,7 +778,7 @@ func (p *plan) applyPinsAndLocks(st RouteState, locks []string, group string) {
 // restricted to members when set. It reports whether the group's first
 // member was skipped because it cannot serve the request, and why each
 // skipped member was.
-func (s *Session) collectCandidates(q request, want []types.Capability, st RouteState, members []string, sent map[string]types.RequestOptions, p *plan, rc *RouteContext) (bool, []error) {
+func (s *Session) collectCandidates(ctx context.Context, q request, want []types.Capability, st RouteState, members []types.ProfileID, sent map[types.ProfileID]types.RequestOptions, p *plan, rc *RouteContext) (bool, []error) {
 	skippedFirst := false
 	var reasons []error
 	for i, candidate := range s.router.Candidates() {
@@ -732,7 +787,7 @@ func (s *Session) collectCandidates(q request, want []types.Capability, st Route
 		if o, ok := sent[candidate.ID]; ok {
 			prev = &o
 		}
-		c, err := q.eligible(candidate, provider, want, prev)
+		c, err := q.eligible(ctx, candidate, provider, want, prev)
 		if members != nil && !slices.Contains(members, candidate.ID) {
 			// Outside the group, but the previous profile still matters: it
 			// may hold a lock that outranks the group.
@@ -750,6 +805,8 @@ func (s *Session) collectCandidates(q request, want []types.Capability, st Route
 			}
 			continue
 		}
+		candidate.EstimatedTokens = estimateFor(q.messages, provider)
+		rc.EstimatedTokens = max(rc.EstimatedTokens, candidate.EstimatedTokens)
 		rc.Candidates = append(rc.Candidates, candidate)
 		p.candidates[candidate.ID] = candidate
 		p.providers[candidate.ID] = provider
@@ -758,15 +815,24 @@ func (s *Session) collectCandidates(q request, want []types.Capability, st Route
 	return skippedFirst, reasons
 }
 
+// estimateFor approximates the prompt tokens of messages on the offering
+// provider serves, or flat when it reports none.
+func estimateFor(messages []types.Message, provider types.Provider) int {
+	if o, ok := convert.Target(provider); ok {
+		return types.EstimateTokensFor(messages, &o)
+	}
+	return types.EstimateTokens(messages)
+}
+
 // members returns the profile IDs a request may use: the pinned group, or
 // the default group when nothing is pinned. Nil means every profile. A pin
 // naming a single profile keeps every profile reachable for failover.
-func (r *Router) members(pin string) ([]string, string) {
-	if g := r.cfg.Groups[pin]; g != nil {
+func (r *Router) members(pin string) ([]types.ProfileID, string) {
+	if g := r.cfg.Groups[types.PresetName(pin)]; g != nil {
 		return g, pin
 	}
 	if pin == "" && r.cfg.DefaultGroup != "" {
-		return r.cfg.Groups[r.cfg.DefaultGroup], r.cfg.DefaultGroup
+		return r.cfg.Groups[r.cfg.DefaultGroup], string(r.cfg.DefaultGroup)
 	}
 	return nil, ""
 }
@@ -774,8 +840,8 @@ func (r *Router) members(pin string) ([]string, string) {
 // groupOrder keeps a policy's order but restricted to the group, so a
 // group's failover order is exactly its declared chain when the policy
 // follows configuration order.
-func groupOrder(order, members []string) []string {
-	out := make([]string, 0, len(order))
+func groupOrder(order, members []types.ProfileID) []types.ProfileID {
+	out := make([]types.ProfileID, 0, len(order))
 	for _, id := range order {
 		if slices.Contains(members, id) {
 			out = append(out, id)
@@ -784,8 +850,8 @@ func groupOrder(order, members []string) []string {
 	return out
 }
 
-func moveFirst(order []string, id string) []string {
-	out := []string{id}
+func moveFirst(order []types.ProfileID, id types.ProfileID) []types.ProfileID {
+	out := []types.ProfileID{id}
 	for _, o := range order {
 		if o != id {
 			out = append(out, o)
@@ -796,10 +862,10 @@ func moveFirst(order []string, id string) []string {
 
 // outcome is what relay learned about one request.
 type outcome struct {
-	served     string // profile whose stream completed, empty if none
-	last       string // last profile attempted
-	lastFailed bool   // the last attempt failed with a failover-eligible error
-	homeFailed bool   // the sticky profile was attempted and failed
+	served     types.ProfileID // profile whose stream completed, empty if none
+	last       types.ProfileID // last profile attempted
+	lastFailed bool            // the last attempt failed with a failover-eligible error
+	homeFailed bool            // the sticky profile was attempted and failed
 	usage      types.UsageDelta
 }
 
@@ -838,7 +904,7 @@ func (s *Session) relay(ctx context.Context, out chan<- types.Delta, p plan, q r
 		}
 		s.shared.mu.Lock()
 		if s.shared.sent == nil {
-			s.shared.sent = map[string]types.RequestOptions{}
+			s.shared.sent = map[types.ProfileID]types.RequestOptions{}
 		}
 		s.shared.sent[id] = p.compiled[id].opts.Clone()
 		s.shared.mu.Unlock()
@@ -902,6 +968,17 @@ func (s *Session) relay(ctx context.Context, out chan<- types.Delta, p plan, q r
 							held = append(held, d)
 							continue
 						}
+					case types.ConversionDelta:
+						// A conversion's cost is real whether or not the
+						// attempt serves: it is forwarded at once, never held
+						// or dropped, and does not commit the attempt.
+						v.Profile = string(id)
+						if !send(v) {
+							cancel()
+							go drain(src)
+							return
+						}
+						continue
 					}
 					// Output commits the attempt: replaying it on another
 					// profile would duplicate what the caller has seen. Usage
@@ -944,22 +1021,22 @@ func (s *Session) relay(ctx context.Context, out chan<- types.Delta, p plan, q r
 // context-length failure only moves to a larger declared context window,
 // largest first, and a content-filter refusal only moves to a different
 // provider. Any other failover-eligible error keeps the order.
-func reroute(order []string, failed Candidate, candidates map[string]Candidate, err error) ([]string, string) {
+func reroute(order []types.ProfileID, failed Candidate, candidates map[types.ProfileID]Candidate, err error) ([]types.ProfileID, string) {
 	switch {
 	case types.IsContextLength(err):
 		window := failed.Capabilities.ContextWindow
-		var out []string
+		var out []types.ProfileID
 		for _, id := range order {
 			if w := candidates[id].Capabilities.ContextWindow; window > 0 && w > window {
 				out = append(out, id)
 			}
 		}
-		slices.SortStableFunc(out, func(a, b string) int {
+		slices.SortStableFunc(out, func(a, b types.ProfileID) int {
 			return candidates[b].Capabilities.ContextWindow - candidates[a].Capabilities.ContextWindow
 		})
 		return out, ReasonContextLength
 	case types.IsContentFilter(err):
-		var out []string
+		var out []types.ProfileID
 		for _, id := range order {
 			if candidates[id].Capabilities.Provider != failed.Capabilities.Provider {
 				out = append(out, id)
@@ -978,13 +1055,13 @@ func drain(src <-chan types.Delta) {
 
 // routeDelta describes one attempt, including the effective options the
 // adapter sends for it and how its dials compiled.
-func (s *Session) routeDelta(id string, provider types.Provider, c compiled, reason string) types.RouteDelta {
+func (s *Session) routeDelta(id types.ProfileID, provider types.Provider, c compiled, reason string) types.RouteDelta {
 	// The profile's provider is usually decorated (retry, attempt deadline);
 	// the route names the adapter underneath, the vendor that served.
-	d := types.RouteDelta{Profile: id, Provider: wrapper.InnermostName(provider), Model: types.ProviderModel(provider), Reason: reason}
+	d := types.RouteDelta{Profile: string(id), Provider: wrapper.InnermostName(provider), Model: types.ProviderModel(provider), Reason: reason}
 	for _, prof := range s.router.cfg.Profiles {
 		if prof.ID == id {
-			d.Preset, d.ConfigHash, d.CatalogRevision = prof.Preset, prof.ConfigHash, prof.CatalogRevision
+			d.Preset, d.ConfigHash, d.CatalogRevision = string(prof.Preset), prof.ConfigHash, prof.CatalogRevision
 			break
 		}
 	}
@@ -995,6 +1072,10 @@ func (s *Session) routeDelta(id string, provider types.Provider, c compiled, rea
 	if c.report != nil {
 		r := c.report.Clone()
 		d.Dials = &r
+	}
+	if c.conversions != nil {
+		r := c.conversions.Clone()
+		d.Conversions = &r
 	}
 	return d
 }

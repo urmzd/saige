@@ -12,6 +12,7 @@ type LinkPolicy interface {
 // to it, including when its declared outbound links were restricted.
 type DirectReturnLinks struct{}
 
+// Resolve implements LinkPolicy.
 func (DirectReturnLinks) Resolve(links map[string][]string) (map[string][]string, error) {
 	out := cloneLinks(links)
 	for from, targets := range links {
@@ -35,6 +36,7 @@ func (DirectReturnLinks) Resolve(links map[string][]string) (map[string][]string
 // edge would violate the deployment's control or trust boundary.
 type DirectedLinks struct{}
 
+// Resolve implements LinkPolicy.
 func (DirectedLinks) Resolve(links map[string][]string) (map[string][]string, error) {
 	return cloneLinks(links), nil
 }
@@ -47,6 +49,8 @@ func cloneLinks(links map[string][]string) map[string][]string {
 	return out
 }
 
-func WithLinkPolicy(policy LinkPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.LinkPolicy = policy }
+// WithLinkPolicy sets how a handoff group's declared links become handoff
+// tools.
+func WithLinkPolicy(policy LinkPolicy) Option {
+	return func(cfg *Config) { cfg.LinkPolicy = policy }
 }

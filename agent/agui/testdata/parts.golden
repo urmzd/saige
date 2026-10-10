@@ -1,0 +1,21 @@
+{"type":"RUN_STARTED","threadId":"th","runId":"run"}
+{"type":"THINKING_START"}
+{"type":"THINKING_TEXT_MESSAGE_START"}
+{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"hmm"}
+{"type":"THINKING_TEXT_MESSAGE_END"}
+{"type":"THINKING_END"}
+{"type":"TEXT_MESSAGE_START","messageId":"run-msg-1","role":"assistant"}
+{"type":"TEXT_MESSAGE_CONTENT","messageId":"run-msg-1","delta":"Here it is."}
+{"type":"TEXT_MESSAGE_END","messageId":"run-msg-1"}
+{"type":"TOOL_CALL_START","toolCallId":"c1","toolCallName":"chart","parentMessageId":"run-msg-1"}
+{"type":"TOOL_CALL_ARGS","delta":"{\"q\":1}","toolCallId":"c1"}
+{"type":"TOOL_CALL_END","toolCallId":"c1"}
+{"type":"CUSTOM","name":"saige.delta","value":{"v":2,"kind":"tool.exec.start","data":{"tool_call_id":"c1","name":"chart"}}}
+{"type":"TOOL_CALL_RESULT","messageId":"run-msg-2","role":"tool","toolCallId":"c1","content":"rendered"}
+{"type":"CUSTOM","toolCallId":"c1","name":"saige.media","value":{"kind":"image","media_type":"image/png","size":307200,"sha256":"abababababababababababababababababababababababababababababababab","url":"/artifacts/abababababababababababababababababababababababababababababababab"}}
+{"type":"CUSTOM","name":"saige.media","value":{"kind":"image_out","index":3,"media_type":"image/png","size":3,"sha256":"796120837694d3f3f29259cfeb25091698c2a0aa87873658d840b4993ee889b3","data":"UE5H"}}
+{"type":"CUSTOM","name":"saige.media","value":{"kind":"audio_out","index":4,"media_type":"audio/wav","url":"https://cdn.example/a.wav","transcript":"hello there"}}
+{"type":"CUSTOM","name":"saige.delta","value":{"v":2,"kind":"part.start","data":{"index":5,"kind":"citation"}}}
+{"type":"CUSTOM","name":"saige.delta","value":{"v":2,"kind":"part.end","data":{"index":5,"part":{"type":"citation","citation":{"ordinal":1,"uri":"https://example.com","title":"Src"}}}}}
+{"type":"CUSTOM","name":"saige.refusal","value":{"index":6,"text":"I can't do that.","category":"safety"}}
+{"type":"RUN_FINISHED","threadId":"th","runId":"run"}

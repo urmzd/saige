@@ -10,7 +10,7 @@ type capProvider struct {
 	caps ModelCapabilities
 }
 
-func (c *capProvider) ChatStream(context.Context, []Message, []ToolDef) (<-chan Delta, error) {
+func (c *capProvider) Stream(_ context.Context, _ Request) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil
@@ -20,17 +20,10 @@ func (c *capProvider) Capabilities() ModelCapabilities { return c.caps }
 // bareProvider reports nothing: the "unknown", not "none", case.
 type bareProvider struct{}
 
-func (bareProvider) ChatStream(context.Context, []Message, []ToolDef) (<-chan Delta, error) {
+func (bareProvider) Stream(_ context.Context, _ Request) (<-chan Delta, error) {
 	ch := make(chan Delta)
 	close(ch)
 	return ch, nil
-}
-
-// negotiatorProvider implements only the adapter-level ContentNegotiator.
-type negotiatorProvider struct{ bareProvider }
-
-func (negotiatorProvider) ContentSupport() ContentSupport {
-	return ContentSupport{NativeTypes: map[MediaType]bool{MediaPNG: true}}
 }
 
 func mkCaps(list ...Capability) ModelCapabilities {
@@ -225,27 +218,5 @@ func TestMissingCapabilitiesFailsClosedOnUnknownProvider(t *testing.T) {
 	got := MissingCapabilities(bareProvider{}, CapTools, CapReasoning)
 	if len(got) != 2 {
 		t.Errorf("MissingCapabilities on an unreporting provider = %v, want everything", got)
-	}
-}
-
-func TestProviderContentSupportPrefersModelDeclaration(t *testing.T) {
-	// The model-level declaration wins: an adapter knows how to encode a PDF,
-	// but only the model decides whether it can read one.
-	mc := mkCaps(CapTools)
-	mc.Media = ContentSupport{NativeTypes: map[MediaType]bool{MediaPDF: true}}
-	got := ProviderContentSupport(&capProvider{caps: mc})
-	if !got.Supports(MediaPDF) || got.Supports(MediaPNG) {
-		t.Errorf("ContentSupport = %+v, want the model declaration", got.NativeTypes)
-	}
-
-	// With no model declaration it falls back to the adapter negotiator.
-	got = ProviderContentSupport(negotiatorProvider{})
-	if !got.Supports(MediaPNG) {
-		t.Error("must fall back to the adapter-level negotiator")
-	}
-
-	// With neither, nothing is native.
-	if got := ProviderContentSupport(bareProvider{}); len(got.NativeTypes) != 0 {
-		t.Errorf("ContentSupport = %+v, want empty", got.NativeTypes)
 	}
 }

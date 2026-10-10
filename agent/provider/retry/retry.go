@@ -2,12 +2,12 @@ package retry
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
-	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -42,104 +42,80 @@ func DefaultConfig() Config {
 	}
 }
 
-// Provider wraps a Provider with retry logic and exponential backoff.
+// Provider wraps a Provider with retry logic and exponential backoff. It
+// embeds wrapper.Base, so every optional interface reaches the inner
+// provider.
 type Provider struct {
-	Inner  types.Provider
+	wrapper.Base
 	Config Config
 }
 
-// New wraps a provider with the given retry config.
-func New(inner types.Provider, cfg Config) *Provider {
-	if cfg.MaxAttempts <= 0 {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithMaxAttempts sets Config.MaxAttempts.
+func WithMaxAttempts(n int) Option { return func(c *Config) { c.MaxAttempts = n } }
+
+// WithShouldRetry sets Config.ShouldRetry.
+func WithShouldRetry(fn func(error) bool) Option { return func(c *Config) { c.ShouldRetry = fn } }
+
+// New wraps inner with retries. Zero fields of cfg take the defaults of
+// DefaultConfig; a negative field, or a nil inner, is an error wrapping
+// types.ErrInvalidConfig.
+func New(inner types.Provider, cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: retry: no provider to wrap", types.ErrInvalidConfig)
+	}
+	if cfg.MaxAttempts < 0 || cfg.BaseDelay < 0 || cfg.MaxDelay < 0 || cfg.Multiplier < 0 || cfg.MaxRetryAfter < 0 {
+		return nil, fmt.Errorf("%w: retry: negative attempts, delay or multiplier", types.ErrInvalidConfig)
+	}
+	if cfg.MaxAttempts == 0 {
 		cfg.MaxAttempts = 3
 	}
-	if cfg.Multiplier <= 0 {
+	if cfg.Multiplier == 0 {
 		cfg.Multiplier = 2.0
 	}
-	if cfg.BaseDelay <= 0 {
+	if cfg.BaseDelay == 0 {
 		cfg.BaseDelay = 500 * time.Millisecond
 	}
-	if cfg.MaxDelay <= 0 {
+	if cfg.MaxDelay == 0 {
 		cfg.MaxDelay = 10 * time.Second
 	}
-	if cfg.MaxRetryAfter <= 0 {
+	if cfg.MaxRetryAfter == 0 {
 		cfg.MaxRetryAfter = 60 * time.Second
 	}
-	return &Provider{Inner: inner, Config: cfg}
+	p := &Provider{Config: cfg}
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
 }
 
+// rewrap keeps the retry config around another inner provider.
+func (r *Provider) rewrap(inner types.Provider) types.Provider {
+	c := *r
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
+}
+
+// Name implements types.NamedProvider.
 func (r *Provider) Name() string {
-	return "retry(" + types.ProviderName(r.Inner) + ")"
+	return "retry(" + types.NameOf(r.Inner) + ")"
 }
 
-// Model implements types.ModelProvider by delegating to the inner provider.
-func (r *Provider) Model() string { return types.ProviderModel(r.Inner) }
-
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// when it supports model switching, keeping the same retry config.
-func (r *Provider) WithModel(model string) types.Provider {
-	return &Provider{Inner: types.ProviderWithModel(r.Inner, model), Config: r.Config}
-}
-
-// ContentSupport implements types.ContentNegotiator by delegating to the inner
-// provider. Without this the file pipeline sees a retry-wrapped adapter as
-// supporting no media at all and extracts every attachment to text, silently
-// discarding images the model could have read natively.
-func (r *Provider) ContentSupport() types.ContentSupport {
-	return types.ProviderContentSupport(r.Inner)
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. When the inner provider does not report, the zero value is
-// returned: it declares nothing and has Known false, so a caller that must
-// fail closed still can. Capabilities that need request options are dropped
-// when the inner provider cannot receive them.
-func (r *Provider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(r.Inner)
-	return optionscheck.Narrow(caps, r.Inner)
-}
-
-func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return r.Inner.ChatStream(ctx, messages, tools)
-	})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. When the
-// inner provider cannot enforce a schema, a non-nil schema is rejected with
-// types.ErrInvalidModelConfig rather than silently dropped: the caller asked
-// for schema-checked output and must not receive free-form text instead.
-func (r *Provider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	sp, ok := r.Inner.(types.StructuredOutputProvider)
-	if !ok {
-		if schema != nil {
-			return nil, schemacheck.Unsupported(r.Inner, "provider cannot enforce a response schema")
-		}
-		return r.ChatStream(ctx, messages, tools)
+// Stream implements types.Provider. A schema or options the inner provider
+// cannot receive are rejected with types.ErrInvalidModelConfig rather than
+// silently dropped: the caller asked for them and must not receive output
+// made without them.
+func (r *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if err := r.Check(req); err != nil {
+		return nil, err
 	}
 	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
+		return r.Inner.Stream(ctx, req)
 	})
 }
-
-// ChatStreamWithOptions implements types.OptionsProvider. When the inner
-// provider cannot receive request options they are rejected with
-// types.ErrInvalidModelConfig rather than dropped.
-func (r *Provider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := r.Inner.(types.OptionsProvider)
-	if !ok {
-		return nil, optionscheck.Unsupported(r.Inner)
-	}
-	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, messages, tools, opts)
-	})
-}
-
-// Unwrap returns the inner provider. See package wrapper.
-func (r *Provider) Unwrap() types.Provider { return r.Inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (r *Provider) Close() error { return types.CloseProvider(r.Inner) }
 
 // retryLoop runs the call function with exponential backoff.
 //
@@ -257,7 +233,7 @@ func (c Config) Delay(attempt int, err error, u float64) time.Duration {
 // discarded, so a retried attempt reports only its own route.
 func isContentDelta(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.RouteDelta, types.DoneDelta, types.ErrorDelta:
+	case types.UsageDelta, types.RouteDelta, types.ConversionDelta, types.DoneDelta, types.ErrorDelta:
 		return false
 	default:
 		return true
@@ -338,16 +314,4 @@ func replay(ctx context.Context, buffered []types.Delta, errAfter error, rest <-
 func drain(ch <-chan types.Delta) {
 	for range ch {
 	}
-}
-
-func (p *Provider) NewSession() types.Provider {
-	return &Provider{Inner: types.NewProviderSession(p.Inner), Config: p.Config}
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the inner
-// provider. A retry replays the identical adapter, so every attempt sends
-// these options.
-func (r *Provider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(r.Inner)
-	return o
 }

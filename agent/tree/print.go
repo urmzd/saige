@@ -86,7 +86,7 @@ func serializeNode(node *types.Node) (serializedNode, error) {
 	if node == nil || node.Message == nil {
 		return serializedNode{}, errors.New("tree: cannot serialize a nil node or message")
 	}
-	message, err := marshalMessage(node.Message)
+	message, err := MarshalMessage(node.Message)
 	if err != nil {
 		return serializedNode{}, err
 	}

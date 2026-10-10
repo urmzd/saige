@@ -11,7 +11,8 @@ import (
 )
 
 func catalogProfile(id, vendor, model string, call func() (<-chan types.Delta, error), got *[]types.RequestOptions) Profile {
-	return Profile{ID: id, Provider: optsProvider{provider: provider{model: model, call: call, caps: catalog.MustLookup(vendor, model)}, got: got}}
+	caps := catalog.MustLookup(types.ProviderName(vendor), model)
+	return Profile{ID: types.ProfileID(id), Provider: optsProvider{provider: provider{model: model, call: call, caps: caps}, got: got}}
 }
 
 func focusedDials() types.RequestOptions {
@@ -30,7 +31,7 @@ func TestFailoverRecordsAdvisoryDrops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, text := collectRoutes(t)(r.Session().ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil, focusedDials()))
+	routes, text := collectRoutes(t)(r.Session().Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: new(focusedDials())}))
 	if text != "served" || len(routes) != 2 {
 		t.Fatalf("text %q, routes %+v", text, routes)
 	}
@@ -59,7 +60,7 @@ func TestRawTemperatureFailsEveryMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	temp := 0.2
-	_, err = r.Session().ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil, types.RequestOptions{Temperature: &temp})
+	_, err = r.Session().Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Temperature: &temp}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("err = %v", err)
 	}
@@ -79,14 +80,13 @@ func TestContractualSeedFiltersMember(t *testing.T) {
 			catalogProfile("haiku", "anthropic", "claude-haiku-5-5", ok("x"), &got),
 			catalogProfile("gpt41", "openai", "gpt-4.1", ok("served"), &got),
 		},
-		Groups: map[string][]string{"chain": {"haiku", "gpt41"}}, DefaultGroup: "chain",
+		Groups: map[types.PresetName][]types.ProfileID{"chain": {"haiku", "gpt41"}}, DefaultGroup: "chain",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	seed := int64(42)
-	routes, text := collectRoutes(t)(r.Session().ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil,
-		types.RequestOptions{Dials: types.Dials{Seed: &seed}}))
+	routes, text := collectRoutes(t)(r.Session().Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Dials: types.Dials{Seed: &seed}}}))
 	if text != "served" || len(routes) != 1 || routes[0].Profile != "gpt41" || routes[0].Reason != ReasonOptions {
 		t.Fatalf("text %q routes %+v", text, routes)
 	}
@@ -111,12 +111,11 @@ func TestConfiguredDialsAndCacheReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := r.Session()
-	routes, _ := collectRoutes(t)(s.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil))
+	routes, _ := collectRoutes(t)(s.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}}))
 	if d, ok := routes[0].Dials.Decision(types.DialReasoning); !ok || d.Action != types.DialApplied || d.CacheResetExpected {
 		t.Fatalf("first call: %+v", routes[0].Dials)
 	}
-	routes, _ = collectRoutes(t)(s.ChatStreamWithOptions(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil,
-		types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}))
+	routes, _ = collectRoutes(t)(s.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}}))
 	d, _ := routes[0].Dials.Decision(types.DialReasoning)
 	if !d.CacheResetExpected || d.Scope != types.DialScopeRequest {
 		t.Fatalf("second call: %+v", d)

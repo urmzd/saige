@@ -17,6 +17,7 @@ import (
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // postgresEngine returns an engine on a fresh database of the server named by
@@ -74,11 +75,11 @@ func TestPostgresSuspendDecideResume(t *testing.T) {
 	factory := func(string) *agent.Agent {
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { writes.Add(1); return "written", nil }}
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { reads.Add(1); return "read", nil }}
-		return agent.NewAgent(agent.AgentConfig{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read)})
+		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read)}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(ctx, wf, "pg-run", input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}

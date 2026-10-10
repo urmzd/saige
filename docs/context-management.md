@@ -14,7 +14,7 @@ Long runs outgrow the context window. Compaction moves a run onto a new, shorter
 ## Quick start
 
 ```go
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
 	Provider:     model,
 	SystemPrompt: "You are a research assistant.",
 	CompactCfg: &types.CompactConfig{
@@ -27,6 +27,9 @@ a := agent.NewAgent(agent.AgentConfig{
 		},
 	},
 })
+if err != nil {
+	return err
+}
 ```
 
 Before a turn whose input exceeds 150,000 tokens, the chain clears old tool results. If the history is still over 100,000 tokens, it keeps the last four turns and the three older spans most relevant to the latest user message, and replaces the rest with a summary written by claude-haiku-5-5.
@@ -60,28 +63,28 @@ Put cheap steps first: `clear_tool_results` makes no model call and often recove
 
 ## When compaction runs
 
-| Trigger | When it fires | `CompactionContent.Trigger` |
+| Trigger | When it fires | `CompactionPart.Trigger` |
 | --- | --- | --- |
-| `MaxInputTokens` set | Before a turn whose input exceeds it. Input is the larger of the last reported prompt tokens and the tokenizer's estimate (`AgentConfig.Tokenizer`). The turn is compacted again while it is still over and the last compaction shrank it, up to 5 times | `input_pressure` |
+| `MaxInputTokens` set | Before a turn whose input exceeds it. Input is the larger of the last reported prompt tokens and the tokenizer's estimate (`agent.Config.Tokenizer`). The turn is compacted again while it is still over and the last compaction shrank it, up to 5 times | `input_pressure` |
 | No `MaxInputTokens` | Before every turn, by the strategy's own rule: `keep_recent` past `KeepTurns` turns, `summary` and `relevant_plus_summary` past `Threshold` messages (never, when `Threshold` is 0), `sliding_window` past `WindowSize`, `summarize` past `Threshold`, `clear_tool_results` past `KeepToolResults` results | `rule` |
-| `ConfigContent.CompactNow` | Before the next turn, whatever the size or rule | `requested` |
+| `ConfigPart.CompactNow` | Before the next turn, whatever the size or rule | `requested` |
 | Context-length error | The provider rejected the turn. The branch is compacted and the turn retried, up to 3 times, then the first error is returned | `context_length` |
 
-Without `MaxInputTokens`, `keep_recent` and `clear_tool_results` compact again on every turn once the history passes their rule, each time onto a new branch. Set a token limit for long runs. A `BeforeCompaction` hook runs before every strategy and can skip the compaction; `AfterCompaction` reports whether it happened and the new branch ([hooks](hooks.md)). Compaction never counts as an iteration. A `ConfigContent` with `Compact` set changes the strategy from that point in the branch.
+Without `MaxInputTokens`, `keep_recent` and `clear_tool_results` compact again on every turn once the history passes their rule, each time onto a new branch. Set a token limit for long runs. A `BeforeCompaction` hook runs before every strategy and can skip the compaction; `AfterCompaction` reports whether it happened and the new branch ([hooks](hooks.md)). Compaction never counts as an iteration. A `ConfigPart` with `Compact` set changes the strategy from that point in the branch.
 
 ## Summaries and the budget
 
 The summary is written by, in order of precedence:
 
-1. `AgentConfig.CompactProvider` (or `agent.WithCompactProvider(p)`), for example a cheaper adapter;
-2. the active provider switched to `CompactConfig.SummaryModel`, through `ModelSwitcher` as a `ConfigContent.Model` switch would be (a router built from a preset accepts another preset or profile name);
+1. `agent.Config.CompactProvider` (or `agent.WithCompactProvider(p)`), for example a cheaper adapter;
+2. the active provider switched to `CompactConfig.SummaryModel`, through `TargetSwitcher` as a `ConfigPart.Model` switch would be (a router built from a preset accepts another preset or profile name);
 3. the active provider.
 
-Every summary call is reserved on `AgentConfig.Budget` before it is sent and settled when it ends, like a turn, and its usage is streamed as a `UsageDelta`. A budget that refuses the call ends the run, and nothing is sent. `Budget.Breakdown()` reports summary spend under the summary model.
+Every summary call is reserved on `agent.Config.Budget` before it is sent and settled when it ends, like a turn, and its usage is streamed as a `UsageDelta`. A budget that refuses the call ends the run, and nothing is sent. `Budget.Breakdown()` reports summary spend under the summary model.
 
 ## Records and deltas
 
-Every compaction writes a `types.CompactionContent` record onto the branch it created and streams a `types.CompactionDelta` (wire kind `compaction`) with the new branch and the record's node.
+Every compaction writes a `types.CompactionPart` record onto the branch it created and streams a `types.CompactionDelta` (wire kind `compaction`) with the new branch and the record's node.
 
 | Field | Meaning |
 | --- | --- |
@@ -112,18 +115,21 @@ Compaction is configured per agent with `CompactCfg` (or `agent.WithCompactConfi
 A subagent inherits its parent's `CompactCfg` and `CompactProvider` unless its `SubAgentDef.Options` set its own. Each subagent compacts its own tree, so an orchestrator can keep every message while its workers compact:
 
 ```go
-orchestrator := agent.NewAgent(agent.AgentConfig{
+orchestrator, err := agent.New(agent.Config{
 	Provider: model,
 	SubAgents: []agent.SubAgentDef{
 		{
 			Name: "researcher", Description: "Reads many documents",
-			Options: []agent.AgentOption{agent.WithCompactConfig(&types.CompactConfig{
+			Options: []agent.Option{agent.WithCompactConfig(&types.CompactConfig{
 				Strategy: types.CompactKeepRecent, KeepTurns: 6, MaxInputTokens: 60_000,
 			})},
 		},
 		{Name: "writer", Description: "Drafts the report"}, // inherits: off
 	},
 }, agent.WithoutCompaction())
+if err != nil {
+	return err
+}
 ```
 
 A child's compaction deltas reach the parent's stream inside `ToolExecDelta`, like its other deltas.

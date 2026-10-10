@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 )
@@ -26,30 +27,45 @@ type BudgetedGenerator struct {
 	Budget *types.Budget
 	// System, when set, is sent as a system message before the prompt.
 	System string
+	// Conversion fits the media of a run's input to the judge model, as
+	// agent.WithConversion does for an agent. The zero value rejects media
+	// the model cannot take natively, which fails that judge score. It
+	// applies when Provider plans conversions, as every provider built by
+	// provider.Build does.
+	Conversion types.ConversionPolicy
 }
 
-var _ eval.StructuredGenerator = (*BudgetedGenerator)(nil)
+var (
+	_ eval.StructuredGenerator = (*BudgetedGenerator)(nil)
+	_ eval.PartsGenerator      = (*BudgetedGenerator)(nil)
+)
 
 // Generate implements [eval.Generator].
 func (g *BudgetedGenerator) Generate(ctx context.Context, prompt string) (string, error) {
-	return g.call(ctx, prompt, nil)
+	return g.call(ctx, []types.UserPart{types.Text(prompt)}, nil)
+}
+
+// GenerateParts implements [eval.PartsGenerator]: parts are sent as one
+// user message, under the Conversion policy.
+func (g *BudgetedGenerator) GenerateParts(ctx context.Context, parts []types.UserPart, schema json.RawMessage) (string, error) {
+	if len(schema) == 0 || !types.AcceptsSchema(g.Provider) {
+		return g.call(ctx, parts, nil)
+	}
+	var ps types.ParameterSchema
+	if err := json.Unmarshal(schema, &ps); err != nil {
+		return "", fmt.Errorf("response schema: %w", err)
+	}
+	return g.call(ctx, parts, &ps)
 }
 
 // GenerateStructured implements [eval.StructuredGenerator]. The schema is
 // sent when the provider supports structured output and dropped otherwise;
 // the judge parses either reply.
 func (g *BudgetedGenerator) GenerateStructured(ctx context.Context, prompt string, schema json.RawMessage) (string, error) {
-	if _, ok := g.Provider.(types.StructuredOutputProvider); !ok {
-		return g.call(ctx, prompt, nil)
-	}
-	var ps types.ParameterSchema
-	if err := json.Unmarshal(schema, &ps); err != nil {
-		return "", fmt.Errorf("response schema: %w", err)
-	}
-	return g.call(ctx, prompt, &ps)
+	return g.GenerateParts(ctx, []types.UserPart{types.Text(prompt)}, schema)
 }
 
-func (g *BudgetedGenerator) call(ctx context.Context, prompt string, schema *types.ParameterSchema) (string, error) {
+func (g *BudgetedGenerator) call(ctx context.Context, parts []types.UserPart, schema *types.ParameterSchema) (string, error) {
 	caps, _ := types.ProviderCapabilities(g.Provider)
 	id := types.NewID()
 	if g.Budget != nil {
@@ -59,19 +75,14 @@ func (g *BudgetedGenerator) call(ctx context.Context, prompt string, schema *typ
 	}
 	msgs := make([]types.Message, 0, 2)
 	if g.System != "" {
-		msgs = append(msgs, types.NewSystemMessage(g.System))
+		msgs = append(msgs, types.SystemMsg(types.Text(g.System)))
 	}
-	msgs = append(msgs, types.NewUserMessage(prompt))
+	msgs = append(msgs, types.UserMsg(parts...))
 
-	var (
-		ch  <-chan types.Delta
-		err error
-	)
-	if schema != nil {
-		ch, err = g.Provider.(types.StructuredOutputProvider).ChatStreamWithSchema(ctx, msgs, nil, schema)
-	} else {
-		ch, err = g.Provider.ChatStream(ctx, msgs, nil)
+	if !g.Conversion.IsZero() {
+		ctx = convert.WithRuntime(ctx, convert.Runtime{Policy: g.Conversion, Budget: g.Budget, Reservation: id})
 	}
+	ch, err := g.Provider.Stream(ctx, types.Request{Messages: msgs, Schema: schema})
 	if err != nil {
 		_ = g.settle(id, caps.Pricing, types.UsageDelta{}, false)
 		return "", err
@@ -84,8 +95,8 @@ func (g *BudgetedGenerator) call(ctx context.Context, prompt string, schema *typ
 	)
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.UsageDelta:
 			usage, gotUsage = usage.Merge(v), true
 		case types.ErrorDelta:

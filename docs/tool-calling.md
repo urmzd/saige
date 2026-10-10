@@ -25,7 +25,7 @@ How a tool call travels from the model to your code and back, which calls run at
    | Per-tool quota (`Budget.ToolQuota`), charged only once the call is cleared | `types.ErrToolQuotaExceeded` as the result |
    | Execute the tool, bounded by `ToolTimeout` | The error text becomes the result |
 
-4. **All results go back in one message.** `persistToolResults` writes a single tool-result message with one `ToolResultContent` per call, in request order, each paired to its call by `ToolCallID` (`agent/agent.go`). Failures carry `IsError`. Every call gets a result, including when the run stops early, so the transcript stays valid for the next request. A suspended durable run is the exception: its pending calls resume later.
+4. **All results go back in one message.** `persistToolResults` writes a single tool-result message with one `ToolResultPart` per call, in request order, each paired to its call by `ToolCallID` (`agent/agent.go`). Failures carry `IsError`. Every call gets a result, including when the run stops early, so the transcript stays valid for the next request. A suspended durable run is the exception: its pending calls resume later.
 5. **The next model turn** reads those results, unless a stop tool ended the run (see [StopAtTools](#other-controls)) or a handoff moved control.
 
 A failed call never ends the run on its own. The model sees the error and can correct the call. `MaxConsecutiveErrors` (default 2, `agent/forcing.go`) stops the run with `ErrToolErrorLimit` after that many turns in a row where every call failed. A refused call does not count as a failure.
@@ -35,10 +35,10 @@ A failed call never ends the run on its own. The model sees the error and can co
 | | Client tools | Server tools |
 | --- | --- | --- |
 | Runs in | Your process | The vendor's infrastructure |
-| Declared with | `AgentConfig.Tools`, `agent.Func`, MCP imports | `agent.WithServerTools(types.ServerTool{Kind: ...})` or catalog `server_tools` |
+| Declared with | `agent.Config.Tools`, `agent.Func`, MCP imports | `agent.WithServerTools(types.ServerTool{Kind: ...})` or catalog `server_tools` |
 | Kinds | Anything you write | `web_search`, `code_execution`, `remote_mcp` (`agent/types/servertool.go`) |
 | Gates, approval, quotas | Yes | No: there is no local execution to gate |
-| Stream events | `ToolCallStartDelta`, `ToolCallArgumentDelta`, `ToolCallEndDelta` from the model, then `ToolExecStartDelta` and `ToolExecEndDelta` from saige | `ServerToolCallDelta`, `ServerToolResultDelta` (`agent/types/delta.go`) |
+| Stream events | A tool-call part (`PartStart`, `PartDelta.Args`, `PartEnd` with the `ToolCallPart`) from the model, then `ToolExecStartDelta` and `ToolExecEndDelta` from saige | `ServerToolCallPart` and `ServerToolResultPart` parts (`agent/types/part.go`) |
 
 saige does not execute server tools. The model calls them and answers from the result inside the same vendor turn. Anthropic (web search, code execution) and Google (search grounding, code execution) send them. The OpenAI adapters and Ollama do not, and `provider.Build` rejects server tools for them (`catalog.ExpressibleServerTools`). Anthropic remote MCP is rejected because it needs the MCP connector. Server tool calls emit no tool spans or tool metrics.
 
@@ -86,7 +86,7 @@ Two independent controls:
 `types.ToolChoice` has four modes: `auto`, `none`, `required` (call some tool) and `named` (call this tool).
 
 - **`auto` and `none` apply to every turn.**
-- **`required` and `named` apply to one turn.** Set through `agent.WithToolChoice` or a preset's `tool_choice`, a forced choice applies to the first turn of each run and then reverts to auto, so a forced call cannot loop (`toolChoice`, `agent/forcing.go`). A `ConfigContent.ToolChoice` in the conversation wins over the agent's setting; a forced one is cleared by the next assistant turn.
+- **`required` and `named` apply to one turn.** Set through `agent.WithToolChoice` or a preset's `tool_choice`, a forced choice applies to the first turn of each run and then reverts to auto, so a forced call cannot loop (`toolChoice`, `agent/forcing.go`). A `ConfigPart.ToolChoice` in the conversation wins over the agent's setting; a forced one is cleared by the next assistant turn.
 - **`none` without option support** withholds the tools from the request, which has the same effect. A forced choice must reach the adapter: an adapter that takes no per-request options fails with `ErrInvalidModelConfig` (`toolChoiceRequest`).
 
 Vendor and model limits, from the catalog (`agent/provider/catalog/data/default.json`):
@@ -95,7 +95,7 @@ Vendor and model limits, from the catalog (`agent/provider/catalog/data/default.
 | --- | --- |
 | claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1, claude-mythos-5-1 | `reasoning.forced_tool_choice: false`: the API rejects `required` and `named`. saige rejects them locally, and structured output uses `output_config.format`. |
 | gpt-6-luna, gpt-6-sol (`chat_completions_tools: no_reasoning`) | On Chat Completions, tools work only at reasoning effort `none`. With tools and no effort, the adapter sends `none`; another raw effort fails locally. `provider.Build` serves the model on the Responses API instead when a reasoning dial is on and that API can send the request. |
-| gpt-6.1-sol, gpt-6-astra (`responses_only`) | Tools need the Responses API. `provider.Build` serves these models through `openai.NewResponsesAdapter` for every request. |
+| gpt-6.1-sol, gpt-6-astra (`responses_only`) | Tools need the Responses API. `provider.Build` serves these models through `openai.NewResponses` for every request. |
 | Ollama | The native API has no `tool_choice`. The adapter emulates it by filtering the tools it sends: `none` sends none, `named` sends only that tool (the model may still answer without calling it). `required` cannot be emulated and is rejected (`agent/provider/ollama/tools.go`). |
 
 ## Other controls

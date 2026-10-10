@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -154,18 +155,42 @@ type Options struct {
 	Stop []string `json:"stop,omitempty"`
 }
 
-// NewClient creates a new Ollama client.
-func NewClient(host, model, embeddingModel string, opts ...Option) *Client {
+// DefaultHost is the address of a local Ollama daemon.
+const DefaultHost = "http://localhost:11434"
+
+// Config names the daemon and models a client or adapter uses.
+type Config struct {
+	// Host is the daemon's base URL. Empty means DefaultHost.
+	Host string
+	// Model is the generation model.
+	Model types.ModelID
+	// EmbeddingModel is the embedding model.
+	EmbeddingModel types.ModelID
+	// Client, for New, is a client built with NewClient (for example with
+	// client options); it takes the place of Host and the models.
+	Client *Client
+}
+
+// NewClient creates an Ollama client. A Host that is not an http or https
+// URL is an error wrapping types.ErrInvalidConfig.
+func NewClient(cfg Config, opts ...Option) (*Client, error) {
+	host := cfg.Host
+	if host == "" {
+		host = DefaultHost
+	}
+	if u, err := url.Parse(host); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("%w: ollama: host %q is not an http(s) URL", types.ErrInvalidConfig, host)
+	}
 	c := &Client{
 		Host:           host,
-		Model:          model,
-		EmbeddingModel: embeddingModel,
+		Model:          string(cfg.Model),
+		EmbeddingModel: string(cfg.EmbeddingModel),
 		HTTP:           defaultHTTPClient(),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
-	return c
+	return c, nil
 }
 
 // defaultHTTPClient bounds the wait for response headers but not the body, so

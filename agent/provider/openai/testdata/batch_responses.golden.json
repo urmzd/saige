@@ -1,0 +1,37 @@
+[
+  {
+    "type": "thinking",
+    "text": "thought",
+    "signature": "enc",
+    "summary": true
+  },
+  {
+    "type": "text",
+    "text": "See [1]."
+  },
+  {
+    "type": "citation",
+    "citation": {
+      "kind": "web",
+      "uri": "https://go.dev",
+      "title": "Go",
+      "start": 4,
+      "end": 7,
+      "producer": "openai"
+    },
+    "anchor": {
+      "part_index": 1,
+      "start": 4,
+      "end": 7
+    }
+  },
+  {
+    "type": "refusal",
+    "text": "Not that."
+  },
+  {
+    "type": "tool_call",
+    "id": "call_1",
+    "name": "f"
+  }
+]

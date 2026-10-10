@@ -5,21 +5,22 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // cacheRequest builds a request with two system blocks, two tools, and a
 // conversation ending in the given message.
 func cacheRequest(last types.Message) anthropic.MessageNewParams {
 	msgs := []types.Message{
-		types.NewSystemMessage("first"),
-		types.NewSystemMessage("last"),
-		types.NewUserMessage("question"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "c1", Name: "lookup", Arguments: map[string]any{}}}},
+		types.SystemMsg(types.Text("first")),
+		types.SystemMsg(types.Text("last")),
+		types.UserMsg(types.Text("question")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "c1", Name: "lookup", Arguments: map[string]any{}}}},
 	}
 	if last != nil {
 		msgs = append(msgs, last)
 	}
-	system, aMsgs := toAnthropicParams(msgs)
+	system, aMsgs := toParams(msgs)
 	return anthropic.MessageNewParams{
 		System:   system,
 		Messages: aMsgs,
@@ -50,7 +51,7 @@ func breakpoints(p anthropic.MessageNewParams) (tools, system, conversation []st
 }
 
 func TestPromptCachePolicyBreakpoints(t *testing.T) {
-	toolResult := types.NewUserToolResultMessage(types.ToolResultContent{ToolCallID: "c1", Text: "found"})
+	toolResult := types.UserToolResults(types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("found")}})
 	for _, tc := range []struct {
 		name             string
 		policy           PromptCachePolicy
@@ -62,13 +63,13 @@ func TestPromptCachePolicyBreakpoints(t *testing.T) {
 		{"system only", PromptCachePolicy{TTL: "1h", System: true}, toolResult, nil, []string{"1h@1"}, nil},
 		{"default marks tools, system, and trailing tool result", DefaultPromptCachePolicy("5m"), toolResult,
 			[]string{"5m@1"}, []string{"5m@1"}, []string{"5m@2.0"}},
-		{"trailing user text", PromptCachePolicy{TTL: "5m", Conversation: true}, types.NewUserMessage("next"),
+		{"trailing user text", PromptCachePolicy{TTL: "5m", Conversation: true}, types.UserMsg(types.Text("next")),
 			nil, nil, []string{"5m@2.0"}},
 		{"assistant tail gets no conversation marker", PromptCachePolicy{TTL: "5m", Conversation: true}, nil, nil, nil, nil},
 		{"disabled places nothing", PromptCachePolicy{}, toolResult, nil, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("unused", "claude-sonnet-4-5", WithPromptCachePolicy(tc.policy))
+			a := must.Get(New(Config{APIKey: "unused", Model: "claude-sonnet-4-5"}, WithPromptCachePolicy(tc.policy)))
 			params := cacheRequest(tc.last)
 			if err := a.applyPromptCache(&params); err != nil {
 				t.Fatal(err)
@@ -92,14 +93,14 @@ func TestPromptCachePolicyValidation(t *testing.T) {
 		{"system cache without system text", "claude-sonnet-4-5", PromptCachePolicy{TTL: "5m", System: true}, anthropic.MessageNewParams{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("unused", tc.model, WithPromptCachePolicy(tc.policy))
+			a := must.Get(New(Config{APIKey: "unused", Model: types.ModelID(tc.model)}, WithPromptCachePolicy(tc.policy)))
 			if err := a.applyPromptCache(&tc.params); err == nil {
 				t.Fatal("invalid cache policy accepted")
 			}
 		})
 	}
 	// The legacy option is the system-only policy.
-	a := NewAdapter("unused", "claude-sonnet-4-5", WithSystemPromptCache("1h"))
+	a := must.Get(New(Config{APIKey: "unused", Model: "claude-sonnet-4-5"}, WithSystemPromptCache("1h")))
 	if a.cachePolicy != (PromptCachePolicy{TTL: "1h", System: true}) {
 		t.Fatalf("WithSystemPromptCache = %+v", a.cachePolicy)
 	}

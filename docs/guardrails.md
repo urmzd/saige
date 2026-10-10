@@ -10,7 +10,7 @@ Each one returns a verdict:
 | `agent.Rewrite(text, reason)` | The text is replaced, for example redacted, and the run goes on |
 
 ```go
-a := agent.NewAgent(cfg,
+a, err := agent.New(cfg,
     agent.WithInputGuardrails(
         agent.InputGuardrail{Guardrail: guardrail.PII(true)},   // redact personal data first
         agent.InputGuardrail{Guardrail: guardrail.MaxLength(8000)},
@@ -24,6 +24,9 @@ a := agent.NewAgent(cfg,
         agent.OutputGuardrail{Guardrail: guardrail.PII(true)},
     ),
 )
+if err != nil {
+    return err
+}
 ```
 
 Write your own with `agent.NewGuardrail(name, func(ctx, in agent.GuardrailInput) (agent.GuardrailVerdict, error))`. The input carries the text, the phase (`input` or `output`), the branch before the message, and the run's identity. A guardrail error fails closed: the run stops as if it blocked.
@@ -56,7 +59,7 @@ A block surfaces in three places:
 
 - the run's error, a `*agent.GuardrailTrippedError` that matches `agent.ErrGuardrailTripped` and names the guardrail, the phase, the reason, and whether a model call was cancelled. It crosses the wire with the code `guardrail_tripped`;
 - a `types.GuardrailDelta` with action `block`, sent before the error;
-- a `types.GuardrailContent` record in the tree, in a system message of its own. A rewrite is recorded too, as `GuardrailContent` attached to the message it rewrote. Records are metadata and never reach the model.
+- a `types.GuardrailPart` record in the tree, in a system message of its own. A rewrite is recorded too, as `GuardrailPart` attached to the message it rewrote. Records are metadata and never reach the model.
 
 `RunStop` hooks see the reason `guardrail`.
 

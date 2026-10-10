@@ -29,7 +29,7 @@ func (e *unsupportedError) Is(target error) bool {
 func Unsupported(p types.Provider, reason string) error {
 	caps, _ := types.ProviderCapabilities(p)
 	if caps.Provider == "" {
-		caps.Provider = types.ProviderName(p)
+		caps.Provider = types.NameOf(p)
 	}
 	if caps.Model == "" {
 		caps.Model = types.ProviderModel(p)

@@ -1,0 +1,5 @@
+create           .cursor/mcp.json
+create           .agents/skills/tidy/SKILL.md
+create           .agents/skills/tidy/scripts/tidy.sh
+create           .cursor/agents/helper.md
+note: Cursor's agent format cannot express approval, model anthropic/claude-haiku-5-5, per-tool selection (only readonly), skills (Cursor finds them in .agents/skills) of agent helper; the saige-helper MCP tool runs the agent with all of them

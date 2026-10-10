@@ -28,8 +28,10 @@ func NewScorerFunc(name string, fn func(ctx context.Context, obs Observation) (S
 	return &ScorerFunc{name: name, fn: fn}
 }
 
+// Name implements Scorer.
 func (s *ScorerFunc) Name() string { return s.name }
 
+// Score calls f.
 func (s *ScorerFunc) Score(ctx context.Context, obs Observation) (Score, error) {
 	score, err := s.fn(ctx, obs)
 	if s.renamed && score.Name != "" {

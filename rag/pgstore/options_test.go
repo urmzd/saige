@@ -2,9 +2,13 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	agenttypes "github.com/urmzd/saige/agent/types"
 
 	"github.com/urmzd/saige/rag/types"
 )
@@ -40,7 +44,7 @@ func TestStoreOptionValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewStore(nil, nil, tt.opts...)
+			s := optionsOnly(tt.opts...)
 			_, _, err := s.searchSettings(context.Background(), false)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
@@ -73,7 +77,7 @@ func TestSearchSettings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewStore(nil, nil, tt.opts...)
+			s := optionsOnly(tt.opts...)
 			got, mode, err := s.searchSettings(context.Background(), tt.filtered)
 			if err != nil {
 				t.Fatal(err)
@@ -86,7 +90,7 @@ func TestSearchSettings(t *testing.T) {
 }
 
 func TestStoreOptionFirstErrorWins(t *testing.T) {
-	s := NewStore(nil, nil, WithEFSearch(0), WithMaxScanTuples(0), WithIterativeScan("fast"))
+	s := optionsOnly(WithEFSearch(0), WithMaxScanTuples(0), WithIterativeScan("fast"))
 	_, _, err := s.searchSettings(context.Background(), false)
 	if err == nil || !strings.Contains(err.Error(), "ef_search") {
 		t.Fatalf("err = %v, want the ef_search error", err)
@@ -121,7 +125,7 @@ func TestSearchOptionsIterativeTrigger(t *testing.T) {
 			}
 			// Unfiltered searches never consult the pgvector version, so a
 			// nil pool is safe here.
-			s := NewStore(nil, nil)
+			s := optionsOnly()
 			got, mode, err := s.searchSettings(context.Background(), hasSearchFilters(tt.opts))
 			if err != nil {
 				t.Fatal(err)
@@ -135,5 +139,29 @@ func TestSearchOptionsIterativeTrigger(t *testing.T) {
 				t.Errorf("mode = %q, want off", mode)
 			}
 		})
+	}
+}
+
+// optionsOnly applies opts to a store without a database, for the option
+// checks searchSettings makes.
+func optionsOnly(opts ...Option) *Store {
+	s := &Store{}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+func TestNewRejectsInvalidConfig(t *testing.T) {
+	if _, err := New(Config{}); !errors.Is(err, agenttypes.ErrInvalidConfig) {
+		t.Fatalf("nil pool: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), "postgres://localhost:1/none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := New(Config{Pool: pool}, WithEFSearch(0)); !errors.Is(err, agenttypes.ErrInvalidConfig) || !strings.Contains(err.Error(), "ef_search") {
+		t.Fatalf("invalid option: %v", err)
 	}
 }

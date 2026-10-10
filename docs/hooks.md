@@ -4,7 +4,7 @@
 Every field is optional. A hook observes its event, and at the points where it is safe it may change the event or abort the run.
 
 ```go
-a := agent.NewAgent(cfg, agent.WithHooks(agent.Hooks{
+a, err := agent.New(cfg, agent.WithHooks(agent.Hooks{
     Name: "audit",
     BeforeModelCall: func(ctx context.Context, ev *agent.BeforeModelCallEvent) error {
         log.Printf("%s calls %s with %d messages", ev.Agent, ev.Model, len(ev.Messages))
@@ -21,6 +21,9 @@ a := agent.NewAgent(cfg, agent.WithHooks(agent.Hooks{
         return nil
     },
 }))
+if err != nil {
+    return err
+}
 ```
 
 ## Events
@@ -76,7 +79,7 @@ A point with no hooks records nothing.
 A sub-agent inherits its parent's hook sets and hook timeout, the same way it inherits the tool gate. `SubAgentDef.Options` can add sets with `WithHooks`; they run after the inherited ones. To drop the inherited sets, add an option that clears them:
 
 ```go
-Options: []agent.AgentOption{func(c *agent.AgentConfig) { c.Hooks = nil }}
+Options: []agent.Option{func(c *agent.Config) { c.Hooks = nil }}
 ```
 
 A child's events carry its own agent name and a non-empty `Path`. `SubagentStart` and `SubagentEnd` fire in the parent, around the delegation.
@@ -86,9 +89,12 @@ A child's events carry its own agent name and a non-empty `Path`. `SubagentStart
 Memories extracted automatically belong in a hook after the run, never inline. `memory.ExtractionHook` provides that hook: on a run that finished normally it calls `Policy.ExtractAfterRun` with the agent that ran as owner and the run's branch, so every record passes the policy's scope, kind and content rules.
 
 ```go
-a := agent.NewAgent(cfg, agent.WithHooks(
+a, err := agent.New(cfg, agent.WithHooks(
     memory.ExtractionHook(store, policy, memory.ExtractorFunc(summarizeFacts)),
 ))
+if err != nil {
+    return err
+}
 ```
 
 The scope always comes from the policy, never from the extractor. Idempotency keys derive from the run ID and call path, so the hook firing again for the same run stores nothing new. See [memory](memory.md).

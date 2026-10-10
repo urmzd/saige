@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestChatCompletionsToolRule checks the catalog's Chat Completions tool rule
@@ -33,8 +34,8 @@ func TestChatCompletionsToolRule(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
-			a := NewAdapter("k", tc.model, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(tc.model)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want an invalid configuration", err)
@@ -72,7 +73,7 @@ func TestSamplingNeedsNoReasoning(t *testing.T) {
 		{"effort none on a model without it", "gpt-6.1-sol", []Option{WithReasoningEffort("none")}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := NewAdapter("k", tc.model, tc.opts...).Validate()
+			err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(tc.model)}, tc.opts...)).Validate()
 			if (err == nil) != tc.ok {
 				t.Fatalf("Validate = %v, want ok=%v", err, tc.ok)
 			}

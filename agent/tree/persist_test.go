@@ -17,11 +17,11 @@ import (
 
 type summaryProvider struct{}
 
-func (summaryProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (summaryProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: "summary"}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: "summary"}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -33,7 +33,7 @@ func (countTokenizer) CountTokens(_ context.Context, msgs []types.Message) (int,
 }
 
 func assistant(text string) types.AssistantMessage {
-	return types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: text}}}
+	return types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: text}}}
 }
 
 func mustAdd(t *testing.T, tr *tree.Tree, parent types.NodeID, msg types.Message) *types.Node {
@@ -71,15 +71,15 @@ func TestAddChildAtRewoundTip(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			tr, _ := tree.New(types.NewSystemMessage("system"))
-			user := mustAdd(t, tr, tr.Root().ID, types.NewUserMessage("q"))
+			tr, _ := tree.New(types.SystemMsg(types.Text("system")))
+			user := mustAdd(t, tr, tr.Root().ID, types.UserMsg(types.Text("q")))
 			cpNode := mustAdd(t, tr, user.ID, assistant("a"))
 			cp, err := tr.Checkpoint("main", "cp")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tc.mainMovesOn {
-				mustAdd(t, tr, cpNode.ID, types.NewUserMessage("main continues"))
+				mustAdd(t, tr, cpNode.ID, types.UserMsg(types.Text("main continues")))
 			}
 			mainTip, _ := tr.Tip("main")
 
@@ -95,13 +95,13 @@ func TestAddChildAtRewoundTip(t *testing.T) {
 
 			var added *types.Node
 			if tc.explicit {
-				added, err = tr.AddChildOnBranch(ctx, rewound, types.NewUserMessage("retry"))
+				added, err = tr.AddChildOnBranch(ctx, rewound, types.UserMsg(types.Text("retry")))
 			} else {
 				tip, tipErr := tr.Tip(rewound)
 				if tipErr != nil {
 					t.Fatal(tipErr)
 				}
-				added, err = tr.AddChild(ctx, tip.ID, types.NewUserMessage("retry"))
+				added, err = tr.AddChild(ctx, tip.ID, types.UserMsg(types.Text("retry")))
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -125,8 +125,8 @@ func TestAddChildAtRewoundTip(t *testing.T) {
 }
 
 func TestAddChildOnBranchUnknownBranch(t *testing.T) {
-	tr, _ := tree.New(types.NewSystemMessage("system"))
-	_, err := tr.AddChildOnBranch(context.Background(), "missing", types.NewUserMessage("x"))
+	tr, _ := tree.New(types.SystemMsg(types.Text("system")))
+	_, err := tr.AddChildOnBranch(context.Background(), "missing", types.UserMsg(types.Text("x")))
 	if !errors.Is(err, tree.ErrBranchNotFound) {
 		t.Fatalf("err = %v, want ErrBranchNotFound", err)
 	}
@@ -152,12 +152,12 @@ func (w *blockingWAL) Begin(ctx context.Context) (types.TxID, error) {
 // stuck behind a blocked WAL and the tree stays unchanged.
 func TestContextVariantsStopOnCancelledContext(t *testing.T) {
 	wal := &blockingWAL{WAL: memwal.New()}
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithWAL(wal))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithWAL(wal))
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := mustAdd(t, tr, tr.Root().ID, types.NewUserMessage("q"))
-	side, _, err := tr.Branch(context.Background(), tr.Root().ID, "side", types.NewUserMessage("s"))
+	user := mustAdd(t, tr, tr.Root().ID, types.UserMsg(types.Text("q")))
+	side, _, err := tr.Branch(context.Background(), tr.Root().ID, "side", types.UserMsg(types.Text("s")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestContextVariantsStopOnCancelledContext(t *testing.T) {
 		call func() error
 	}{
 		{"NewContext", func() error {
-			_, err := tree.NewContext(ctx, types.NewSystemMessage("s"), tree.WithWAL(wal))
+			_, err := tree.NewContext(ctx, types.SystemMsg(types.Text("s")), tree.WithWAL(wal))
 			return err
 		}},
 		{"SetActiveContext", func() error { return tr.SetActiveContext(ctx, side) }},
@@ -211,13 +211,13 @@ func TestContextVariantsStopOnCancelledContext(t *testing.T) {
 func TestWithStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithStore(store))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 	tip := tr.Root()
 	for i := range 6 {
-		var msg types.Message = types.NewUserMessage("user")
+		var msg types.Message = types.UserMsg(types.Text("user"))
 		if i%2 == 1 {
 			msg = assistant("reply")
 		}
@@ -228,17 +228,17 @@ func TestWithStoreRoundTrip(t *testing.T) {
 		t.Fatalf("Compact = %s, %v; want a new branch", compacted, err)
 	}
 	for range 3 {
-		if _, err := tr.AddChildOnBranch(ctx, compacted, types.NewUserMessage("after compaction")); err != nil {
+		if _, err := tr.AddChildOnBranch(ctx, compacted, types.UserMsg(types.Text("after compaction"))); err != nil {
 			t.Fatal(err)
 		}
 	}
 	compactTip, _ := tr.Tip(compacted)
-	if _, err := tr.AddFeedback(ctx, compactTip.ID, types.NewUserMessage("good")); err != nil {
+	if _, err := tr.AddFeedback(ctx, compactTip.ID, types.UserMsg(types.Text("good"))); err != nil {
 		t.Fatal(err)
 	}
 	mainPath, _ := tr.Path(tip.ID)
 	editTarget := mainPath[1]
-	if _, _, err := tr.UpdateUserMessage(ctx, editTarget, types.NewUserMessage("edited")); err != nil {
+	if _, _, err := tr.UpdateUserMessage(ctx, editTarget, types.UserMsg(types.Text("edited"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.Archive(mainPath[2], "tester", false); err != nil {
@@ -298,14 +298,14 @@ func TestWithStoreFailureLeavesTreeUnchanged(t *testing.T) {
 	ctx := context.Background()
 	store := &failingStore{Store: memstore.New()}
 	wal := memwal.New()
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithStore(store), tree.WithWAL(wal))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store), tree.WithWAL(wal))
 	if err != nil {
 		t.Fatal(err)
 	}
 	before, _ := wal.Recover(ctx)
 
 	store.err = errors.New("db down")
-	_, err = tr.AddChild(ctx, tr.Root().ID, types.NewUserMessage("q"))
+	_, err = tr.AddChild(ctx, tr.Root().ID, types.UserMsg(types.Text("q")))
 	if !errors.Is(err, tree.ErrStoreWrite) || !errors.Is(err, store.err) {
 		t.Fatalf("err = %v, want ErrStoreWrite wrapping the store error", err)
 	}
@@ -353,13 +353,13 @@ func TestWALCommitFailure(t *testing.T) {
 			if tc.withStore {
 				opts = append(opts, tree.WithStore(store))
 			}
-			tr, err := tree.New(types.NewSystemMessage("system"), opts...)
+			tr, err := tree.New(types.SystemMsg(types.Text("system")), opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			wal.err = errors.New("disk full")
-			node, err := tr.AddChild(ctx, tr.Root().ID, types.NewUserMessage("q"))
+			node, err := tr.AddChild(ctx, tr.Root().ID, types.UserMsg(types.Text("q")))
 			if !errors.Is(err, wal.err) {
 				t.Fatalf("err = %v, want the WAL commit error", err)
 			}
@@ -404,13 +404,13 @@ func TestWALCommitFailure(t *testing.T) {
 // that already happened must not depend on the request context.
 func TestWithStoreWriteUsesDetachedContext(t *testing.T) {
 	store := memstore.New()
-	tr, err := tree.New(types.NewSystemMessage("system"), tree.WithStore(store))
+	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	node, err := tr.AddChild(ctx, tr.Root().ID, types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "c1", Text: "ok"}))
+	node, err := tr.AddChild(ctx, tr.Root().ID, types.ToolResults(types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("ok")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,11 +434,11 @@ func TestLoadFromStoreActiveBranch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
-			tr, err := tree.New(types.NewSystemMessage("system"), tree.WithStore(store))
+			tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.NewUserMessage("s")); err != nil {
+			if _, _, err := tr.Branch(ctx, tr.Root().ID, "side", types.UserMsg(types.Text("s"))); err != nil {
 				t.Fatal(err)
 			}
 			if tc.saved != "" {

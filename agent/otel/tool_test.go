@@ -27,14 +27,14 @@ func (t plainTool) Execute(context.Context, map[string]any) (string, error) {
 type richTool struct{ plainTool }
 
 func (t richTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
-	return types.ToolResult{Text: "rich", Citations: []types.Citation{{URI: "https://example.com", Title: "src"}}}, nil
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text("rich")}, Citations: []types.Citation{{URI: "https://example.com", Title: "src"}}}, nil
 }
 
 // isErrorTool reports failure through ToolResult.IsError without a Go error.
 type isErrorTool struct{ plainTool }
 
 func (t isErrorTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
-	return types.ToolResult{Text: t.name + " failed", IsError: true}, nil
+	return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(t.name + " failed")}, IsError: true}, nil
 }
 
 // cacheableTool declares a cache policy.
@@ -196,7 +196,7 @@ func TestTracedToolSpans(t *testing.T) {
 			if tt.rich {
 				var res types.ToolResult
 				res, err = tool.ExecuteRich(context.Background(), nil)
-				text, cites = res.Text, len(res.Citations)
+				text, cites = res.Text(), len(res.Citations)
 			} else {
 				text, err = tool.Execute(context.Background(), nil)
 			}

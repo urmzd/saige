@@ -166,3 +166,21 @@ func TestRegistryUniqueAndUnregister(t *testing.T) {
 		t.Fatal("tool still registered")
 	}
 }
+
+func TestZeroToolRegistryIsUsable(t *testing.T) {
+	var r ToolRegistry
+	if _, ok := r.Get("x"); ok || len(r.All()) != 0 {
+		t.Fatal("zero registry is not empty")
+	}
+	r.Register(&ToolFunc{Def: ToolDef{Name: "a"}})
+	var u ToolRegistry
+	if err := u.RegisterUnique(&ToolFunc{Def: ToolDef{Name: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Get("a"); !ok {
+		t.Fatal("Register on a zero registry lost the tool")
+	}
+	if _, ok := u.Get("b"); !ok {
+		t.Fatal("RegisterUnique on a zero registry lost the tool")
+	}
+}

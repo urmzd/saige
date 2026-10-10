@@ -11,10 +11,11 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // fakeProvider streams a fixed delta sequence, optionally after a delay
-// before ChatStream returns, or fails before streaming.
+// before Stream returns, or fails before streaming.
 type fakeProvider struct {
 	deltas []types.Delta
 	delay  time.Duration
@@ -25,7 +26,7 @@ type fakeProvider struct {
 func (p *fakeProvider) Name() string  { return "fake" }
 func (p *fakeProvider) Model() string { return "m1" }
 
-func (p *fakeProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *fakeProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	time.Sleep(p.delay)
 	if p.err != nil {
 		return nil, p.err
@@ -41,17 +42,24 @@ func (p *fakeProvider) ChatStream(context.Context, []types.Message, []types.Tool
 // optionsProvider also accepts request options.
 type optionsProvider struct{ fakeProvider }
 
-func (p *optionsProvider) ChatStreamWithOptions(ctx context.Context, m []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	p.opts = &opts
-	return p.ChatStream(ctx, m, tools)
+func (p *optionsProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		o := *req.Options
+		p.opts = &o
+	}
+	return p.fakeProvider.Stream(ctx, types.Request{Messages: req.Messages, Tools: req.Tools})
 }
+
+func (p *optionsProvider) SupportsOptions() bool { return true }
 
 // schemaProvider also accepts structured output requests.
 type schemaProvider struct{ fakeProvider }
 
-func (p *schemaProvider) ChatStreamWithSchema(ctx context.Context, m []types.Message, tools []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
-	return p.ChatStream(ctx, m, tools)
+func (p *schemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return p.fakeProvider.Stream(ctx, types.Request{Messages: req.Messages, Tools: req.Tools})
 }
+
+func (p *schemaProvider) SupportsSchema() bool { return true }
 
 func drain(t *testing.T, ch <-chan types.Delta) []types.Delta {
 	t.Helper()
@@ -67,7 +75,7 @@ func TestTracedProviderChatStream(t *testing.T) {
 	// completion counts at message end.
 	anthropicUsage := []types.Delta{
 		types.UsageDelta{PromptTokens: 120, CachedPromptTokens: 100, CacheWriteTokens: 7, Cumulative: true},
-		types.TextContentDelta{Content: "hi"},
+		types.PartDelta{Index: 0, Text: "hi"},
 		types.UsageDelta{CompletionTokens: 9, Cumulative: true, ResponseModel: "m1-2025", FinishReasons: []string{"end_turn"}},
 		types.DoneDelta{},
 	}
@@ -107,7 +115,7 @@ func TestTracedProviderChatStream(t *testing.T) {
 			provider: &fakeProvider{deltas: []types.Delta{
 				types.RouteDelta{Profile: "primary", Provider: "a", Model: "x", Reason: "primary"},
 				types.RouteDelta{Profile: "canary", Provider: "b", Model: "y", Experiment: "exp1", Variant: "treatment", Reason: "fallback"},
-				types.TextContentDelta{Content: "ok"},
+				types.PartDelta{Index: 0, Text: "ok"},
 			}},
 			wantCount: 3,
 			wantModel: "y",
@@ -166,8 +174,8 @@ func TestTracedProviderChatStream(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer, rec := newSpyTracer()
-			p := NewTracedProvider(tt.provider, tracer)
-			ch, err := p.ChatStream(context.Background(), nil, nil)
+			p := must.Get(NewTracedProvider(tt.provider, tracer))
+			ch, err := p.Stream(context.Background(), types.Request{})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -203,9 +211,9 @@ func TestTracedProviderTimeToFirstChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracer, rec := newSpyTracer()
-	inner := &fakeProvider{delay: delay, deltas: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "a"}, types.TextContentDelta{Content: "b"}}}
-	p := NewTracedProvider(inner, tracer, WithProviderMetrics(m))
-	ch, err := p.ChatStream(context.Background(), nil, nil)
+	inner := &fakeProvider{delay: delay, deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "a"}, types.PartDelta{Index: 0, Text: "b"}}}
+	p := must.Get(NewTracedProvider(inner, tracer, WithProviderMetrics(m)))
+	ch, err := p.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +248,7 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 	t.Run("options forwarded", func(t *testing.T) {
 		tracer, rec := newSpyTracer()
 		inner := &optionsProvider{fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}}
-		ch, err := NewTracedProvider(inner, tracer).ChatStreamWithOptions(context.Background(), nil, nil, opts)
+		ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{Options: &opts})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -262,7 +270,7 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 
 	t.Run("options rejected when unsupported", func(t *testing.T) {
 		tracer, rec := newSpyTracer()
-		_, err := NewTracedProvider(&fakeProvider{}, tracer).ChatStreamWithOptions(context.Background(), nil, nil, opts)
+		_, err := must.Get(NewTracedProvider(&fakeProvider{}, tracer)).Stream(context.Background(), types.Request{Options: &opts})
 		if !errors.Is(err, types.ErrInvalidModelConfig) || !errors.Is(err, types.ErrOptionsUnsupported) {
 			t.Fatalf("err = %v, want ErrOptionsUnsupported", err)
 		}
@@ -274,7 +282,7 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 	t.Run("schema", func(t *testing.T) {
 		tracer, rec := newSpyTracer()
 		inner := &schemaProvider{fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}}
-		ch, err := NewTracedProvider(inner, tracer).ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+		ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,8 +299,8 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 	t.Run("schema rejected when unsupported", func(t *testing.T) {
 		tracer, _ := newSpyTracer()
 		inner := &fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}
-		p := NewTracedProvider(inner, tracer)
-		_, err := p.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: "object"})
+		p := must.Get(NewTracedProvider(inner, tracer))
+		_, err := p.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 		if !errors.Is(err, types.ErrSchemaUnsupported) || !errors.Is(err, types.ErrInvalidModelConfig) {
 			t.Fatalf("err = %v, want ErrSchemaUnsupported", err)
 		}
@@ -300,7 +308,7 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 			t.Fatal("an unsupported schema must not be retried")
 		}
 		// Without a schema the call is a plain chat.
-		ch, err := p.ChatStreamWithSchema(context.Background(), nil, nil, nil)
+		ch, err := p.Stream(context.Background(), types.Request{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,9 +317,9 @@ func TestTracedProviderEntryPoints(t *testing.T) {
 
 	t.Run("wrapper survives model switch and session", func(t *testing.T) {
 		tracer, _ := newSpyTracer()
-		p := NewTracedProvider(&fakeProvider{}, tracer)
-		if _, ok := p.WithModel("other").(*TracedProvider); !ok {
-			t.Error("WithModel dropped tracing")
+		p := must.Get(NewTracedProvider(switchingFake{&fakeProvider{}}, tracer))
+		if _, ok := must.Get(p.WithTarget(types.ModelTarget("other"))).(*TracedProvider); !ok {
+			t.Error("WithTarget dropped tracing")
 		}
 		if _, ok := p.NewSession().(*TracedProvider); !ok {
 			t.Error("NewSession dropped tracing")
@@ -342,7 +350,7 @@ func TestRedactorScrubsErrorMessages(t *testing.T) {
 
 	t.Run("provider", func(t *testing.T) {
 		tracer, rec := newSpyTracer()
-		_, _ = NewTracedProvider(&fakeProvider{err: err}, tracer, WithProviderRedactor(redact)).ChatStream(context.Background(), nil, nil)
+		_, _ = must.Get(NewTracedProvider(&fakeProvider{err: err}, tracer, WithProviderRedactor(redact))).Stream(context.Background(), types.Request{})
 		check(t, rec.all()[0])
 	})
 	t.Run("tool", func(t *testing.T) {
@@ -381,3 +389,8 @@ type panicError struct{}
 
 func (panicError) Error() string   { return "tool t panicked: boom" }
 func (panicError) ToolPanic() bool { return true }
+
+// switchingFake is a fakeProvider that can be re-targeted.
+type switchingFake struct{ *fakeProvider }
+
+func (f switchingFake) WithTarget(types.Target) (types.Provider, error) { return f, nil }

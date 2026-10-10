@@ -1,0 +1,52 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "go"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "args": {
+              "zoom": 2
+            },
+            "name": "take_photo"
+          }
+        },
+        {
+          "functionCall": {
+            "name": "write"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "take_photo",
+            "response": {
+              "error": "camera offline"
+            }
+          }
+        },
+        {
+          "functionResponse": {
+            "name": "write",
+            "response": {
+              "result": "ok"
+            }
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {}
+}

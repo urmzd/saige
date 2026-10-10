@@ -39,6 +39,7 @@ func New() *WAL {
 	}
 }
 
+// Begin implements types.WAL.
 func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -48,6 +49,7 @@ func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	return id, nil
 }
 
+// Append implements types.WAL.
 func (w *WAL) Append(_ context.Context, txID types.TxID, op types.TxOp) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -62,6 +64,7 @@ func (w *WAL) Append(_ context.Context, txID types.TxID, op types.TxOp) error {
 	return nil
 }
 
+// Commit implements types.WAL.
 func (w *WAL) Commit(_ context.Context, txID types.TxID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -76,6 +79,7 @@ func (w *WAL) Commit(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Abort implements types.WAL.
 func (w *WAL) Abort(_ context.Context, txID types.TxID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -127,6 +131,7 @@ func (w *WAL) MarkApplied(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Replay implements types.WAL.
 func (w *WAL) Replay(_ context.Context, txID types.TxID) ([]types.TxOp, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

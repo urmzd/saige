@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -20,12 +21,12 @@ func TestFunctionModelStreamsAResponse(t *testing.T) {
 		return agenttest.Response{
 			Thinking:     "hmm",
 			TextChunks:   []string{"Hel", "lo"},
-			ToolCalls:    []types.ToolUseContent{{Name: "greet", Arguments: map[string]any{"name": "Ada"}}},
+			ToolCalls:    []types.ToolCallPart{{Name: "greet", Arguments: map[string]any{"name": "Ada"}}},
 			Usage:        &types.UsageDelta{PromptTokens: 10, CompletionTokens: 3},
 			FinishReason: "tool_use",
 		}, nil
 	}}
-	ch, err := m.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := m.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,14 +35,19 @@ func TestFunctionModelStreamsAResponse(t *testing.T) {
 	var usage types.UsageDelta
 	for _, d := range deltas {
 		switch v := d.(type) {
-		case types.ThinkingContentDelta:
-			kinds = append(kinds, "thinking:"+v.Content)
-		case types.TextContentDelta:
-			kinds = append(kinds, "text:"+v.Content)
-		case types.ToolCallStartDelta:
-			kinds = append(kinds, "call:"+v.ID+":"+v.Name)
-		case types.ToolCallArgumentDelta:
-			kinds = append(kinds, "args:"+v.Content)
+		case types.PartDelta:
+			switch {
+			case v.Thinking != "":
+				kinds = append(kinds, "thinking:"+v.Thinking)
+			case v.Text != "":
+				kinds = append(kinds, "text:"+v.Text)
+			case v.Args != "":
+				kinds = append(kinds, "args:"+v.Args)
+			}
+		case types.PartStart:
+			if v.Kind == types.KindToolCall {
+				kinds = append(kinds, "call:"+v.ID+":"+v.Name)
+			}
 		case types.UsageDelta:
 			usage = v
 			kinds = append(kinds, "usage")
@@ -61,7 +67,7 @@ func TestFunctionModelStreamsAResponse(t *testing.T) {
 
 func mustStream(t *testing.T, p types.Provider) <-chan types.Delta {
 	t.Helper()
-	ch, err := p.ChatStream(context.Background(), nil, nil)
+	ch, err := p.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +82,7 @@ func TestFunctionModelErrors(t *testing.T) {
 		}
 		return agenttest.Response{Text: "partial", StreamErr: boom}, nil
 	}}
-	if _, err := m.ChatStream(context.Background(), nil, nil); !errors.Is(err, boom) {
+	if _, err := m.Stream(context.Background(), types.Request{}); !errors.Is(err, boom) {
 		t.Fatalf("first call err = %v", err)
 	}
 	deltas := agenttest.CollectDeltas(mustStream(t, m))
@@ -104,9 +110,9 @@ func TestFunctionModelSeesOptionsAndDialReport(t *testing.T) {
 		},
 	}
 	creative := types.CreativityDeterministic
-	_, err := m.ChatStreamWithOptions(context.Background(), nil, nil, types.RequestOptions{
+	_, err := m.Stream(context.Background(), types.Request{Options: &types.RequestOptions{
 		Dials: types.Dials{Creativity: &creative},
-	})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,19 +136,19 @@ func TestFunctionModelChecksDeclaredCapabilities(t *testing.T) {
 		Caps: map[types.Capability]bool{types.CapStreaming: true},
 	}}
 	tools := []types.ToolDef{{Name: "t", Parameters: types.ParameterSchema{Type: types.SchemaObject}}}
-	if _, err := m.ChatStream(context.Background(), nil, tools); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := m.Stream(context.Background(), types.Request{Tools: tools}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("tools on a model without tools: err = %v", err)
 	}
-	if _, err := m.ChatStreamWithOptions(context.Background(), nil, nil, types.RequestOptions{Temperature: ptr(0.5)}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := m.Stream(context.Background(), types.Request{Options: &types.RequestOptions{Temperature: ptr(0.5)}}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("temperature on a model without it: err = %v", err)
 	}
-	if _, err := m.ChatStreamWithSchema(context.Background(), nil, nil, &types.ParameterSchema{Type: types.SchemaObject}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := m.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: types.SchemaObject}}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("schema on a model without structured output: err = %v", err)
 	}
 	// The agent refuses a schema the declared model cannot enforce, before
 	// any call.
-	a := agent.NewAgent(agent.AgentConfig{Provider: m}, agent.WithResponseSchema(&types.ParameterSchema{Type: types.SchemaObject}))
-	if _, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})); err == nil {
+	a := must.Get(agent.New(agent.Config{Provider: m}, agent.WithResponseSchema(&types.ParameterSchema{Type: types.SchemaObject})))
+	if _, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})); err == nil {
 		t.Fatal("the agent sent a schema to a model without structured output")
 	}
 	if n := m.CallCount(); n != 3 {
@@ -186,11 +192,11 @@ func TestFunctionModelDrivesAnAgent(t *testing.T) {
 		if len(tools) != 1 || tools[0].Name != "greet" {
 			return agenttest.Response{}, errors.New("greet not offered")
 		}
-		return agenttest.Response{ToolCalls: []types.ToolUseContent{{Name: "greet", Arguments: map[string]any{"name": "Ada"}}}}, nil
+		return agenttest.Response{ToolCalls: []types.ToolCallPart{{Name: "greet", Arguments: map[string]any{"name": "Ada"}}}}, nil
 	}}
-	a := agent.NewAgent(agent.AgentConfig{Provider: m, Tools: types.NewToolRegistry(greet)},
-		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
-	text, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("greet Ada")}))
+	a := must.Get(agent.New(agent.Config{Provider: m, Tools: types.NewToolRegistry(greet)},
+		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
+	text, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet Ada"))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,8 +222,8 @@ func TestFunctionModelServesStructuredOutput(t *testing.T) {
 		}
 		return agenttest.Response{Text: `{"city": "Paris"}`}, nil
 	}}
-	got, res, err := agent.Structured(context.Background(), agent.NewAgent(agent.AgentConfig{Provider: m}),
-		[]types.Message{types.NewUserMessage("Where?")}, agent.OutputSpec[city]{})
+	got, res, err := agent.Structured(context.Background(), must.Get(agent.New(agent.Config{Provider: m})),
+		[]types.Message{types.UserMsg(types.Text("Where?"))}, agent.OutputSpec[city]{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +238,8 @@ func TestFunctionModelServesStructuredOutput(t *testing.T) {
 func lastUser(msgs []types.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if um, ok := msgs[i].(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					return tc.Text
 				}
 			}

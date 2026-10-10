@@ -44,11 +44,6 @@ type Script struct {
 	Turns   []Turn
 }
 
-// Experiment is the former name of [Script].
-//
-// Deprecated: Use [Script].
-type Experiment = Script
-
 // FlowContext carries results across the flows of one script. The runner
 // records each flow's final artifact and turn-0 metrics under the flow name,
 // so later flows can seed from earlier ones ([StatelessFlow] seeds from

@@ -54,7 +54,7 @@ func NewToolCallEmulator(cfg EmulatorConfig) *FunctionModel {
 			calls := selectTools(cfg.Tools, tools, req.Effective.ToolChoice)
 			if len(calls) > 0 && toolRounds(messages) < rounds {
 				for _, def := range calls {
-					resp.ToolCalls = append(resp.ToolCalls, types.ToolUseContent{
+					resp.ToolCalls = append(resp.ToolCalls, types.ToolCallPart{
 						Name:      def.Name,
 						Arguments: FakeArguments(def.Parameters, !cfg.RequiredOnly),
 					})
@@ -112,11 +112,11 @@ func toolRounds(messages []types.Message) int {
 	for i := len(messages) - 1; i >= 0; i-- {
 		switch m := messages[i].(type) {
 		case types.UserMessage:
-			if slices.ContainsFunc(m.Content, func(c types.UserContent) bool { _, ok := c.(types.TextContent); return ok }) {
+			if slices.ContainsFunc(m.Parts, func(c types.UserPart) bool { _, ok := c.(types.TextPart); return ok }) {
 				return n
 			}
 		case types.AssistantMessage:
-			if slices.ContainsFunc(m.Content, func(c types.AssistantContent) bool { _, ok := c.(types.ToolUseContent); return ok }) {
+			if slices.ContainsFunc(m.Parts, func(c types.AssistantPart) bool { _, ok := c.(types.ToolCallPart); return ok }) {
 				n++
 			}
 		}
@@ -131,8 +131,8 @@ func summarizeResults(messages []types.Message) string {
 	last := -1
 	for i, m := range messages {
 		if am, ok := m.(types.AssistantMessage); ok {
-			for _, c := range am.Content {
-				if tu, ok := c.(types.ToolUseContent); ok {
+			for _, c := range am.Parts {
+				if tu, ok := c.(types.ToolCallPart); ok {
 					names[tu.ID] = tu.Name
 					last = i
 				}
@@ -141,22 +141,22 @@ func summarizeResults(messages []types.Message) string {
 	}
 	var lines []string
 	add := func(c any) {
-		if r, ok := c.(types.ToolResultContent); ok {
-			text := r.Text
+		if r, ok := c.(types.ToolResultPart); ok {
+			text := r.Text()
 			if r.IsError {
 				text = "error: " + text
 			}
-			lines = append(lines, names[r.ToolCallID]+": "+text)
+			lines = append(lines, names[r.CallID]+": "+text)
 		}
 	}
 	for _, m := range messages[last+1:] {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		}

@@ -1,0 +1,18 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "sys"
+    },
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "hello"
+    }
+  ],
+  "stream": true
+}

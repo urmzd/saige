@@ -1,0 +1,14 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "q"
+    },
+    {
+      "role": "assistant",
+      "content": "Per the source, I cannot say more."
+    }
+  ],
+  "stream": true
+}

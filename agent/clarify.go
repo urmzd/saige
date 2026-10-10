@@ -15,10 +15,10 @@ const ClarificationToolName = "ask_user"
 // ClarificationTool returns a tool the model calls to ask the person running
 // it a question. Register it like any other tool.
 //
-// A call posts a types.InterruptClarification interrupt whose Payload is
-// {"question": "..."} and sends a MarkerDelta with one marker of kind
-// "clarification". Answer it with EventStream.ReplyInterrupt and an Answer,
-// or with ResolveMarkerWithMessage, approved, with the answer as the message.
+// A call posts a types.InterruptClarification interrupt whose Payload is a
+// types.ClarificationPayload (read it with Interrupt.Clarification) and
+// sends a MarkerDelta with one marker of kind "clarification". Answer it
+// with EventStream.ReplyInterrupt and a reply from types.Answer, or with ResolveMarkerWithMessage, approved, with the answer as the message.
 // The answer becomes the tool result. A refusal becomes a tool error, so the
 // model can carry on without it.
 //
@@ -58,12 +58,12 @@ var errNoClarifier = errors.New("ask_user needs an agent run with a consumer to 
 
 // askClarification posts a clarification interrupt for tc and returns the
 // answer as the call's result.
-func (a *Agent) askClarification(ctx context.Context, stream *EventStream, tc types.ToolUseContent) toolResult {
+func (a *Agent) askClarification(ctx context.Context, stream *EventStream, tc types.ToolCallPart) toolResult {
 	question := strings.TrimSpace(stringArg(tc.Arguments, argQuestion))
 	if question == "" {
 		return failedTool(stream, tc.ID, tc.Name, "question is empty")
 	}
-	payload, _ := json.Marshal(map[string]string{argQuestion: question})
+	payload, _ := json.Marshal(types.ClarificationPayload{Question: question})
 	d, ok := a.awaitInterrupt(ctx, stream, interruptRequest{
 		kind:    types.InterruptClarification,
 		phase:   "clarification",

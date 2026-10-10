@@ -169,31 +169,40 @@ var (
 	_ types.Provider                 = (*Split)(nil)
 	_ types.NamedProvider            = (*Split)(nil)
 	_ types.ModelProvider            = (*Split)(nil)
-	_ types.ModelSwitcher            = (*Split)(nil)
+	_ types.TargetSwitcher           = (*Split)(nil)
 	_ types.CapabilityReporter       = (*Split)(nil)
-	_ types.ContentNegotiator        = (*Split)(nil)
 	_ types.StructuredOutputProvider = (*Split)(nil)
 	_ types.OptionsProvider          = (*Split)(nil)
 	_ types.SessionProvider          = (*Split)(nil)
 	_ types.Closer                   = (*Split)(nil)
 )
 
-// New validates cfg and returns a split session.
-func New(cfg Config) (*Split, error) {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithSample sets Config.Sample.
+func WithSample(fn func() float64) Option { return func(c *Config) { c.Sample = fn } }
+
+// New validates cfg and returns a split session. An invalid configuration
+// is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Split, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if cfg.Experiment == "" {
-		return nil, errors.New("split requires an experiment name")
+		return nil, fmt.Errorf("%w: split requires an experiment name", types.ErrInvalidConfig)
 	}
 	if len(cfg.Arms) == 0 {
-		return nil, errors.New("split requires at least one arm")
+		return nil, fmt.Errorf("%w: split requires at least one arm", types.ErrInvalidConfig)
 	}
 	labels := map[string]bool{}
 	total, control := 0, -1
 	for i, a := range cfg.Arms {
 		if a.Label == "" || labels[a.Label] || a.Provider == nil || a.Weight < 0 {
-			return nil, fmt.Errorf("invalid or duplicate split arm %q", a.Label)
+			return nil, fmt.Errorf("%w: invalid or duplicate split arm %q", types.ErrInvalidConfig, a.Label)
 		}
 		if a.Canary != nil && (a.Canary.MaxErrorRate < 0 || a.Canary.MaxErrorRate > 1) {
-			return nil, fmt.Errorf("split arm %q: canary error rate must be between 0 and 1", a.Label)
+			return nil, fmt.Errorf("%w: split arm %q: canary error rate must be between 0 and 1", types.ErrInvalidConfig, a.Label)
 		}
 		labels[a.Label] = true
 		total += a.Weight
@@ -202,17 +211,17 @@ func New(cfg Config) (*Split, error) {
 		}
 	}
 	if total == 0 {
-		return nil, errors.New("split arms need a positive total weight")
+		return nil, fmt.Errorf("%w: split arms need a positive total weight", types.ErrInvalidConfig)
 	}
 	if control < 0 {
-		return nil, errors.New("split requires a control arm without a canary guard")
+		return nil, fmt.Errorf("%w: split requires a control arm without a canary guard", types.ErrInvalidConfig)
 	}
 	for _, s := range cfg.Shadow {
 		if s.Label == "" || labels[s.Label] || s.Provider == nil || s.Rate < 0 || s.Rate > 1 {
-			return nil, fmt.Errorf("invalid or duplicate shadow arm %q", s.Label)
+			return nil, fmt.Errorf("%w: invalid or duplicate shadow arm %q", types.ErrInvalidConfig, s.Label)
 		}
 		if s.Budget == nil {
-			return nil, fmt.Errorf("shadow arm %q requires its own budget", s.Label)
+			return nil, fmt.Errorf("%w: shadow arm %q requires its own budget", types.ErrInvalidConfig, s.Label)
 		}
 		labels[s.Label] = true
 	}
@@ -261,14 +270,15 @@ func (s *Split) Model() string {
 	return types.ProviderModel(s.arms[i])
 }
 
-// WithModel implements types.ModelSwitcher by re-targeting every arm, as a
-// fallback chain does. The result is a fresh session.
-func (s *Split) WithModel(model string) types.Provider {
-	arms := make([]types.Provider, len(s.arms))
-	for i, p := range s.arms {
-		arms[i] = types.ProviderWithModel(p, model)
+// WithTarget implements types.TargetSwitcher for a model target by
+// re-targeting every arm, as a fallback chain does. The result is a fresh
+// session.
+func (s *Split) WithTarget(t types.Target) (types.Provider, error) {
+	arms, err := types.RetargetMembers(s.arms, t, "split")
+	if err != nil {
+		return nil, err
 	}
-	return &Split{shared: s.shared, arms: arms, key: s.key, assigned: -1}
+	return &Split{shared: s.shared, arms: arms, key: s.key, assigned: -1}, nil
 }
 
 // Capabilities implements types.CapabilityReporter as the intersection over
@@ -282,23 +292,6 @@ func (s *Split) Capabilities() types.ModelCapabilities {
 		out = out.Intersect(next)
 	}
 	return optionscheck.Narrow(out, s.arms...)
-}
-
-// ContentSupport implements types.ContentNegotiator as the intersection over
-// the arms.
-func (s *Split) ContentSupport() types.ContentSupport {
-	out := types.ProviderContentSupport(s.arms[0])
-	for _, p := range s.arms[1:] {
-		next := types.ProviderContentSupport(p)
-		merged := map[types.MediaType]bool{}
-		for mt, ok := range out.NativeTypes {
-			if ok && next.NativeTypes[mt] {
-				merged[mt] = true
-			}
-		}
-		out = types.ContentSupport{NativeTypes: merged}
-	}
-	return out
 }
 
 // Unwrap returns the arms in configuration order. Shadow arms are not
@@ -317,19 +310,20 @@ func (s *Split) Drain(ctx context.Context) error {
 	}
 }
 
-// Close implements types.Closer. It waits for shadow calls, then closes every
+// Close implements types.Closer. It waits for shadow calls (until ctx
+// ends), then closes every
 // arm and shadow provider. Sessions share these providers, so close the split
 // only after its last session.
-func (s *Split) Close() error {
-	_ = s.Drain(context.Background())
+func (s *Split) Close(ctx context.Context) error {
+	_ = s.Drain(ctx)
 	var errs []error
 	for _, p := range s.arms {
-		if err := types.CloseProvider(p); err != nil {
+		if err := types.CloseProvider(ctx, p); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	for _, sh := range s.shared.cfg.Shadow {
-		if err := types.CloseProvider(sh.Provider); err != nil {
+		if err := types.CloseProvider(ctx, sh.Provider); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -436,39 +430,26 @@ type request struct {
 }
 
 func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta, error) {
-	switch {
-	case q.opts != nil:
-		op, ok := p.(types.OptionsProvider)
-		if !ok {
-			return nil, optionscheck.Unsupported(p)
-		}
-		return op.ChatStreamWithOptions(ctx, q.messages, q.tools, *q.opts)
-	case q.schema != nil:
-		sp, ok := p.(types.StructuredOutputProvider)
-		if !ok {
-			return nil, schemacheck.Unsupported(p, "provider cannot enforce a response schema")
-		}
-		return sp.ChatStreamWithSchema(ctx, q.messages, q.tools, q.schema)
-	default:
-		return p.ChatStream(ctx, q.messages, q.tools)
+	if q.opts != nil && !types.AcceptsOptions(p) {
+		return nil, optionscheck.Unsupported(p)
 	}
+	if q.schema != nil && !types.AcceptsSchema(p) {
+		return nil, schemacheck.Unsupported(p, "provider cannot enforce a response schema")
+	}
+	return p.Stream(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
 }
 
-func (s *Split) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. An arm that
-// cannot enforce a schema rejects the request rather than drop the schema.
-func (s *Split) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, schema: schema})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. An arm that cannot
+// Stream implements types.Provider. An arm that cannot enforce a schema or
 // receive request options rejects the request rather than drop them.
-func (s *Split) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, opts: &opts})
+func (s *Split) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return s.stream(ctx, request{messages: req.Messages, tools: req.Tools, schema: req.Schema, opts: req.Options})
 }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (s *Split) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (s *Split) SupportsOptions() bool { return true }
 
 func (s *Split) stream(ctx context.Context, q request) (<-chan types.Delta, error) {
 	if err := ctx.Err(); err != nil {
@@ -649,13 +630,13 @@ func (s *Split) attempt(ctx context.Context, send func(types.Delta) bool, q requ
 }
 
 // isOutput reports whether forwarding d commits the request to this arm.
-// Usage, terminal markers and routes do not: adapters such as Anthropic's
-// report usage when the message starts, before any output, and the most
-// common transient failure follows it. Usage that precedes output is held
-// back instead (see attempt).
+// Usage, terminal markers, routes and conversion reports do not: adapters
+// such as Anthropic's report usage when the message starts, before any
+// output, and the most common transient failure follows it. Usage that
+// precedes output is held back instead (see attempt).
 func isOutput(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.DoneDelta, types.ErrorDelta, types.RouteDelta:
+	case types.UsageDelta, types.DoneDelta, types.ErrorDelta, types.RouteDelta, types.ConversionDelta:
 		return false
 	default:
 		return true

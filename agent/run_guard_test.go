@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // heldProvider answers each call with text, but only after release closes.
@@ -23,7 +24,7 @@ func newHeldProvider() *heldProvider {
 	return &heldProvider{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (p *heldProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *heldProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.once.Do(func() { close(p.started) })
 	ch := make(chan types.Delta, 3)
 	go func() {
@@ -42,14 +43,14 @@ func (p *heldProvider) ChatStream(ctx context.Context, _ []types.Message, _ []ty
 
 func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 	provider := newHeldProvider()
-	a := NewAgent(AgentConfig{Provider: provider})
+	a := must.Get(New(Config{Provider: provider}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	first := a.Invoke(ctx, []types.Message{types.NewUserMessage("one")})
+	first := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("one"))})
 	<-provider.started
 
-	second := a.Invoke(ctx, []types.Message{types.NewUserMessage("two")})
+	second := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("two"))})
 	deltas := agenttest.CollectDeltas(second.Deltas())
 	if err := second.Wait(); !errors.Is(err, ErrRunActive) {
 		t.Fatalf("second Invoke = %v, want ErrRunActive", err)
@@ -57,7 +58,7 @@ func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 	if len(deltas) == 0 {
 		t.Fatal("the refused stream must report its error in-band")
 	}
-	if _, err := a.RunDurable(ctx, nil, []types.Message{types.NewUserMessage("three")}, a.Tree().Active()); !errors.Is(err, ErrRunActive) {
+	if _, err := a.RunDurable(ctx, nil, []types.Message{types.UserMsg(types.Text("three"))}, a.Tree().Active()); !errors.Is(err, ErrRunActive) {
 		t.Fatalf("RunDurable = %v, want ErrRunActive", err)
 	}
 	if err := a.LoadSession(&Session{TreeData: json.RawMessage(`{}`)}); !errors.Is(err, ErrRunActive) {
@@ -66,7 +67,7 @@ func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 
 	// Another branch of the same tree is independent.
 	root := a.Tree().Root()
-	side, _, err := a.Tree().Branch(ctx, root.ID, "side", types.NewUserMessage("side task"))
+	side, _, err := a.Tree().Branch(ctx, root.ID, "side", types.UserMsg(types.Text("side task")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("main has %d messages, want system, input, answer", len(msgs))
 	}
-	again := a.Invoke(ctx, []types.Message{types.NewUserMessage("four")})
+	again := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("four"))})
 	for range again.Deltas() {
 	}
 	if err := again.Wait(); err != nil {
@@ -102,9 +103,9 @@ func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 }
 
 func TestConcurrentInvokeRace(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("a"), agenttest.TextResponse("b"), agenttest.TextResponse("c"), agenttest.TextResponse("d"),
-	}}})
+	}}}))
 	var wg sync.WaitGroup
 	var ok, busy int
 	var mu sync.Mutex
@@ -112,7 +113,7 @@ func TestConcurrentInvokeRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("q")})
+			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("q"))})
 			for range s.Deltas() {
 			}
 			err := s.Wait()
@@ -144,8 +145,8 @@ func TestConcurrentInvokeRace(t *testing.T) {
 func TestLoadSessionLeavesTreeIntactOnBadInput(t *testing.T) {
 	newAgent := func(t *testing.T) (*Agent, []types.Message) {
 		t.Helper()
-		a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hello")}}})
-		s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+		a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hello")}}}))
+		s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 		for range s.Deltas() {
 		}
 		if err := s.Wait(); err != nil {
@@ -236,7 +237,7 @@ func TestLoadSessionLeavesTreeIntactOnBadInput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fresh := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}})
+		fresh := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}}))
 		if err := fresh.LoadSession(s); err != nil {
 			t.Fatal(err)
 		}
@@ -258,9 +259,9 @@ func TestInvokeAfterWaitReusesBranch(t *testing.T) {
 	for i := range responses {
 		responses[i] = agenttest.TextResponse("ok")
 	}
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: responses}})
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: responses}}))
 	for i := 0; i < runs; i++ {
-		s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("q")})
+		s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("q"))})
 		for range s.Deltas() {
 		}
 		if err := s.Wait(); err != nil {
@@ -272,7 +273,7 @@ func TestInvokeAfterWaitReusesBranch(t *testing.T) {
 // TestLoadSessionBlocksNewRuns checks that a tree claimed for loading refuses
 // new runs, and that a busy branch refuses the tree claim.
 func TestLoadSessionBlocksNewRuns(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}})
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}}))
 	tests := []struct {
 		name  string
 		setup func(t *testing.T) func()
@@ -288,7 +289,7 @@ func TestLoadSessionBlocksNewRuns(t *testing.T) {
 				return release
 			},
 			try: func() error {
-				s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("q")})
+				s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("q"))})
 				for range s.Deltas() {
 				}
 				return s.Wait()

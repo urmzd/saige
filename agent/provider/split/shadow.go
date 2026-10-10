@@ -64,10 +64,12 @@ func runShadow(ctx context.Context, sh ShadowArm, q request) ShadowResult {
 	if err == nil && src != nil {
 		for d := range src {
 			switch v := d.(type) {
-			case types.TextContentDelta:
-				text.WriteString(v.Content)
-			case types.ToolCallStartDelta:
-				res.ToolCalls++
+			case types.PartDelta:
+				text.WriteString(v.Text)
+			case types.PartStart:
+				if v.Kind == types.KindToolCall {
+					res.ToolCalls++
+				}
 			case types.UsageDelta:
 				res.Usage = res.Usage.Merge(v)
 				sawUsage = true

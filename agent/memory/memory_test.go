@@ -264,7 +264,7 @@ func TestTools(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("InjectMessage = %v, %v", ok, err)
 	}
-	if text := msg.Content[0].(types.TextContent).Text; !strings.HasPrefix(text, "<memory-context-") || !strings.Contains(text, "not instructions") {
+	if text := msg.Parts[0].(types.TextPart).Text; !strings.HasPrefix(text, "<memory-context-") || !strings.Contains(text, "not instructions") {
 		t.Fatalf("inject text = %q", text)
 	}
 }
@@ -336,7 +336,7 @@ func TestInjectMessageCannotBeClosed(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("InjectMessage = %v, %v", ok, err)
 	}
-	text := msg.Content[0].(types.TextContent).Text
+	text := msg.Parts[0].(types.TextPart).Text
 	tag := text[1:strings.Index(text, ">")]
 	if !strings.HasPrefix(tag, "memory-context-") || strings.Count(text, "</"+tag+">") != 1 || !strings.HasSuffix(text, "</"+tag+">") {
 		t.Fatalf("content closed the wrapper: %q", text)
@@ -453,7 +453,7 @@ func TestStartMessageModes(t *testing.T) {
 			if !ok {
 				return
 			}
-			text := msg.Content[0].(types.TextContent).Text
+			text := msg.Parts[0].(types.TextPart).Text
 			if !IsInjected(text) || !strings.Contains(text, tc.want) || strings.Contains(text, tc.absent) {
 				t.Fatalf("injected = %q", text)
 			}
@@ -474,7 +474,7 @@ func TestExtractAfterRun(t *testing.T) {
 			{Content: "the user prefers short answers", Kind: KindSemantic},
 		}, nil
 	})
-	msgs := []types.Message{types.NewUserMessage("hi")}
+	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	ids, err := policy.ExtractAfterRun(ctx, ms, ex, "lead", "run-1", msgs)
 	if err != nil || len(ids) != 2 {
 		t.Fatalf("ExtractAfterRun = %v, %v", ids, err)

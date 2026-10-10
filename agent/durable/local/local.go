@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent"
-	_ "github.com/urmzd/saige/agent/internal/durablecodec"
+	"github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -33,6 +32,7 @@ const (
 	statusReady     = "ready"
 )
 
+// Engine errors.
 var (
 	ErrBusy          = errors.New("durable run already has a worker")
 	ErrIndeterminate = errors.New("attempt outcome requires reconciliation")
@@ -45,6 +45,7 @@ var (
 // Completed steps reconstruct conversation state without repeating operations.
 type Factory func() *agent.Agent
 
+// Engine runs durable agent runs on files in a private directory.
 type Engine struct {
 	Directory   string
 	ApprovalTTL time.Duration
@@ -57,11 +58,12 @@ type Engine struct {
 // New uses a host-owned private directory. A zero TTL defaults to 24 hours.
 func New(directory string) *Engine { return &Engine{Directory: directory, ApprovalTTL: 24 * time.Hour} }
 
+// Step is the recorded outcome of one durable step.
 type Step struct {
 	Status      string    `json:"status"`
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
-	Result      []byte    `json:"result,omitempty"` // gob preserves sealed content and raw bytes
+	Result      []byte    `json:"result,omitempty"` // durablecodec record; parts keep their media bytes
 	Error       string    `json:"error,omitempty"`
 	// Idempotent records that the step ran an idempotent tool
 	// (types.IdempotentStep), so an attempt without a known outcome is
@@ -69,6 +71,7 @@ type Step struct {
 	Idempotent bool `json:"idempotent,omitempty"`
 }
 
+// Interrupt is a pending or decided approval or interrupt of a run.
 type Interrupt struct {
 	Request     types.ApprovalRequest   `json:"request"`
 	CreatedAt   time.Time               `json:"created_at"`
@@ -83,8 +86,8 @@ type Interrupt struct {
 	Answer json.RawMessage `json:"answer,omitempty"`
 }
 
-// State is a detached inspection snapshot. Input and step Result are gob bytes.
-// Do not put credentials in input, tool arguments, or approval messages.
+// Event is one entry of a run's event log, part of a State snapshot. Do
+// not put credentials in input, tool arguments, or approval messages.
 type Event struct {
 	Sequence int       `json:"sequence"`
 	At       time.Time `json:"at"`
@@ -92,6 +95,8 @@ type Event struct {
 	ID       string    `json:"id,omitempty"`
 }
 
+// State is a detached inspection snapshot. Input and step Result are
+// durablecodec records.
 type State struct {
 	History            []Event               `json:"history"`
 	ReconciledReceipts []types.BudgetReceipt `json:"reconciled_receipts,omitempty"`
@@ -99,7 +104,7 @@ type State struct {
 	RunID              string                `json:"run_id"`
 	Revision           string                `json:"revision"`
 	Status             string                `json:"status"`
-	Input              []byte                `json:"input"`            // first input segment, gob
+	Input              []byte                `json:"input"`            // first input segment, a durablecodec record
 	Inputs             []InputSegment        `json:"inputs,omitempty"` // later segments, in append order
 	Steps              map[string]Step       `json:"steps"`
 	Interrupts         map[string]Interrupt  `json:"interrupts"`
@@ -675,12 +680,12 @@ func atomicWrite(path string, raw []byte) error {
 	defer func() { _ = dir.Close() }()
 	return dir.Sync()
 }
-func encode(v any) ([]byte, error) {
-	var b bytes.Buffer
-	err := gob.NewEncoder(&b).Encode(v)
-	return b.Bytes(), err
-}
-func decode(raw []byte, v any) error { return gob.NewDecoder(bytes.NewReader(raw)).Decode(v) }
+
+// encode and decode go through durablecodec, which records messages and
+// parts in a versioned form and reads the records earlier releases wrote.
+func encode(v any) ([]byte, error) { return durablecodec.Encode(v) }
+
+func decode(raw []byte, v any) error { return durablecodec.Decode(raw, v) }
 
 func (r *runner) note(kind, id string) {
 	r.state.History = append(r.state.History, Event{Sequence: len(r.state.History) + 1, At: time.Now().UTC(), Kind: kind, ID: id})

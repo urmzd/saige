@@ -76,6 +76,9 @@ The server negotiates MCP protocol `2025-11-25` or older. Protocol `2026-07-28` 
 | `--agent-schema` | | JSON object schema file; the agent then returns a structured result |
 | `--agent-max-iter` | | Most model turns per agent call (default: 10) |
 | `--agent-timeout` | | Time limit of one agent call (default: `5m`) |
+| `--approvals-dir` | `SAIGE_APPROVALS_DIR` | Where held approvals wait for `saige approvals` (default: `~/.local/state/saige/approvals`) |
+| `--approval-timeout` | | How long a held approval waits for a decision before its run ends (default: `15m`) |
+| `--approval-wait` | | How long one resume call waits for a decision (default: `30s`) |
 | `--transport` | | `stdio` (default) or `http` |
 | `--addr` | | HTTP listen address (default: `127.0.0.1:8765`) |
 | `--path` | | HTTP endpoint path (default: `/mcp`) |
@@ -95,7 +98,7 @@ The server treats a marker of any kind, such as `audit` or `rate_limit`, as need
 
 | Mode | Behavior |
 |------|----------|
-| `elicit` | Asks the user through MCP elicitation and runs the tool only on an explicit yes. A client without elicitation gets a refusal that names the other modes. |
+| `elicit` | Asks the user through MCP elicitation and runs the tool only on an explicit yes. A direct call from a client without elicitation gets a refusal that names the other modes; a call the agent tool makes is held for `saige approvals` (see below). |
 | `host` | Runs the tool and relies on the client's own per-tool permission prompt. |
 | `deny` | Refuses every marked tool. |
 
@@ -153,6 +156,10 @@ With `--agent-schema`, the agent answers with a JSON object matching the schema,
 The agent's provider credentials come from the environment, as for the `saige` CLI (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and so on).
 
 A marked tool the agent calls is decided as a direct call would be: `elicit` asks the client, and `deny` refuses. `host` cannot apply, because the client's permission prompt covered the agent tool and not the calls the agent makes, so those calls are refused with a message naming `--approval=elicit`. The model sees each refusal and can answer without the tool. The agent tool carries `destructiveHint` when any of its tools needs approval.
+
+With `elicit` and a client that has no elicitation (opencode, Zed), the call is held instead of refused: the agent tool returns an approval-required result with a token, you decide with `saige approvals approve TOKEN` or `saige approvals deny TOKEN`, and the model continues the run with the `NAME_resume` tool, published when the agent may need approval. See [approvals in harnesses without elicitation](../../docs/harnesses.md#approvals-in-harnesses-without-elicitation).
+
+`saige export` writes this server's entry, the definition's skills and a native agent file for Claude Code, Codex, Gemini CLI, opencode and Cursor; `saige launch` starts those harnesses with it. See [harnesses](../../docs/harnesses.md).
 
 ## Client Setup
 

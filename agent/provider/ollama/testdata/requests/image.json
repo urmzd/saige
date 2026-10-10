@@ -1,0 +1,14 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What color?",
+      "images": [
+        "iVBORw0KGgpmYWtl",
+        "/9j/ZmFrZQ=="
+      ]
+    }
+  ],
+  "stream": true
+}

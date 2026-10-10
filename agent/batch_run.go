@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 
 	"github.com/urmzd/saige/agent/batch"
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -62,10 +62,14 @@ func (a *Agent) RunBatch(ctx context.Context, inputs []BatchInput, cfg BatchConf
 		}
 		msgs := in.Messages
 		if a.cfg.SystemPrompt != "" {
-			msgs = append([]types.Message{types.NewSystemMessage(a.cfg.SystemPrompt)}, msgs...)
+			msgs = append([]types.Message{types.SystemMsg(types.Text(a.cfg.SystemPrompt))}, msgs...)
 		}
 		reqs[i] = types.BatchRequest{CustomID: id, Messages: msgs, Schema: schema, Options: opts.Clone()}
 	}
+	// The agent's conversion policy applies to every request, planned when
+	// the batch is submitted; converters that call a model are charged to
+	// the agent's budget.
+	ctx = convert.WithRuntime(ctx, convert.Runtime{Policy: a.cfg.Conversion, Budget: a.cfg.Budget})
 	return runBatch(ctx, a.cfg.Provider, a.cfg.Budget, cfg, "agent-"+a.cfg.Name, reqs)
 }
 
@@ -78,17 +82,20 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 			bp = BatchProviderFor(p, cfg.Concurrency)
 		}
 		if bp == nil {
-			return nil, errors.New("agent: batch needs a provider")
+			return nil, fmt.Errorf("%w: agent: batch needs a provider", types.ErrInvalidConfig)
 		}
 		var ropts []batch.RunnerOption
 		if budget != nil {
 			ropts = append(ropts, batch.WithBudget(budget))
 		}
-		r = batch.NewRunner(bp, batch.NewMemoryStore(), ropts...)
+		var err error
+		if r, err = batch.NewRunner(batch.RunnerConfig{Provider: bp, Store: batch.NewMemoryStore()}, ropts...); err != nil {
+			return nil, err
+		}
 	}
 	id := cfg.JobID
 	if id == "" {
-		provider, model := types.ProviderName(p), types.ProviderModel(p)
+		provider, model := types.NameOf(p), types.ProviderModel(p)
 		m, err := batch.Manifest(provider, model, reqs)
 		if err != nil {
 			return nil, err
@@ -101,12 +108,26 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 // BatchProviderFor returns the types.BatchProvider behind p: the first
 // provider in its decorator chain that implements one, else a local batch
 // over p with the given concurrency. It returns nil for a nil p.
+//
+// A vendor batch provider is returned behind the conversion decorator
+// (convert.Batch), so each request is planned against the offering at
+// submit and a request the offering cannot take fails before upload: with
+// the policy of the conversion decorator in p's chain when there is one,
+// else with the default policy, which rejects media the offering does not
+// take. A local batch makes ordinary calls through p, which converts them.
 func BatchProviderFor(p types.Provider, concurrency int) types.BatchProvider {
 	if p == nil {
 		return nil
 	}
 	if bp, ok := wrapper.As[types.BatchProvider](p); ok {
-		return bp
+		if cp, ok := wrapper.As[*convert.Provider](p); ok {
+			return cp.Batch(bp)
+		}
+		cb, err := convert.NewBatch(bp, convert.Config{})
+		if err != nil {
+			return bp
+		}
+		return cb
 	}
 	return batch.NewLocal(p, concurrency)
 }
@@ -143,9 +164,9 @@ func (f *AIFunction[In, Out]) Batch(ctx context.Context, inputs []In, cfg BatchC
 		}
 		var msgs []types.Message
 		if f.cfg.System != "" {
-			msgs = append(msgs, types.NewSystemMessage(f.cfg.System))
+			msgs = append(msgs, types.SystemMsg(types.Text(f.cfg.System)))
 		}
-		reqs[i] = types.BatchRequest{CustomID: strconv.Itoa(i), Messages: append(msgs, types.NewUserMessage(prompt)), Schema: schema}
+		reqs[i] = types.BatchRequest{CustomID: strconv.Itoa(i), Messages: append(msgs, types.UserMsg(types.Text(prompt))), Schema: schema}
 	}
 	results, err := runBatch(ctx, provider, nil, cfg, "aifunc-"+f.name+"-"+f.version, reqs)
 	if err != nil {

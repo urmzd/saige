@@ -20,7 +20,7 @@ const expiredReplyKey = "expired"
 var _ types.InterruptRouter = (*runner)(nil)
 
 // truncatedLLM reports whether result is a provider turn committed before it
-// finished, marked with TruncationContent. A turn that still holds tool calls
+// finished, marked with TruncationPart. A turn that still holds tool calls
 // does not qualify: their arguments may be incomplete, so the agent must drop
 // them before it returns the partial turn. Committing such a turn would let a
 // replay run calls the first attempt never ran.
@@ -29,11 +29,11 @@ func truncatedLLM(result types.StepResult) bool {
 		return false
 	}
 	marked := false
-	for _, c := range result.Message.Content {
+	for _, c := range result.Message.Parts {
 		switch c.(type) {
-		case types.TruncationContent:
+		case types.TruncationPart:
 			marked = true
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			return false
 		}
 	}

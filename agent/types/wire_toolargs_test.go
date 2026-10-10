@@ -7,7 +7,7 @@ import (
 )
 
 func TestWireToolCallEndCarriesArgumentsError(t *testing.T) {
-	tests := []ToolCallEndDelta{
+	tests := []v1ToolCallEnd{
 		{ID: "c1", ArgumentsError: "unexpected end of JSON input"},
 		{ID: "c2", Arguments: map[string]any{"path": "/tmp"}},
 	}

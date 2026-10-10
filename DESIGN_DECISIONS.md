@@ -60,7 +60,7 @@ The SDK cannot infer a tenant's authorization scope or the meaning of a deployme
 A cache wrapper therefore uses a private identity unless the host supplies scope and configuration keys.
 Explicit sharing remains possible, but the host owns that contract.
 A model name alone is insufficient because two configurations of one model can produce different results.
-Agent stores take tenant scope the same way: `pgstore.ScopedConversationID` and `NewScopedStore` place the scope as a namespace inside `conversation_id`, so two tenants never read each other's nodes.
+Agent stores take tenant scope the same way: `pgstore.ScopedConversationID` and `pgstore.Config.Scope` place the scope as a namespace inside `conversation_id`, so two tenants never read each other's nodes.
 
 ## D-08: Keep policies separate
 
@@ -219,7 +219,7 @@ The `none` strategy never makes a summary call, also after a context-length erro
 A turn that stops at the output token limit can end with a tool call whose arguments are cut off.
 Running it could act on partial input. The loop therefore never runs any tool call from a truncated turn.
 The completed text is committed and the stream sends `TruncatedDelta` with the node and the finish reason.
-The committed node carries a `TruncationContent` marker with the reason. The tree stores it, and the loop strips it before the next provider call.
+The committed node carries a `TruncationPart` marker with the reason. The tree stores it, and the loop strips it before the next provider call.
 A truncated text-only turn ends the run cleanly unless `WithAutoContinue` or a queued message resumes it (D-25). The delta shows the answer is partial.
 A truncated turn that requested tools ends the run with `ResponseTruncatedError`.
 
@@ -250,11 +250,11 @@ A run that moves to a compacted branch extends its claim to it, so a message add
 
 Some failures are signals about the model, not the request: structured output that never validates, or a sub-agent that fails.
 An `OutcomePolicy` observes these outcomes and may return a `Switch` to another model.
-The agent records an accepted switch as `ConfigContent{Model, Reason}` on the branch and sends a `RouteDelta` with the reason.
+The agent records an accepted switch as `ConfigPart{Target, Reason}` on the branch and sends a `RouteDelta` with the reason.
 Recording it in the tree makes the switch hold for later turns, survive a reload, and appear in the audit trail.
 A sub-agent failure is observed after the turn's tool results are recorded, so a switch never separates a call from its result.
 `Structured` observes `schema_invalid` after its repairs run out, then repairs again on the new model, at most three switches per call.
-A `Switch` can also carry dials, recorded as `ConfigContent{Dials}`, so a policy can raise reasoning depth on the same model before it moves to another one.
+A `Switch` can also carry dials, recorded as `ConfigPart{Dials}`, so a policy can raise reasoning depth on the same model before it moves to another one.
 A switch is ignored only when it changes neither the model nor the dials, so a ladder that has reached its top ends the escalation.
 Cancellation is not a failure and is never reported. A policy should be deterministic, because a durable run replays its outcomes.
 The policy is not inherited by sub-agents. The parent observes a child's failure and decides for itself.
@@ -409,3 +409,40 @@ A registry checks the whole set before it replaces what it holds: every referenc
 A definition that arrived with a repository is checked against an allowlist, as a project catalog layer is: nothing that connects to a server, reads memory, loosens an approval or runs code without asking.
 Approval rules use the permission syntax of Claude Code, decided deny, then ask, then allow, then the tool's own marker, then its capability class. An allow rule matches a shell command only when it is one simple command, because a prefix rule must never approve what follows a `&&`. An approval block takes over its tools' markers, so the rules, not a marker, decide. Grants stay host-created (D-38); a definition can only cap their scope.
 A sub-agent's own definition governs its own calls, behind the host's gate; a handoff member shares its entry agent's run and so cannot declare run policy of its own.
+
+## D-44: Messages are ordered typed parts
+
+A message is an ordered list of parts, and every part has a kind: text, an image, a document, a tool call, a citation, a refusal, and so on. The role seals which kinds a message may hold, so a misplaced part is a compile error rather than a runtime surprise.
+Media is one part however it is reached. Its `Source` can carry bytes, a URI, a workspace reference and uploads to several vendors at once, and each adapter picks the locator it can use. One vendor's file ID is useless to another, so a request that fails over still has a way to reach the media. Bytes are never persisted; stores keep the other locators and the digest.
+Model output streams as parts too. Each part has an index, its position in the final message, so parts can interleave and an aggregator, a restorer or a UI keys its state by index instead of guessing which call a fragment belongs to. A part that breaks the protocol is counted and ignored, never guessed at.
+Every store, the wire and the durable journal encode a part the same way: its fields plus a `type` tag. Kinds are never renamed (D-35). A reader rejects a kind it does not know, ignores fields it does not know, and the earlier wire version stays readable through an upgrader. Output an older reader cannot represent becomes an error it can see, never a silent drop (D-12).
+
+## D-45: Convert the view, never the record; reject by default
+
+A part the serving model cannot take natively is never dropped or replaced by a placeholder. Each attempt plans every part against the offering that serves it: native, lowered from a tool result by the adapter, converted by an action the modality dial permits, or rejected. Reject is the default, and an action is permitted only by naming it, as a contractual dial is loosened only by naming it (D-12). Omitting a part is one of those actions, and it leaves a notice in its place.
+The plan is pure: it reads the offering's modalities, limits and locators and asks converters for estimates, and does no I/O. A router plans each member while it filters candidates, so a member that would reject leaves the request and a member that would convert stays; failover plans again for the next member, whose modalities may differ.
+Conversions change only the copy sent to the provider. The conversation keeps the original parts, so a later turn on a model that reads the media gets it as it is, and the record never holds text a converter made as if the user had written it.
+Because history is sent every turn, conversions are memoized by scope, converter version and digest, run as durable steps so a replay never runs or bills them twice, and charged to the attempt's budget reservation (D-09). The executed report is streamed before the attempt's output and kept on failover, because its cost is real, and the serving attempt's report is saved with the turn.
+The same planner keeps reasoning a target cannot verify out of the view: a thinking part signed by another vendor, or unsigned, is not replayed to an API that checks signatures.
+
+## D-46: An offering is a model on an endpoint, and its parameters are data
+
+A model's facts (context window, output limit, the modalities its weights take and produce) hold wherever it is served. What may be sent does not: the same model accepts different parameters, media, locators, service tiers and prices on its vendor's API, on a cloud platform and behind a compatible proxy. The catalog therefore keeps three things apart. A model holds the facts, an endpoint says how a surface is reached (auth by secret reference, location, transport, batch mode, data handling, file store), and an offering joins one model to one endpoint with everything that holds there.
+An offering's parameter specification is data, not adapter code: each parameter's type, range or values, default and the constraints between parameters (such as sampling allowed only with reasoning effort `none`). Dials compile against it, the router checks eligibility against it and a preset entry is validated against it at load (D-37), so a request the endpoint would reject fails before it is sent, and a new model needs a catalog row, not a release.
+Modality limits, accepted source forms and per-modality prices live on the offering too, because they differ by endpoint: the conversion planner reads them (D-45), and a usage the rate card does not price leaves the call unpriced rather than billed as text (D-09).
+Batch is a service tier of the offering, not a separate model, and its transport needs the endpoint's batch mode. Model, profile, preset and vendor names are distinct types, and a target names exactly one of a model, a profile or a preset, so a string meant for one is never read as another.
+Version 1 catalog files still load: each row upgrades to a model and an offering on the vendor's primary endpoint, with a warning, and `saige catalog migrate` writes the version 2 form.
+
+## D-47: Never take a vendor file ID from an untrusted client
+
+A vendor's file store belongs to an account, not to a user. Anthropic files are visible to the whole workspace, a Gemini Files API name to the whole project, and Vertex AI reads any `gs://` object its service account can. A locator a client supplies is therefore resolved with the host's credentials, and could name another tenant's file.
+An untrusted client, such as the body of a request to a server, may send inline bytes, a `saige-artifact://` digest reference (which resolves only in its own session's store) and an https URL to public content. It may not send a vendor file, another URI scheme (`http`, `gs`, `s3`, `file`), a bare name such as `files/abc`, any other reference, or a URL on a vendor's file store. `types.CheckClientSource` and `types.CheckClientParts` apply the rule, and a host calls them where untrusted parts enter. Vendor files are only ever recorded by the host's own uploads, with the endpoint they belong to.
+Derived results follow the same line. A conversion keyed by a digest is a content address: whoever sends the same bytes gets the same output, so it is shared without a scope. A part reached only by a URI or a vendor file is a name, so its conversion is memoized only under a named tenant scope. The response cache keys media by digest first and is scoped by tenant (`ScopeKey`), so a cached answer about one tenant's file never reaches another.
+Behind a privacy boundary the conversion runs inside it (D-31): its text output is tokenized before it is sent, and with `require_text` media leaves only as text and a converter sends media only to an endpoint cleared for personal data.
+
+## D-48: Host an agent in other harnesses through one session layer
+
+`saige serve`, `saige acp` and saige-mcp's agent tool host an agent for another program, and they share one session layer rather than three: a session binds the definition when it starts and keeps the pinned version, runs one turn at a time, checks every grant against the definition's cap before delivering it, and releases what binding opened when it ends. A session bound from a definition with no approval block still gets an empty approval policy, so a grant a host accepts takes effect instead of being dropped.
+ACP is the protocol for editors. saige speaks version 1 through the official Go SDK and keeps a thin mapping between saige deltas and ACP updates, because version 2 changes tool-call updates and drops modes and client file and terminal methods. The agent and the model are config options, not modes, and saige uses its own harness tools rather than the client's file and terminal methods. A client's MCP servers connect only when the definition names them, the same narrowing the host's own servers get.
+Coding harnesses reach the agent as an MCP tool. `saige export` writes the server entry, the skills with only the agentskills.io fields, and the definition in each harness's own agent format, with a note for every field the format cannot hold; the agent behind the tool keeps all of them. Export merges into existing files by key and touches only its own entries, so it is idempotent and never rewrites someone else's configuration. User-level files change only with `--user`, and then always with a printed diff. `saige launch` prefers flags and environment, and writes project files only for what a harness reads from files alone.
+An approval must reach a person even when the client cannot ask one. A client without MCP elicitation does not get a refusal for a call the agent makes; saige-mcp holds the run, records the call under an unguessable token in a private store, and returns a result that tells the model to have the user decide. The person decides with `saige approvals`, out of the model's channel, and the model only resumes. The first decision wins, a grant stays within the definition's cap, and an undecided call ends its run after a timeout: an unanswered approval is never a yes.

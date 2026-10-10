@@ -20,8 +20,10 @@ type MarkedTool struct {
 
 var _ RichTool = (*MarkedTool)(nil)
 
+// Definition implements Tool.
 func (m *MarkedTool) Definition() ToolDef { return m.Inner.Definition() }
 
+// Execute implements Tool.
 func (m *MarkedTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	return m.Inner.Execute(ctx, args)
 }
@@ -35,7 +37,7 @@ func (m *MarkedTool) ExecuteRich(ctx context.Context, args map[string]any) (Tool
 		return rt.ExecuteRich(ctx, args)
 	}
 	text, err := m.Inner.Execute(ctx, args)
-	return ToolResult{Text: text}, err
+	return ToolResult{Parts: []ToolOutputPart{Text(text)}}, err
 }
 
 // WithMarkers wraps a tool with markers.

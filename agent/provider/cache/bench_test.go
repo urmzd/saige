@@ -7,12 +7,13 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func benchMessages() []types.Message {
 	return []types.Message{
-		types.NewSystemMessage("You are a helpful assistant with a long, stable system prompt."),
-		types.NewUserMessage("Summarize the key benefits of response caching in three bullet points."),
+		types.SystemMsg(types.Text("You are a helpful assistant with a long, stable system prompt.")),
+		types.UserMsg(types.Text("Summarize the key benefits of response caching in three bullet points.")),
 	}
 }
 
@@ -32,19 +33,19 @@ func BenchmarkKey(b *testing.B) {
 // hot path that avoids an upstream provider call entirely.
 func BenchmarkCacheHit(b *testing.B) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
-		{types.TextStartDelta{}, types.TextContentDelta{Content: "cached answer"}, types.TextEndDelta{},
+		{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "cached answer"}, types.PartEnd{Index: 0},
 			types.UsageDelta{PromptTokens: 50, CompletionTokens: 12, TotalTokens: 62}},
 	}}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 	msgs := benchMessages()
 
 	// Prime the cache (miss) so every measured call is a hit.
-	drain(mustCh(p.ChatStream(context.Background(), msgs, nil)))
+	drain(mustCh(p.Stream(context.Background(), types.Request{Messages: msgs})))
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ch, _ := p.ChatStream(context.Background(), msgs, nil)
+		ch, _ := p.Stream(context.Background(), types.Request{Messages: msgs})
 		drain(ch)
 	}
 }
@@ -58,10 +59,10 @@ func BenchmarkCacheMiss(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Fresh empty cache each iteration so every call is a miss.
 		inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
-			{types.TextStartDelta{}, types.TextContentDelta{Content: "fresh"}, types.TextEndDelta{}},
+			agenttest.TextResponse("fresh"),
 		}}
-		p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
-		ch, _ := p.ChatStream(context.Background(), msgs, nil)
+		p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
+		ch, _ := p.Stream(context.Background(), types.Request{Messages: msgs})
 		drain(ch)
 	}
 }
