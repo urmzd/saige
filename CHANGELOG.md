@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.30.0 (2026-10-10)
+
+### Features
+
+- **agent**: pluggable compaction strategies with per-agent policy and records (#76) ([0fe6898](https://github.com/urmzd/saige/commit/0fe6898135b13717a909978ee7b3b3ae994657ac))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.29.0...v0.30.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
