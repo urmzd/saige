@@ -48,7 +48,9 @@ func (o SpillOptions) withDefaults() SpillOptions {
 // recognized by their concrete type and must not be wrapped.
 //
 // When the store rejects the write, for example through a read-only view, the
-// result is returned whole rather than cut.
+// result is returned whole rather than cut. Inside a sub-agent the attached
+// workspace is the child's scratch over the parent's, so the child's spills
+// land in its own scratch and the parent reads them through the result.
 func Spill(tool types.Tool, ws Workspace, opts SpillOptions) types.Tool {
 	if mt, ok := tool.(*types.MarkedTool); ok {
 		return types.WithMarkers(Spill(mt.Inner, ws, opts), mt.Markers...)
@@ -114,12 +116,18 @@ func (s *spillTool) ExecuteRich(ctx context.Context, args map[string]any) (types
 }
 
 func (s *spillTool) spill(ctx context.Context, text string) string {
-	if len(text) <= s.opts.MaxBytes || s.ws == nil {
+	if len(text) <= s.opts.MaxBytes {
 		return text
 	}
+	// The workspace attached to the call wins, so a tool built for a
+	// parent spills into a sub-agent's private scratch when a child runs
+	// it. A nil ws spills only where a workspace is attached.
 	w := s.ws
 	if attached, ok := FromContext(ctx); ok {
 		w = attached
+	}
+	if w == nil {
+		return text
 	}
 	name := "tool-results/" + s.inner.Definition().Name + "/" + Digest([]byte(text))[:16]
 	ref, err := w.Put(ctx, name, []byte(text), map[string]string{"tool": s.inner.Definition().Name})

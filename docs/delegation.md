@@ -8,6 +8,9 @@ An agent can pass work to another agent in two ways. A **handoff** moves ownersh
 - [Collecting transcripts after a run](#collecting-transcripts-after-a-run)
 - [Size limits and truncation](#size-limits-and-truncation)
 - [Iteration and time limits](#iteration-and-time-limits)
+- [Subagent budgets and wrap-up](#subagent-budgets-and-wrap-up)
+- [Private scratch](#private-scratch)
+- [References instead of copies](#references-instead-of-copies)
 - [Choosing a path](#choosing-a-path)
 
 ## Two paths, side by side
@@ -115,16 +118,17 @@ A subagent gets its config from `inheritConfig` in `agent/subagent.go`. `SubAgen
 | Setting | Subagent | Handoff member |
 | --- | --- | --- |
 | `Provider` | `SubAgentDef.Provider`, else the parent's. A `SessionProvider` gets a new session | `HandoffDef.Provider`, else the entry agent's. A `SessionProvider` gets a new session |
-| `MaxIter` | `SubAgentDef.MaxIter`, else the parent's | `HandoffDef.MaxIter`, else the entry agent's |
+| `MaxIter` | `SubAgentDef.MaxIter`, else the parent's cap, else `DefaultSubAgentMaxIter` when the parent has none. See [subagent budgets](#subagent-budgets-and-wrap-up) | `HandoffDef.MaxIter`, else the entry agent's |
 | `Dials`, `DialPolicy` | Inherited (dials cloned) | `HandoffDef.Dials`, else the entry agent's |
 | `ToolGate`, `ToolPolicy`, `ApprovalPolicy` | Inherited | The entry agent's |
 | `Deps`, `ToolContext`, `ToolRedactor`, `Tokenizer` | Inherited | The entry agent's |
 | `LLMTimeout`, `ToolTimeout`, `MaxParallelTools` | Inherited | The entry agent's |
-| `OnMaxIter`, `ForceFinalPrompt`, `MaxConsecutiveErrors`, `MaxRepeatIterations` | Inherited | The entry agent's |
+| `OnMaxIter` | `MaxIterForceFinal`, whatever the parent's. Override it in `Options` | The entry agent's |
+| `ForceFinalPrompt`, `MaxConsecutiveErrors`, `MaxRepeatIterations` | Inherited | The entry agent's |
 | `InterruptTTL`, `InterruptPolicy` | Inherited | The entry agent's |
 | `CompactCfg` | Inherited | Not usable: a handoff group rejects compaction (see below) |
 | `Budget` | Shared by pointer, not copied. Set `WithBudget` in `Options` to cap one child separately | The entry agent's |
-| `Workspace` | A read-only view of the parent's (`View(true)`) | The entry agent's |
+| `Workspace` | A private scratch over a read-only view of the parent's. See [private scratch](#private-scratch) | The entry agent's |
 | `StepRunner` | A durable parent runner is shared with step names prefixed `sub-<toolCallID>-`. An inline parent leaves the child inline | The entry agent's |
 | `Logger`, `Metrics`, `Resolvers`, `Extractors` | Inherited | The entry agent's |
 | `ResponseSchema` | `SubAgentDef.ResponseSchema` only. The parent's is not inherited | The entry agent's |
@@ -149,6 +153,12 @@ Every child run ends in a `SubAgentResult` (`agent/subagent_result.go`):
 | `Output` | What the result policy selected. Empty on failure |
 | `Error` | The failure text, if any |
 | `StopToolCallID` | Set when a `StopAtTools` tool ended the child |
+| `Iterations`, `MaxIter` | Model turns used, the forced final call included, and the child's cap |
+| `Forced`, `ForcedReason` | Set when the answer was forced at a step limit, and which limit |
+| `OutputRef` | The `saige-artifact://` URI of `Output` when it went to the parent by reference |
+| `Scratch` | A read-only view of the child's private scratch. Not serialized |
+
+`ParentText()` returns exactly what the parent's model received: `Output`, or a reference with a preview, behind a note when the answer was forced.
 
 Read it with `Tree()`, `Messages()`, `Node(id)`, `FinalAssistant()`, and `StopToolResult()`. Each call returns independent data.
 
@@ -211,14 +221,16 @@ A failed delegation becomes an error tool result in the parent, and the parent's
 
 A finished result reaches the parent in one of two ways:
 
-- **`await_subagent(handle)`**: the tool result is the child's `Output`, or an error. The result is then not delivered again.
+- **`await_subagent(handle)`**: the tool result is the child's `ParentText()`, or an error. The result is then not delivered again.
 - **Injection at a safe point**: at the start of each loop iteration, after every tool call has its result, each finished and undelivered child is appended as one user message, in completion order, and reported with `InjectedDelta{Mode: "subagent"}`:
 
 ```text
-<subagent_result handle="<id>" name="<name>" status="completed">
-<output, or "error: ..." for a failed child>
+<subagent_result handle="<id>" name="<name>" status="completed" iterations="<n>">
+<ParentText(), or "error: ..." for a failed child>
 </subagent_result>
 ```
+
+A forced child's tag also carries `forced="true"`.
 
 A run does not finish while a child runs or a result is undelivered. Where it would finish, it waits for the next result and resumes with it. `cancel_subagent` stops a running child, and its result is not delivered. A run that ends by error, cancellation, or a stop tool cancels its children before the stream closes. Spawning needs the inline runner; under a durable runner `spawn_<name>` returns `ErrSpawnUnsupported` as its tool error.
 
@@ -253,11 +265,12 @@ For tracing spans across parents and children, see [observability](observability
 | Mechanism | Default | Behavior |
 | --- | --- | --- |
 | `workspace.Spill` around a tool | `DefaultSpillMaxBytes` 16 KiB, `DefaultSpillPreviewBytes` 2 KiB | A larger result is stored in the workspace and replaced by a preview cut at a word boundary, with a `saige-artifact://<digest>` URI and a hint to page with `scratch_read` |
-| Subagent output | No limit | `Output` reaches the parent whole. Bound or store it in a custom `SubAgentResultPolicy` or `ResultSink` |
+| Subagent output | `SubAgentReferences.ResultTokens`, 2000 estimated tokens | A larger result reaches the parent's model as a `saige-artifact://` URI and a preview. `Output` keeps all of it. See [references](#references-instead-of-copies) |
+| Subagent task and forked text | `SubAgentReferences.InputTokens`, 2000 estimated tokens | A larger task or text block goes to the child's scratch, and the child gets a URI and a preview |
 | `search_subagent` | 5 hits, at most 20; excerpts of 300 characters | Longer text ends in `...` |
 | `read_subagent` | 5 messages, at most 20; 4000 characters per message | Longer text ends in `...` |
 
-Do not wrap handoff, clarification, or sub-agent tools with `Spill`; the loop recognizes them by type. A spilled tool inside a child writes through the child's read-only workspace view, so the write fails and the full result is returned. Give the child its own workspace with `WithWorkspace` in `Options` to spill there. A child can still read artifacts the parent stored, so pass a `saige-artifact://` URI in the task instead of the content.
+Do not wrap handoff, clarification, or sub-agent tools with `Spill`; the loop recognizes them by type. A spilled tool inside a child spills into the child's private scratch, even when it was built for the parent's workspace, and the parent reads the spill through `SubAgentResult.Scratch`. A child can still read artifacts the parent stored, so pass a `saige-artifact://` URI in the task instead of the content.
 
 Compaction (`agent/overflow.go`, `agent/types/compactor.go`):
 
@@ -285,7 +298,9 @@ Output truncation (`agent/forcing.go`, `agent/submit.go`):
 | --- | --- | --- | --- |
 | `AgentConfig.MaxIter` | 10 | Completed model turns per user turn of a run. Compactions and retries do not count. One counter covers every handoff owner in the run | `types.ErrMaxIterations` when tool results are still unanswered; otherwise a clean finish |
 | `HandoffDef.MaxIter` | 0, which uses the entry agent's | The cap while that member owns the turn, checked against the shared counter. A `ConfigContent.MaxIter` on the branch overrides it | Same as `MaxIter` |
-| `SubAgentDef.MaxIter` | 0, which uses the parent's | The child's own counter, independent of the parent's | The child fails, and the parent gets an error tool result |
+| `AgentConfig.MaxIter` set to `NoIterLimit` | | No cap. Suits an orchestrator whose children stay bounded | None |
+| `SubAgentDef.MaxIter` | 0, which uses the parent's cap, or `DefaultSubAgentMaxIter` (10) under an uncapped parent | The child's own counter, independent of the parent's | A forced answer without tools. The delegation succeeds and the result is marked `Forced` |
+| `SubAgentDef.WrapUpAt` | `MaxIter - 2`, at least 1 | The child's turns before its wrap-up note | The note says how many turns remain and to return the result now |
 | `MaxHandoffs` | 8 | Transfers per run, not reset by queued user turns | `ErrHandoffLimitExceeded`. The over-limit transfer is neither streamed nor persisted |
 | `MaxConsecutiveErrors` | 2 (`DefaultMaxConsecutiveErrors`); negative disables | Consecutive turns in which every tool call failed. Refused calls do not count | `ErrToolErrorLimit` |
 | `MaxRepeatIterations` | 0 (off) | Identical tool calls more than n turns in a row | The repeated calls are not run, then `ErrRepeatedToolCalls` |
@@ -300,9 +315,135 @@ Output truncation (`agent/forcing.go`, `agent/submit.go`):
 | `MaxIterError` (default) | The run returns the limit's error |
 | `MaxIterForceFinal` | One more call with tools disabled and `DefaultForceFinalPrompt` (or `ForceFinalPrompt`). Its reply is recorded as the final answer and the run ends without an error. A failed call or an empty reply returns the limit's error |
 
-`MaxHandoffs` is not covered by `OnMaxIter`: it always returns `ErrHandoffLimitExceeded`. A child inherits the parent's `OnMaxIter`, so under `MaxIterForceFinal` a child at its cap returns a forced answer as its result instead of failing.
+`MaxHandoffs` is not covered by `OnMaxIter`: it always returns `ErrHandoffLimitExceeded`. A child runs under `MaxIterForceFinal` whatever the parent uses, so a child at its cap returns a forced answer as its result instead of failing.
 
 `await_subagent` is an ordinary tool step, so `ToolTimeout` bounds it. When the wait times out, the tool returns `sub-agent <handle> is still running`, and the result is still delivered at a later safe point.
+
+## Subagent budgets and wrap-up
+
+Each child has an iteration budget, counted in model turns per user turn.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `SubAgentDef.MaxIter` | The parent's cap, or `DefaultSubAgentMaxIter` (10) when the parent has none | The child's cap. `NoIterLimit` removes it. |
+| `SubAgentDef.WrapUpAt` | `MaxIter - 2`, at least 1 | After this many turns the child gets a wrap-up note. A negative value sends none. |
+| `SubAgentDef.WrapUpPrompt` | `DefaultWrapUpPrompt` | Replaces the instruction in the note. |
+| Limit policy | `MaxIterForceFinal` | At the cap the child answers with its tools removed. |
+
+The orchestrator follows its own config. Set `MaxIter: agent.NoIterLimit` on the parent to remove its cap. Its children stay bounded:
+
+```go
+lead := agent.NewAgent(agent.AgentConfig{
+    Name:     "lead",
+    Provider: model,
+    MaxIter:  agent.NoIterLimit,
+    SubAgents: []agent.SubAgentDef{{
+        Name:        "researcher",
+        Description: "Finds facts in the corpus.",
+        Tools:       researchTools,
+        MaxIter:     6, // wrap-up note after turn 4, forced answer at turn 6
+    }},
+})
+```
+
+The wrap-up note is a system message. It joins the child's branch at the next safe point after the threshold, once per user turn, and only while the child still has tool results to answer. It states how many iterations remain and tells the child to return its result now. When the child answers through `final_answer`, the note tells it to call `final_answer`. The child's stream reports the note as an `InjectedDelta` with `Mode` `"wrap_up"`.
+
+At the cap the child makes one more call with no tools and records that reply as its answer. The delegation succeeds. To fail the delegation at the cap instead, add `agent.WithOnMaxIter(agent.MaxIterError)` to `SubAgentDef.Options`.
+
+Every result carries its budget metadata:
+
+| Field | Meaning |
+| --- | --- |
+| `Iterations` | Model turns used, the forced final call included |
+| `MaxIter` | The child's cap, or `NoIterLimit` |
+| `Forced` | The answer was forced at a step limit |
+| `ForcedReason` | Which limit: iterations, consecutive tool errors, or repeated calls |
+
+The parent model sees the same facts. A forced delegation result starts with a note that the child reached its step limit after N iterations. A spawned child's `<subagent_result>` message carries `iterations="N"`, plus `forced="true"` when forced.
+
+`AgentConfig.WrapUpAt` and `WithWrapUpAt` give the same note to any agent, a top-level one included.
+
+## Private scratch
+
+Each invocation of a child gets a fresh in-memory workspace. The child's workspace is that scratch layered over a read-only view of the parent's (`workspace.Layers`):
+
+- Writes go to the child's scratch only. The parent's workspace never changes.
+- Reads look in the scratch first and then in the parent's workspace.
+- Siblings, and later invocations of the same definition, never see each other's scratch.
+- A spilling tool (`workspace.Spill`) built for the parent spills into the child's scratch when the child runs it.
+
+A child that has tools also gets `scratch_write`, `scratch_read`, and `scratch_search`. A child with no tools answers in one turn and does not get them.
+
+| `SubAgentScratch` field | Effect |
+| --- | --- |
+| `Off` | No scratch and no scratch tools. The child sees the parent's workspace read-only. Large inputs stay inline. |
+| `NoTools` | Keep the scratch for references and spills, but add no scratch tools. |
+| `New` | Build the scratch yourself, for example a `workspace.Dir` per call ID. |
+
+The parent reads a child's scratch in three ways:
+
+- `SubAgentResult.Scratch`, a read-only view, from `SubAgentResult()`, a `ResultSink`, or `SubAgentHandle.Wait`.
+- `SubAgentHandle.Scratch()`, available as soon as a spawned child starts.
+- The parent model's `read_artifact` and `search_artifact` tools, which cover every child scratch the run received a result from.
+
+### Lifetime and cleanup
+
+An in-memory scratch lives as long as something holds it: the parent run, until the run ends, and any `SubAgentResult` or handle the host keeps. It needs no cleanup. A scratch made by `New` belongs to the host. Remove it, for example the `workspace.Dir` directory, when you no longer need the child's results.
+
+A result reference stored in a child's scratch stops resolving for the parent model after the parent's run ends. Give the parent a `Workspace` to keep result references readable across runs.
+
+## References instead of copies
+
+Sizes are estimated at four bytes per token (`workspace.EstimateTokens`), so a reference decision needs no tokenizer and gives the same result on every run and replay.
+
+| `SubAgentReferences` field | Default | Effect |
+| --- | --- | --- |
+| `InputTokens` | 2000 | A task, or a text block of a forked or filtered message, above this goes to the child's scratch. |
+| `ResultTokens` | 2000 | A result above this goes back to the parent as a reference. This is the cap on inline sub-agent output. |
+| `PreviewTokens` | 200 | The size of each preview. |
+| `Off` | false | Send everything inline. |
+
+### Inputs
+
+A large task is stored in the child's scratch as `inputs/task`. The child receives the artifact's `saige-artifact://` URI and a preview, never the full text. It also gets `read_artifact` and `search_artifact` to pull the parts it needs. A child also gets these tools when its task names an artifact URI, for example one a host created with `workspace.NewReference`. Large text blocks and text-only tool results in forked or filtered history are replaced the same way. Tool call IDs are kept, so tool pairing is unchanged. With scratch off, inputs stay inline.
+
+### Results
+
+A large result is stored in the parent's workspace when it accepts writes, under `subagents/<name>/<call id>/result`. Otherwise it is stored in the child's scratch. The parent model receives the URI and a preview, and reads more with `read_artifact`. An agent with sub-agents has that tool. `SubAgentResult.Output` still holds the whole result for the host, and `OutputRef` names the artifact. `ParentText()` returns exactly what the parent model received.
+
+### Passing data by reference yourself
+
+A tool returns a reference instead of a large value with `agent.Ref`. It stores the data in the call's workspace:
+
+```go
+func exportRows(ctx context.Context, args map[string]any) (string, error) {
+    rows, err := loadRows(ctx)
+    if err != nil {
+        return "", err
+    }
+    return agent.Ref(ctx, "exports/rows.csv", rows) // URI and preview, not the rows
+}
+```
+
+A host outside a tool call uses `workspace.NewReference` with its workspace, then puts the reference in a task:
+
+```go
+ref, err := workspace.NewReference(ctx, ws, "docs/contract.md", contract, workspace.ReferenceOptions{})
+if err != nil {
+    return err
+}
+stream, err := lead.InvokeSubAgent(ctx, "reviewer", "Review this contract.\n"+ref.String())
+```
+
+Copy helpers move content without passing it through a model:
+
+| Helper | What it does |
+| --- | --- |
+| `workspace.Copy` | Copy an artifact to a new name, or into another workspace |
+| `workspace.CopyArtifactTool` | `copy_artifact`: the model files an artifact under a new name |
+| `workspace.CopyFileTool(ws, root)` | `copy_file`: store a file under `root` and return a reference. Paths resolve inside `root` through `os.Root`, so `..` and symbolic links cannot escape it. |
+
+Content is addressed by its digest, so a copy shares its source's URI and the backend stores no new bytes.
 
 ## Choosing a path
 

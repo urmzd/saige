@@ -133,8 +133,16 @@ func TestWorkspaceAttachedAndNarrowedForChildren(t *testing.T) {
 	if child.Workspace == nil {
 		t.Fatal("child has no workspace")
 	}
-	if _, err := child.Workspace.Put(context.Background(), "x", []byte("y"), nil); !errors.Is(err, workspace.ErrReadOnly) {
-		t.Fatalf("child write err = %v, want ErrReadOnly", err)
+	// The child writes into its private scratch, never into the parent's.
+	if _, err := child.Workspace.Put(context.Background(), "x", []byte("y"), nil); err != nil {
+		t.Fatalf("child write err = %v", err)
+	}
+	if _, err := ws.Stat(context.Background(), workspace.Ref{Name: "x"}); !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("child write reached the parent: %v", err)
+	}
+	off := childConfig(t, AgentConfig{Name: "lead", Provider: provider, Workspace: ws}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}})
+	if _, err := off.Workspace.Put(context.Background(), "x", []byte("y"), nil); !errors.Is(err, workspace.ErrReadOnly) {
+		t.Fatalf("child write without scratch err = %v, want ErrReadOnly", err)
 	}
 	if _, err := ws.Put(context.Background(), "shared", []byte("parent data"), nil); err != nil {
 		t.Fatal(err)
@@ -147,8 +155,8 @@ func TestWorkspaceAttachedAndNarrowedForChildren(t *testing.T) {
 	if c := childConfig(t, AgentConfig{Name: "lead", Provider: provider, ToolRedactor: redactor}, SubAgentDef{Name: "worker", Description: "w"}); c.ToolRedactor != types.ToolRedactor(redactor) {
 		t.Fatal("child must share the parent's redactor")
 	}
-	if c := childConfig(t, AgentConfig{Name: "lead", Provider: provider}, SubAgentDef{Name: "worker", Description: "w"}); c.Workspace != nil {
-		t.Fatal("child of an agent without a workspace has one")
+	if c := childConfig(t, AgentConfig{Name: "lead", Provider: provider}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}}); c.Workspace != nil {
+		t.Fatal("child without scratch of an agent without a workspace has one")
 	}
 }
 

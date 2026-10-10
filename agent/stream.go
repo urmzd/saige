@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/agent/workspace"
 )
 
 // Marker resolution errors.
@@ -61,6 +62,16 @@ type EventStream struct {
 	// stopToolCallID is the tool call whose result ended the run through
 	// AgentConfig.StopAtTools. It is written before the stream closes.
 	stopToolCallID string
+	// iterations counts the run's model turns, the forced final call
+	// included; forced is set when MaxIterForceFinal produced the answer and
+	// forcedReason names the limit. Written before the stream closes.
+	iterations   int
+	forced       bool
+	forcedReason string
+	// artifacts is what this run's tools read and write: the agent's
+	// workspace, plus the scratch of every sub-agent the run delegated to.
+	// Nil for an agent without sub-agents.
+	artifacts *workspace.Layers
 	// runID and path identify this run inside a delegation tree: runID is
 	// the root run's ID and path lists the tool call IDs from the root run
 	// down to this one. Interrupt IDs derive from them.
