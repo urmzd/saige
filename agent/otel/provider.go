@@ -61,7 +61,7 @@ func (p *TracedProvider) Close() error { return types.CloseProvider(p.Inner) }
 
 // Name delegates to the inner provider.
 func (p *TracedProvider) Name() string {
-	return types.ProviderName(p.Inner)
+	return types.NameOf(p.Inner)
 }
 
 // Model delegates to the inner provider.
@@ -203,6 +203,16 @@ func requestAttributes(o types.RequestOptions) []attribute.KeyValue {
 // requested model.
 func (p *TracedProvider) WithModel(model string) types.Provider {
 	return &TracedProvider{Inner: types.ProviderWithModel(p.Inner, model), tracer: p.tracer, opts: p.opts}
+}
+
+// WithTarget implements types.TargetSwitcher: it re-targets the inner
+// provider and keeps tracing attached.
+func (p *TracedProvider) WithTarget(t types.Target) (types.Provider, error) {
+	inner, err := types.ProviderWithTarget(p.Inner, t)
+	if err != nil {
+		return nil, err
+	}
+	return &TracedProvider{Inner: inner, tracer: p.tracer, opts: p.opts}, nil
 }
 
 // ContentSupport delegates to the inner provider, preferring its model-level

@@ -38,10 +38,10 @@ import (
 
 // Provider names accepted by Config.Provider. They match each adapter's Name.
 const (
-	Anthropic = "anthropic"
-	OpenAI    = "openai"
-	Google    = "google"
-	Ollama    = "ollama"
+	Anthropic types.ProviderName = "anthropic"
+	OpenAI    types.ProviderName = "openai"
+	Google    types.ProviderName = "google"
+	Ollama    types.ProviderName = "ollama"
 )
 
 // DefaultOllamaHost is used when neither Config.BaseURL nor OLLAMA_HOST is set.
@@ -53,7 +53,7 @@ var ErrUnknownProvider = errors.New("unknown provider")
 
 // APIKeyEnv lists the environment variables read for each provider's key, in
 // order of preference.
-var APIKeyEnv = map[string][]string{
+var APIKeyEnv = map[types.ProviderName][]string{
 	Anthropic: {"ANTHROPIC_API_KEY"},
 	OpenAI:    {"OPENAI_API_KEY"},
 	Google:    {"GOOGLE_API_KEY", "GEMINI_API_KEY"},
@@ -62,10 +62,10 @@ var APIKeyEnv = map[string][]string{
 // Config describes one provider configuration.
 type Config struct {
 	// Provider is one of the names above. Empty infers it from Model.
-	Provider string
+	Provider types.ProviderName
 	// Model is the provider's model identifier. A "provider/" prefix naming a
 	// known provider is accepted and removed.
-	Model string
+	Model types.ModelID
 	// APIKey overrides the environment. Ollama needs none and rejects one,
 	// since its adapter sends no key. OpenAI with a
 	// BaseURL may also run without one, for compatible servers that do not
@@ -177,20 +177,20 @@ type PromptCache struct {
 // FromModel builds a provider for a model name, inferring the provider and
 // reading credentials from the environment.
 func FromModel(ctx context.Context, model string) (types.Provider, error) {
-	return Build(ctx, Config{Model: model})
+	return Build(ctx, Config{Model: types.ModelID(model)})
 }
 
 // Infer returns the provider and bare model name for a model identifier. An
 // explicit "provider/model" form wins; otherwise the catalog's longest
 // matching family decides, and an unmatched name with an Ollama-style ":tag"
 // is taken as a local model.
-func Infer(model string) (provider, bare string, err error) {
+func Infer(model string) (provider types.ProviderName, bare string, err error) {
 	if p, rest, ok := strings.Cut(model, "/"); ok && rest != "" {
 		if name := knownProvider(p); name != "" {
 			return name, rest, nil
 		}
 	}
-	if p, ok := catalog.InferProvider(model); ok && knownProvider(p) != "" {
+	if p, ok := catalog.InferProvider(model); ok && knownProvider(string(p)) != "" {
 		return p, model, nil
 	}
 	if strings.Contains(model, ":") {
@@ -199,8 +199,8 @@ func Infer(model string) (provider, bare string, err error) {
 	return "", model, fmt.Errorf("%w: cannot infer a provider for model %q; set Config.Provider", ErrUnknownProvider, model)
 }
 
-func knownProvider(name string) string {
-	switch n := strings.ToLower(strings.TrimSpace(name)); n {
+func knownProvider(name string) types.ProviderName {
+	switch n := types.ProviderName(strings.ToLower(strings.TrimSpace(name))); n {
 	case Anthropic, OpenAI, Google, Ollama:
 		return n
 	}
@@ -213,7 +213,7 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	name, model := knownProvider(cfg.Provider), cfg.Model
+	name, model := knownProvider(string(cfg.Provider)), string(cfg.Model)
 	switch {
 	case cfg.Provider != "" && name == "":
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, cfg.Provider)
@@ -240,7 +240,7 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 		return nil, caps.OptionError("api_key", "not sent by the ollama adapter")
 	}
 	if len(cfg.ServerTools) > 0 && catalog.ExpressibleServerTools(name) != nil {
-		return nil, caps.OptionError("server_tools", "not sent by the "+name+" adapter")
+		return nil, caps.OptionError("server_tools", "not sent by the "+string(name)+" adapter")
 	}
 	if err := checkExpressible(caps, name, cfg); err != nil {
 		return nil, err
@@ -274,7 +274,7 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 // credentialsFor resolves how the adapter authenticates: an API key, or for
 // Google on Vertex AI, the project and location used with Application
 // Default Credentials.
-func credentialsFor(caps types.ModelCapabilities, name, model string, cfg Config, getenv func(string) string) (string, *Vertex, error) {
+func credentialsFor(caps types.ModelCapabilities, name types.ProviderName, model string, cfg Config, getenv func(string) string) (string, *Vertex, error) {
 	var vertex *Vertex
 	switch {
 	case name == Google:
@@ -287,7 +287,7 @@ func credentialsFor(caps types.ModelCapabilities, name, model string, cfg Config
 			return "", nil, caps.OptionError("api_key", "vertex authenticates with Application Default Credentials, not an API key")
 		}
 		if vertex.Project == "" {
-			return "", nil, &types.ProviderError{Provider: name, Model: model, Kind: types.ErrorKindAuth,
+			return "", nil, &types.ProviderError{Provider: string(name), Model: model, Kind: types.ErrorKindAuth,
 				Err: fmt.Errorf("%w: vertex needs a project: set Config.Vertex.Project or %s", types.ErrAuth, EnvCloudProject)}
 		}
 		return "", vertex, nil
@@ -300,7 +300,7 @@ func credentialsFor(caps types.ModelCapabilities, name, model string, cfg Config
 		key = getenv(env)
 	}
 	if key == "" && name != Ollama && (name != OpenAI || cfg.BaseURL == "") {
-		return "", nil, &types.ProviderError{Provider: name, Model: model, Kind: types.ErrorKindAuth,
+		return "", nil, &types.ProviderError{Provider: string(name), Model: model, Kind: types.ErrorKindAuth,
 			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, strings.Join(APIKeyEnv[name], " or "))}
 	}
 	return key, nil, nil
@@ -314,7 +314,7 @@ func unsupported(caps types.ModelCapabilities, option string) error {
 // checkExpressible applies the catalog's shared expressibility table, so a
 // control the adapter cannot send fails the same way here and in catalog
 // validation.
-func checkExpressible(caps types.ModelCapabilities, name string, cfg Config) error {
+func checkExpressible(caps types.ModelCapabilities, name types.ProviderName, cfg Config) error {
 	var ee *catalog.ExpressError
 	err := catalog.Expressible(name, cfg.Options)
 	if err == nil && cfg.PromptCache != nil {
@@ -322,6 +322,11 @@ func checkExpressible(caps types.ModelCapabilities, name string, cfg Config) err
 	}
 	if errors.As(err, &ee) {
 		return caps.OptionError(ee.Option, ee.Reason)
+	}
+	if err == nil && cfg.PromptCache != nil && cfg.PromptCache.Retention != "" && caps.Offering != nil {
+		// A model that keeps prompt caches for a fixed time rejects any
+		// other retention; refuse it here rather than on the first call.
+		err = caps.Offering.AcceptsValue(types.ParamPromptCacheRetention, catalog.NormalizeRetention(cfg.PromptCache.Retention))
 	}
 	return err
 }

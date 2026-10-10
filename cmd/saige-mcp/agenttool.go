@@ -59,7 +59,7 @@ func newAgentTool(ctx context.Context, f agentFlags, tools *agenttypes.ToolRegis
 			return agentTool{}, err
 		}
 	}
-	bundle, err := preset.Build(ctx, cat, f.ref, nil, preset.Options{})
+	bundle, err := preset.Build(ctx, cat, agenttypes.PresetName(f.ref), nil, preset.Options{})
 	if err != nil {
 		return agentTool{}, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}

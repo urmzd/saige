@@ -26,11 +26,13 @@ type goldenLookup struct {
 
 // probes are the model names recorded for a provider: every family, plus
 // dated, tagged, path-prefixed and unknown variants.
-func probes(c *Catalog, provider string) []string {
+func probes(c *Catalog, provider types.ProviderName) []string {
 	var out []string
-	for _, m := range c.Models {
-		if m.Provider == provider {
-			out = append(out, m.Prefix, m.Prefix+"-20990101", m.Prefix+":latest", "hf.co/someone/"+m.Prefix)
+	for _, k := range sortedKeys(c.Models) {
+		v, prefix, _ := splitModelKey(k)
+		if v == provider {
+			m := string(prefix)
+			out = append(out, m, m+"-20990101", m+":latest", "hf.co/someone/"+m)
 		}
 	}
 	out = append(out, "unknown-model-xyz")
@@ -39,21 +41,26 @@ func probes(c *Catalog, provider string) []string {
 }
 
 func lookupRecords(c *Catalog) []goldenLookup {
-	providers := map[string]bool{}
-	for _, m := range c.Models {
-		providers[m.Provider] = true
+	providers := map[types.ProviderName]bool{}
+	for k := range c.Models {
+		v, _, _ := splitModelKey(k)
+		providers[v] = true
 	}
-	for p := range c.Baselines {
-		providers[p] = true
+	for _, ep := range c.Endpoints {
+		if ep.DefaultOfferingTemplate != "" {
+			for _, v := range ep.Serves {
+				providers[v] = true
+			}
+		}
 	}
 	var out []goldenLookup
 	for _, p := range sortedKeys(providers) {
 		for _, m := range probes(c, p) {
-			caps, known := c.Lookup(p, m)
-			r := goldenLookup{Provider: p, Model: m, Known: known, Caps: caps}
-			if e, ok := c.Describe(p, m); ok {
+			caps, known := c.Lookup(p, types.ModelID(m))
+			r := goldenLookup{Provider: string(p), Model: m, Known: known, Caps: caps}
+			if e, ok := c.Describe(p, types.ModelID(m)); ok {
 				r.Described = true
-				if e.Prefix == m {
+				if string(e.Prefix) == m {
 					e.Caps = types.ModelCapabilities{} // recorded in Caps already
 					r.Entry = &e
 				}
@@ -87,6 +94,34 @@ func checkGolden(t *testing.T, name string, got []byte) {
 // change to default.json shows up as a reviewed diff of this file.
 func TestDefaultLookupGolden(t *testing.T) {
 	checkGolden(t, "lookup_golden.json", jsonLines(t, lookupRecords(Default())))
+}
+
+// TestUpgradeV1Golden is the migration's safety net: the last version 1
+// catalog, upgraded, resolves every family and every probe exactly as the
+// version 1 reader did, recorded in v1/lookup_golden.json before the
+// format changed.
+func TestUpgradeV1Golden(t *testing.T) {
+	c, err := LoadFile(filepath.Join("testdata", "v1", "default.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := jsonLines(t, lookupRecords(c))
+	want, err := os.ReadFile(filepath.Join("testdata", "v1", "lookup_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		gl, wl := bytes.Split(got, []byte("\n")), bytes.Split(want, []byte("\n"))
+		for i := range min(len(gl), len(wl)) {
+			if !bytes.Equal(gl[i], wl[i]) {
+				t.Fatalf("line %d differs\n got: %s\nwant: %s", i+1, gl[i], wl[i])
+			}
+		}
+		t.Fatalf("got %d lines, want %d", len(gl), len(wl))
+	}
 }
 
 // jsonLines writes one compact record per line, so diffs stay readable.

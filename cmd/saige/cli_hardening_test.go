@@ -38,7 +38,7 @@ func TestBaseURLAppliesOnPresetPath(t *testing.T) {
 			return nil, err
 		}
 		defer func() { _ = b.Close() }()
-		rp, _ := b.Resolved(presetName)
+		rp, _ := b.Resolved(types.PresetName(presetName))
 		urls := map[string]string{}
 		for _, e := range rp.Chain {
 			urls[e.ID] = e.BaseURL
@@ -104,7 +104,7 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 		rp, _ := b.Resolved("default")
 		var ids []string
 		for _, e := range rp.Chain {
-			ids = append(ids, e.ProfileID)
+			ids = append(ids, string(e.ProfileID))
 		}
 		return ids, nil
 	}

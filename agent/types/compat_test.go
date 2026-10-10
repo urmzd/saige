@@ -27,7 +27,7 @@ func TestCompatConstructorsBuildParts(t *testing.T) {
 	if len(msg.Parts) != 2 || !ok || img.Source.URI != "file:///a.png" || len(img.Source.Inline) != 1 || img.Source.Digest == "" {
 		t.Errorf("NewUserMessageWithFiles = %#v", msg)
 	}
-	if !IsMetadataContent(ConfigContent{Model: "m"}) || IsMetadataContent("text") || RouteContentFrom(RouteDelta{Model: "m"}).Model != "m" {
+	if !IsMetadataContent(ConfigContent{Target: ModelTarget("m")}) || IsMetadataContent("text") || RouteContentFrom(RouteDelta{Model: "m"}).Model != "m" {
 		t.Error("metadata shims disagree with the part API")
 	}
 }

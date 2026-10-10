@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -64,7 +66,7 @@ func listModels(asJSON bool) error {
 	var rows []capabilityRow
 	for _, provider := range catalog.Providers() {
 		families := catalog.Families(provider)
-		sort.Strings(families)
+		slices.Sort(families)
 		for _, family := range families {
 			rows = append(rows, newRow(catalog.MustLookup(provider, family)))
 		}
@@ -86,7 +88,7 @@ func listModels(asJSON bool) error {
 }
 
 func describeModel(provider, model string, asJSON bool) error {
-	caps, found := catalog.Lookup(provider, model)
+	caps, found := catalog.Lookup(types.ProviderName(provider), model)
 
 	if asJSON {
 		out := struct {
@@ -133,6 +135,15 @@ func describeModel(provider, model string, asJSON bool) error {
 	if media := mediaList(caps); media != "" {
 		fmt.Printf("  native media: %s\n", media)
 	}
+	if o := caps.Offering; o != nil {
+		fmt.Printf("  offering: %s\n", dash(o.ID))
+		if in := modalitySummary(*o); len(in) > 0 {
+			fmt.Printf("  input modalities: %s\n", strings.Join(in, ", "))
+		}
+		if len(o.Tiers) > 0 {
+			fmt.Printf("  service tiers: standard, %s\n", joinNames(slices.Sorted(maps.Keys(o.Tiers))))
+		}
+	}
 	fmt.Printf("  pricing: %s\n", caps.Pricing.Describe())
 	if len(caps.ServerTools) > 0 {
 		kinds := make([]string, 0, len(caps.ServerTools))
@@ -142,7 +153,7 @@ func describeModel(provider, model string, asJSON bool) error {
 		fmt.Printf("  server tools: %s\n", strings.Join(kinds, ", "))
 	}
 	if found {
-		fmt.Printf("  registry revisions: %d\n", catalog.Revisions(provider, caps.Family))
+		fmt.Printf("  registry revisions: %d\n", catalog.Revisions(types.ProviderName(provider), types.ModelID(caps.Family)))
 	}
 	fmt.Printf("  flags: %s\n", strings.Join(capNames(caps), ", "))
 	for _, n := range caps.Notes {
@@ -158,7 +169,7 @@ func newRow(caps types.ModelCapabilities) capabilityRow {
 	}
 	revisions := 0
 	if caps.Family != "" {
-		revisions = catalog.Revisions(caps.Provider, caps.Family)
+		revisions = catalog.Revisions(types.ProviderName(caps.Provider), types.ModelID(caps.Family))
 	}
 	return capabilityRow{
 		Provider:                    caps.Provider,

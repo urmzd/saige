@@ -166,5 +166,5 @@ func aiConfigHash(cfg AIConfig) string {
 		}
 		return "preset:" + d.Name + "@" + d.CatalogRevision
 	}
-	return "provider:" + types.ProviderName(cfg.Provider) + "/" + types.ProviderModel(cfg.Provider)
+	return "provider:" + types.NameOf(cfg.Provider) + "/" + types.ProviderModel(cfg.Provider)
 }

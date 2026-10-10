@@ -42,7 +42,7 @@ func partCases() []Part {
 		ImageOutPart{Source: URL("https://x/o.png", MediaPNG), ImageMeta: ImageMeta{Width: 64}, RevisedPrompt: "a cat"},
 		VideoOutPart{Source: URL("gs://b/v.mp4", MediaMP4), Operation: "op/1"},
 		RefusalPart{Text: "no", Category: "safety"},
-		ConfigPart{Model: "m", MaxIter: 3},
+		ConfigPart{Target: ModelTarget("m"), MaxIter: 3},
 		RoutePart{Profile: "p", Model: "m", Conversions: &ConversionReport{Offering: "o", Hash: "h"}},
 		SteerPart{ID: "s"},
 		TruncationPart{Reason: "max_tokens", Dropped: []PartKind{KindToolCall}},

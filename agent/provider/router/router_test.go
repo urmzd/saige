@@ -103,7 +103,7 @@ func TestSessionBusyAndCapabilityGate(t *testing.T) {
 	if _, err = s.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}}); err == nil {
 		t.Fatal("schema silently dropped")
 	}
-	if _, err = s.WithModel("missing").Stream(context.Background(), types.Request{}); err == nil {
+	if _, err = s.WithTarget(types.ProfileTarget("missing")); err == nil {
 		t.Fatal("unknown profile accepted")
 	}
 }
@@ -116,7 +116,7 @@ func TestEarlyStreamFailureAndPolicyValidation(t *testing.T) {
 	if got, err := consume(t, r.Session()); err != nil || got != "ok" {
 		t.Fatal(got, err)
 	}
-	r.cfg.Policy = PolicyFunc(func(context.Context, Request) ([]string, error) { return []string{"a", "a"}, nil })
+	r.cfg.Policy = PolicyFunc(func(context.Context, Request) ([]types.ProfileID, error) { return []types.ProfileID{"a", "a"}, nil })
 	if _, err := consume(t, r.Session()); err == nil {
 		t.Fatal("invalid policy accepted")
 	}

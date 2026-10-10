@@ -9,14 +9,20 @@ import (
 )
 
 // SchemaVersion is the major version of the catalog file format this package
-// reads and writes. A file with another major version is rejected rather
-// than half understood.
-const SchemaVersion = 1
+// writes. A version 1 file still loads: UpgradeV1 converts it, with a
+// warning. A file with any other major version is rejected rather than half
+// understood.
+const SchemaVersion = 2
 
-// Catalog is one catalog document: model rows, templates they extend,
-// per-provider baselines, and named presets. It is the JSON file format and
-// the in-memory value hosts pass around. Model rows reach adapters through
-// Install; presets never become global state.
+// SchemaVersionV1 is the earlier file format, read through UpgradeV1.
+const SchemaVersionV1 = 1
+
+// Catalog is one catalog document: the models the catalog knows, the
+// endpoints that serve them, the offerings that join the two (what may be
+// sent to a model on an endpoint), the templates they extend, and named
+// presets. It is the JSON file format and the in-memory value hosts pass
+// around. Model rows reach adapters through Install; presets never become
+// global state.
 type Catalog struct {
 	// Schema is an editor hint and is ignored.
 	Schema string `json:"$schema,omitempty"`
@@ -29,94 +35,275 @@ type Catalog struct {
 	// InheritDefault false starts this layer from an empty catalog instead of
 	// merging onto the layers below it. Nil means true.
 	InheritDefault *bool `json:"inherit_default,omitempty"`
-	// Templates are partial rows reachable only through Extends.
-	Templates map[string]ModelSpec `json:"templates,omitempty"`
-	// Models are the rows Lookup matches, keyed by (Provider, Prefix).
-	Models []ModelSpec `json:"models,omitempty"`
-	// Baselines are the conservative per-provider fallbacks.
-	Baselines map[string]ModelSpec `json:"baselines,omitempty"`
+	// ModelTemplates are partial models reachable only through Extends.
+	ModelTemplates map[string]ModelSpec `json:"model_templates,omitempty"`
+	// Models are the model families Lookup matches, keyed by
+	// "<vendor>/<prefix>". The prefix matches model identifiers by longest
+	// declared prefix.
+	Models map[string]ModelSpec `json:"models,omitempty"`
+	// Endpoints are where models are reached.
+	Endpoints map[string]EndpointSpec `json:"endpoints,omitempty"`
+	// OfferingTemplates are partial offerings reachable only through
+	// Extends, an endpoint's default_offering_template or its overrides.
+	OfferingTemplates map[string]OfferingSpec `json:"offering_templates,omitempty"`
+	// Offerings are the explicit model and endpoint pairs, keyed by
+	// (model, endpoint). A model with no offering on an endpoint that
+	// serves its vendor gets one from the endpoint's inherit_offerings
+	// source or its default_offering_template.
+	Offerings []OfferingSpec `json:"offerings,omitempty"`
 	// Presets are named, complete provider configurations.
-	Presets map[string]PresetSpec `json:"presets,omitempty"`
+	Presets map[types.PresetName]PresetSpec `json:"presets,omitempty"`
 	// DefaultPreset is used by the CLI when neither a preset nor a model is
 	// named.
-	DefaultPreset string `json:"default_preset,omitempty"`
+	DefaultPreset types.PresetName `json:"default_preset,omitempty"`
 	// Dials are global dials, the lowest layer of every preset entry's.
 	Dials *types.Dials `json:"dials,omitempty"`
 
 	// deletedPresets lists the presets a layer removes with null.
-	deletedPresets []string
+	deletedPresets []types.PresetName
+	// upgraded is set on a catalog read from a version 1 file.
+	upgraded bool
 }
 
-// ModelSpec is one model row, template, or baseline. Every field is optional
-// in a template or an overlay; a resolved row inherits what it leaves unset
-// from the template it extends.
+// ModelSpec is one model family or model template: the facts about the
+// weights. Every field is optional in a template or an overlay; a resolved
+// model inherits what it leaves unset from the template it extends.
 type ModelSpec struct {
-	Provider string `json:"provider,omitempty"`
-	Prefix   string `json:"prefix,omitempty"`
-	// Extends names a template. Chains are allowed up to four deep.
-	Extends      string `json:"extends,omitempty"`
-	Tier         Tier   `json:"tier,omitempty"`
-	SupersededBy string `json:"superseded_by,omitempty"`
-	// ChatCompletionsTools is "any", "no_reasoning" (tools on OpenAI Chat
-	// Completions need reasoning effort none) or "responses_only" (tools
-	// need the Responses API). Empty inherits.
-	ChatCompletionsTools string `json:"chat_completions_tools,omitempty"`
-	// Capabilities replaces the inherited list when non-empty.
-	// AddCapabilities and RemoveCapabilities then edit it.
-	Capabilities       []types.Capability `json:"capabilities,omitempty"`
-	AddCapabilities    []types.Capability `json:"add_capabilities,omitempty"`
-	RemoveCapabilities []types.Capability `json:"remove_capabilities,omitempty"`
-	Limits             *LimitsSpec        `json:"limits,omitempty"`
-	Reasoning          *ReasoningSpec     `json:"reasoning,omitempty"`
-	// StructuredOutput is "", "native" or "tool_call". Nil inherits.
-	StructuredOutput *types.StructuredOutputMode `json:"structured_output,omitempty"`
-	// Media replaces the inherited media list when set.
-	Media          []types.MediaType            `json:"media,omitempty"`
-	ServerTools    []types.ServerToolKind       `json:"server_tools,omitempty"`
-	ServerToolFees map[types.ServerToolKind]Fee `json:"server_tool_fees,omitempty"`
-	Pricing        *PricingSpec                 `json:"pricing,omitempty"`
-	// Defaults are model-level option defaults, the lowest declared layer of
-	// a preset entry's options.
-	Defaults *OptionsSpec `json:"defaults,omitempty"`
-	// Dials declares how the row compiles model-neutral dials, and its
-	// default dials. Templates and rows merge it field by field.
-	Dials *DialsSpec `json:"dials,omitempty"`
-	Notes []string   `json:"notes,omitempty"`
-	// Replace makes an overlay row replace the base row whole instead of
-	// patching it. Delete removes the base row.
+	// Extends names a model template. Chains are allowed up to four deep.
+	Extends      string        `json:"extends,omitempty"`
+	Tier         Tier          `json:"tier,omitempty"`
+	SupersededBy types.ModelID `json:"superseded_by,omitempty"`
+	// Limits are the model's token limits. Zero means undeclared.
+	Limits *ModelLimitsSpec `json:"limits,omitempty"`
+	// Modalities are what the weights can take in and produce. An
+	// offering's modalities are narrowed to these.
+	Modalities *ModelModalitiesSpec `json:"modalities,omitempty"`
+	Notes      []string             `json:"notes,omitempty"`
+	// Replace makes an overlay model replace the base model whole instead
+	// of patching it. Delete removes the base model and its offerings.
 	Replace bool `json:"$replace,omitempty"`
 	Delete  bool `json:"$delete,omitempty"`
 
-	// raw is the row as written, kept so a merge can tell an absent key
-	// from an explicit null.
 	raw json.RawMessage
 }
 
-// LimitsSpec declares token limits. Zero means undeclared.
-type LimitsSpec struct {
-	ContextWindow          *int `json:"context_window,omitempty"`
-	MaxOutputTokens        *int `json:"max_output_tokens,omitempty"`
-	DefaultMaxOutputTokens *int `json:"default_max_output_tokens,omitempty"`
+// ModelLimitsSpec declares token limits. Nil means undeclared.
+type ModelLimitsSpec struct {
+	ContextWindow   *int `json:"context_window,omitempty"`
+	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
 }
 
-// ReasoningSpec declares how a family sizes and defaults its reasoning.
-type ReasoningSpec struct {
-	Efforts                     []string           `json:"efforts,omitempty"`
-	DefaultEffort               *string            `json:"default_effort,omitempty"`
-	Required                    *bool              `json:"required,omitempty"`
-	DefaultEnabled              *bool              `json:"default_enabled,omitempty"`
-	MinBudget                   *int               `json:"min_budget,omitempty"`
-	MaxBudget                   *int               `json:"max_budget,omitempty"`
-	DynamicBudget               *bool              `json:"dynamic_budget,omitempty"`
-	ZeroBudget                  *bool              `json:"zero_budget,omitempty"`
-	SamplingRequiresNoReasoning []types.Capability `json:"sampling_requires_no_reasoning,omitempty"`
-	// ForcedToolChoice false declares that the API rejects a required or
-	// named tool choice for the model, as some always-thinking models do.
-	// Nil or true leaves forcing to CapToolChoice.
-	ForcedToolChoice *bool `json:"forced_tool_choice,omitempty"`
+// ModelModalitiesSpec lists the modalities a model takes in and produces.
+// Each list replaces the inherited one.
+type ModelModalitiesSpec struct {
+	In  []types.Modality `json:"in,omitempty"`
+	Out []types.Modality `json:"out,omitempty"`
 }
 
-// PricingSpec is the JSON form of types.Pricing. Rates are per million tokens.
+// EndpointSpec is where and how models are reached. Credentials are never
+// part of a catalog: auth names a secret reference.
+type EndpointSpec struct {
+	// Surface is the API the endpoint speaks: anthropic.messages,
+	// openai.chat, openai.responses, openai.compatible, gemini.api, vertex
+	// or ollama.native.
+	Surface string `json:"surface"`
+	// Serves lists the vendors whose models the endpoint serves.
+	Serves []types.ProviderName `json:"serves,omitempty"`
+	// Primary marks the endpoint Lookup resolves a vendor's models on.
+	// Each vendor has at most one.
+	Primary   bool           `json:"primary,omitempty"`
+	Location  *LocationSpec  `json:"location,omitempty"`
+	Auth      *AuthSpec      `json:"auth,omitempty"`
+	Transport *TransportSpec `json:"transport,omitempty"`
+	Capacity  *CapacitySpec  `json:"capacity,omitempty"`
+	Data      *DataSpec      `json:"data,omitempty"`
+	Files     *FilesSpec     `json:"files,omitempty"`
+	Modes     *ModesSpec     `json:"modes,omitempty"`
+	// ModelIDs maps a catalog model prefix to the identifier this endpoint
+	// takes for it, when the two differ.
+	ModelIDs map[types.ModelID]types.ModelID `json:"model_ids,omitempty"`
+	// DefaultOfferingTemplate is the offering template a served model with
+	// no other offering here gets, and the baseline for a model the catalog
+	// does not list (with Known false).
+	DefaultOfferingTemplate string `json:"default_offering_template,omitempty"`
+	// InheritOfferings names an endpoint whose offerings this one copies
+	// for every model it has no explicit offering for.
+	InheritOfferings string `json:"inherit_offerings,omitempty"`
+	// Overrides patch every offering on this endpoint, after its templates
+	// and before an explicit offering's own fields.
+	Overrides *OfferingSpec `json:"overrides,omitempty"`
+
+	raw json.RawMessage
+}
+
+// LocationSpec places an endpoint. A value of the form "env:NAME" is read
+// from the environment when the entry is built.
+type LocationSpec struct {
+	Region  string `json:"region,omitempty"`
+	Project string `json:"project,omitempty"`
+}
+
+// AuthSpec says how an endpoint authenticates.
+type AuthSpec struct {
+	// Type is api_key (the default when a secret is set), adc (Application
+	// Default Credentials) or none.
+	Type string `json:"type,omitempty"`
+	// Secret is a reference to the credential, never the credential:
+	// "env:NAME" names an environment variable.
+	Secret string `json:"secret,omitempty"`
+}
+
+// TransportSpec is how requests reach the endpoint.
+type TransportSpec struct {
+	// BaseURL targets a gateway or a compatible server.
+	BaseURL string `json:"base_url,omitempty"`
+	// Timeout bounds one attempt.
+	Timeout Duration `json:"timeout,omitzero"`
+}
+
+// CapacitySpec is the endpoint's declared rate limits. Zero means
+// undeclared.
+type CapacitySpec struct {
+	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
+	TokensPerMinute   int `json:"tokens_per_minute,omitempty"`
+	MaxConcurrency    int `json:"max_concurrency,omitempty"`
+}
+
+// DataSpec is what the endpoint does with request data.
+type DataSpec struct {
+	ZeroRetention bool   `json:"zero_retention,omitempty"`
+	Store         *bool  `json:"store,omitempty"`
+	Residency     string `json:"residency,omitempty"`
+	// PIIOK means raw personal data may be sent here.
+	PIIOK bool `json:"pii_ok,omitempty"`
+}
+
+// FilesSpec is the endpoint's vendor file store and the URI schemes it
+// fetches.
+type FilesSpec struct {
+	API        bool     `json:"api,omitempty"`
+	MaxBytes   int64    `json:"max_bytes,omitempty"`
+	TTL        Duration `json:"ttl,omitzero"`
+	URISchemes []string `json:"uri_schemes,omitempty"`
+}
+
+// ModesSpec lists the transport modes the endpoint offers.
+type ModesSpec struct {
+	// Batch means the endpoint has a batch API, which a batch service
+	// tier needs.
+	Batch bool `json:"batch,omitempty"`
+	// Streaming false declares an endpoint that cannot stream. Nil means
+	// it can.
+	Streaming *bool `json:"streaming,omitempty"`
+}
+
+// OfferingSpec is one offering, offering template or endpoint override:
+// what may be sent to a model on an endpoint. Every field is optional in a
+// template or an overlay.
+type OfferingSpec struct {
+	// Model and Endpoint identify an explicit offering. Model is the
+	// "<vendor>/<prefix>" key of a model.
+	Model    string `json:"model,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	// Extends names an offering template. Chains are allowed up to four
+	// deep.
+	Extends string `json:"extends,omitempty"`
+	// Features are the capabilities that are not request parameters (tools,
+	// streaming, web_search, ...). A non-empty list replaces the inherited
+	// one; AddFeatures and RemoveFeatures then edit it.
+	Features       []types.Capability `json:"features,omitempty"`
+	AddFeatures    []types.Capability `json:"add_features,omitempty"`
+	RemoveFeatures []types.Capability `json:"remove_features,omitempty"`
+	// Params declares the request parameters, merged per parameter and
+	// field. A parameter is accepted when allowed resolves true, or when it
+	// declares a type and allowed is unset. Null removes an inherited one.
+	Params map[types.ParamName]*ParamSpec `json:"params,omitempty"`
+	// Constraints restrict parameters together, keyed by a name so a child
+	// can replace or (with null) remove an inherited one.
+	Constraints map[string]*types.Constraint `json:"constraints,omitempty"`
+	Modalities  *ModalitiesSpec              `json:"modalities,omitempty"`
+	// Limits, when set, cap the model's limits on this endpoint. A baseline
+	// template declares the limits of an unlisted model here.
+	Limits *ModelLimitsSpec `json:"limits,omitempty"`
+	// StructuredOutput is "", "native" or "tool_call". Nil inherits.
+	StructuredOutput *types.StructuredOutputMode `json:"structured_output,omitempty"`
+	ServerTools      []types.ServerToolKind      `json:"server_tools,omitempty"`
+	// ServerToolFees replace the inherited fees whole.
+	ServerToolFees map[types.ServerToolKind]Fee `json:"server_tool_fees,omitempty"`
+	// Pricing is the standard tier's rate card. It replaces the inherited
+	// card whole.
+	Pricing *PricingSpec `json:"pricing,omitempty"`
+	// Tiers are the other service tiers (priority, flex, batch), replaced
+	// per tier; null removes one.
+	Tiers map[types.ServiceTier]*TierSpec `json:"tiers,omitempty"`
+	// ModalityPricing prices modalities the vendor bills apart from text,
+	// replaced per modality.
+	ModalityPricing map[types.Modality]*types.ModalityRate `json:"modality_pricing,omitempty"`
+	// Defaults are option defaults, the lowest declared layer of a preset
+	// entry's options.
+	Defaults *OptionsSpec `json:"defaults,omitempty"`
+	// Dials declares how the offering compiles model-neutral dials, and its
+	// default dials. Templates and offerings merge it field by field.
+	Dials *DialsSpec `json:"dials,omitempty"`
+	// Fallback names offerings to consider when this one cannot serve. It
+	// never creates failover by itself.
+	Fallback *FallbackSpec `json:"fallback,omitempty"`
+	Notes    []string      `json:"notes,omitempty"`
+	// Replace makes an overlay offering replace the base offering whole.
+	// Delete removes it.
+	Replace bool `json:"$replace,omitempty"`
+	Delete  bool `json:"$delete,omitempty"`
+
+	raw json.RawMessage
+}
+
+// ParamSpec is the file form of types.ParamSpec. Pointer fields distinguish
+// "unset, inherit" from an explicit value.
+type ParamSpec struct {
+	// Type is number, integer, boolean, enum or string_list.
+	Type   string   `json:"type,omitempty"`
+	Min    *float64 `json:"min,omitempty"`
+	Max    *float64 `json:"max,omitempty"`
+	Values []string `json:"values,omitempty"`
+	// Default is the value the vendor applies when the parameter is not
+	// sent.
+	Default  any   `json:"default,omitempty"`
+	Allowed  *bool `json:"allowed,omitempty"`
+	Required *bool `json:"required,omitempty"`
+	// Special maps values outside the range to their meaning, such as
+	// {"-1": "dynamic", "0": "off"}. An empty meaning removes one.
+	Special map[string]string `json:"special,omitempty"`
+	// Wire is the vendor's field name, for documentation.
+	Wire string `json:"wire,omitempty"`
+}
+
+// ModalitiesSpec is the file form of types.Modalities. Each modality merges
+// field by field; null removes an inherited one.
+type ModalitiesSpec struct {
+	In  map[types.Modality]*ModalityLimitSpec `json:"in,omitempty"`
+	Out map[types.Modality]*ModalityLimitSpec `json:"out,omitempty"`
+	// ToolResult is inline, follow_up_user or none per modality. An empty
+	// value removes one.
+	ToolResult map[types.Modality]string `json:"tool_result,omitempty"`
+}
+
+// ModalityLimitSpec is the file form of types.ModalityLimit.
+type ModalityLimitSpec struct {
+	// Media lists the accepted media types. It replaces the inherited list.
+	Media []types.MediaType `json:"media,omitempty"`
+	// Sources lists the accepted locators: inline, uri, file.
+	Sources     []types.SourceKind `json:"sources,omitempty"`
+	MaxBytes    *int64             `json:"max_bytes,omitempty"`
+	MaxCount    *int               `json:"max_count,omitempty"`
+	MaxPixels   *int               `json:"max_pixels,omitempty"`
+	MaxPages    *int               `json:"max_pages,omitempty"`
+	MaxDuration *Duration          `json:"max_duration,omitempty"`
+	FPS         *ParamSpec         `json:"fps,omitempty"`
+	Tokens      *types.TokenRule   `json:"tokens,omitempty"`
+}
+
+// PricingSpec is the JSON form of a standard-tier rate card. Rates are per
+// million tokens. Batch rates live on the batch tier.
 type PricingSpec struct {
 	Currency           string  `json:"currency,omitempty"`
 	InputPerMTok       float64 `json:"input_per_mtok,omitempty"`
@@ -124,30 +311,48 @@ type PricingSpec struct {
 	CachedInputPerMTok float64 `json:"cached_input_per_mtok,omitempty"`
 	CacheWritePerMTok  float64 `json:"cache_write_per_mtok,omitempty"`
 	PerRequest         float64 `json:"per_request,omitempty"`
-	// BatchDiscount is the fraction off token rates through the vendor's
-	// batch API, such as 0.5.
-	BatchDiscount float64 `json:"batch_discount,omitempty"`
-	// BatchCachedInputPerMTok is the cache-read rate through the batch API,
-	// for vendors whose batch discount stacks with the cache discount.
-	BatchCachedInputPerMTok float64 `json:"batch_cached_input_per_mtok,omitempty"`
-	Free                    bool    `json:"free,omitempty"`
-	AsOf                    string  `json:"as_of,omitempty"`
-	Source                  string  `json:"source,omitempty"`
+	Free               bool    `json:"free,omitempty"`
+	AsOf               string  `json:"as_of,omitempty"`
+	Source             string  `json:"source,omitempty"`
 }
 
 func (p PricingSpec) pricing() types.Pricing {
 	return types.Pricing{Currency: p.Currency, InputPerMTok: p.InputPerMTok, OutputPerMTok: p.OutputPerMTok,
 		CachedInputPerMTok: p.CachedInputPerMTok, CacheWritePerMTok: p.CacheWritePerMTok,
-		PerRequest: p.PerRequest, BatchDiscount: p.BatchDiscount, BatchCachedInputPerMTok: p.BatchCachedInputPerMTok, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
+		PerRequest: p.PerRequest, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
 }
 
 func pricingSpec(p types.Pricing) *PricingSpec {
+	p.BatchDiscount, p.BatchCachedInputPerMTok = 0, 0
 	if p == (types.Pricing{}) {
 		return nil
 	}
 	return &PricingSpec{Currency: p.Currency, InputPerMTok: p.InputPerMTok, OutputPerMTok: p.OutputPerMTok,
 		CachedInputPerMTok: p.CachedInputPerMTok, CacheWritePerMTok: p.CacheWritePerMTok,
-		PerRequest: p.PerRequest, BatchDiscount: p.BatchDiscount, BatchCachedInputPerMTok: p.BatchCachedInputPerMTok, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
+		PerRequest: p.PerRequest, Free: p.Free, AsOf: p.AsOf, Source: p.Source}
+}
+
+// TierSpec is the file form of types.TierSpec.
+type TierSpec struct {
+	// Transport is "batch" for a tier served through the endpoint's batch
+	// mode.
+	Transport string `json:"transport,omitempty"`
+	// Discount is the fraction taken off the standard token rates.
+	Discount float64 `json:"discount,omitempty"`
+	// CachedInputPerMTok is the cache-read rate on this tier, for vendors
+	// whose discount does not stack with the cache discount.
+	CachedInputPerMTok float64 `json:"cached_input_per_mtok,omitempty"`
+	// Pricing, when set, is the tier's rate card outright.
+	Pricing *PricingSpec `json:"pricing,omitempty"`
+	// Wire is the vendor's name for the tier.
+	Wire string `json:"wire,omitempty"`
+}
+
+// FallbackSpec names offerings ("<vendor>/<prefix>@<endpoint>") to consider
+// when an offering cannot serve.
+type FallbackSpec struct {
+	Equivalents   []string `json:"equivalents,omitempty"`
+	LargerContext []string `json:"larger_context,omitempty"`
 }
 
 // OptionsSpec is the options object used everywhere options are declared:
@@ -227,7 +432,7 @@ type PresetSpec struct {
 	Description string `json:"description,omitempty"`
 	// Extends copies another preset, then overrides its top-level keys. A
 	// chain set here replaces the parent's chain whole.
-	Extends string `json:"extends,omitempty"`
+	Extends types.PresetName `json:"extends,omitempty"`
 	// Options are inherited by every chain entry that does not opt out.
 	Options *OptionsSpec `json:"options,omitempty"`
 	// Dials are inherited by every chain entry that does not opt out, and
@@ -335,10 +540,19 @@ func (r RoutingSpec) UsesAffinity() bool {
 // make the configuration complete.
 type EntrySpec struct {
 	// ID is unique within the preset. Empty defaults to "provider/model".
-	ID       string       `json:"id,omitempty"`
-	Provider string       `json:"provider"`
-	Model    string       `json:"model"`
-	Options  *OptionsSpec `json:"options,omitempty"`
+	ID string `json:"id,omitempty"`
+	// Offering names the entry's offering as "<vendor>/<model>@<endpoint>".
+	// It sets the provider, model and endpoint together.
+	Offering string `json:"offering,omitempty"`
+	// Endpoint names the endpoint that serves Model. Empty uses the
+	// vendor's primary endpoint, or the one vertex, base_url or
+	// api_key_env describe.
+	Endpoint string `json:"endpoint,omitempty"`
+	// Provider is the vendor. It may be left out with an offering or an
+	// endpoint, which name it.
+	Provider types.ProviderName `json:"provider,omitempty"`
+	Model    types.ModelID      `json:"model,omitempty"`
+	Options  *OptionsSpec       `json:"options,omitempty"`
 	// Dials are the entry's own dials, on top of the preset's.
 	Dials *types.Dials `json:"dials,omitempty"`
 	// Unset removes inherited option names from the result, and inherited

@@ -39,7 +39,7 @@
 package catalog
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -50,12 +50,12 @@ import (
 // Entry is one row of the capability table: a model-name prefix and the
 // capabilities every model matching it declares.
 type Entry struct {
-	// Provider is the adapter name the entry applies to.
-	Provider string
+	// Provider is the vendor the entry applies to.
+	Provider types.ProviderName
 	// Prefix matches model identifiers by longest-prefix. Use the family stem
 	// ("claude-sonnet-4"), not a dated full name, so new point releases inherit
 	// the entry instead of falling through to the baseline.
-	Prefix string
+	Prefix types.ModelID
 	// Caps is the capability surface, minus Provider/Model/Family/Known, which
 	// Lookup fills in from the match.
 	Caps types.ModelCapabilities
@@ -64,7 +64,7 @@ type Entry struct {
 	Tier Tier
 	// SupersededBy names the prefix of the family the vendor recommends
 	// instead. Empty means the family is current.
-	SupersededBy string
+	SupersededBy types.ModelID
 	// ServerToolFees holds per-use charges for provider-executed tools, which
 	// are billed on top of tokens. A kind absent from the map is unpriced,
 	// not free.
@@ -75,6 +75,10 @@ type Entry struct {
 	// Dials is the row's dials declaration, merged through its templates.
 	// Caps.DialMap holds its compiled form. Nil means none.
 	Dials *DialsSpec `json:",omitempty"`
+	// Offerings are the model's offerings by endpoint name. Caps projects
+	// the one on the vendor's primary endpoint. Nil for a row registered as
+	// capabilities alone.
+	Offerings map[string]types.Offering `json:"-"`
 
 	// removed marks a tombstone: a row a later Install no longer declares.
 	removed bool
@@ -91,11 +95,11 @@ type Entry struct {
 var (
 	mu       sync.RWMutex
 	models   = registry.New[Entry]()
-	baseline = map[string]types.ModelCapabilities{}
+	baseline = map[types.ProviderName]types.ModelCapabilities{}
 )
 
 // key is the registry name for one row.
-func key(provider, prefix string) string { return provider + "/" + prefix }
+func key(provider types.ProviderName, prefix types.ModelID) string { return modelKey(provider, prefix) }
 
 // Register adds a revision for a provider+prefix row and returns it. Resolution
 // takes the newest revision unless the row is pinned, so this both seeds the
@@ -120,12 +124,19 @@ func cloneEntry(e Entry) Entry {
 	}
 	e.Defaults = e.Defaults.clone()
 	e.Dials = e.Dials.clone()
+	if e.Offerings != nil {
+		offs := make(map[string]types.Offering, len(e.Offerings))
+		for k, o := range e.Offerings {
+			offs[k] = o.Clone()
+		}
+		e.Offerings = offs
+	}
 	return e
 }
 
 // History returns every revision of one row, oldest first. Use it to see what a
 // row said before a correction, and when it changed.
-func History(provider, prefix string) []registry.Entry[Entry] {
+func History(provider types.ProviderName, prefix types.ModelID) []registry.Entry[Entry] {
 	history := models.History(key(provider, prefix))
 	for i := range history {
 		history[i].Value = cloneEntry(history[i].Value)
@@ -136,28 +147,28 @@ func History(provider, prefix string) []registry.Entry[Entry] {
 // Pin freezes a row to a revision. A deployment whose cost model was validated
 // against a particular rate card pins it, so a later table update cannot move
 // the numbers underneath a running budget.
-func Pin(provider, prefix string, rev registry.Revision) error {
+func Pin(provider types.ProviderName, prefix types.ModelID, rev registry.Revision) error {
 	return models.Pin(key(provider, prefix), rev)
 }
 
 // Unpin releases a pin.
-func Unpin(provider, prefix string) { models.Unpin(key(provider, prefix)) }
+func Unpin(provider types.ProviderName, prefix types.ModelID) { models.Unpin(key(provider, prefix)) }
 
 // Rollback pins a row to its previous revision, for when a correction turns out
 // to be the wrong correction.
-func Rollback(provider, prefix string) (Entry, error) {
+func Rollback(provider types.ProviderName, prefix types.ModelID) (Entry, error) {
 	e, err := models.Rollback(key(provider, prefix))
 	return cloneEntry(e.Value), err
 }
 
 // Revisions returns how many revisions a row has.
-func Revisions(provider, prefix string) int {
+func Revisions(provider types.ProviderName, prefix types.ModelID) int {
 	return len(models.History(key(provider, prefix)))
 }
 
 // RegisterBaseline sets the conservative fallback for a provider, used when no
 // prefix matches. Capabilities resolved from a baseline have Known false.
-func RegisterBaseline(provider string, caps types.ModelCapabilities) {
+func RegisterBaseline(provider types.ProviderName, caps types.ModelCapabilities) {
 	mu.Lock()
 	defer mu.Unlock()
 	baseline[provider] = caps.ForModel(caps.Model)
@@ -171,17 +182,38 @@ func RegisterBaseline(provider string, caps types.ModelCapabilities) {
 //
 // Matching is case-insensitive and ignores an ollama-style ":tag" suffix for
 // prefix purposes only, so "qwen3:4b" matches the "qwen3" entry.
-func Lookup(provider, model string) (types.ModelCapabilities, bool) {
+//
+// The model may be a types.ModelID or any string-kinded vendor model type.
+// A row read from a catalog file carries its offering on the vendor's
+// primary endpoint in ModelCapabilities.Offering.
+func Lookup[M ~string](provider types.ProviderName, model M) (types.ModelCapabilities, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
-	return globalView().lookup(provider, model)
+	return globalView().lookup(provider, string(model))
+}
+
+// LookupOffering returns the offering that serves a model on an endpoint
+// of the installed catalog, as Catalog.Offering does.
+func LookupOffering[M ~string](endpoint string, provider types.ProviderName, model M) (types.Offering, bool) {
+	cat := Active()
+	mu.RLock()
+	defer mu.RUnlock()
+	if e, ok := globalView().match(provider, string(model)); ok && e.Offerings == nil {
+		// A row registered as capabilities has no offerings of its own.
+		o := types.OfferingFromCapabilities(e.Caps.ForModel(string(model)))
+		return o, true
+	}
+	return cat.view().offering(endpoint, provider, string(model))
 }
 
 // view is a set of resolved rows and baselines to match against: the global
 // registry, or one catalog value that has not been installed.
 type view struct {
 	entries   []Entry // sorted by key
-	baselines map[string]types.ModelCapabilities
+	baselines map[types.ProviderName]types.ModelCapabilities
+	// index is the resolved catalog the view came from, nil for the
+	// global registry.
+	index *index
 }
 
 // globalView snapshots the registry. The caller holds mu.
@@ -196,14 +228,19 @@ func globalView() view {
 	return v
 }
 
-func (v view) lookup(provider, model string) (types.ModelCapabilities, bool) {
+func (v view) lookup(provider types.ProviderName, model string) (types.ModelCapabilities, bool) {
 	if best, ok := v.match(provider, model); ok {
 		out := best.Caps.ForModel(model)
-		out.Provider = provider
-		out.Family = best.Prefix
+		out.Provider = string(provider)
+		out.Family = string(best.Prefix)
+		if out.Offering == nil {
+			o := types.OfferingFromCapabilities(out)
+			o.Model.Known = true
+			out.Offering = &o
+		}
 		// A prefix or stripped Ollama tag/path identifies a possible family,
 		// not a declaration for the requested model or weights.
-		out.Known = strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(best.Prefix))
+		out.Known = strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(string(best.Prefix)))
 		if !out.Known {
 			out.Notes = append(out.Notes, "capabilities inferred from family prefix; register the exact model to mark this declaration known")
 		}
@@ -212,17 +249,34 @@ func (v view) lookup(provider, model string) (types.ModelCapabilities, bool) {
 
 	if b, ok := v.baselines[provider]; ok {
 		out := b.ForModel(model)
-		out.Provider = provider
+		out.Provider = string(provider)
 		out.Family = ""
 		out.Known = false
 		return out, false
 	}
-	return types.ModelCapabilities{Provider: provider, Model: model}, false
+	return types.ModelCapabilities{Provider: string(provider), Model: model}, false
+}
+
+// offering returns the offering of the family that serves a model on an
+// endpoint, or the endpoint's baseline.
+func (v view) offering(endpoint string, provider types.ProviderName, model string) (types.Offering, bool) {
+	if v.index == nil {
+		return types.Offering{}, false
+	}
+	if e, ok := v.match(provider, model); ok {
+		if r := v.index.offerings[endpoint][modelKey(e.Provider, e.Prefix)]; r != nil {
+			return r.off.Clone(), true
+		}
+	}
+	if b := v.index.baselines[endpoint][provider]; b != nil {
+		return b.off.Clone(), true
+	}
+	return types.Offering{}, false
 }
 
 // match returns the row that serves a model: an exact declaration first,
 // otherwise the longest matching prefix.
-func (v view) match(provider, model string) (Entry, bool) {
+func (v view) match(provider types.ProviderName, model string) (Entry, bool) {
 	want := normalize(model)
 	var best Entry
 	bestLen := -1
@@ -230,11 +284,11 @@ func (v view) match(provider, model string) (Entry, bool) {
 		if e.Provider != provider {
 			continue
 		}
-		p := normalize(e.Prefix)
+		p := normalize(string(e.Prefix))
 		// Exact tag/path declarations override a normalized family with the
 		// same length; otherwise registering pinned local weights would lose
 		// to their shorter family name after normalization.
-		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(string(e.Prefix))) {
 			return e, true
 		}
 		if !strings.HasPrefix(want, p) {
@@ -248,17 +302,17 @@ func (v view) match(provider, model string) (Entry, bool) {
 }
 
 // match returns the global row that serves a model. The caller holds mu.
-func match(provider, model string) (Entry, bool) {
+func match(provider types.ProviderName, model string) (Entry, bool) {
 	return globalView().match(provider, model)
 }
 
 // Describe returns the row that serves a model, including the row-level
 // metadata Lookup does not carry (Tier, SupersededBy, ServerToolFees). The
 // bool is false when only the provider baseline applies.
-func Describe(provider, model string) (Entry, bool) {
+func Describe[M ~string](provider types.ProviderName, model M) (Entry, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
-	e, ok := match(provider, model)
+	e, ok := match(provider, string(model))
 	if !ok {
 		return Entry{}, false
 	}
@@ -269,42 +323,42 @@ func Describe(provider, model string) (Entry, bool) {
 // a baseline as an acceptable answer (adapters reporting their own
 // capabilities, since a user pointing an adapter at an unlisted model is
 // routine, not an error).
-func MustLookup(provider, model string) types.ModelCapabilities {
+func MustLookup[M ~string](provider types.ProviderName, model M) types.ModelCapabilities {
 	caps, _ := Lookup(provider, model)
 	return caps
 }
 
 // Families returns the registered prefixes for a provider, sorted. Useful for
 // `saige models` style listings and for tests that assert coverage.
-func Families(provider string) []string {
+func Families(provider types.ProviderName) []types.ModelID {
 	mu.RLock()
 	defer mu.RUnlock()
-	var out []string
+	var out []types.ModelID
 	for _, e := range globalView().entries {
 		if e.Provider == provider {
 			out = append(out, e.Prefix)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
 // Providers returns every provider with at least one entry or baseline, sorted.
-func Providers() []string {
+func Providers() []types.ProviderName {
 	mu.RLock()
 	defer mu.RUnlock()
-	seen := map[string]bool{}
+	seen := map[types.ProviderName]bool{}
 	for _, e := range globalView().entries {
 		seen[e.Provider] = true
 	}
 	for p := range baseline {
 		seen[p] = true
 	}
-	out := make([]string, 0, len(seen))
+	out := make([]types.ProviderName, 0, len(seen))
 	for p := range seen {
 		out = append(out, p)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/provider"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/preset"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // pulled is a ListLocal that reports the given models as pulled.
@@ -50,7 +51,7 @@ func TestLocalFallbackServesAPulledModel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, name := range []string{"local", "child"} {
+			for _, name := range []types.PresetName{"local", "child"} {
 				rec := newRecorder()
 				b, err := preset.Build(context.Background(), cat, name, nil,
 					preset.Options{Getenv: everyone, Factory: rec.factory, Probe: reachable, ListLocal: pulled(tt.pulled...)})
@@ -58,7 +59,7 @@ func TestLocalFallbackServesAPulledModel(t *testing.T) {
 					t.Fatal(err)
 				}
 				rp, _ := b.Resolved(name)
-				if len(rp.Chain) != 1 || rp.Chain[0].Model != tt.want || rp.Chain[0].ProfileID != name+"/primary" {
+				if len(rp.Chain) != 1 || string(rp.Chain[0].Model) != tt.want || rp.Chain[0].ProfileID != types.ProfileID(name)+"/primary" {
 					t.Fatalf("%s: chain %+v", name, rp.Chain)
 				}
 				if _, ok := rec.configs[tt.want]; !ok {
@@ -112,7 +113,7 @@ func TestLocalFallbackLeavesOtherEntriesAlone(t *testing.T) {
 		return nil, errors.New("connection refused")
 	}
 	for _, tc := range []struct {
-		name string
+		name types.PresetName
 		list func(context.Context, provider.Config) ([]catalog.RemoteModel, error)
 	}{
 		{"pinned", pulled("gemma3:latest")}, // no local_fallback: the named model is kept

@@ -95,7 +95,7 @@ func New(inner types.Provider, cfg Config) *Provider {
 	}
 	identity := types.NewID()
 	if cfg.ScopeKey != "" && cfg.ConfigKey != "" {
-		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.ProviderName(inner)})
+		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.NameOf(inner)})
 		identity = string(raw)
 	}
 	return &Provider{inner: inner, cfg: cfg, identity: identity, flights: &flights{inflight: map[string]*flight{}}}
@@ -103,7 +103,7 @@ func New(inner types.Provider, cfg Config) *Provider {
 
 // Name implements types.NamedProvider.
 func (p *Provider) Name() string {
-	return "cache(" + types.ProviderName(p.inner) + ")"
+	return "cache(" + types.NameOf(p.inner) + ")"
 }
 
 // Model implements types.ModelProvider by delegating to the inner provider.
@@ -115,6 +115,16 @@ func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
 // answered from the original model's cache entries.
 func (p *Provider) WithModel(model string) types.Provider {
 	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg, identity: p.identity, flights: p.flights}
+}
+
+// WithTarget implements types.TargetSwitcher: it re-targets the inner
+// provider and keeps the same cache config.
+func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
+	inner, err := types.ProviderWithTarget(p.inner, t)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity, flights: p.flights}, nil
 }
 
 // ContentSupport implements types.ContentNegotiator by delegating to the inner

@@ -97,7 +97,7 @@ func run(t *testing.T, p types.Provider, msgs ...types.Message) turn {
 func profiles(ps ...scripted) []Profile {
 	out := make([]Profile, len(ps))
 	for i, p := range ps {
-		out[i] = Profile{ID: p.id, Provider: p}
+		out[i] = Profile{ID: types.ProfileID(p.id), Provider: p}
 	}
 	return out
 }
@@ -111,8 +111,16 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 	}
 	s := r.Session()
 
-	// Each turn re-applies the pin, as the agent loop does with ConfigPart.Model.
-	got := run(t, types.ProviderWithModel(s, "b"))
+	pin := func() types.Provider {
+		p, err := types.ProviderWithTarget(s, types.ProfileTarget("b"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// Each turn re-applies the pin, as the agent loop does with a ConfigPart
+	// target.
+	got := run(t, pin())
 	if got.err != nil || got.text != "a" {
 		t.Fatalf("pinned profile failure did not fail over: %+v", got)
 	}
@@ -120,7 +128,7 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 		t.Fatalf("routes = %+v", got.routes)
 	}
 	for range 2 {
-		if got := run(t, types.ProviderWithModel(s, "b")); got.text != "b" {
+		if got := run(t, pin()); got.text != "b" {
 			t.Fatalf("pin lost: %+v", got)
 		}
 	}
@@ -136,10 +144,10 @@ func TestPinnedModelKeepsSessionStateAndFailover(t *testing.T) {
 	if st := s.RouteState(); st.Pin != "" {
 		t.Fatalf("unpin kept %q", st.Pin)
 	}
-	if w := s.WithModel("missing"); !errors.Is(run(t, w).err, ErrUnknownProfile) {
+	if _, err := s.WithTarget(types.ProfileTarget("missing")); !errors.Is(err, ErrUnknownProfile) {
 		t.Fatal("unknown profile accepted")
 	}
-	if s.WithModel("b").(*Session).shared != s.shared {
+	if pin().(*Session).shared != s.shared {
 		t.Fatal("pinned view does not share session state")
 	}
 }
@@ -151,7 +159,7 @@ func TestAffinitySustainedFailureThreshold(t *testing.T) {
 		threshold   int
 		primaryFail func(int) error
 		wantTexts   []string
-		wantProfile string
+		wantProfile types.ProfileID
 		wantPrimary int32
 	}{
 		{"one blip stays", 2, failCalls(transient, 1), []string{"b", "a", "a"}, "a", 3},
@@ -434,7 +442,7 @@ func TestRouteContextCarriesRequestFacts(t *testing.T) {
 		Budget:   budget,
 		SessionPolicy: SessionPolicyFunc(func(_ context.Context, rc RouteContext, _ RouteState) (RouteDecision, error) {
 			seen = rc
-			return RouteDecision{Order: []string{"a"}}, nil
+			return RouteDecision{Order: []types.ProfileID{"a"}}, nil
 		}),
 	})
 	msgs := []types.Message{types.SystemMsg(types.Text("sys")), types.UserMsg(types.Text("hello there"))}
@@ -451,7 +459,7 @@ func TestSessionPolicyValidation(t *testing.T) {
 	r, _ := New(Config{
 		Profiles: profiles(newScripted("a", "x", 0, nil), newScripted("b", "y", 0, nil)),
 		SessionPolicy: SessionPolicyFunc(func(context.Context, RouteContext, RouteState) (RouteDecision, error) {
-			return RouteDecision{Order: []string{"a"}, Profile: "b"}, nil
+			return RouteDecision{Order: []types.ProfileID{"a"}, Profile: "b"}, nil
 		}),
 	})
 	if _, err := r.Session().Stream(context.Background(), types.Request{}); err == nil {
@@ -500,7 +508,7 @@ func TestHardLockOutranksPin(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		// pin is the profile ConfigPart.Model selects on the locked turn.
+		// pin is the profile a ConfigPart target selects on the locked turn.
 		pin      string
 		aFails   bool
 		wantText string
@@ -523,11 +531,18 @@ func TestHardLockOutranksPin(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := r.Session()
-			if got := run(t, types.ProviderWithModel(s, "a")); got.text != "a" {
+			pin := func(id string) types.Provider {
+				p, err := s.WithTarget(types.ProfileTarget(types.ProfileID(id)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return p
+			}
+			if got := run(t, pin("a")); got.text != "a" {
 				t.Fatalf("first turn = %+v", got)
 			}
 
-			got := run(t, types.ProviderWithModel(s, tc.pin), signed...)
+			got := run(t, pin(tc.pin), signed...)
 			if (got.err != nil) != tc.wantErr || got.text != tc.wantText {
 				t.Fatalf("locked turn = %+v", got)
 			}

@@ -33,7 +33,7 @@ func NewProvider(inner types.Provider, v Vault) *Provider {
 }
 
 // Name implements types.NamedProvider.
-func (p *Provider) Name() string { return "privacy(" + types.ProviderName(p.Inner) + ")" }
+func (p *Provider) Name() string { return "privacy(" + types.NameOf(p.Inner) + ")" }
 
 // Model implements types.ModelProvider.
 func (p *Provider) Model() string { return types.ProviderModel(p.Inner) }
@@ -42,6 +42,15 @@ func (p *Provider) Model() string { return types.ProviderModel(p.Inner) }
 // placeholders keep their meaning after a model switch.
 func (p *Provider) WithModel(model string) types.Provider {
 	return &Provider{Inner: types.ProviderWithModel(p.Inner, model), Vault: p.Vault}
+}
+
+// WithTarget implements types.TargetSwitcher. The vault is shared.
+func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
+	inner, err := types.ProviderWithTarget(p.Inner, t)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{Inner: inner, Vault: p.Vault}, nil
 }
 
 // NewSession implements types.SessionProvider. The session shares the vault.
@@ -94,10 +103,10 @@ func (p *Provider) SupportsOptions() bool { return true }
 
 func (p *Provider) unsupported(what string) error {
 	return &types.ProviderError{
-		Provider: types.ProviderName(p.Inner),
+		Provider: types.NameOf(p.Inner),
 		Model:    types.ProviderModel(p.Inner),
 		Kind:     types.ErrorKindPermanent,
-		Err:      fmt.Errorf("%w: provider %q does not accept %s", types.ErrInvalidModelConfig, types.ProviderName(p.Inner), what),
+		Err:      fmt.Errorf("%w: provider %q does not accept %s", types.ErrInvalidModelConfig, types.NameOf(p.Inner), what),
 	}
 }
 

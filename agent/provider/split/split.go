@@ -271,6 +271,16 @@ func (s *Split) WithModel(model string) types.Provider {
 	return &Split{shared: s.shared, arms: arms, key: s.key, assigned: -1}
 }
 
+// WithTarget implements types.TargetSwitcher for a model target by
+// re-targeting every arm, as WithModel does.
+func (s *Split) WithTarget(t types.Target) (types.Provider, error) {
+	arms, err := types.RetargetMembers(s.arms, t, "split")
+	if err != nil {
+		return nil, err
+	}
+	return &Split{shared: s.shared, arms: arms, key: s.key, assigned: -1}, nil
+}
+
 // Capabilities implements types.CapabilityReporter as the intersection over
 // the arms, since any arm may serve a request. Shadow arms never serve one
 // and are not included. Capabilities that need request options are dropped

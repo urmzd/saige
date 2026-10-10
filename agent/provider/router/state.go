@@ -108,14 +108,14 @@ func signedReasoning(messages []types.Message) bool {
 // restart. It never holds credentials or message content.
 type RouteState struct {
 	// Profile is the sticky profile the session prefers.
-	Profile string `json:"profile,omitempty"`
-	// Pin is the profile or group selected through ConfigPart.Model, if
+	Profile types.ProfileID `json:"profile,omitempty"`
+	// Pin is the profile ID or group name a ConfigPart target selected, if
 	// any.
 	Pin string `json:"pin,omitempty"`
 	// Last is the profile attempted most recently, and LastFailed reports
 	// whether that attempt failed with a failover-eligible error.
-	Last       string `json:"last,omitempty"`
-	LastFailed bool   `json:"last_failed,omitempty"`
+	Last       types.ProfileID `json:"last,omitempty"`
+	LastFailed bool            `json:"last_failed,omitempty"`
 	// Revision is the Config.Revision that wrote this state.
 	Revision string `json:"revision,omitempty"`
 	// Switches counts changes of Profile.
@@ -151,7 +151,7 @@ func (st RouteState) effective(cfg Config, messages int) RouteState {
 	return st
 }
 
-func (st *RouteState) switchTo(id string) {
+func (st *RouteState) switchTo(id types.ProfileID) {
 	if id == "" || id == st.Profile {
 		return
 	}
@@ -217,7 +217,7 @@ func (s *Session) RestoreRouteState(st RouteState) error {
 	if st.Pin != "" && !s.router.hasTarget(st.Pin) {
 		st.Pin = ""
 	}
-	for _, id := range []*string{&st.Profile, &st.Last} {
+	for _, id := range []*types.ProfileID{&st.Profile, &st.Last} {
 		if *id != "" && !s.router.hasProfile(*id) {
 			*id = ""
 		}
@@ -236,16 +236,16 @@ func (s *Session) RestoreRouteState(st RouteState) error {
 // RouteDecision is a session policy's answer for one request.
 type RouteDecision struct {
 	// Order lists the profiles to try, each at most once.
-	Order []string
+	Order []types.ProfileID
 	// Reason is reported on the first attempt's RouteDelta.
 	Reason string
 	// Profile, when set, becomes the session's sticky profile before the
 	// request runs. It must appear in Order.
-	Profile string
+	Profile types.ProfileID
 	// Probe, when set, is tried first and becomes the sticky profile only if
 	// it serves the request. A failed probe leaves the sticky profile and its
 	// failure count unchanged. It must appear in Order.
-	Probe string
+	Probe types.ProfileID
 }
 
 // SessionRouterPolicy orders profiles from the session's RouteState. The
@@ -338,7 +338,7 @@ func (a Affinity) Select(_ context.Context, rc RouteContext, st RouteState) (Rou
 	}
 	if a.ReprobeAfter > 0 && pos > 0 && st.TurnsSince >= a.ReprobeAfter && len(rc.Locks) == 0 {
 		if i := firstFit(0, -1, -1); i >= 0 && i < pos && SwitchCost(st, c[pos], c[i]) <= a.MaxSwitchCost {
-			order := []string{c[i].ID, c[pos].ID}
+			order := []types.ProfileID{c[i].ID, c[pos].ID}
 			for _, x := range c {
 				if x.ID != c[i].ID && x.ID != c[pos].ID {
 					order = append(order, x.ID)
@@ -351,8 +351,8 @@ func (a Affinity) Select(_ context.Context, rc RouteContext, st RouteState) (Rou
 }
 
 // rotate lists every candidate starting at index start.
-func rotate(c []Candidate, start int) []string {
-	out := make([]string, len(c))
+func rotate(c []Candidate, start int) []types.ProfileID {
+	out := make([]types.ProfileID, len(c))
 	for i := range out {
 		out[i] = c[(start+i)%len(c)].ID
 	}

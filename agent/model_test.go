@@ -46,7 +46,7 @@ func TestConfigContentModelSwitchesProvider(t *testing.T) {
 	agent := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
 
 	msg := types.UserMessage{Parts: []types.UserPart{
-		types.ConfigPart{Model: "fast-model"},
+		types.ConfigPart{Target: types.ModelTarget("fast-model")},
 		types.TextPart{Text: "hi"},
 	}}
 	stream := agent.Invoke(context.Background(), []types.Message{msg})

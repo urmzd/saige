@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -13,12 +12,16 @@ import (
 // Merge layers overlays onto base, lowest first, and validates the result
 // as a complete catalog. Neither input is modified.
 //
-// Model rows, templates and baselines merge field by field: the overlay row
-// with the same key is an RFC 7396 merge patch on the base row, so a present
-// key replaces, null deletes, an absent key keeps the base value, and arrays
-// replace whole. add_capabilities and remove_capabilities accumulate across
-// layers instead. "$replace": true replaces the whole row and "$delete": true
-// removes it.
+// Models, templates, endpoints and offerings merge field by field: the
+// overlay value with the same key (an offering's key is its model and
+// endpoint) is a merge patch on the base value, so a present key replaces,
+// an absent key keeps the base value, and arrays replace whole. Null
+// removes a whole model, template or endpoint; inside one, a null map
+// entry (a parameter, a constraint, a modality, a tier) is kept, so it
+// also removes what a template would supply. add_features and
+// remove_features accumulate across layers. "$replace": true replaces the
+// whole value and "$delete": true removes it; deleting a model removes its
+// offerings.
 //
 // Presets merge entry by entry: an overlay preset replaces the base preset
 // with the same name whole, and null deletes it. To change one field, write
@@ -26,7 +29,7 @@ import (
 //
 // The revision becomes the layers' revisions joined with "+", the topmost
 // default_preset wins, and a layer with inherit_default false drops every
-// layer below it.
+// layer below it. A version 1 layer is upgraded before it is merged.
 func Merge(base *Catalog, overlays ...*Catalog) (*Catalog, error) {
 	out, err := merge(base, overlays...)
 	if err != nil {
@@ -72,6 +75,7 @@ func (c *Catalog) apply(o *Catalog) error {
 	if o.Schema != "" {
 		c.Schema = o.Schema
 	}
+	c.upgraded = c.upgraded || o.upgraded
 	switch {
 	case o.Revision == "":
 	case c.Revision == "":
@@ -91,39 +95,62 @@ func (c *Catalog) apply(o *Catalog) error {
 		c.Dials = &d
 	}
 	var err error
-	if c.Templates, err = patchMap(c.Templates, o.Templates); err != nil {
+	if c.ModelTemplates, err = patchMap(c.ModelTemplates, o.ModelTemplates); err != nil {
 		return err
 	}
-	if c.Baselines, err = patchMap(c.Baselines, o.Baselines); err != nil {
+	if c.OfferingTemplates, err = patchMap(c.OfferingTemplates, o.OfferingTemplates); err != nil {
 		return err
 	}
-	for _, m := range o.Models {
-		k := rowKey(m.Provider, m.Prefix)
-		i := slices.IndexFunc(c.Models, func(b ModelSpec) bool { return rowKey(b.Provider, b.Prefix) == k })
+	if c.Endpoints, err = patchMap(c.Endpoints, o.Endpoints); err != nil {
+		return err
+	}
+	for _, k := range sortedKeys(o.Models) {
+		m := o.Models[k]
+		b, ok := c.Models[k]
 		switch {
-		case m.Delete:
-			if i >= 0 {
-				c.Models = slices.Delete(c.Models, i, i+1)
-			}
-		case i < 0 || m.Replace:
-			row := m.clone()
-			row.Replace, row.raw = false, nil
-			if i < 0 {
-				c.Models = append(c.Models, row)
-			} else {
-				c.Models[i] = row
-			}
+		case m.Delete || isNullRaw(m.raw):
+			delete(c.Models, k)
+			c.Offerings = slices.DeleteFunc(c.Offerings, func(x OfferingSpec) bool { return x.Model == k })
+			continue
+		case !ok || m.Replace:
+			m.Replace, m.raw = false, nil
 		default:
-			row, err := patchSpec(c.Models[i], m)
-			if err != nil {
+			if m, err = patchValue(b, m); err != nil {
 				return fmt.Errorf("models %s: %w", k, err)
 			}
-			c.Models[i] = row
+		}
+		if c.Models == nil {
+			c.Models = map[string]ModelSpec{}
+		}
+		c.Models[k] = m.cloneSpec()
+	}
+	for _, off := range o.Offerings {
+		k := OfferingID(off.Model, off.Endpoint)
+		i := slices.IndexFunc(c.Offerings, func(b OfferingSpec) bool { return OfferingID(b.Model, b.Endpoint) == k })
+		switch {
+		case off.Delete:
+			if i >= 0 {
+				c.Offerings = slices.Delete(c.Offerings, i, i+1)
+			}
+		case i < 0 || off.Replace:
+			row := off.cloneSpec()
+			row.Replace = false
+			if i < 0 {
+				c.Offerings = append(c.Offerings, row)
+			} else {
+				c.Offerings[i] = row
+			}
+		default:
+			row, err := patchValue(c.Offerings[i], off)
+			if err != nil {
+				return fmt.Errorf("offerings %s: %w", k, err)
+			}
+			c.Offerings[i] = row
 		}
 	}
-	sortModels(c.Models)
+	sortOfferings(c.Offerings)
 	if len(o.Presets) > 0 && c.Presets == nil {
-		c.Presets = map[string]PresetSpec{}
+		c.Presets = map[types.PresetName]PresetSpec{}
 	}
 	for name, p := range o.Presets {
 		c.Presets[name] = p.clone()
@@ -134,30 +161,68 @@ func (c *Catalog) apply(o *Catalog) error {
 	return nil
 }
 
-func sortModels(m []ModelSpec) {
-	sort.SliceStable(m, func(i, j int) bool { return rowKey(m[i].Provider, m[i].Prefix) < rowKey(m[j].Provider, m[j].Prefix) })
+// patchable is a spec that keeps its raw form for merging.
+type patchable[T any] interface {
+	rawJSON() json.RawMessage
+	withRaw(json.RawMessage) T
+	isReplace() bool
 }
 
-// patchMap merges overlay specs into base by name. A null value in the
+func (m ModelSpec) rawJSON() json.RawMessage            { return m.raw }
+func (m ModelSpec) withRaw(r json.RawMessage) ModelSpec { m.raw = r; return m }
+func (m ModelSpec) isReplace() bool                     { return m.Replace }
+func (m ModelSpec) cloneSpec() ModelSpec                { return cloneJSON(m).withRaw(cloneRaw(m.raw)) }
+func (o OfferingSpec) rawJSON() json.RawMessage         { return o.raw }
+func (o OfferingSpec) withRaw(r json.RawMessage) OfferingSpec {
+	o.raw = r
+	return o
+}
+func (o OfferingSpec) isReplace() bool          { return o.Replace }
+func (o OfferingSpec) cloneSpec() OfferingSpec  { return cloneJSON(o).withRaw(cloneRaw(o.raw)) }
+func (e EndpointSpec) rawJSON() json.RawMessage { return e.raw }
+func (e EndpointSpec) isReplace() bool          { return false }
+func (e EndpointSpec) withRaw(r json.RawMessage) EndpointSpec {
+	e.raw = r
+	return e
+}
+
+// cloneJSON deep-copies a value through its JSON form, keeping nulls in
+// maps.
+func cloneJSON[T any](v T) T {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("catalog: clone: %v", err))
+	}
+	var out T
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
+		panic(fmt.Sprintf("catalog: clone: %v", err))
+	}
+	return out
+}
+
+// patchMap merges overlay values into base by name. A null value in the
 // overlay file deletes the name.
-func patchMap(base, over map[string]ModelSpec) (map[string]ModelSpec, error) {
+func patchMap[T patchable[T]](base, over map[string]T) (map[string]T, error) {
 	if len(over) == 0 {
 		return base, nil
 	}
 	if base == nil {
-		base = map[string]ModelSpec{}
+		base = map[string]T{}
 	}
-	for name, o := range over {
-		if string(bytes.TrimSpace(o.raw)) == jsonNull {
+	for _, name := range sortedKeys(over) {
+		o := over[name]
+		if isNullRaw(o.rawJSON()) {
 			delete(base, name)
 			continue
 		}
 		b, ok := base[name]
-		if !ok {
-			base[name] = o.clone()
+		if !ok || o.isReplace() {
+			base[name] = cloneJSON(o).withRaw(cloneRaw(o.rawJSON()))
 			continue
 		}
-		merged, err := patchSpec(b, o)
+		merged, err := patchValue(b, o)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
@@ -166,51 +231,61 @@ func patchMap(base, over map[string]ModelSpec) (map[string]ModelSpec, error) {
 	return base, nil
 }
 
-// patchSpec applies overlay o to base b as a JSON merge patch.
-func patchSpec(b, o ModelSpec) (ModelSpec, error) {
+// patchValue applies overlay o to base b as a merge patch whose nulls are
+// kept, so a null map entry still removes what a template supplies.
+func patchValue[T patchable[T]](b, o T) (T, error) {
+	var zero T
 	baseRaw, err := json.Marshal(b)
 	if err != nil {
-		return ModelSpec{}, err
+		return zero, err
 	}
-	overRaw := o.raw
+	overRaw := o.rawJSON()
 	if len(overRaw) == 0 {
 		if overRaw, err = json.Marshal(o); err != nil {
-			return ModelSpec{}, err
+			return zero, err
 		}
 	}
 	// Decode numbers as json.Number so a value round-trips digit for digit:
 	// a float64 would round integers above 2^53 and change decimals.
 	bm, err := decodeObject(baseRaw)
 	if err != nil {
-		return ModelSpec{}, err
+		return zero, err
 	}
 	om, err := decodeObject(overRaw)
 	if err != nil {
-		return ModelSpec{}, err
+		return zero, err
 	}
 	delete(om, "$replace")
 	delete(om, "$delete")
-	add, _ := om["add_capabilities"].([]any)
-	remove, _ := om["remove_capabilities"].([]any)
-	delete(om, "add_capabilities")
-	delete(om, "remove_capabilities")
-	merged := mergePatch(bm, om).(map[string]any)
-	// Capability edits accumulate: the overlay's additions and removals are
-	// applied on top of the base row's.
-	merged["add_capabilities"] = editList(merged["add_capabilities"], add, remove)
-	merged["remove_capabilities"] = editList(merged["remove_capabilities"], remove, add)
+	add, _ := om["add_features"].([]any)
+	remove, _ := om["remove_features"].([]any)
+	delete(om, "add_features")
+	delete(om, "remove_features")
+	merged := mergeKeep(bm, om).(map[string]any)
+	// Feature edits accumulate: the overlay's additions and removals are
+	// applied on top of the base value's.
+	if v := editList(merged["add_features"], add, remove); v != nil {
+		merged["add_features"] = v
+	} else {
+		delete(merged, "add_features")
+	}
+	if v := editList(merged["remove_features"], remove, add); v != nil {
+		merged["remove_features"] = v
+	} else {
+		delete(merged, "remove_features")
+	}
 	data, err := json.Marshal(merged)
 	if err != nil {
-		return ModelSpec{}, err
+		return zero, err
 	}
-	var out ModelSpec
+	var out T
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	dec.UseNumber()
 	if err := dec.Decode(&out); err != nil {
-		return ModelSpec{}, err
+		return zero, err
 	}
-	return out, nil
+	return out.withRaw(data), nil
 }
 
 // decodeObject decodes a JSON object with numbers kept as json.Number.
@@ -228,9 +303,8 @@ func decodeObject(data []byte) (map[string]any, error) {
 func editList(list any, add, remove []any) any {
 	cur, _ := list.([]any)
 	var out []any
-	has := func(xs []any, v any) bool { return slices.Contains(xs, v) }
 	for _, v := range append(append([]any(nil), cur...), add...) {
-		if !has(out, v) && !has(remove, v) {
+		if !slices.Contains(out, v) && !slices.Contains(remove, v) {
 			out = append(out, v)
 		}
 	}
@@ -240,8 +314,9 @@ func editList(list any, add, remove []any) any {
 	return out
 }
 
-// mergePatch implements RFC 7396.
-func mergePatch(target, patch any) any {
+// mergeKeep is RFC 7396 except that a null in the patch is kept in the
+// result rather than deleting the key.
+func mergeKeep(target, patch any) any {
 	pm, ok := patch.(map[string]any)
 	if !ok {
 		return patch
@@ -252,10 +327,10 @@ func mergePatch(target, patch any) any {
 	}
 	for k, v := range pm {
 		if v == nil {
-			delete(tm, k)
+			tm[k] = nil
 			continue
 		}
-		tm[k] = mergePatch(tm[k], v)
+		tm[k] = mergeKeep(tm[k], v)
 	}
 	return tm
 }
@@ -267,26 +342,31 @@ func (c *Catalog) clone() *Catalog {
 		panic(fmt.Sprintf("catalog: clone: %v", err))
 	}
 	out := &Catalog{}
-	if err := json.Unmarshal(data, out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(out); err != nil {
 		panic(fmt.Sprintf("catalog: clone: %v", err))
 	}
-	out.deletedPresets = append([]string(nil), c.deletedPresets...)
+	out.deletedPresets = slices.Clone(c.deletedPresets)
+	out.upgraded = c.upgraded
 	for _, name := range out.deletedPresets {
 		delete(out.Presets, name)
 	}
-	// The JSON round trip drops each row's raw form, which is what tells a
-	// merge an explicit null from an absent key, and turns a template or
-	// baseline deleted with null into an empty one. Carry the raw forms
-	// over. MarshalJSON writes rows sorted, so match them in that order.
-	sorted := append([]ModelSpec(nil), c.Models...)
-	sortModels(sorted)
-	for i := range out.Models {
+	// The JSON round trip drops each value's raw form, which is what tells
+	// a merge a value deleted with null from an empty one. Carry the raw
+	// forms over. MarshalJSON writes offerings sorted, so match them in
+	// that order.
+	sorted := slices.Clone(c.Offerings)
+	sortOfferings(sorted)
+	for i := range out.Offerings {
 		if i < len(sorted) {
-			out.Models[i].raw = cloneRaw(sorted[i].raw)
+			out.Offerings[i].raw = cloneRaw(sorted[i].raw)
 		}
 	}
-	copyRaw(out.Templates, c.Templates)
-	copyRaw(out.Baselines, c.Baselines)
+	copyRaw(out.ModelTemplates, c.ModelTemplates)
+	copyRaw(out.Models, c.Models)
+	copyRaw(out.Endpoints, c.Endpoints)
+	copyRaw(out.OfferingTemplates, c.OfferingTemplates)
 	return out
 }
 
@@ -297,22 +377,13 @@ func cloneRaw(r json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), r...)
 }
 
-// copyRaw copies each spec's raw form from src onto the same name in dst.
-func copyRaw(dst, src map[string]ModelSpec) {
+// copyRaw copies each value's raw form from src onto the same name in dst.
+func copyRaw[T patchable[T]](dst, src map[string]T) {
 	for name, m := range src {
 		if d, ok := dst[name]; ok {
-			d.raw = cloneRaw(m.raw)
-			dst[name] = d
+			dst[name] = d.withRaw(cloneRaw(m.rawJSON()))
 		}
 	}
-}
-
-func (s ModelSpec) clone() ModelSpec {
-	data, _ := json.Marshal(s)
-	var out ModelSpec
-	_ = json.Unmarshal(data, &out)
-	out.raw = cloneRaw(s.raw)
-	return out
 }
 
 func (p PresetSpec) clone() PresetSpec {
@@ -322,17 +393,18 @@ func (p PresetSpec) clone() PresetSpec {
 	return out
 }
 
-// MarshalJSON writes the catalog canonically: rows sorted by provider and
-// prefix, map keys sorted, and presets deleted by this layer written as null.
+// MarshalJSON writes the catalog canonically: offerings sorted by model
+// and endpoint, map keys sorted, and presets deleted by this layer written
+// as null. A version 1 catalog upgraded in memory is written as version 2.
 func (c *Catalog) MarshalJSON() ([]byte, error) {
 	type plain Catalog
 	p := plain(*c)
-	p.Models = append([]ModelSpec(nil), c.Models...)
-	sortModels(p.Models)
+	p.Offerings = slices.Clone(c.Offerings)
+	sortOfferings(p.Offerings)
 	if len(c.deletedPresets) == 0 {
 		return marshalNoEscape(p)
 	}
-	presets := map[string]*PresetSpec{}
+	presets := map[types.PresetName]*PresetSpec{}
 	for name, ps := range c.Presets {
 		presets[name] = &ps
 	}
@@ -341,7 +413,7 @@ func (c *Catalog) MarshalJSON() ([]byte, error) {
 	}
 	type withNulls struct {
 		plain
-		Presets map[string]*PresetSpec `json:"presets,omitempty"`
+		Presets map[types.PresetName]*PresetSpec `json:"presets,omitempty"`
 	}
 	return marshalNoEscape(withNulls{plain: p, Presets: presets})
 }

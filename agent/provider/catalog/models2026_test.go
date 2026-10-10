@@ -13,11 +13,12 @@ import (
 // pricing.
 func TestCurrentModelRows(t *testing.T) {
 	for _, tt := range []struct {
-		provider, model string
-		rejectsForced   bool
-		chatTools       types.ChatCompletionsTools
-		efforts         string
-		input, output   float64
+		provider      types.ProviderName
+		model         string
+		rejectsForced bool
+		chatTools     types.ChatCompletionsTools
+		efforts       string
+		input, output float64
 	}{
 		{"anthropic", "claude-haiku-5-5", false, "", "low medium high xhigh max", 0.1, 0.5},
 		{"anthropic", "claude-sonnet-5-5", true, "", "low medium high xhigh max", 2, 10},
@@ -115,7 +116,7 @@ func TestPresetSamplingRules(t *testing.T) {
 // TestDefaultPresets checks the cheap defaults and the quality tier.
 func TestDefaultPresets(t *testing.T) {
 	c := Default()
-	want := map[string]string{
+	want := map[types.PresetName]types.ModelID{
 		"anthropic": "claude-haiku-5-5", "openai": "gpt-6-luna", "google": "gemini-3.1-flash-lite",
 		"anthropic-quality": "claude-sonnet-5-5", "openai-quality": "gpt-6.1-sol", "google-quality": "gemini-3.8-flash",
 		"vertex": "gemini-3.1-flash-lite",
@@ -134,7 +135,7 @@ func TestDefaultPresets(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range rp.Chain {
-		if m, ok := want[e.Provider]; ok && e.Model != m {
+		if m, ok := want[types.PresetName(e.Provider)]; ok && e.Model != m {
 			t.Errorf("default chain %s: model %s, want %s", e.Provider, e.Model, m)
 		}
 	}

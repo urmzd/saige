@@ -97,7 +97,14 @@ var forwarded = []struct {
 }{
 	{"NamedProvider", func(p types.Provider) bool { _, ok := p.(types.NamedProvider); return ok }},
 	{"ModelProvider", func(p types.Provider) bool { _, ok := p.(types.ModelProvider); return ok }},
-	{"ModelSwitcher", func(p types.Provider) bool { _, ok := p.(types.ModelSwitcher); return ok }},
+	// A model switch reaches the inner provider through ModelSwitcher, or
+	// through TargetSwitcher, which the router implements in its place.
+	{"ModelSwitcher", func(p types.Provider) bool {
+		_, ms := p.(types.ModelSwitcher)
+		_, ts := p.(types.TargetSwitcher)
+		return ms || ts
+	}},
+	{"TargetSwitcher", func(p types.Provider) bool { _, ok := p.(types.TargetSwitcher); return ok }},
 	{"CapabilityReporter", func(p types.Provider) bool { _, ok := p.(types.CapabilityReporter); return ok }},
 	{"ContentNegotiator", func(p types.Provider) bool { _, ok := p.(types.ContentNegotiator); return ok }},
 	{"StructuredOutputProvider", func(p types.Provider) bool { _, ok := p.(types.StructuredOutputProvider); return ok }},

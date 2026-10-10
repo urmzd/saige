@@ -25,7 +25,7 @@ func (p dialModel) Capabilities() types.ModelCapabilities  { return p.caps }
 func (p dialModel) EffectiveOptions() types.RequestOptions { return types.RequestOptions{} }
 
 func newDialModel(provider, model string, responses ...[]types.Delta) dialModel {
-	return dialModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: responses}, caps: catalog.MustLookup(provider, model)}
+	return dialModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: responses}, caps: catalog.MustLookup(types.ProviderName(provider), model)}
 }
 
 func routed(t *testing.T, p types.Provider) types.Provider {

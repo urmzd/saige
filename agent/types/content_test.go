@@ -16,8 +16,8 @@ func TestContentRoleInterfaces(t *testing.T) {
 	var _ UserPart = ToolResultPart{CallID: "1", Parts: []ToolOutputPart{Text("ok")}}
 
 	// ConfigPart is system and user
-	var _ SystemPart = ConfigPart{Model: "gpt-4"}
-	var _ UserPart = ConfigPart{Model: "gpt-4"}
+	var _ SystemPart = ConfigPart{Target: ModelTarget("gpt-4")}
+	var _ UserPart = ConfigPart{Target: ModelTarget("gpt-4")}
 
 	// Media parts are user input and tool output
 	var _ UserPart = Document(URL("file:///test.txt"))

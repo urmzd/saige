@@ -30,7 +30,7 @@ func (a *Agent) observeOutcome(ctx context.Context, emit func(types.Delta), tr *
 		return nil, nil
 	}
 	o.Agent = a.cfg.Name
-	o.Provider = types.ProviderName(provider)
+	o.Provider = types.NameOf(provider)
 	if o.Model == "" {
 		o.Model = types.ProviderModel(provider)
 	}
@@ -66,7 +66,7 @@ func (a *Agent) observeOutcome(ctx context.Context, emit func(types.Delta), tr *
 	if reason == "" {
 		reason = string(o.Kind)
 	}
-	cfg := types.SystemMessage{Parts: []types.SystemPart{types.ConfigPart{Model: model, Dials: dials, Reason: reason}}}
+	cfg := types.SystemMessage{Parts: []types.SystemPart{types.ConfigPart{Target: modelTarget(model), Dials: dials, Reason: reason}}}
 	if err := a.appendToBranch(ctx, tr, branch, cfg); err != nil {
 		return nil, err
 	}
@@ -99,4 +99,12 @@ func (a *Agent) observeSubAgentFailures(ctx context.Context, stream *EventStream
 		}
 	}
 	return nil
+}
+
+// modelTarget is the target of a switch to model; empty keeps the model.
+func modelTarget(model string) types.Target {
+	if model == "" {
+		return types.Target{}
+	}
+	return types.ModelTarget(types.ModelID(model))
 }

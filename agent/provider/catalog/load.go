@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // ErrInvalidCatalog matches every *ValidationError.
@@ -207,21 +209,43 @@ func load(r io.Reader, source string) (*Catalog, error) {
 		return nil, err
 	}
 	var found issues
-	lintJSON(data, &found)
+	v1 := fileVersion(data) == SchemaVersionV1
+	root := reflect.TypeFor[Catalog]()
+	if v1 {
+		root = reflect.TypeFor[CatalogV1]()
+	}
+	lintJSON(data, root, &found)
 	if found.hasErrors() {
 		return nil, found.asError(source)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	dec.UseNumber()
-	c := &Catalog{}
-	if err := dec.Decode(c); err != nil {
-		found.errorf("", CodeSyntax, "%v", err)
-		return nil, found.asError(source)
-	}
-	if err := attachRaw(c, data); err != nil {
-		found.errorf("", CodeSyntax, "%v", err)
-		return nil, found.asError(source)
+	var c *Catalog
+	if v1 {
+		old := &CatalogV1{}
+		if err := decodeStrict(data, old); err != nil {
+			found.errorf("", CodeSyntax, "%v", err)
+			return nil, found.asError(source)
+		}
+		if err := attachRawV1(old, data); err != nil {
+			found.errorf("", CodeSyntax, "%v", err)
+			return nil, found.asError(source)
+		}
+		var upgradeIssues []Issue
+		c, upgradeIssues = UpgradeV1(old)
+		for _, is := range upgradeIssues {
+			if is.Severity == SeverityError {
+				found = append(found, is)
+			}
+		}
+	} else {
+		c = &Catalog{}
+		if err := decodeStrict(data, c); err != nil {
+			found.errorf("", CodeSyntax, "%v", err)
+			return nil, found.asError(source)
+		}
+		if err := attachRaw(c, data); err != nil {
+			found.errorf("", CodeSyntax, "%v", err)
+			return nil, found.asError(source)
+		}
 	}
 	standalone := c.InheritDefault != nil && !*c.InheritDefault
 	found = append(found, c.check(standalone)...)
@@ -231,13 +255,75 @@ func load(r io.Reader, source string) (*Catalog, error) {
 	return c, nil
 }
 
-// attachRaw keeps each row as written, and records presets deleted with null.
+// fileVersion reads the version key without validating anything else.
+func fileVersion(data []byte) int {
+	var v struct {
+		Version json.Number `json:"version"`
+	}
+	if json.Unmarshal(data, &v) != nil {
+		return 0
+	}
+	n, _ := v.Version.Int64()
+	return int(n)
+}
+
+func decodeStrict(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	return dec.Decode(v)
+}
+
+// attachRaw keeps each model, template, endpoint and offering as written,
+// and records presets deleted with null.
 func attachRaw(c *Catalog, data []byte) error {
 	var raw struct {
-		Models    []json.RawMessage          `json:"models"`
-		Templates map[string]json.RawMessage `json:"templates"`
-		Baselines map[string]json.RawMessage `json:"baselines"`
-		Presets   map[string]json.RawMessage `json:"presets"`
+		ModelTemplates    map[string]json.RawMessage           `json:"model_templates"`
+		Models            map[string]json.RawMessage           `json:"models"`
+		Endpoints         map[string]json.RawMessage           `json:"endpoints"`
+		OfferingTemplates map[string]json.RawMessage           `json:"offering_templates"`
+		Offerings         []json.RawMessage                    `json:"offerings"`
+		Presets           map[types.PresetName]json.RawMessage `json:"presets"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for name, m := range c.ModelTemplates {
+		m.raw = raw.ModelTemplates[name]
+		c.ModelTemplates[name] = m
+	}
+	for name, m := range c.Models {
+		m.raw = raw.Models[name]
+		c.Models[name] = m
+	}
+	for name, e := range c.Endpoints {
+		e.raw = raw.Endpoints[name]
+		c.Endpoints[name] = e
+	}
+	for name, o := range c.OfferingTemplates {
+		o.raw = raw.OfferingTemplates[name]
+		c.OfferingTemplates[name] = o
+	}
+	for i := range c.Offerings {
+		if i < len(raw.Offerings) {
+			c.Offerings[i].raw = raw.Offerings[i]
+		}
+	}
+	c.deletedPresets = deletedPresets(raw.Presets)
+	for _, name := range c.deletedPresets {
+		delete(c.Presets, name)
+	}
+	return nil
+}
+
+// attachRawV1 keeps each v1 row as written, and records presets deleted
+// with null.
+func attachRawV1(c *CatalogV1, data []byte) error {
+	var raw struct {
+		Models    []json.RawMessage                    `json:"models"`
+		Templates map[string]json.RawMessage           `json:"templates"`
+		Baselines map[string]json.RawMessage           `json:"baselines"`
+		Presets   map[types.PresetName]json.RawMessage `json:"presets"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -255,14 +341,22 @@ func attachRaw(c *Catalog, data []byte) error {
 		m.raw = raw.Baselines[name]
 		c.Baselines[name] = m
 	}
-	for name, p := range raw.Presets {
-		if string(bytes.TrimSpace(p)) == jsonNull {
-			c.deletedPresets = append(c.deletedPresets, name)
-			delete(c.Presets, name)
+	c.deletedPresets = deletedPresets(raw.Presets)
+	for _, name := range c.deletedPresets {
+		delete(c.Presets, name)
+	}
+	return nil
+}
+
+func deletedPresets(raw map[types.PresetName]json.RawMessage) []types.PresetName {
+	var out []types.PresetName
+	for name, p := range raw {
+		if isNullRaw(p) {
+			out = append(out, name)
 		}
 	}
-	sort.Strings(c.deletedPresets)
-	return nil
+	slices.Sort(out)
+	return out
 }
 
 // jsonNull is the literal a merge patch uses to delete a key.
@@ -290,12 +384,12 @@ type linter struct {
 	failed bool
 }
 
-// lintJSON walks the document against the Catalog key schema.
-func lintJSON(data []byte, found *issues) {
+// lintJSON walks the document against a catalog type's key schema.
+func lintJSON(data []byte, root reflect.Type, found *issues) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	l := &linter{dec: dec, issues: found}
-	l.value("", reflect.TypeFor[Catalog](), nullNever)
+	l.value("", root, nullNever)
 	if l.failed {
 		return
 	}
@@ -494,7 +588,7 @@ func (l *linter) mapObject(path string, t reflect.Type, nulls nullContext) {
 // mapValueNulls lets a template, baseline or preset be removed with null.
 func mapValueNulls(path string, elem reflect.Type, parent nullContext) nullContext {
 	switch {
-	case path == "templates" || path == "baselines":
+	case slices.Contains([]string{"templates", "baselines", "model_templates", "models", "endpoints", "offering_templates"}, path):
 		return nullValue
 	case path == "presets" && elem == reflect.TypeFor[PresetSpec]():
 		return nullValue
@@ -526,14 +620,15 @@ func fieldsOf(t reflect.Type) (map[string]reflect.Type, []string) {
 	return fields, names
 }
 
-// secretKeys are rejected with a pointer to api_key_env.
+// secretKeys are rejected with a pointer to secret references.
 var secretKeys = map[string]bool{"api_key": true, "apikey": true, "api-key": true, "key_value": true, "secret": true, "token": true}
 
 func (l *linter) object(path string, t reflect.Type, nulls nullContext) {
 	fields, names := fieldsOf(t)
 	seen := map[string]bool{}
 	// A row patch may null any key, except inside its options defaults.
-	rowLike := t == reflect.TypeFor[ModelSpec]()
+	rowLike := t == reflect.TypeFor[ModelSpec]() || t == reflect.TypeFor[ModelSpecV1]() ||
+		t == reflect.TypeFor[OfferingSpec]() || t == reflect.TypeFor[EndpointSpec]()
 	for l.dec.More() && !l.failed {
 		tok, ok := l.token()
 		if !ok {
@@ -549,7 +644,7 @@ func (l *linter) object(path string, t reflect.Type, nulls nullContext) {
 		if !known {
 			switch {
 			case secretKeys[strings.ToLower(key)]:
-				l.issues.errorf(child, CodeSecretKey, "secrets are not part of a catalog; name the environment variable with api_key_env")
+				l.issues.errorf(child, CodeSecretKey, "secrets are not part of a catalog; reference one with an endpoint's auth.secret (\"env:NAME\") or an entry's api_key_env")
 			default:
 				msg := fmt.Sprintf("unknown key %q", key)
 				if s := suggest(key, names); s != "" {

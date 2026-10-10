@@ -31,8 +31,8 @@ func (p catalogModel) EffectiveOptions() types.RequestOptions {
 func dialSubject(t *testing.T, vendor, model string, prov *topeval.Provenance, mu *sync.Mutex) topeval.Subject {
 	return func(ctx context.Context, obs *topeval.Observation) error {
 		p := catalogModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}},
-			caps: catalog.MustLookup(vendor, model)}
-		r, err := router.New(router.Config{Profiles: []router.Profile{{ID: vendor + "/" + model, Provider: p}}})
+			caps: catalog.MustLookup(types.ProviderName(vendor), model)}
+		r, err := router.New(router.Config{Profiles: []router.Profile{{ID: types.ProfileID(vendor + "/" + model), Provider: p}}})
 		if err != nil {
 			t.Fatal(err)
 		}

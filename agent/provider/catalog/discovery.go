@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,31 +24,13 @@ const (
 	TierEconomy Tier = "economy"
 )
 
-// Fee is a flat per-use charge for a provider-executed tool, such as a web
-// search billed per query on top of the tokens it adds to the prompt.
-type Fee struct {
-	Currency string  `json:"currency,omitempty"` // ISO code; empty means types.DefaultCurrency
-	PerUse   float64 `json:"per_use"`            // charge for one invocation
-	AsOf     string  `json:"as_of,omitempty"`    // date the rate was recorded
-	Source   string  `json:"source,omitempty"`   // where the rate came from
-}
-
-// Reserve returns the most a call can spend on the tool when the provider may
-// invoke it up to maxUses times. A budget reserves this before dispatch,
-// because the invocations happen inside the provider and are only reported
-// after the fact. maxUses <= 0 means the provider default, which is
-// unbounded, so Reserve reports false.
-func (f Fee) Reserve(maxUses int) (float64, bool) {
-	if maxUses <= 0 {
-		return 0, false
-	}
-	return f.PerUse * float64(maxUses), true
-}
+// Fee is a flat per-use charge for a provider-executed tool. See types.Fee.
+type Fee = types.Fee
 
 // ServerToolFee returns the per-use fee for a server tool on a model. The bool
 // is false when the row does not price that tool, which a budget must treat as
 // unpriced rather than free.
-func ServerToolFee(provider, model string, kind types.ServerToolKind) (Fee, bool) {
+func ServerToolFee[M ~string](provider types.ProviderName, model M, kind types.ServerToolKind) (Fee, bool) {
 	e, ok := Describe(provider, model)
 	if !ok {
 		return Fee{}, false
@@ -60,17 +43,17 @@ func ServerToolFee(provider, model string, kind types.ServerToolKind) (Fee, bool
 // returns the prefix of the newest family. The bool is false when the model's
 // family is current or unknown. A cycle in the table stops at the last row
 // not yet visited.
-func Successor(provider, model string) (string, bool) {
+func Successor[M ~string](provider types.ProviderName, model M) (types.ModelID, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
-	e, ok := match(provider, model)
+	e, ok := match(provider, string(model))
 	if !ok || e.SupersededBy == "" {
 		return "", false
 	}
-	seen := map[string]bool{e.Prefix: true}
+	seen := map[types.ModelID]bool{e.Prefix: true}
 	next := e.SupersededBy
 	for {
-		row, ok := match(provider, next)
+		row, ok := match(provider, string(next))
 		if !ok || row.SupersededBy == "" || seen[row.SupersededBy] {
 			return next, true
 		}
@@ -106,10 +89,11 @@ func Fits(caps types.ModelCapabilities, inputTokens, outputTokens int) error {
 // longest declared prefix across every provider. An explicit
 // "provider/model" form is honored first when the part before the slash is a
 // cataloged provider. The bool is false when no row matches.
-func InferProvider(model string) (provider string, ok bool) {
+func InferProvider[M ~string](id M) (provider types.ProviderName, ok bool) {
+	model := string(id)
 	if p, rest, found := strings.Cut(model, "/"); found && rest != "" {
 		for _, known := range Providers() {
-			if strings.EqualFold(p, known) {
+			if strings.EqualFold(p, string(known)) {
 				return known, true
 			}
 		}
@@ -119,10 +103,10 @@ func InferProvider(model string) (provider string, ok bool) {
 	want := normalize(model)
 	bestLen := -1
 	for _, e := range globalView().entries {
-		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(e.Prefix)) {
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(string(e.Prefix))) {
 			return e.Provider, true
 		}
-		p := normalize(e.Prefix)
+		p := normalize(string(e.Prefix))
 		// Ties go to the alphabetically first provider so the answer does
 		// not depend on map iteration order.
 		if strings.HasPrefix(want, p) && (len(p) > bestLen || (len(p) == bestLen && e.Provider < provider)) {
@@ -167,9 +151,9 @@ const (
 type ReconciledModel struct {
 	Remote       RemoteModel
 	Status       Status
-	Family       string // matched prefix; empty when undeclared
+	Family       types.ModelID // matched prefix; empty when undeclared
 	Tier         Tier
-	SupersededBy string
+	SupersededBy types.ModelID
 	// Drift lists limits the endpoint reports that disagree with the row.
 	Drift []string
 }
@@ -177,12 +161,12 @@ type ReconciledModel struct {
 // Reconciliation compares what an endpoint serves with what the catalog
 // declares for its provider.
 type Reconciliation struct {
-	Provider string
+	Provider types.ProviderName
 	Models   []ReconciledModel // sorted by ID
 	// Unserved lists the provider's catalog prefixes that no remote model
 	// matched. For a hosted provider this often means a retired family; for
 	// a local runtime it means the weights are not pulled.
-	Unserved []string
+	Unserved []types.ModelID
 }
 
 // Undeclared returns the IDs of remote models that only the baseline covers.
@@ -199,18 +183,18 @@ func (r Reconciliation) Undeclared() []string {
 // Reconcile classifies each remote model against the catalog. It does not
 // register anything: discovery says what an endpoint serves, not what the
 // model accepts, so adding a row stays a deliberate Register call.
-func Reconcile(provider string, remote []RemoteModel) Reconciliation {
+func Reconcile(provider types.ProviderName, remote []RemoteModel) Reconciliation {
 	mu.RLock()
 	defer mu.RUnlock()
 	out := Reconciliation{Provider: provider}
-	matched := map[string]bool{}
+	matched := map[types.ModelID]bool{}
 	for _, rm := range remote {
 		r := ReconciledModel{Remote: rm, Status: StatusUndeclared}
 		if e, ok := match(provider, rm.ID); ok {
 			matched[e.Prefix] = true
 			r.Family, r.Tier, r.SupersededBy = e.Prefix, e.Tier, e.SupersededBy
 			r.Status = StatusInferred
-			if strings.EqualFold(strings.TrimSpace(rm.ID), strings.TrimSpace(e.Prefix)) {
+			if strings.EqualFold(strings.TrimSpace(rm.ID), strings.TrimSpace(string(e.Prefix))) {
 				r.Status = StatusDeclared
 			}
 			if rm.ContextWindow > 0 && e.Caps.ContextWindow > 0 && rm.ContextWindow != e.Caps.ContextWindow {
@@ -228,6 +212,6 @@ func Reconcile(provider string, remote []RemoteModel) Reconciliation {
 			out.Unserved = append(out.Unserved, e.Prefix)
 		}
 	}
-	sort.Strings(out.Unserved)
+	slices.Sort(out.Unserved)
 	return out
 }

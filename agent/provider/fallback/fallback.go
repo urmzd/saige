@@ -124,6 +124,18 @@ func (f *Provider) WithModel(model string) types.Provider {
 	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}
 }
 
+// WithTarget implements types.TargetSwitcher for a model target: each
+// member is re-targeted, and a member that cannot switch models is kept
+// as-is, as WithModel does. A profile or preset target is not defined
+// on a fallback chain.
+func (f *Provider) WithTarget(t types.Target) (types.Provider, error) {
+	providers, err := types.RetargetMembers(f.Providers, t, "fallback")
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}, nil
+}
+
 // Stream implements types.Provider. A request with a schema skips members
 // that cannot enforce one, and a request with options skips members that
 // cannot receive them, so an outage never downgrades schema-checked output to

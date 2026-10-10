@@ -70,7 +70,9 @@ type ParamSpec struct {
 func (s ParamSpec) Accepted() bool { return s.Allowed == nil || *s.Allowed }
 
 // CondValue is a test on one parameter or request-shape key. In and Not
-// test the value as a string; Bool tests a boolean; Set tests presence.
+// test the value as a string and Bool tests a boolean, all at the
+// parameter's default when the request leaves it unset; Set tests whether
+// the request sets it explicitly.
 type CondValue struct {
 	In   []string `json:"in,omitempty"`
 	Not  []string `json:"not,omitempty"`
@@ -251,6 +253,14 @@ func (s ParamSpace) Validate(o RequestOptions, shape RequestShape) error {
 			return err
 		}
 	}
+	// A constraint may forbid a request-shape key, such as tools on an API
+	// that cannot take them for this model.
+	if shape.Tools {
+		set[CondRequestTools] = paramValue{set: true, isBool: true, b: true}
+	}
+	if shape.Schema {
+		set[CondRequestSchema] = paramValue{set: true, isBool: true, b: true}
+	}
 	for _, c := range s.Constraints {
 		if !s.holds(c.When, set, shape) {
 			continue
@@ -308,7 +318,8 @@ func (spec ParamSpec) check(name ParamName, v paramValue, fail func(string, stri
 }
 
 // holds evaluates a condition. An unset parameter is tested at its spec's
-// default.
+// default (a required boolean at true), except by Set, which tests what the
+// request sets.
 func (s ParamSpace) holds(c Condition, set map[ParamName]paramValue, shape RequestShape) bool {
 	keys := make([]string, 0, len(c))
 	for k := range c {
@@ -318,6 +329,7 @@ func (s ParamSpace) holds(c Condition, set map[ParamName]paramValue, shape Reque
 	for _, k := range keys {
 		test := c[k]
 		var v paramValue
+		explicit := true
 		switch k {
 		case CondRequestTools:
 			v = paramValue{set: true, isBool: true, b: shape.Tools}
@@ -327,11 +339,17 @@ func (s ParamSpace) holds(c Condition, set map[ParamName]paramValue, shape Reque
 			v = paramValue{set: shape.Surface != "", str: shape.Surface}
 		default:
 			v = set[ParamName(k)]
+			explicit = v.set
 			if !v.set {
-				v = defaultValue(s.Params[ParamName(k)].Default)
+				spec := s.Params[ParamName(k)]
+				v = defaultValue(spec.Default)
+				if spec.Required && spec.Type == ParamTypeBoolean && !v.set {
+					// Reasoning that cannot be turned off is on.
+					v = paramValue{set: true, isBool: true, b: true}
+				}
 			}
 		}
-		if !test.match(v) {
+		if !test.match(v, explicit) {
 			return false
 		}
 	}
@@ -360,8 +378,8 @@ func defaultValue(d any) paramValue {
 	}
 }
 
-func (t CondValue) match(v paramValue) bool {
-	if t.Set != nil && *t.Set != v.set {
+func (t CondValue) match(v paramValue, explicit bool) bool {
+	if t.Set != nil && *t.Set != explicit {
 		return false
 	}
 	if t.Bool != nil && (!v.set || !v.isBool || v.b != *t.Bool) {

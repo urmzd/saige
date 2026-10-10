@@ -9,7 +9,7 @@ import (
 
 func TestLookupMatchesLongestPrefix(t *testing.T) {
 	tests := []struct {
-		provider string
+		provider types.ProviderName
 		model    string
 		family   string
 	}{
@@ -69,7 +69,7 @@ func TestUnknownProviderDeclaresNothing(t *testing.T) {
 func TestReasoningKnobsDifferWithinAProvider(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider string
+		provider types.ProviderName
 		model    string
 		want     []types.Capability
 		notWant  []types.Capability
@@ -241,8 +241,9 @@ func TestLocalModelsArePricedFreeNotUnpriced(t *testing.T) {
 // ollama has none, and the flag and the enumerated kinds must agree.
 func TestServerToolDeclarationsAgreeWithFlags(t *testing.T) {
 	for _, tt := range []struct {
-		provider, model string
-		wantWebSearch   bool
+		provider      types.ProviderName
+		model         string
+		wantWebSearch bool
 	}{
 		{"anthropic", "claude-sonnet-4-5", true},
 		{"google", "gemini-2.5-flash", true},
@@ -268,7 +269,7 @@ func TestMinReasoningBudgetIsDeclaredWhereItIsEnforced(t *testing.T) {
 
 func TestProvidersAndFamiliesAreListed(t *testing.T) {
 	provs := Providers()
-	want := map[string]bool{"anthropic": true, "openai": true, "google": true, "ollama": true}
+	want := map[types.ProviderName]bool{"anthropic": true, "openai": true, "google": true, "ollama": true}
 	for _, p := range provs {
 		delete(want, p)
 	}

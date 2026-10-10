@@ -3,15 +3,18 @@ package catalog
 import (
 	"strings"
 	"testing"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 func TestBatchDiscountValidated(t *testing.T) {
-	doc := `{"version":1,"models":[{"provider":"openai","prefix":"x-test","pricing":{"input_per_mtok":1,"batch_discount":1.5,"as_of":"2026-10-09"}}]}`
+	doc := `{"version":2,"offerings":[{"model":"openai/x-test","endpoint":"openai-chat","pricing":{"input_per_mtok":1,"as_of":"2026-10-09"},
+		"tiers":{"batch":{"transport":"batch","discount":1.5}}}]}`
 	c, err := Load(strings.NewReader(doc))
 	if err == nil {
 		err = c.Validate()
 	}
-	issueAt(t, err, "models[0].pricing.batch_discount", CodePricing)
+	issueAt(t, err, "offerings[0].tiers.batch.discount", CodePricing)
 }
 
 // TestDefaultCatalogBatchPricing checks the declared batch discounts: half
@@ -19,8 +22,9 @@ func TestBatchDiscountValidated(t *testing.T) {
 // discounted again only where the vendor stacks the discounts.
 func TestDefaultCatalogBatchPricing(t *testing.T) {
 	for _, tc := range []struct {
-		provider, model string
-		stacked         bool
+		provider types.ProviderName
+		model    string
+		stacked  bool
 	}{
 		{"anthropic", "claude-haiku-5-5", true},
 		{"openai", "gpt-6-luna", true},

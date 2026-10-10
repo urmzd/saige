@@ -1,44 +1,168 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
-  "version": 1,
+  "version": 2,
   "revision": "test.1",
   "inherit_default": false,
-  "templates": {
+  "model_templates": {
+    "anthropic.base": {
+      "limits": {
+        "context_window": 200000
+      },
+      "modalities": {
+        "in": [
+          "text",
+          "image",
+          "document"
+        ]
+      }
+    }
+  },
+  "models": {
+    "anthropic/claude-3-5-haiku": {
+      "extends": "anthropic.base",
+      "tier": "economy",
+      "limits": {
+        "max_output_tokens": 8192
+      }
+    },
+    "anthropic/claude-sonnet-4-6": {
+      "extends": "anthropic.base",
+      "tier": "standard"
+    },
+    "openai/gpt-4.1": {
+      "tier": "standard",
+      "limits": {
+        "context_window": 1000000,
+        "max_output_tokens": 32768
+      }
+    }
+  },
+  "endpoints": {
+    "anthropic": {
+      "surface": "anthropic.messages",
+      "serves": [
+        "anthropic"
+      ],
+      "primary": true,
+      "auth": {
+        "type": "api_key",
+        "secret": "env:ANTHROPIC_API_KEY"
+      },
+      "files": {
+        "api": true,
+        "uri_schemes": [
+          "https"
+        ]
+      },
+      "modes": {
+        "batch": true
+      }
+    },
+    "openai-chat": {
+      "surface": "openai.chat",
+      "serves": [
+        "openai"
+      ],
+      "primary": true,
+      "auth": {
+        "type": "api_key",
+        "secret": "env:OPENAI_API_KEY"
+      },
+      "files": {
+        "api": true,
+        "uri_schemes": [
+          "https"
+        ]
+      },
+      "modes": {
+        "batch": true
+      },
+      "default_offering_template": "baseline.openai"
+    },
+    "openai-responses": {
+      "surface": "openai.responses",
+      "serves": [
+        "openai"
+      ],
+      "auth": {
+        "type": "api_key",
+        "secret": "env:OPENAI_API_KEY"
+      },
+      "files": {
+        "api": true,
+        "uri_schemes": [
+          "https"
+        ]
+      },
+      "modes": {
+        "batch": true
+      },
+      "default_offering_template": "baseline.openai",
+      "inherit_offerings": "openai-chat"
+    }
+  },
+  "offering_templates": {
     "anthropic.base": {
       "extends": "tool_use",
-      "add_capabilities": [
-        "temperature",
-        "top_p",
-        "top_k",
-        "stop_sequences",
-        "max_output_tokens",
+      "add_features": [
         "prompt_caching",
         "prompt_cache_markers",
-        "structured_output",
-        "parallel_tool_control"
+        "structured_output"
       ],
-      "limits": {
-        "context_window": 200000,
-        "default_max_output_tokens": 4096
+      "params": {
+        "max_output_tokens": {
+          "default": 4096,
+          "allowed": true
+        },
+        "parallel_tools": {
+          "allowed": true
+        },
+        "stop": {
+          "allowed": true
+        },
+        "temperature": {
+          "allowed": true
+        },
+        "top_k": {
+          "allowed": true
+        },
+        "top_p": {
+          "allowed": true
+        }
       },
-      "structured_output": "tool_call",
-      "media": [
-        "image/jpeg",
-        "image/png",
-        "application/pdf"
-      ]
+      "modalities": {
+        "in": {
+          "audio": null,
+          "document": {
+            "media": [
+              "application/pdf"
+            ]
+          },
+          "file": null,
+          "image": {
+            "media": [
+              "image/jpeg",
+              "image/png"
+            ]
+          },
+          "video": null
+        }
+      },
+      "structured_output": "tool_call"
     },
     "anthropic.thinking": {
       "extends": "anthropic.base",
-      "add_capabilities": [
+      "add_features": [
         "reasoning",
-        "reasoning_budget",
         "reasoning_signature",
         "server_tools",
         "web_search"
       ],
-      "reasoning": {
-        "min_budget": 1024
+      "params": {
+        "reasoning.budget": {
+          "min": 1024,
+          "allowed": true
+        }
       },
       "server_tools": [
         "web_search"
@@ -52,25 +176,67 @@
         }
       }
     },
+    "baseline.openai": {
+      "extends": "tool_use",
+      "notes": [
+        "unrecognised model"
+      ]
+    },
     "tool_use": {
-      "capabilities": [
+      "features": [
         "tools",
         "parallel_tools",
-        "tool_choice",
         "streaming",
         "system_prompt"
-      ]
+      ],
+      "params": {
+        "frequency_penalty": {
+          "allowed": false
+        },
+        "max_output_tokens": {
+          "allowed": false
+        },
+        "parallel_tools": {
+          "allowed": false
+        },
+        "presence_penalty": {
+          "allowed": false
+        },
+        "reasoning.budget": {
+          "allowed": false
+        },
+        "reasoning.effort": {
+          "allowed": false
+        },
+        "reasoning.enabled": {
+          "allowed": false
+        },
+        "seed": {
+          "allowed": false
+        },
+        "stop": {
+          "allowed": false
+        },
+        "temperature": {
+          "allowed": false
+        },
+        "tool_choice": {
+          "allowed": true
+        },
+        "top_k": {
+          "allowed": false
+        },
+        "top_p": {
+          "allowed": false
+        }
+      }
     }
   },
-  "models": [
+  "offerings": [
     {
-      "provider": "anthropic",
-      "prefix": "claude-3-5-haiku",
+      "model": "anthropic/claude-3-5-haiku",
+      "endpoint": "anthropic",
       "extends": "anthropic.base",
-      "tier": "economy",
-      "limits": {
-        "max_output_tokens": 8192
-      },
       "pricing": {
         "currency": "USD",
         "input_per_mtok": 0.8,
@@ -79,43 +245,55 @@
       }
     },
     {
-      "provider": "anthropic",
-      "prefix": "claude-sonnet-4-6",
+      "model": "anthropic/claude-sonnet-4-6",
+      "endpoint": "anthropic",
       "extends": "anthropic.thinking",
-      "tier": "standard",
-      "add_capabilities": [
-        "reasoning_effort"
-      ],
-      "reasoning": {
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "max"
-        ]
+      "params": {
+        "reasoning.effort": {
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "allowed": true
+        }
       }
     },
     {
-      "provider": "openai",
-      "prefix": "gpt-4.1",
+      "model": "openai/gpt-4.1",
+      "endpoint": "openai-chat",
       "extends": "tool_use",
-      "tier": "standard",
-      "add_capabilities": [
-        "temperature",
-        "top_p",
-        "stop_sequences",
-        "max_output_tokens",
-        "seed",
-        "frequency_penalty",
-        "presence_penalty",
+      "add_features": [
         "prompt_caching",
         "automatic_prompt_cache",
-        "parallel_tool_control",
         "structured_output"
       ],
-      "limits": {
-        "context_window": 1000000,
-        "max_output_tokens": 32768
+      "params": {
+        "frequency_penalty": {
+          "allowed": true
+        },
+        "max_output_tokens": {
+          "allowed": true
+        },
+        "parallel_tools": {
+          "allowed": true
+        },
+        "presence_penalty": {
+          "allowed": true
+        },
+        "seed": {
+          "allowed": true
+        },
+        "stop": {
+          "allowed": true
+        },
+        "temperature": {
+          "allowed": true
+        },
+        "top_p": {
+          "allowed": true
+        }
       },
       "structured_output": "native",
       "pricing": {
@@ -131,14 +309,6 @@
       }
     }
   ],
-  "baselines": {
-    "openai": {
-      "extends": "tool_use",
-      "notes": [
-        "unrecognised model"
-      ]
-    }
-  },
   "presets": {
     "balanced": {
       "description": "General assistant with cross-vendor failover",

@@ -93,7 +93,7 @@ func localKey(baseURL, model string) string { return baseURL + "\x00" + model }
 // An entry whose server cannot be listed is left as written; the probe and
 // the requests report that server. Entries whose server has no chat model
 // are returned in missing, keyed by localKey, for Build to drop or fail.
-func pickLocalModels(ctx context.Context, cat *catalog.Catalog, names []string, o Options) (*catalog.Catalog, []catalog.Issue, map[string]error) {
+func pickLocalModels(ctx context.Context, cat *catalog.Catalog, names []types.PresetName, o Options) (*catalog.Catalog, []catalog.Issue, map[string]error) {
 	var (
 		out      = cat
 		warnings []catalog.Issue
@@ -124,11 +124,11 @@ func pickLocalModels(ctx context.Context, cat *catalog.Catalog, names []string, 
 				}
 				listed[host] = pulled
 			}
-			pick := chooseLocalModel(es.Model, pulled)
+			pick := types.ModelID(chooseLocalModel(string(es.Model), pulled))
 			switch pick {
 			case es.Model:
 			case "":
-				missing[localKey(es.BaseURL, es.Model)] = noLocalModel(es.Model)
+				missing[localKey(es.BaseURL, string(es.Model))] = noLocalModel(string(es.Model))
 			default:
 				if out == cat {
 					out = cat.Clone()
@@ -138,12 +138,12 @@ func pickLocalModels(ctx context.Context, cat *catalog.Catalog, names []string, 
 				id := chain[i].ID
 				if id == "" {
 					// Keep the profile ID the entry had under its own model.
-					id = es.Provider + "/" + es.Model
+					id = string(es.Provider) + "/" + string(es.Model)
 				}
 				chain[i].ID, chain[i].Model = id, pick
 				spec.Chain = chain
 				out.Presets[decl] = spec
-				warnings = append(warnings, catalog.Issue{Path: "presets." + decl, Code: WarnLocalModel, Severity: catalog.SeverityWarning,
+				warnings = append(warnings, catalog.Issue{Path: "presets." + string(decl), Code: WarnLocalModel, Severity: catalog.SeverityWarning,
 					Message: fmt.Sprintf("entry %s: %s is not pulled in Ollama; serving %s", id, es.Model, pick)})
 			}
 		}
@@ -153,8 +153,8 @@ func pickLocalModels(ctx context.Context, cat *catalog.Catalog, names []string, 
 
 // declaringPreset follows extends from name to the preset that declares
 // the chain name runs, or returns "" when there is none.
-func declaringPreset(cat *catalog.Catalog, name string) string {
-	seen := map[string]bool{}
+func declaringPreset(cat *catalog.Catalog, name types.PresetName) types.PresetName {
+	seen := map[types.PresetName]bool{}
 	for name != "" && !seen[name] {
 		seen[name] = true
 		p, ok := cat.Presets[name]

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -239,15 +241,19 @@ func newCatalogCmd(ctx context.Context) *cobra.Command {
 			".saige/catalog.json in the project, $SAIGE_CATALOG, then each --catalog.",
 	}
 	cmd.AddCommand(newCatalogShowCmd(), newCatalogExplainCmd(), newCatalogValidateCmd(ctx), newCatalogLayersCmd(),
-		newCatalogSchemaCmd(), newCatalogExportCmd(), newCatalogReconcileCmd())
+		newCatalogSchemaCmd(), newCatalogExportCmd(), newCatalogReconcileCmd(), newCatalogMigrateCmd())
 	return cmd
 }
 
 // shownEntry is the JSON shape of one resolved chain entry.
 type shownEntry struct {
-	Profile    string                   `json:"profile"`
-	Provider   string                   `json:"provider"`
-	Model      string                   `json:"model"`
+	Profile    types.ProfileID          `json:"profile"`
+	Provider   types.ProviderName       `json:"provider"`
+	Model      types.ModelID            `json:"model"`
+	Endpoint   string                   `json:"endpoint,omitempty"`
+	Offering   string                   `json:"offering,omitempty"`
+	Modalities []string                 `json:"modalities,omitempty"`
+	Tiers      []types.ServiceTier      `json:"service_tiers,omitempty"`
 	Known      bool                     `json:"known"`
 	ConfigHash string                   `json:"config_hash"`
 	Options    map[string]shownOption   `json:"options,omitempty"`
@@ -262,10 +268,10 @@ type shownOption struct {
 }
 
 type shownPreset struct {
-	Name     string          `json:"name"`
-	Revision string          `json:"catalog_revision,omitempty"`
-	Chain    []shownEntry    `json:"chain"`
-	Warnings []catalog.Issue `json:"warnings,omitempty"`
+	Name     types.PresetName `json:"name"`
+	Revision string           `json:"catalog_revision,omitempty"`
+	Chain    []shownEntry     `json:"chain"`
+	Warnings []catalog.Issue  `json:"warnings,omitempty"`
 }
 
 func newCatalogShowCmd() *cobra.Command {
@@ -279,19 +285,13 @@ func newCatalogShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := ""
+			var name types.PresetName
 			if len(args) == 1 {
-				name = args[0]
+				name = types.PresetName(args[0])
 			} else if name, cat, _, err = cf.selectPreset(cat); err != nil {
 				return err
 			}
-			var rp catalog.ResolvedPreset
-			if _, ok := cat.Presets[name]; ok || !strings.Contains(name, "/") {
-				rp, err = cat.Resolve(name)
-			} else {
-				p, m, _ := strings.Cut(name, "/")
-				rp, err = cat.ResolveModel(p, m)
-			}
+			rp, err := resolveNamed(cat, name)
 			if err != nil {
 				return err
 			}
@@ -303,8 +303,12 @@ func newCatalogShowCmd() *cobra.Command {
 func showPreset(rp catalog.ResolvedPreset) shownPreset {
 	out := shownPreset{Name: rp.Name, Revision: rp.CatalogRevision, Warnings: rp.Warnings}
 	for _, e := range rp.Chain {
-		se := shownEntry{Profile: e.ProfileID, Provider: e.Provider, Model: e.Model, Known: e.Caps.Known,
-			ConfigHash: e.ConfigHash, Options: map[string]shownOption{}, Retry: e.Retry, Cache: e.PromptCache, Optional: e.Optional}
+		se := shownEntry{Profile: e.ProfileID, Provider: e.Provider, Model: e.Model, Endpoint: e.Endpoint, Offering: e.Offering,
+			Known: e.Caps.Known, ConfigHash: e.ConfigHash, Options: map[string]shownOption{}, Retry: e.Retry, Cache: e.PromptCache, Optional: e.Optional}
+		if o := e.Caps.Offering; o != nil {
+			se.Modalities = modalitySummary(*o)
+			se.Tiers = slices.Sorted(maps.Keys(o.Tiers))
+		}
 		values := optionValues(e)
 		for _, n := range e.OptionNames() {
 			se.Options[n] = shownOption{Value: values[n], Origin: e.Origin[n]}
@@ -383,6 +387,10 @@ func writeShown(w io.Writer, sp shownPreset, asJSON bool) error {
 			fmt.Fprint(w, "  (optional)")
 		}
 		fmt.Fprintln(w)
+		fmt.Fprintf(w, "   endpoint %s  offering %s\n", dash(e.Endpoint), dash(e.Offering))
+		if len(e.Modalities) > 0 || len(e.Tiers) > 0 {
+			fmt.Fprintf(w, "   in %s  tiers %s\n", dash(strings.Join(e.Modalities, ", ")), dash(joinNames(e.Tiers)))
+		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "   OPTION\tVALUE\tORIGIN")
 		for _, n := range sortedOptionNames(e.Options) {
@@ -575,4 +583,76 @@ func newCatalogExportCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&flat, "flat", false, "Write every row in full, without templates")
 	return cmd
+}
+
+func newCatalogMigrateCmd() *cobra.Command {
+	var write bool
+	cmd := &cobra.Command{
+		Use:   "migrate FILE",
+		Short: "Convert a version 1 catalog file to version 2",
+		Long: "Read a catalog layer, convert it to version 2 if it is version 1, and print it\n" +
+			"as canonical JSON. Templates split into model and offering templates, rows\n" +
+			"into models and offerings on each vendor's primary endpoint, baselines into\n" +
+			"endpoint default offering templates, and batch pricing into the batch tier.\n" +
+			"With --write, the file is rewritten in place.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := catalog.LoadFile(args[0])
+			if err != nil {
+				return err
+			}
+			out, err := c.Canonical()
+			if err != nil {
+				return err
+			}
+			if !write {
+				_, err = cmd.OutOrStdout().Write(out)
+				return err
+			}
+			info, err := os.Stat(args[0])
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(args[0], out, info.Mode().Perm()); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "wrote %s (catalog version %d)\n", args[0], catalog.SchemaVersion)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&write, "write", false, "Rewrite the file in place")
+	return cmd
+}
+
+// resolveNamed resolves a preset, or a "provider/model" reference to a
+// one-entry preset.
+func resolveNamed(cat *catalog.Catalog, name types.PresetName) (catalog.ResolvedPreset, error) {
+	if _, ok := cat.Presets[name]; ok || !strings.Contains(string(name), "/") {
+		return cat.Resolve(name)
+	}
+	p, m, _ := strings.Cut(string(name), "/")
+	return cat.ResolveModel(types.ProviderName(p), types.ModelID(m))
+}
+
+// modalitySummary lists an offering's input modalities with their media
+// types, as "image(jpeg,png)".
+func modalitySummary(o types.Offering) []string {
+	var out []string
+	for _, m := range types.KnownModalities() {
+		l, ok := o.Modalities.In[m]
+		if !ok {
+			continue
+		}
+		var media []string
+		for _, mt := range l.Media {
+			_, sub, _ := strings.Cut(string(mt), "/")
+			media = append(media, sub)
+		}
+		s := string(m)
+		if len(media) > 0 {
+			s += "(" + strings.Join(media, ",") + ")"
+		}
+		out = append(out, s)
+	}
+	return out
 }

@@ -121,7 +121,7 @@ func (r *Runner) Store() Store { return r.store }
 func (r *Runner) Provider() types.BatchProvider { return r.provider }
 
 func (r *Runner) identity() (string, string) {
-	return types.ProviderName(asProvider(r.provider)), types.ProviderModel(asProvider(r.provider))
+	return types.NameOf(asProvider(r.provider)), types.ProviderModel(asProvider(r.provider))
 }
 
 // asProvider lets the name and model helpers read a BatchProvider that also

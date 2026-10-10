@@ -86,7 +86,7 @@ func NewProviderClient(p types.Provider) *Client {
 // provider's name on the provider transport, [OpenAICompatible] otherwise.
 func (c *Client) ProviderName() string {
 	if c.Provider != nil {
-		return types.ProviderName(c.Provider)
+		return types.NameOf(c.Provider)
 	}
 	return OpenAICompatible
 }
