@@ -328,7 +328,13 @@ func TestResultLimits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := connect(t, tt.spec(ts.spec()))
+			spec := tt.spec(ts.spec())
+			if tt.tool == "t_big" {
+				// A 10 MiB result takes longer than the suite's short call
+				// timeout under the race detector.
+				spec.CallTimeout = DefaultCallTimeout
+			}
+			c := connect(t, spec)
 			res, err := toolNamed(t, c, tt.tool).ExecuteRich(context.Background(), nil)
 			if err != nil {
 				t.Fatal(err)
