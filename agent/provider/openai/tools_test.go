@@ -58,7 +58,8 @@ func TestToolChoiceWire(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			ch, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, opts...)).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, opts...))
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 					t.Fatalf("err = %v, requests = %d; want a local configuration error", err, len(*bodies))
@@ -95,11 +96,13 @@ func TestToolChoiceNeedsCapability(t *testing.T) {
 		{types.ToolChoiceRequired, true},
 		{types.ToolChoiceNone, true},
 	} {
-		if err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithToolChoice(types.ToolChoice{Mode: tc.mode}))).Validate(); (err == nil) != tc.ok {
+		a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithToolChoice(types.ToolChoice{Mode: tc.mode})))
+		if err := a.Validate(); (err == nil) != tc.ok {
 			t.Errorf("mode %s: Validate = %v, want ok=%v", tc.mode, err, tc.ok)
 		}
 	}
-	if err := must.Get(New(Config{APIKey: "k", Model: "text-embedding-3-small"}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))).Validate(); err == nil {
+	emb := must.Get(New(Config{APIKey: "k", Model: "text-embedding-3-small"}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
+	if err := emb.Validate(); err == nil {
 		t.Error("an embedding model does not declare tool choice")
 	}
 }
@@ -126,7 +129,8 @@ func TestListModels(t *testing.T) {
 		http.Error(w, `{"error":{"message":"bad key","type":"invalid_request_error"}}`, http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	if _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL))).ListModels(context.Background()); !types.IsAuth(err) {
+	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL)))
+	if _, err := a.ListModels(context.Background()); !types.IsAuth(err) {
 		t.Fatalf("err = %v, want an auth error", err)
 	}
 }

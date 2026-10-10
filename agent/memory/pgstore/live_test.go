@@ -43,7 +43,8 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
 	}
-	store, err := New(Config{Pool: pool, Embedder: ollama.NewEmbedder(must.Get(ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: types.ModelID(embedModel)})))})
+	client := must.Get(ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: types.ModelID(embedModel)}))
+	store, err := New(Config{Pool: pool, Embedder: ollama.NewEmbedder(client)})
 	if err != nil {
 		t.Fatal(err)
 	}

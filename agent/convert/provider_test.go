@@ -12,7 +12,10 @@ import (
 func TestProviderConvertsBeforeDispatch(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: visionChat(), opts: true}
 	c := &fake{action: types.ActTranscribe, media: types.ModalityAudio, text: "spoken words"}
-	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{c}}, Layers: []types.DialLayer{layer(types.DialScopePreset, per(types.ModalityAudio, types.ActTranscribe))}}))
+	p := must.Get(New(inner, Config{
+		Policy: types.ConversionPolicy{Converters: []types.Converter{c}},
+		Layers: []types.DialLayer{layer(types.DialScopePreset, per(types.ModalityAudio, types.ActTranscribe))},
+	}))
 	msgs := []types.Message{types.UserMsg(types.Text("q"), wav("clip"))}
 	temp := 0.5
 	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs, Options: &types.RequestOptions{Temperature: &temp}})

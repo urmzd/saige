@@ -133,7 +133,8 @@ func TestStreamIntegrity(t *testing.T) {
 
 func TestTruncatedStreamNotCached(t *testing.T) {
 	server := lineServer(t, 0, true, content("partial"))
-	p := must.Get(cache.New(must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))})), cache.Config{Cache: memcache.New[cache.CachedResponse]()}))
+	inner := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))}))
+	p := must.Get(cache.New(inner, cache.Config{Cache: memcache.New[cache.CachedResponse]()}))
 	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	for i := range 2 {
 		ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
@@ -177,7 +178,8 @@ func TestRequestErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			_, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))})).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
+			a := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))}))
+			_, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 			var pe *types.ProviderError
 			if !errors.As(err, &pe) || pe.Kind != tc.wantKind || pe.RetryAfter != tc.wantAfter || pe.Code != tc.status {
 				t.Fatalf("err = %#v", err)
@@ -192,7 +194,8 @@ func TestRequestErrorClassification(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	_ = ln.Close()
-	_, err = must.Get(New(Config{Client: must.Get(NewClient(Config{Host: "http://" + addr, Model: "test-model"}))})).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
+	a := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: "http://" + addr, Model: "test-model"}))}))
+	_, err = a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if !types.IsTransient(err) {
 		t.Fatalf("refused connection: err = %v, want transient", err)
 	}

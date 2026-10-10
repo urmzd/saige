@@ -63,7 +63,11 @@ func TestDialAttributesForSingleAdapter(t *testing.T) {
 	inner := &capsProvider{optionsProvider: optionsProvider{fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}},
 		caps: catalog.MustLookup("ollama", "qwen3")}
 	tracer, rec := newSpyTracer()
-	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{Options: &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}, DialPolicy: &types.DialPolicy{}}})
+	p := must.Get(NewTracedProvider(inner, tracer))
+	ch, err := p.Stream(context.Background(), types.Request{Options: &types.RequestOptions{
+		Dials:      types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}},
+		DialPolicy: &types.DialPolicy{},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 	"github.com/urmzd/saige/internal/must"
 )
 
-// modelSwitchProvider is a fake types.ModelSwitcher that records which model
+// modelSwitchProvider is a fake types.TargetSwitcher that records which model
 // variant served each Stream call.
 type modelSwitchProvider struct {
 	model string

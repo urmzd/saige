@@ -94,7 +94,8 @@ func TestGroupsRestrictAndPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if routes, text = collectRoutes(t)(byModel.Stream(context.Background(), types.Request{})); text != "b1" || routes[0].Profile != "b/1" || routes[0].Reason != ReasonPinned {
+	routes, text = collectRoutes(t)(byModel.Stream(context.Background(), types.Request{}))
+	if text != "b1" || routes[0].Profile != "b/1" || routes[0].Reason != ReasonPinned {
 		t.Fatalf("model pin: %q %+v", text, routes)
 	}
 	// A profile target pins that profile, and failover may still leave it.
@@ -102,7 +103,8 @@ func TestGroupsRestrictAndPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if routes, text = collectRoutes(t)(byProfile.Stream(context.Background(), types.Request{})); text == "" || routes[0].Profile != "a/1" || routes[0].Reason != ReasonPinned {
+	routes, text = collectRoutes(t)(byProfile.Stream(context.Background(), types.Request{}))
+	if text == "" || routes[0].Profile != "a/1" || routes[0].Reason != ReasonPinned {
 		t.Fatalf("profile pin: %q %+v", text, routes)
 	}
 }

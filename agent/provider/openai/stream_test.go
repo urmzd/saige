@@ -228,7 +228,8 @@ func TestToolArgumentIntegrity(t *testing.T) {
 
 func TestTruncatedStructuredOutput(t *testing.T) {
 	body := []string{chunk(`"delta":{"content":"{\"answer\":\"par"}`), finish("length"), usageChunk}
-	r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, body...).URL))), &types.ParameterSchema{Type: "object"})
+	a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, body...).URL)))
+	r := run(t, a, &types.ParameterSchema{Type: "object"})
 	if len(r.errs) != 1 || !types.IsTruncated(r.errs[0]) {
 		t.Fatalf("errors = %v, want one truncation", r.errs)
 	}

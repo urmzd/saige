@@ -92,7 +92,9 @@ func TestToolChoiceWire(t *testing.T) {
 func TestPenaltiesAreSentAndValidated(t *testing.T) {
 	var bodies []map[string]any
 	half := float32(0.5)
-	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}), WithGenerationConfig(GenerationConfig{FrequencyPenalty: &half, PresencePenalty: &half}))
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+		WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}),
+		WithGenerationConfig(GenerationConfig{FrequencyPenalty: &half, PresencePenalty: &half}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +110,9 @@ func TestPenaltiesAreSentAndValidated(t *testing.T) {
 	}
 
 	tooHigh := float32(3)
-	if _, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithGenerationConfig(GenerationConfig{FrequencyPenalty: &tooHigh})); !errors.Is(err, types.ErrInvalidModelConfig) {
+	_, err = New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+		WithGenerationConfig(GenerationConfig{FrequencyPenalty: &tooHigh}))
+	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("err = %v, want an out-of-range rejection", err)
 	}
 }
@@ -121,7 +125,9 @@ func TestServerToolDeltas(t *testing.T) {
 		`{"candidates":[{"content":{"role":"model","parts":[{"text":"answer"}]},"groundingMetadata":{"webSearchQueries":["go generics"],"groundingChunks":[{"web":{"uri":"https://go.dev/doc","title":"Docs"}}]}}]}`,
 		`{"candidates":[{"content":{"role":"model","parts":[{"text":"."}]},"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["go generics"],"groundingChunks":[{"web":{"uri":"https://go.dev/doc","title":"Docs"}}]}}]}`,
 	}
-	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithServerTools(types.ServerTool{Kind: types.ServerToolCodeExecution}, types.ServerTool{Kind: types.ServerToolWebSearch}), WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+		WithServerTools(types.ServerTool{Kind: types.ServerToolCodeExecution}, types.ServerTool{Kind: types.ServerToolWebSearch}),
+		WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
 	if err != nil {
 		t.Fatal(err)
 	}

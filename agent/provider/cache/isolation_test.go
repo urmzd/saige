@@ -13,7 +13,8 @@ import (
 func TestPrivateNamespaceAndExplicitConfigurationScope(t *testing.T) {
 	store := memcache.New[CachedResponse]()
 	makeProvider := func(answer, scope, config string) *Provider {
-		return must.Get(New(&agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}, Config{Cache: store, ScopeKey: scope, ConfigKey: config}))
+		inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}
+		return must.Get(New(inner, Config{Cache: store, ScopeKey: scope, ConfigKey: config}))
 	}
 	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 	first := makeProvider("first", "", "")

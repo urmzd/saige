@@ -79,7 +79,8 @@ func TestAdaptivePromptCache(t *testing.T) {
 				_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 			}))
 			defer server.Close()
-			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(model)}, WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h")))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(model)},
+				WithBaseURL(server.URL), WithReasoningEffort("max"), WithSystemPromptCache("1h")))
 			stream, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("reply"))}})
 			if err != nil {
 				t.Fatal(err)
