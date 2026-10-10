@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.32.0 (2026-10-10)
+
+### Features
+
+- **eval**: inconclusive outcome and saige eval compare regression gate (#85) ([6c29c12](https://github.com/urmzd/saige/commit/6c29c1200e9fdeac4600fb0d3aff29d4931971c6))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.31.1...v0.32.0)
+
+
 ## 0.31.1 (2026-10-10)
 
 ### Bug Fixes
