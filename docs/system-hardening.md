@@ -89,6 +89,8 @@ Status values: **implemented** (done and covered by tests), **partial** (done wi
 | `fetch` pack: blocks private, loopback, and metadata addresses, including redirects | implemented | `tools/fetch/` | `fetch_test.go` |
 | MCP client: pooled sessions, safe retries, catalog drift, capability gate | implemented | `agent/mcp/` | `connection_test.go`, `e2e_test.go` |
 | `saige-mcp` approval for mutating tools (elicit, host, deny) | implemented | `cmd/saige-mcp/bridge.go` | `bridge_test.go` |
+| `saige-mcp` streamable HTTP: bearer tokens, per-token rate limit, TLS or loopback bind | implemented | `cmd/saige-mcp/http.go` | `http_test.go` |
+| `saige-mcp` agent tool: inner marked calls decided like direct calls | implemented | `cmd/saige-mcp/agenttool.go` | `agenttool_test.go` |
 | Research tools path safety | implemented | `tools/research/safepath.go` | `tools_test.go`, `longline_test.go` |
 
 ### Storage and wire format
