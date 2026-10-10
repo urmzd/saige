@@ -35,7 +35,11 @@ func childConfig(t *testing.T, parent AgentConfig, sa SubAgentDef) AgentConfig {
 	if !ok {
 		t.Fatalf("delegate tool is %T, want *subAgentTool", tool)
 	}
-	return st.factory(nil).cfg
+	child, err := st.factory(context.Background(), nil, "call-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return child.cfg
 }
 
 // A sub-agent is a full agent, so it must run with the same operational

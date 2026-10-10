@@ -12,6 +12,7 @@ import (
 
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/agent/workspace"
 )
 
 // SubAgentResult is a detached record of one delegation. Trace uses tree.Print's
@@ -30,6 +31,27 @@ type SubAgentResult struct {
 	// StopToolCallID is set when a StopAtTools tool ended the child run. Its
 	// result, not an assistant turn, is then the child's answer.
 	StopToolCallID string `json:"stop_tool_call_id,omitempty"`
+
+	// Iterations is how many model turns the child used, its forced final
+	// answer included. MaxIter is its cap, NoIterLimit when it had none.
+	Iterations int `json:"iterations"`
+	MaxIter    int `json:"max_iter"`
+	// Forced is set when the child reached a step limit and its answer was
+	// forced with its tools removed (MaxIterForceFinal). ForcedReason names
+	// the limit. The parent model is told, through ParentText.
+	Forced       bool   `json:"forced,omitempty"`
+	ForcedReason string `json:"forced_reason,omitempty"`
+	// OutputRef is the saige-artifact:// URI of Output when it was too
+	// large to return inline (see SubAgentReferences). The parent model
+	// then received the URI and a preview; Output still holds all of it.
+	OutputRef string `json:"output_ref,omitempty"`
+	// Scratch is a read-only view of the child's private scratch, nil when
+	// the definition turned it off. It is not serialized.
+	Scratch workspace.Workspace `json:"-"`
+
+	// parentText is what the parent model receives instead of Output when
+	// Output went by reference.
+	parentText string
 }
 
 // Tree restores an independent tree. Editing it cannot change the child or
@@ -227,6 +249,10 @@ type subAgentCapture struct {
 	result SubAgentResult
 	policy SubAgentResultPolicy
 	sink   SubAgentResultSink
+
+	refs     SubAgentReferences
+	parentWS workspace.Workspace
+	scratch  workspace.Workspace // the child's private scratch, or nil
 }
 
 func (a *Agent) captureSubAgent(ctx context.Context, stream *EventStream, runErr error) error {
@@ -238,6 +264,8 @@ func (a *Agent) captureSubAgent(ctx context.Context, stream *EventStream, runErr
 	r.CompletedAt = time.Now().UTC()
 	r.Branch = stream.branch
 	r.StopToolCallID = stream.stopToolCallID
+	r.Iterations, r.Forced, r.ForcedReason = stream.iterations, stream.forced, stream.forcedReason
+	r.Scratch = readOnlyView(capture.scratch)
 	var trace bytes.Buffer
 	if err := tree.Print(&trace, a.cfg.Tree); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("subagent trace: %w", err))
@@ -258,13 +286,14 @@ func (a *Agent) captureSubAgent(ctx context.Context, stream *EventStream, runErr
 			r.Error = runErr.Error()
 		} else {
 			r.Output = selected
+			capture.referenceResult(ctx, &r)
 		}
 	}
 	if capture.sink != nil {
 		if err := capture.sink.Save(ctx, cloneSubAgentResult(r)); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("save subagent result: %w", err))
 			r.Error = runErr.Error()
-			r.Output = ""
+			r.Output, r.OutputRef, r.parentText = "", "", ""
 		}
 	}
 	stream.result = &r

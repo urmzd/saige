@@ -18,7 +18,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema, sources and layers, merge rules, precedence, validation, preset building, CLI
 - [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
 - [docs/tool-calling.md](docs/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
-- [docs/delegation.md](docs/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration limits
+- [docs/delegation.md](docs/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration budgets and wrap-up, private scratch, passing tasks and results by reference
 - [docs/func-tools.md](docs/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
 - [docs/harness-tools.md](docs/harness-tools.md): Harness toolset: read_file, list_dir, glob, grep, write_file, edit_file, execute_code, fetch_url, scratch tools; sandboxes, approvals, spill, CLI --tools
 - [docs/approval-policy.md](docs/approval-policy.md): Approval policy: grants by scope and expiry, denial limits, capability defaults, replay

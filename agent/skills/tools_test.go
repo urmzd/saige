@@ -379,9 +379,14 @@ func TestActiveSkillStaysInItsDelegation(t *testing.T) {
 	}}
 	childTools := append(ts.Tools(), mock("read_file"), mock("write_file"))
 	a := agent.NewAgent(agent.AgentConfig{
-		Name:      "parent",
-		Provider:  parent,
-		SubAgents: []agent.SubAgentDef{{Name: "child", Provider: child, Tools: types.NewToolRegistry(childTools...)}},
+		Name:     "parent",
+		Provider: parent,
+		SubAgents: []agent.SubAgentDef{{
+			Name: "child", Provider: child, Tools: types.NewToolRegistry(childTools...),
+			// Scratch tools would join the child's tool list; this test is
+			// about skill tools only.
+			Scratch: agent.SubAgentScratch{Off: true},
+		}},
 	}, agent.WithToolPolicy(ts.Policy(nil)))
 	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
 	deltas := agenttest.CollectDeltas(stream.Deltas())

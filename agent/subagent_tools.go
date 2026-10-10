@@ -165,7 +165,7 @@ func awaitSubAgent(ctx context.Context, r *spawnRegistry, args map[string]any) (
 	if err != nil {
 		return "", fmt.Errorf("sub-agent %s failed: %w", h.id, err)
 	}
-	return result.Output, nil
+	return result.ParentText(), nil
 }
 
 func sendSubAgent(_ context.Context, r *spawnRegistry, args map[string]any) (string, error) {
