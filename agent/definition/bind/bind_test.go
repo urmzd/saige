@@ -298,7 +298,7 @@ func TestApprovalRun(t *testing.T) {
 	env := toolEnv(t)
 	env.Preset = fakePreset{model}
 	b := bind(t, resolve(t, "a", file("a", "tools:\n  harness: [exec]\napproval:\n  allow: [\"Bash(echo:*)\"]\n  deny: [\"Bash(rm:*)\"]\n", "p")), env)
-	stream := b.NewAgent().Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := b.NewAgent().Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	results := map[string]types.ToolExecEndDelta{}
 	for d := range stream.Deltas() {
 		switch v := d.(type) {
@@ -367,7 +367,7 @@ func TestBindSkills(t *testing.T) {
 	// message, and only a matching one.
 	a := b.NewAgent()
 	for _, msg := range []string{"cut the Release now", "hello"} {
-		if _, err := agent.Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage(msg)}), nil); err != nil {
+		if _, err := agent.Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(msg))}), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -428,7 +428,7 @@ func TestBindMemory(t *testing.T) {
 	}
 
 	b = bind(t, resolve(t, "a", file("a", "memory:\n  store: team\n  recall: inject\n  namespace: notes\n", "p")), env)
-	if _, err := agent.Collect(b.NewAgent().Invoke(context.Background(), []types.Message{types.NewUserMessage("when is the deploy window?")}), nil); err != nil {
+	if _, err := agent.Collect(b.NewAgent().Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("when is the deploy window?"))}), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := userText(lastUser(model.Requests()[0].Messages)); !strings.Contains(got, "Tuesday") || !strings.Contains(got, "deploy window?") {

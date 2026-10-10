@@ -133,7 +133,7 @@ func triggerHook(owner string, list []trigger) agent.Hooks {
 				}
 			}
 			if b.Len() > 0 {
-				ev.Message = withPrefix(ev.Message, types.NewUserMessage(strings.TrimSpace(b.String())))
+				ev.Message = withPrefix(ev.Message, types.UserMsg(types.Text(strings.TrimSpace(b.String()))))
 			}
 			return nil
 		},
