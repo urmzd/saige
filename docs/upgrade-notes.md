@@ -8,11 +8,11 @@ Messages are ordered lists of typed parts, model output streams as part deltas, 
 
 | Change | What to do |
 | --- | --- |
-| Message fields are named `Parts` (`UserMessage.Parts`, and so on), and the content types are parts: `TextContent` is `TextPart`, `ToolUseContent` is `ToolCallPart`, `ThinkingContent` is `ThinkingPart` (its text field is `Text`), `ToolResultContent` is `ToolResultPart` (its ID field is `CallID`), and the role interfaces are `SystemPart`, `UserPart` and `AssistantPart`. The metadata types are `ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart` and `CompactionPart`; the old names remain as deprecated aliases for one release. | Rename the fields and types. Build messages with `UserMsg(Text("hi"))`, `SystemMsg`, `AssistantMsg`, `ToolResults` and `UserToolResults`; `NewUserMessage` and the other string constructors remain as deprecated shims for one release. |
-| Media is a part with a `Source`: `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart` and `FilePart`, built with `Image`, `Document`, `Media` and the like from `Bytes`, `URL`, `Artifact` or `VendorFileID`. `FileContent` is no longer a message part. | Replace `FileContent{URI: u}` with `Media(URL(u, mediaType))`. `FileContent.Part()` converts an old value. |
-| A tool result holds `Parts []ToolOutputPart` (text, JSON, images, documents, audio, files). `ToolResult.Text` and `ToolResultPart.Text` are methods that join the text and JSON parts. `ToolResultBlock` is deprecated; `ToolResultBlock.Part()` converts one. `ToolExecEndDelta`, `AfterToolEvent` and `StepResult` carry parts instead of blocks. | Return `ToolResult{Parts: []types.ToolOutputPart{types.Text(s)}}` or `TextResult(s)`. Read `r.Text()` instead of `r.Text`. |
+| Message fields are named `Parts` (`UserMessage.Parts`, and so on), and the content types are parts: `TextContent` is `TextPart`, `ToolUseContent` is `ToolCallPart`, `ThinkingContent` is `ThinkingPart` (its text field is `Text`), `ToolResultContent` is `ToolResultPart` (its ID field is `CallID`), and the role interfaces are `SystemPart`, `UserPart` and `AssistantPart`. The metadata types are `ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart` and `CompactionPart`; the `*Content` aliases are removed (see [API unification](#api-unification)). | Rename the fields and types. Build messages with `UserMsg(Text("hi"))`, `SystemMsg`, `AssistantMsg`, `ToolResults` and `UserToolResults`; the string constructors such as `NewUserMessage` are removed. |
+| Media is a part with a `Source`: `ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart` and `FilePart`, built with `Image`, `Document`, `Media` and the like from `Bytes`, `URL`, `Artifact` or `VendorFileID`. `FileContent` is no longer a message part. | Replace `FileContent{URI: u}` with `Media(URL(u, mediaType))`. `FileContent` is removed. |
+| A tool result holds `Parts []ToolOutputPart` (text, JSON, images, documents, audio, files). `ToolResult.Text` and `ToolResultPart.Text` are methods that join the text and JSON parts. `ToolResultBlock` is removed. `ToolExecEndDelta`, `AfterToolEvent` and `StepResult` carry parts instead of blocks. | Return `ToolResult{Parts: []types.ToolOutputPart{types.Text(s)}}` or `TextResult(s)`. Read `r.Text()` instead of `r.Text`. |
 | `Provider` has one method, `Stream(ctx, Request)`. `Request` carries the messages, tools, an optional `Schema` and optional `Options` (`*RequestOptions`). `ChatStreamWithSchema` and `ChatStreamWithOptions` are gone; a provider declares that it applies a schema or options with `SupportsSchema() bool` and `SupportsOptions() bool`, and `types.AcceptsSchema` and `types.AcceptsOptions` test for them. `Generate(ctx, prompt)` stays as a text convenience. | Rename `ChatStream` to `Stream` and read `req.Messages` and `req.Tools`; fold the schema and options methods into it and add the matching `Supports` method. The built-in adapters reject a request that carries both a schema and options. |
-| Model output streams as `PartStart`, `PartDelta` and `PartEnd`, each with an `Index` that is the part's position in the final message. Deltas for different parts may interleave. A tool call's `PartEnd` carries the complete `ToolCallPart`. Server tool calls and their results are separate parts (`PairServerTools` joins them), and model citations arrive as `CitationPart` parts, numbered by the agent and stored with the turn. The text, thinking, tool-call and server-tool deltas of the previous release remain only as the input of `NewV1Upgrader` and `UpgradeV1Stream`. | Switch consumers to the part deltas: read `PartDelta.Text` for text and `PartEnd.Part` for finished parts, or build the turn with `types.NewPartAssembler`. A provider that still emits the old deltas can wrap its stream with `types.UpgradeV1Stream`. |
+| Model output streams as `PartStart`, `PartDelta` and `PartEnd`, each with an `Index` that is the part's position in the final message. Deltas for different parts may interleave. A tool call's `PartEnd` carries the complete `ToolCallPart`. Server tool calls and their results are separate parts (`PairServerTools` joins them), and model citations arrive as `CitationPart` parts, numbered by the agent and stored with the turn. The text, thinking, tool-call and server-tool deltas of the previous release are removed; a version 1 envelope still decodes, through `types.NewDecoder`. | Switch consumers to the part deltas: read `PartDelta.Text` for text and `PartEnd.Part` for finished parts, or build the turn with `types.NewPartAssembler`. Emit part deltas from a provider. |
 | The wire format is version 2: model output uses the kinds `part.start`, `part.delta` and `part.end`, and media bytes in one field are limited to 256 KiB (`ErrWireInlineTooLarge`). Version 1 envelopes still decode. | Use `types.NewEncoder(types.EncodeOptions{Version: 1})` for a client that reads only version 1. Output with no version 1 form, such as a refusal or a generated image, becomes an error envelope with the code `wire_unrepresentable`. |
 | The response cache and the tool cache store entries in a new format (codec version 2). | None. Entries written by an earlier release miss and are recorded again. |
 | Durable engines record steps, run input and final messages in a new versioned format (`types.StepFormatVersion` 2), with messages and parts in the shared part codec. Journals an earlier release wrote still decode and are upgraded on replay. | None. In-flight runs resume across the upgrade. |
@@ -280,3 +280,97 @@ Node messages and durable records are stored as typed parts. Everything an earli
 | `router.Candidate.EstimatedTokens` is the prompt estimate priced by the candidate's offering, and `RouteContext.EstimatedTokens` is the largest of them. `router.Affinity` fits each candidate by its own estimate. | None. |
 | `gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-6-sol` and `gpt-6-astra` declare prompt cache retention `24h` only, as the API rejects `in_memory` for them. | Drop the retention or set `24h`. |
 | The TUI filter badge counts only the entries the template draws. | None. |
+
+## API unification
+
+Constructors take a `Config` and options and return an error, decorators share one base, errors keep their identity across the wire, and every name deprecated in earlier releases is removed. Stored data is unaffected: trees, journals, caches and wire version 1 envelopes written by earlier releases still read.
+
+| Change | What to do |
+| --- | --- |
+| Every constructor below validates its configuration and returns an error wrapping `types.ErrInvalidConfig` instead of panicking or failing on first use. `agent.New` returns that error for a negative `LLMTimeout`, `ToolTimeout` or `InterruptTTL` and for an invalid handoff group, where `NewAgent` panicked. | Handle the error. Tests can use a small helper that fails the test on it. |
+| A decorator embeds `wrapper.Base`, which forwards every optional provider interface (name, model, capabilities, effective options, schema and options support, `WithTarget`, `NewSession`, `Close`) and rebuilds the decorator around a re-targeted or isolated provider. `wrapper.Describe(p)` reports what a provider stack declares in one `ProviderInfo`. `wrapper.NoClose(p)` lends a provider to a second owner. The attempt deadline of a preset entry now forwards `WithTarget`, so a model switch reaches an entry built with `attempt_timeout`. | Embed `wrapper.Base` in your own decorators and override only what they change; build it with `wrapper.NewBase(inner, rewrap)`. |
+| `types.Closer.Close` takes a context, and so does every `Close` of a type that owns resources: providers and decorators, `router.Router`, `split.Split`, `preset.Bundle`, `mcp.Client`, `mcp.Pool`, `bind.Bound`, `filewal.WAL`, `notify.Hub`, `notify.Memory`, `notify.Cache` and `postgres.Notifier`. `types.CloseProvider` takes the context first. | Pass a context; it bounds waits such as an MCP server shutting down. |
+| `FallbackError` unwraps to its last attempt only. `errors.Is`, `errors.As`, `KindOf`, `IsTransient` and `RetryAfter` all answer for the attempt that ended the chain; an earlier rate-limited attempt no longer makes the failure match `ErrRateLimited`. `FallbackError.Errors` still lists every attempt. | Read `Errors` to inspect earlier attempts. |
+| `KindOf` and `IsTransient` read the first `types.KindReporter` (`ErrorKind() ErrorKind`) in an error's chain; `ProviderError`, `RemoteError`, `ResponseTruncatedError`, `FallbackError` and `RetryError` implement it. `RetryAfter` finds a `ProviderError` behind any wrapper, including a decoded error. | Implement `KindReporter` on your own error types to classify them. |
+| Every exported sentinel error in the module has a stable wire code (`types.RegisterWireSentinel`, `types.WireSentinels`), so `errors.Is` holds after an error crosses a process boundary, for example `agent.ErrToolErrorLimit`, `agent.ErrHandoffLimitExceeded` or `router.ErrNoEligibleProfile`. `types.EncodeError` and `types.DecodeError` expose the codec as `types.EncodedError`. | Register your own sentinels from `init` if they cross the wire. |
+| The router reports a request no profile can serve as `router.ErrNoEligibleProfile` (joined with each candidate's reason), and a policy that names an undefined profile as `router.ErrUnknownProfile`. | Match the sentinels instead of the message text. |
+| `ModelSwitcher`, `WithModel(string)` and `ProviderWithModel` are removed. Every adapter and decorator implements `TargetSwitcher`. `types.TargetModel` is the rule for a provider that serves one model. | Call `p.WithTarget(types.ModelTarget(m))` or `types.ProviderWithTarget(p, types.ModelTarget(m))`, and implement `WithTarget(types.Target) (types.Provider, error)` instead of `WithModel`. |
+| Interrupt payloads are typed: `types.ClarificationPayload`, `Interrupt.Clarification`, `Interrupt.ToolCall`, `types.InterruptPayload[T]`, `types.ReplyAnswer[T]`, `types.Answer` and `types.ModifiedArgsAs[T]`; a payload of the wrong shape is `types.ErrInterruptPayload`. The wire form is unchanged. | Replace hand-written JSON decoding of `Payload` and `Answer`. |
+| `types.Key[T]` names a typed tool context knob or dependency: `NewKey`, `Get`, `Put`, `WithDep` and `Dep` take one. A zero `types.ToolRegistry` is ready to use. | Replace `Dep[T](deps, "name")` with `Dep(deps, nameKey)` where `nameKey = types.NewKey[T]("name")`. |
+| `agui.Mapper.Close` is `Flush`: it returns the closing events of an unfinished run and owns no resource. | Rename the call. |
+
+### Symbol mapping
+
+Removed or changed symbols and their replacements. A rename keeps the arguments unless the replacement shows them.
+
+| Removed | Replacement |
+| --- | --- |
+| `agent.NewAgent(cfg, opts...) *Agent` | `agent.New(cfg, opts...) (*Agent, error)` |
+| `agent.AgentConfig` | `agent.Config` |
+| `agent.AgentOption` | `agent.Option` |
+| `bind.Bound.NewAgent(opts...) *agent.Agent` | `bind.Bound.NewAgent(opts...) (*agent.Agent, error)` |
+| `anthropic.NewAdapter(key, model, opts...)` | `anthropic.New(anthropic.Config{APIKey: key, Model: model}, opts...)`, which returns an error |
+| `openai.NewAdapter(key, model, opts...)` | `openai.New(openai.Config{APIKey: key, Model: model}, opts...)`, which returns an error |
+| `openai.NewResponsesAdapter(key, model, opts...)` | `openai.NewResponses(openai.Config{APIKey: key, Model: model}, opts...)`, which returns an error |
+| `openai.NewEmbedder(key, model, opts...)` | `openai.NewEmbedder(openai.Config{APIKey: key, Model: model}, opts...)`, which returns an error |
+| `google.NewAdapter(ctx, key, model, opts...)` | `google.New(ctx, google.Config{APIKey: key, Model: model}, opts...)` |
+| `google.NewEmbedder(ctx, key, model, opts...)` | `google.NewEmbedder(ctx, google.Config{APIKey: key, Model: model}, opts...)` |
+| `ollama.NewClient(host, model, embedModel, opts...) *Client` | `ollama.NewClient(ollama.Config{Host: host, Model: model, EmbeddingModel: embedModel}, opts...) (*Client, error)` |
+| `ollama.NewAdapter(client, opts...) *Adapter` | `ollama.New(ollama.Config{Client: client}, opts...)`, or `ollama.New(ollama.Config{Host: h, Model: m}, opts...)`; both return an error |
+| `retry.New(inner, cfg) *Provider` | `retry.New(inner, cfg, opts...) (*Provider, error)`; `retry.Provider{Inner: p}` literals become `retry.New` |
+| `cache.New(inner, cfg) *Provider` | `cache.New(inner, cfg, opts...) (*Provider, error)`; `cfg.Cache` is required |
+| `fallback.New(providers...) *Provider` | `fallback.New(fallback.Config{Providers: providers}, opts...)` or `fallback.Of(providers...)`, which return an error |
+| `privacy.NewProvider(inner, vault)` | `privacy.New(inner, privacy.Config{Vault: vault}, opts...)`, which returns an error; `Media` and `AllowAudioOut` move into `privacy.Config` |
+| `otel.NewTracedProvider(inner, tracer, opts...) *TracedProvider` | the same call, which returns an error |
+| `convert.New(inner, policy, layers...)` | `convert.New(inner, convert.Config{Policy: policy, Layers: layers}, opts...)`, which returns an error |
+| `convert.NewBatch(inner, policy, layers...)` | `convert.NewBatch(inner, convert.Config{Policy: policy, Layers: layers}, opts...)`, which returns an error |
+| `router.New(cfg)`, `split.New(cfg)` | the same calls with optional `opts...`; errors wrap `types.ErrInvalidConfig` |
+| `types.ModelSwitcher` | `types.TargetSwitcher` |
+| `p.WithModel(m)` | `p.WithTarget(types.ModelTarget(m))`, which returns an error |
+| `types.ProviderWithModel(p, m)` | `types.ProviderWithTarget(p, types.ModelTarget(m))` |
+| `types.Closer.Close() error` | `Close(ctx context.Context) error` |
+| `types.CloseProvider(p)` | `types.CloseProvider(ctx, p)` |
+| `types.Dep[T](deps, "name")` | `types.Dep(deps, types.NewKey[T]("name"))` |
+| `FallbackError.Unwrap() []error` | `FallbackError.Unwrap() error`, the last attempt; all attempts stay in `Errors` |
+| `pgstore.NewStore(pool, conv, logger)` (agent) | `pgstore.New(pgstore.Config{Pool: pool, ConversationID: conv, Logger: logger})`, which returns an error |
+| `pgstore.NewScopedStore(pool, scope, conv, logger)` (agent) | `pgstore.New(pgstore.Config{Pool: pool, Scope: scope, ConversationID: conv, Logger: logger})` |
+| `pgstore.NewStore(pool, logger, opts...)` (rag) | `pgstore.New(pgstore.Config{Pool: pool, Logger: logger}, opts...)`, which returns an error; an invalid search option fails here instead of on every search |
+| `pgstore.NewStore(pool, logger, opts...)` (knowledge), `pgstore.StoreOption` | `pgstore.New(pgstore.Config{Pool: pool, Logger: logger}, opts...)`, `pgstore.Option` |
+| `pgstore.New(pool, cfg)` (memory) | `pgstore.New(cfg, opts...)` with `cfg.Pool` set |
+| `pgstore.New(ctx, pool, tenant)` (eval) | `pgstore.New(ctx, pgstore.Config{Pool: pool, Tenant: tenant})` |
+| `filewal.New(path)` | `filewal.New(filewal.Config{Path: path})` |
+| `batch.NewRunner(p, store, opts...) *Runner` | `batch.NewRunner(batch.RunnerConfig{Provider: p, Store: store}, opts...) (*Runner, error)` |
+| `rag.NewPipeline(opts...)` | `rag.New(rag.Config{}, opts...)`; set fields on the `Config` or pass options |
+| `knowledge.NewGraph(ctx, opts...)` | `knowledge.New(knowledge.Config{}, opts...)` |
+| `harness.Runner{...}` literal | `harness.New(harness.Config{...}, opts...) (*Runner, error)`; a `Client` is required |
+| `mcp.Client.Close()`, `mcp.Pool.Close()`, `bind.Bound.Close()` | `Close(ctx)` |
+| `notify.Hub.Close()` | `notify.Hub.Close(ctx) error` |
+| `agui.Mapper.Close() []Event` | `agui.Mapper.Flush() []Event` |
+| `types.NewSystemMessage(s)`, `NewUserMessage(s)`, `NewAssistantMessage(s)` | `types.SystemMsg(types.Text(s))`, `types.UserMsg(types.Text(s))`, `types.AssistantMsg(types.Text(s))` |
+| `types.NewToolResultMessage(rs...)`, `NewUserToolResultMessage(rs...)` | `types.ToolResults(rs...)`, `types.UserToolResults(rs...)` |
+| `types.NewFileMessage(uri, mt)` | `types.UserMsg(types.Media(types.URL(uri, mt)))` |
+| `types.NewUserMessageWithFiles(text, files...)` | `types.UserMsg` with a `types.Text` part followed by `types.Media` parts |
+| `types.ConfigContent`, `RouteContent`, `SteerContent`, `TruncationContent`, `HandoffContent`, `FeedbackContent`, `ApprovalContent`, `GuardrailContent`, `CompactionContent` | `types.ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart`, `CompactionPart` |
+| `types.RouteContentFrom(d)` | `types.RoutePartFrom(d)` |
+| `types.IsMetadataContent(c)` | `types.IsMetadata(p)` |
+| `types.FileContent{URI, MediaType, Data, Filename}` | `types.Media(types.Bytes(mt, data).With(types.Source{URI: uri, Filename: name}))`, or a `Source` |
+| `types.ToolResultBlock`, `ToolResultBlockKind`, `ToolResultBlockText`, `ToolResultBlockImage`, `ToolResultBlockFile`, `ToolResultBlockJSON` | `types.ToolOutputPart`: `types.Text`, `types.JSONPart`, `types.Image`, `types.Document`, `types.Audio`, `types.File` |
+| `types.TextStartDelta`, `TextContentDelta`, `TextEndDelta`, `ThinkingStartDelta`, `ThinkingContentDelta`, `ThinkingEndDelta`, `ToolCallStartDelta`, `ToolCallArgumentDelta`, `ToolCallEndDelta`, `ServerToolCallDelta`, `ServerToolResultDelta` | `types.PartStart`, `types.PartDelta`, `types.PartEnd` |
+| `types.UpgradeV1Stream(ch)` | `types.NewDecoder().Decode(env)` per envelope, or `types.NewV1Upgrader()` per decoded delta |
+| `eval.RunExperiment(...)` | `eval.Compare(...)`; pass `eval.WithName("experiment")` to keep the old default name |
+| `eval.ExperimentResult`, `ExperimentConfig`, `ExperimentOption` | `eval.Comparison`, `eval.Config`, `eval.Option` |
+| `eval.WithExperimentName`, `WithExperimentLogger` | `eval.WithName`, `eval.WithLogger` |
+| `eval.WithRunOptions(opts...)` | pass the options directly |
+| `eval.WriteExperiment`, `ReadExperiment` | `eval.WriteComparison`, `eval.ReadComparison` |
+| `harness.Experiment`, `harness.FilterExperiments` | `harness.Script`, `harness.FilterScripts` |
+
+Most of the renames are mechanical. For example:
+
+```sh
+gofmt -r 'agent.AgentConfig -> agent.Config' -w .
+gofmt -r 'agent.AgentOption -> agent.Option' -w .
+gofmt -r 'types.ConfigContent -> types.ConfigPart' -w .
+gofmt -r 'eval.ExperimentResult -> eval.Comparison' -w .
+```
+
+The constructors that now return an error need an edit at each call site; the compiler lists every one.
