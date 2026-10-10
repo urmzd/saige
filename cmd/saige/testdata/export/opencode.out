@@ -1,0 +1,6 @@
+create           opencode.json
+create           .agents/skills/tidy/SKILL.md
+create           .agents/skills/tidy/scripts/tidy.sh
+create           .opencode/agents/helper.md
+note: opencode has no MCP elicitation: an approval the agent needs is held, and you decide it with saige approvals
+note: opencode's agent format cannot express approval of agent helper; the saige-helper MCP tool runs the agent with all of them

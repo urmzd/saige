@@ -29,6 +29,7 @@ Start with [concepts](concepts.md), then open the guide for the piece you are wo
 | [Orchestration policies](orchestration-policies.md) | Conversation ownership, subagent results, handoff return links, sticky routing, approval limits |
 | [Context management](context-management.md) | Compaction strategies, chains, triggers, summary budget, records, per-agent policy and handoff groups |
 | [Agent definitions](agent-definitions.md) | An agent as a versioned Markdown file: format, sources and trust, resolution and pinning, binding, CLI and MCP server |
+| [Harnesses](harnesses.md) | Running a saige agent in Claude Code, Codex, Gemini CLI, opencode, Cursor and ACP editors: export, launch, acp, held approvals |
 | [Approval policy and grants](approval-policy.md) | Grants by scope and expiry, denial limits, capability defaults, replay |
 | [Run hooks](hooks.md) | Lifecycle events that observe, change or abort a run; ordering, timeouts, durable replay, inheritance |
 | [Guardrails](guardrails.md) | Input and output checks that pass, block or rewrite; parallel mode, tripwires, built-ins, budget, relation to gates and redaction |

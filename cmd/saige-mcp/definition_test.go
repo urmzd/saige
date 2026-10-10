@@ -42,17 +42,17 @@ func TestDefinitionTool(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("got %v %v", ok, err)
 	}
-	if at.name != "searcher" || at.description != "The searcher agent." || at.gated || at.newBound == nil {
+	if at.name != "searcher" || at.description != "The searcher agent." || at.gated || at.newSession == nil {
 		t.Fatalf("tool %+v", at)
 	}
-	a, release, err := at.newBound(context.Background())
+	ag, err := at.newSession(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info := a.Info(); info.Name != "searcher" || len(info.Tools) != 1 || info.Tools[0] != "kg_search" {
+	if info := ag.Agent.Info(); info.Name != "searcher" || len(info.Tools) != 1 || info.Tools[0] != "kg_search" {
 		t.Fatalf("agent %+v", info)
 	}
-	release()
+	ag.Release()
 
 	// Writes carry markers, so the tool is published as gated.
 	at, _, err = newDefinitionTool(context.Background(), flags("editor@^1"), packs)

@@ -65,6 +65,10 @@ func newServer(version string) *mcp.Server {
 // bridge publishes saige tools on an MCP server.
 type bridge struct {
 	approval approvalMode
+	// held, when set, holds an agent's approval the client cannot ask
+	// about (no elicitation) until a person decides it with saige
+	// approvals; nil refuses such calls.
+	held *heldApprovals
 }
 
 // approvalMarker returns the marker that gates tool, looking through nested

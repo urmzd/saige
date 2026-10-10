@@ -1,0 +1,42 @@
+== .agents/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .agents/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
+== .claude/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .claude/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
+== .kiro/skills/tidy/SKILL.md ==
+---
+name: tidy
+description: Tidy up text files.
+license: MIT
+metadata:
+  generated-by: saige export
+  owner: docs
+---
+
+Remove trailing whitespace.
+== .kiro/skills/tidy/scripts/tidy.sh ==
+#!/bin/sh
+sed -i 's/ *$//' "$1"
