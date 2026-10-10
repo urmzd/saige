@@ -43,7 +43,7 @@ the SDK wire representation. [Google thinking controls](https://ai.google.dev/ge
 
 Anthropic adaptive-only families reject manual budgets. `WithReasoningEffort` enables adaptive
 thinking and sends output effort. Manual thinking rejects non-default temperature, top-k, and
-top-p below 0.95. This adapter uses a forced tool for schema output.
+top-p below 0.95. This adapter uses a forced tool for schema output, or `output_config.format` on a model that rejects forced tools.
 Manual thinking cannot use this path. Adaptive thinking can use it when the model permits forced tools. [Anthropic thinking rules](https://platform.claude.com/docs/en/build-with-claude/thinking).
 
 Ollama validates `top_k` as a nonnegative integer. Strings, fractions, and negative values fail
@@ -121,7 +121,7 @@ in ways no amount of interface uniformity hides:
 |---|---|---|---|---|---|---|
 | How is reasoning sized? | manual budget or adaptive effort | effort enum | not available | token budget | thinking level | on/off toggle |
 | Does it take `temperature`? | per model and thinking mode | per model and effort | yes | yes | yes | yes |
-| Schema output | emulated via forced tool call | native | native | native | native | native |
+| Schema output | forced tool call, or native on models that reject forcing | native | native | native | native | native |
 | Reasoning signature round-trip | required | n/a | n/a | n/a | required | none returned |
 | Server-side web search | yes | yes | no | yes | yes | no |
 | Cost | per Mtok | per Mtok | per Mtok | per Mtok, tiered | per Mtok | free |

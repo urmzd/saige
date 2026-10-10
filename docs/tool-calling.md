@@ -93,7 +93,7 @@ Vendor and model limits, from the catalog (`agent/provider/catalog/data/default.
 
 | Model or runtime | Limit |
 | --- | --- |
-| claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1, claude-mythos-5-1 | `reasoning.forced_tool_choice: false`: the API rejects `required` and `named`. saige rejects them locally, and structured output uses the `final_answer` tool with choice auto. |
+| claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1, claude-mythos-5-1 | `reasoning.forced_tool_choice: false`: the API rejects `required` and `named`. saige rejects them locally, and structured output uses `output_config.format`. |
 | gpt-6-luna, gpt-6-sol (`chat_completions_tools: no_reasoning`) | On Chat Completions, tools work only at reasoning effort `none`. With tools and no effort, the adapter sends `none`; another raw effort fails locally. `provider.Build` serves the model on the Responses API instead when a reasoning dial is on and that API can send the request. |
 | gpt-6.1-sol, gpt-6-astra (`responses_only`) | Tools need the Responses API. `provider.Build` serves these models through `openai.NewResponsesAdapter` for every request. |
 | Ollama | The native API has no `tool_choice`. The adapter emulates it by filtering the tools it sends: `none` sends none, `named` sends only that tool (the model may still answer without calling it). `required` cannot be emulated and is rejected (`agent/provider/ollama/tools.go`). |

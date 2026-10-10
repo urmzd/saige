@@ -47,7 +47,7 @@ func (richTool) ExecuteRich(context.Context, map[string]any) (agenttypes.ToolRes
 func session(t *testing.T, b bridge, elicit func(*mcp.ElicitRequest) (*mcp.ElicitResult, error), tools ...agenttypes.Tool) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := mcp.NewServer(&mcp.Implementation{Name: "saige-mcp", Version: "test"}, nil)
+	server := newServer("test")
 	for _, tool := range tools {
 		b.register(server, tool)
 	}
@@ -236,5 +236,23 @@ func TestParseApprovalMode(t *testing.T) {
 	}
 	if _, err := parseApprovalMode("yolo"); err == nil {
 		t.Error("unknown mode accepted")
+	}
+}
+
+// TestServerNegotiatesHandshakeProtocol checks that a client asking for the
+// newest protocol is answered with a handshake-era version, where approval
+// can still elicit while a call runs.
+func TestServerNegotiatesHandshakeProtocol(t *testing.T) {
+	var runs atomic.Int64
+	asked := false
+	cs := session(t, bridge{approval: approvalElicit}, func(*mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		asked = true
+		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"approve": true}}, nil
+	}, storeTool(&runs))
+	if got := cs.InitializeResult().ProtocolVersion; got >= "2026-07-28" || got == "" {
+		t.Fatalf("negotiated %q, want a version before 2026-07-28", got)
+	}
+	if res := call(t, cs, "store"); res.IsError || !asked || runs.Load() != 1 {
+		t.Fatalf("IsError=%v asked=%v runs=%d, want an approved run", res.IsError, asked, runs.Load())
 	}
 }

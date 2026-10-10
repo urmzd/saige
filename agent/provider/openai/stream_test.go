@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -278,6 +279,13 @@ func TestHTTPErrorClassification(t *testing.T) {
 			}
 			if types.KindOf(r.errs[0]) != tc.wantKind || types.RetryAfter(r.errs[0]) != tc.wantAfter {
 				t.Fatalf("kind = %v after = %v: %v", types.KindOf(r.errs[0]), types.RetryAfter(r.errs[0]), r.errs[0])
+			}
+			// The SDK's own message is a bare status line; the API's
+			// message must still reach the caller, without the request URL.
+			var body struct{ Error struct{ Message string } }
+			_ = json.Unmarshal([]byte(tc.body), &body)
+			if msg := r.errs[0].Error(); !strings.Contains(msg, body.Error.Message) || strings.Contains(msg, server.URL) {
+				t.Fatalf("error = %q, want the API message %q and no URL", msg, body.Error.Message)
 			}
 		})
 	}

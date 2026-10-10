@@ -42,6 +42,26 @@ func parseApprovalMode(s string) (approvalMode, error) {
 	return "", fmt.Errorf("unknown --approval %q: use elicit, host or deny", s)
 }
 
+// handshakeProtocols lists the MCP protocol versions saige-mcp negotiates:
+// every version the SDK supports before 2026-07-28. That revision forbids a
+// server-initiated elicitation while a call runs, which approval relies on,
+// both for a direct tool call and for the calls an agent tool makes mid-run.
+func handshakeProtocols() []string {
+	var out []string
+	for _, v := range mcp.SupportedProtocolVersions() {
+		if v < "2026-07-28" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// newServer creates the saige-mcp server, limited to handshakeProtocols.
+func newServer(version string) *mcp.Server {
+	return mcp.NewServer(&mcp.Implementation{Name: "saige-mcp", Version: version},
+		&mcp.ServerOptions{SupportedProtocolVersions: handshakeProtocols()})
+}
+
 // bridge publishes saige tools on an MCP server.
 type bridge struct {
 	approval approvalMode

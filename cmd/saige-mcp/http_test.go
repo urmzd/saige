@@ -64,7 +64,7 @@ func (s *statusTransport) saw(code int) bool {
 // httpServer serves the bridged tools over streamable HTTP on a test server.
 func httpServer(t *testing.T, b bridge, cfg httpConfig, tools ...agenttypes.Tool) *httptest.Server {
 	t.Helper()
-	server := mcp.NewServer(&mcp.Implementation{Name: "saige-mcp", Version: "test"}, nil)
+	server := newServer("test")
 	for _, tool := range tools {
 		b.register(server, tool)
 	}
@@ -166,10 +166,11 @@ func TestHTTPRateLimitsPerToken(t *testing.T) {
 	now := time.Unix(0, 0)
 	var mu sync.Mutex
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	// The handshake is two requests (initialize, initialized); the
-	// standalone event stream is a third.
+	// The handshake is three requests (a server/discover probe the server
+	// refuses, initialize, initialized); the standalone event stream is a
+	// fourth.
 	ts := httpServer(t, bridge{approval: approvalElicit},
-		httpConfig{tokens: []string{testToken, other}, rate: 1, burst: 4, now: clock}, echoTool())
+		httpConfig{tokens: []string{testToken, other}, rate: 1, burst: 5, now: clock}, echoTool())
 
 	cs, st, err := httpClient(t, ts, testToken, nil)
 	if err != nil {
