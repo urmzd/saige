@@ -221,3 +221,126 @@ func TestBudgetCarve(t *testing.T) {
 		t.Fatalf("an unpriced converter was admitted under a cost limit: %v", err)
 	}
 }
+
+// lowerView plans and applies msgs on the Chat-like offering.
+func lowerView(t *testing.T, msgs []types.Message) ([]types.Message, types.ConversionReport) {
+	t.Helper()
+	pl, err := PlanConversions(visionChat(), msgs, types.ConversionPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pl.Rewrites() || pl.Converts() {
+		t.Fatalf("plan rewrites=%v converts=%v, want a lowering only", pl.Rewrites(), pl.Converts())
+	}
+	view, rep, err := pl.Apply(t.Context(), msgs, Runtime{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return view, rep
+}
+
+// describeView renders a view as one line per message, for comparisons.
+func describeView(msgs []types.Message) []string {
+	var out []string
+	for _, m := range msgs {
+		var b strings.Builder
+		b.WriteString(string(m.Role()) + ":")
+		for _, p := range types.PartsOf(m) {
+			switch v := p.(type) {
+			case types.TextPart:
+				b.WriteString(" text(" + v.Text + ")")
+			case types.ToolCallPart:
+				b.WriteString(" call(" + v.ID + ")")
+			case types.ToolResultPart:
+				b.WriteString(" result(" + v.CallID + ":")
+				for _, np := range v.Parts {
+					if t, ok := np.(types.TextPart); ok {
+						b.WriteString(" " + t.Text)
+					} else {
+						b.WriteString(" " + string(np.Kind()))
+					}
+				}
+				b.WriteString(")")
+			default:
+				src, _ := types.SourceOf(p)
+				b.WriteString(" " + string(p.Kind()) + "(" + string(src.Inline) + ")")
+			}
+		}
+		out = append(out, b.String())
+	}
+	return out
+}
+
+func sameView(t *testing.T, got []types.Message, want ...string) {
+	t.Helper()
+	if g := describeView(got); strings.Join(g, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("view:\n%s\nwant:\n%s", strings.Join(g, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A tool result image on a surface whose tool results carry text only is
+// moved to a user message after the tool results; the record keeps it.
+func TestApplyLowersAToolResultImage(t *testing.T) {
+	img := pngPart("red").(types.ToolOutputPart)
+	msgs := []types.Message{
+		types.UserMsg(types.Text("what color?")),
+		types.AssistantMsg(types.ToolCallPart{ID: "c1", Name: "snapshot"}),
+		types.ToolResults(types.ToolOK("c1", types.Text("snapshot taken"), img)),
+	}
+	view, rep := lowerView(t, msgs)
+	sameView(t, view,
+		"user: text(what color?)",
+		"assistant: call(c1)",
+		"system: result(c1: snapshot taken [image image/png attached in the next message])",
+		"user: text([output of tool call c1 (snapshot)]) image(red)")
+	if _, ok := msgs[2].(types.SystemMessage).Parts[0].(types.ToolResultPart).Parts[1].(types.ImagePart); !ok || len(msgs) != 3 {
+		t.Fatal("the record changed")
+	}
+	if len(rep.Decisions) != 1 || rep.Decisions[0].Action != types.DecisionLowered || rep.Decisions[0].Path.Nested != 1 {
+		t.Errorf("report = %+v", rep)
+	}
+}
+
+// Every lowered part of one turn goes into one follow-up message, in order,
+// labelled by its call, after all of the turn's tool results; text parts
+// stay in their tool results.
+func TestApplyLowersOneFollowUpPerTurn(t *testing.T) {
+	part := func(s string) types.ToolOutputPart { return pngPart(s).(types.ToolOutputPart) }
+	msgs := []types.Message{
+		types.UserMsg(types.Text("compare")),
+		types.AssistantMsg(types.ToolCallPart{ID: "c1", Name: "a"}, types.ToolCallPart{ID: "c2", Name: "b"}, types.ToolCallPart{ID: "c3", Name: "c"}),
+		types.ToolResults(
+			types.ToolOK("c1", part("one"), types.Text("between"), part("two")),
+			types.ToolOK("c2", types.Text("text only")),
+		),
+		types.ToolResults(types.ToolOK("c3", part("three"))),
+		types.AssistantMsg(types.Text("next turn"), types.ToolCallPart{ID: "c4", Name: "a"}),
+		types.UserMsg(types.ToolOK("c4", part("four")), types.Text("and say why")),
+	}
+	view, _ := lowerView(t, msgs)
+	sameView(t, view,
+		"user: text(compare)",
+		"assistant: call(c1) call(c2) call(c3)",
+		"system: result(c1: [image image/png attached in the next message] between [image image/png attached in the next message]) result(c2: text only)",
+		"system: result(c3: [image image/png attached in the next message])",
+		"user: text([output of tool call c1 (a)]) image(one) image(two) text([output of tool call c3 (c)]) image(three)",
+		"assistant: text(next turn) call(c4)",
+		"user: result(c4: [image image/png attached in the next message])",
+		"user: text([output of tool call c4 (a)]) image(four)",
+		"user: text(and say why)")
+}
+
+// An offering that takes media inline in tool results is not rewritten.
+func TestApplyLeavesInlineToolResultMedia(t *testing.T) {
+	o := visionChat()
+	o.Modalities.ToolResult = map[types.Modality]string{types.ModalityImage: types.ToolResultInline}
+	msgs := []types.Message{types.AssistantMsg(types.ToolCallPart{ID: "c1"}),
+		types.ToolResults(types.ToolOK("c1", pngPart("x").(types.ToolOutputPart)))}
+	pl, err := PlanConversions(o, msgs, types.ConversionPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.Rewrites() || pl.Decisions[0].Action != types.DecisionNative {
+		t.Fatalf("plan = %+v, want the image native", pl.Decisions)
+	}
+}

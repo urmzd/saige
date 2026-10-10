@@ -73,7 +73,7 @@ func (b *Batch) Submit(ctx context.Context, requests []types.BatchRequest, opts 
 		if err != nil {
 			return types.BatchHandle{}, fmt.Errorf("batch request %q: %w", r.CustomID, err)
 		}
-		if ok && pl.Converts() {
+		if ok && pl.Rewrites() {
 			plans[i] = &pl
 		}
 	}

@@ -306,3 +306,39 @@ func TestLiveImageWithoutSystemPromptOnVertex(t *testing.T) {
 	}
 	spend(t, "vertex image", b)
 }
+
+// snapshotTool returns a red square as a tool result image.
+type snapshotTool struct{ png []byte }
+
+func (s snapshotTool) Definition() types.ToolDef {
+	return types.ToolDef{Name: "snapshot", Description: "Takes a snapshot of the screen and returns it as an image.",
+		Parameters: types.ParameterSchema{Type: "object"}}
+}
+
+func (s snapshotTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	r, err := s.ExecuteRich(ctx, args)
+	return r.Text(), err
+}
+
+func (s snapshotTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult, error) {
+	return types.ImageResult("snapshot taken", types.MediaPNG, s.png), nil
+}
+
+// A tool that returns an image, on gpt-6-luna through Chat Completions,
+// whose tool messages carry text only: the image reaches the model in a
+// user message after the tool results.
+func TestLiveToolImageOnChat(t *testing.T) {
+	live(t, "OPENAI_API_KEY")
+	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01)})
+	p := build(t, provider.Config{Provider: provider.OpenAI, Model: "gpt-6-luna"})
+	if o, _ := convert.Target(p); o.Endpoint.Surface != types.SurfaceOpenAIChat {
+		t.Fatalf("serving surface = %q, want Chat Completions", o.Endpoint.Surface)
+	}
+	a := must.Get(agent.New(agent.Config{Provider: p, Budget: b, Tools: types.NewToolRegistry(snapshotTool{png: redSquare(t)})}))
+	answer, _, _, _ := run(t, a, types.UserMsg(types.Text("Call the snapshot tool, then tell me the main color of the image. Reply with one word.")))
+	if !strings.Contains(strings.ToLower(answer), "red") {
+		t.Fatalf("answer = %q", answer)
+	}
+	t.Logf("answer %q", answer)
+	spend(t, "tool image", b)
+}

@@ -20,7 +20,7 @@ For each media part, including media inside a tool result, the planner decides o
 | Decision | When |
 | --- | --- |
 | `native` | The offering's input modalities list the media type, the part is within the limits (bytes, count), and it has a locator the endpoint reads: inline bytes, a URI with a scheme the endpoint fetches (`gs` on Vertex AI, `https`), or a file in the endpoint's own store. |
-| `lowered` | Media in a tool result that the offering declares `follow_up_user` for (`modalities.tool_result`): the adapter sends it in a user message after the tool results. |
+| `lowered` | Media in a tool result that the offering declares `follow_up_user` for (`modalities.tool_result`). The request view keeps the tool result's text with a notice (`[image image/png attached in the next message]`) and moves the media to one user message right after that turn's tool results, each tool call's media under a label (`[output of tool call call_1 (snapshot)]`). The stored conversation is unchanged. OpenAI Chat Completions offerings lower images this way; Responses, Anthropic and Gemini 3 take them inline. |
 | one of the actions below | The part is not native, and the modality dial permits the action and a registered converter accepts the part. |
 | `rejected` | Nothing permitted can serve the part. The attempt fails with an error matching `types.ErrModalityUnsupported` (and `types.ErrInvalidModelConfig`), naming the part's path, kind, media type and reason. Media whose bytes cannot be reached also matches `types.ErrMediaUnavailable`. |
 

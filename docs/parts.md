@@ -158,7 +158,7 @@ What a model takes is declared by its catalog offering: media types, size and co
 | Audio | `types.Audio` | no | WAV or MP3 bytes | no | yes | no |
 | Video | `types.Video` | no | no | no | by upload, `https`, YouTube, or `gs://` on Vertex AI | no |
 | File | `types.File` | as a code execution upload | no | no | no | no |
-| Media in a tool result | `types.ToolOK(id, parts...)` | text, JSON, images, documents | text only | text, images, files | images, PDFs, text on Gemini 3 | images |
+| Media in a tool result | `types.ToolOK(id, parts...)` | text, JSON, images, documents | text; images move to a user message after the tool results | text, images, files | images, PDFs, text on Gemini 3 | images |
 
 Google sends inline bytes up to 20 MB; upload larger media and pass its URI. A part the adapter cannot send fails before the request with an error that names the part and matches `types.ErrModalityUnsupported`, or `types.ErrMediaUnavailable` when no locator can be reached.
 

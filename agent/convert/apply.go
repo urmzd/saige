@@ -30,6 +30,10 @@ const StepPrefix = "convert:"
 // conversation keeps its original parts, and only the view sent to the
 // provider is converted.
 //
+// A lowered part, media in a tool result the target takes only from the
+// user, is replaced in the tool result by a notice and moved to a user
+// message placed right after the tool results of its turn (see lower).
+//
 // Each conversion is looked up in cache by the policy's scope, the
 // converter's Name@Version and the part's digest (or URI); a miss runs as
 // a durable step under rt.Steps and, for a priced converter, is carved from
@@ -39,10 +43,14 @@ func (p Plan) Apply(ctx context.Context, msgs []types.Message, rt Runtime, cache
 	subst := map[types.PartPath][]types.Part{}
 	eg, _ := types.EgressFrom(ctx)
 	ex := executor{plan: p, rt: rt, cache: cache, egress: eg}
+	var lowered []Decision
 	for _, d := range p.Decisions {
 		dec := d.ConversionDecision
 		switch dec.Action {
-		case types.DecisionNative, types.DecisionLowered:
+		case types.DecisionNative:
+		case types.DecisionLowered:
+			subst[dec.Path] = []types.Part{types.TextPart{Text: fmt.Sprintf("[%s attached in the next message]", describePart(d.part))}}
+			lowered = append(lowered, d)
 		case types.DecisionRejected:
 			return nil, rep, &RejectError{Offering: p.Offering, Rejected: []types.ConversionDecision{dec}}
 		case types.DecisionOmitted:
@@ -65,7 +73,106 @@ func (p Plan) Apply(ctx context.Context, msgs []types.Message, rt Runtime, cache
 	if err := tokenizeSubst(ctx, eg.Vault, subst); err != nil {
 		return nil, rep, err
 	}
-	return substitute(msgs, subst), rep, nil
+	return lower(substitute(msgs, subst), followUps(msgs, lowered)), rep, nil
+}
+
+// followUps groups the lowered parts by the message holding their tool
+// result, in request order, each tool result's media under a label naming
+// its call.
+func followUps(msgs []types.Message, lowered []Decision) map[int][]types.UserPart {
+	if len(lowered) == 0 {
+		return nil
+	}
+	names := map[string]string{}
+	for _, m := range msgs {
+		if am, ok := m.(types.AssistantMessage); ok {
+			for _, p := range am.Parts {
+				if c, ok := p.(types.ToolCallPart); ok {
+					names[c.ID] = c.Name
+				}
+			}
+		}
+	}
+	out := map[int][]types.UserPart{}
+	last := types.PartPath{Message: -1}
+	for _, d := range lowered {
+		up, ok := d.part.(types.UserPart)
+		if !ok {
+			continue
+		}
+		mi := d.Path.Message
+		if mi != last.Message || d.Path.Part != last.Part {
+			id := ""
+			if tr, ok := types.PartsOf(msgs[mi])[d.Path.Part].(types.ToolResultPart); ok {
+				id = tr.CallID
+			}
+			label := "[output of tool call " + id
+			if n := names[id]; n != "" {
+				label += " (" + n + ")"
+			}
+			out[mi] = append(out[mi], types.TextPart{Text: label + "]"})
+		}
+		out[mi] = append(out[mi], up)
+		last = d.Path
+	}
+	return out
+}
+
+// lower places the lowered media of each turn in one user message right
+// after that turn's tool results. The tool results of a turn are the run of
+// consecutive messages that hold them; they stay contiguous, so they still
+// answer the assistant's calls directly, and a user message after them is
+// valid on every surface. A user message that holds tool results and its
+// own content is split, the follow-up between the two, as the adapters send
+// tool results before the user's content.
+func lower(msgs []types.Message, follow map[int][]types.UserPart) []types.Message {
+	if len(follow) == 0 {
+		return msgs
+	}
+	out := make([]types.Message, 0, len(msgs)+len(follow))
+	var pending []types.UserPart
+	flush := func() {
+		if len(pending) > 0 {
+			out = append(out, types.UserMessage{Parts: pending})
+			pending = nil
+		}
+	}
+	for mi, msg := range msgs {
+		pending = append(pending, follow[mi]...)
+		if um, ok := msg.(types.UserMessage); ok && len(pending) > 0 && holdsToolResult(um) {
+			var results, rest []types.UserPart
+			own := false
+			for _, p := range um.Parts {
+				if _, ok := p.(types.ToolResultPart); ok {
+					results = append(results, p)
+					continue
+				}
+				rest = append(rest, p)
+				own = own || !types.IsMetadata(p)
+			}
+			if own {
+				out = append(out, types.UserMessage{Parts: results})
+				flush()
+				out = append(out, types.UserMessage{Parts: rest})
+				continue
+			}
+		}
+		out = append(out, msg)
+		if mi+1 == len(msgs) || !holdsToolResult(msgs[mi+1]) {
+			flush()
+		}
+	}
+	return out
+}
+
+// holdsToolResult reports whether m carries a tool result.
+func holdsToolResult(m types.Message) bool {
+	for _, p := range types.PartsOf(m) {
+		if _, ok := p.(types.ToolResultPart); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // tokenizeSubst tokenizes the text of every replacement with the privacy

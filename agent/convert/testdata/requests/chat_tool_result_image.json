@@ -1,0 +1,73 @@
+{
+  "messages": [
+    {
+      "content": "what color is the snapshot?",
+      "role": "user"
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "function": {
+            "arguments": "{}",
+            "name": "snapshot"
+          },
+          "type": "function"
+        },
+        {
+          "id": "call_2",
+          "function": {
+            "arguments": "{}",
+            "name": "snapshot"
+          },
+          "type": "function"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": "snapshot taken\n[image image/png attached in the next message]",
+      "tool_call_id": "call_1",
+      "role": "tool"
+    },
+    {
+      "content": "no change",
+      "tool_call_id": "call_2",
+      "role": "tool"
+    },
+    {
+      "content": [
+        {
+          "text": "[output of tool call call_1 (snapshot)]",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgpmaXh0dXJl"
+          },
+          "type": "image_url"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "reasoning_effort": "none",
+  "stream_options": {
+    "include_usage": true
+  },
+  "tools": [
+    {
+      "function": {
+        "name": "snapshot",
+        "description": "Takes a snapshot",
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ],
+  "stream": true
+}
