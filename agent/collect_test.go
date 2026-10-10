@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestCollect(t *testing.T) {
@@ -59,7 +60,7 @@ func TestCollect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &agenttest.ScriptedProvider{Responses: tt.responses, Errors: tt.errs}
-			a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(lookup, broken)}, WithMaxConsecutiveErrors(-1))
+			a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(lookup, broken)}, WithMaxConsecutiveErrors(-1)))
 			var seen int
 			tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), func(types.Delta) { seen++ })
 			if (err != nil) != tt.wantErr {
@@ -102,7 +103,7 @@ func TestCollect(t *testing.T) {
 
 func TestCollectText(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hi")}}
-	a := NewAgent(AgentConfig{Provider: p})
+	a := must.Get(New(Config{Provider: p}))
 	text, err := CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 	if err != nil || text != "hi" {
 		t.Fatalf("CollectText = %q, %v", text, err)
@@ -116,7 +117,7 @@ func TestCollectIgnoresSubAgentText(t *testing.T) {
 		agenttest.TextResponse("child text"),
 		agenttest.TextResponse("parent text"),
 	}}
-	a := NewAgent(AgentConfig{Provider: p}, WithSubAgents(child), WithSequentialTools())
+	a := must.Get(New(Config{Provider: p}, WithSubAgents(child), WithSequentialTools()))
 	tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), nil)
 	if err != nil {
 		t.Fatal(err)

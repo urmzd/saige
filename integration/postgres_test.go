@@ -12,6 +12,7 @@ import (
 	agentpgstore "github.com/urmzd/saige/agent/pgstore"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/embedderregistry"
 	"github.com/urmzd/saige/rag/extractor"
@@ -30,11 +31,11 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	ctx := testContext(t, 10*time.Minute)
 
 	store := agentpgstore.NewStore(pool, uuid.NewString(), nil)
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "persistent",
 		SystemPrompt: "You are a concise assistant.",
 		Provider:     ollama.NewAdapter(client),
-	}, agentsdk.WithStore(store))
+	}, agentsdk.WithStore(store)))
 
 	const question = "Reply with exactly one word: pong"
 	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})

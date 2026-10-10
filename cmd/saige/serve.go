@@ -131,7 +131,7 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 					if err != nil {
 						return agenthost.Agent{}, err
 					}
-					return agenthost.FromBound(b), nil
+					return agenthost.FromBound(b)
 				}
 				return listenAndServe(ctx, srvCtx, cmd, addr, opts, -1)
 			}
@@ -152,11 +152,11 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			tools = append(tools, packTools...)
 
 			opts.newAgent = func() (*agentsdk.Agent, error) {
-				cfg := agentsdk.AgentConfig{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
+				cfg := agentsdk.Config{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
 				if len(tools) > 0 {
 					cfg.Tools = types.NewToolRegistry(tools...)
 				}
-				return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter})), nil
+				return agentsdk.New(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter}))
 			}
 			return listenAndServe(ctx, srvCtx, cmd, addr, opts, len(tools))
 		},

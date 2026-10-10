@@ -133,7 +133,7 @@ func TestLiveBurst(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					p := retry.New(&countingProvider{inner: adapter, stats: stats}, cfg)
+					p := must.Get(retry.New(&countingProvider{inner: adapter, stats: stats}, cfg))
 					began := time.Now()
 					text, err := types.GenerateText(ctx, p, prompt)
 					stats.mu.Lock()

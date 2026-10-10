@@ -15,6 +15,7 @@ import (
 	agenttypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/cmd/internal/agenthost"
 	"github.com/urmzd/saige/cmd/internal/approvals"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // heldSession serves at with held approvals in a temporary store, to a
@@ -145,7 +146,7 @@ func TestHeldApprovalGrantCap(t *testing.T) {
 	inner := at.newAgent
 	at.newAgent = nil
 	at.newSession = func(context.Context) (agenthost.Agent, error) {
-		return agenthost.Agent{Agent: inner(), MaxGrant: agenttypes.GrantOnce}, nil
+		return agenthost.Agent{Agent: must.Get(inner()), MaxGrant: agenttypes.GrantOnce}, nil
 	}
 	cs, store := heldSession(t, at, time.Minute)
 	token := heldToken(t, callAgent(t, cs, "store"))

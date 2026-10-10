@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestToolCitationsReachTheEndAndTheResult checks that a rich tool's
@@ -19,7 +20,7 @@ func TestToolCitationsReachTheEndAndTheResult(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "cite", map[string]any{}),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Name: "a", Provider: provider, Tools: types.NewToolRegistry(tool)})
+	a := must.Get(New(Config{Name: "a", Provider: provider, Tools: types.NewToolRegistry(tool)}))
 	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas())
 	agenttest.AssertNoErrors(t, deltas)
 
@@ -53,7 +54,7 @@ func TestToolCitationsSurviveReplay(t *testing.T) {
 	runner.seed("tool-call-1", types.StepResult{Kind: types.StepKindTool, ToolCallID: "call-1", ToolResult: "recorded",
 		ToolCitations: []types.Citation{cite}})
 	tool := &citingTool{}
-	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}))
 	if _, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("go"))}, ""); err != nil {
 		t.Fatal(err)
 	}

@@ -47,6 +47,6 @@ func cloneLinks(links map[string][]string) map[string][]string {
 	return out
 }
 
-func WithLinkPolicy(policy LinkPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.LinkPolicy = policy }
+func WithLinkPolicy(policy LinkPolicy) Option {
+	return func(cfg *Config) { cfg.LinkPolicy = policy }
 }

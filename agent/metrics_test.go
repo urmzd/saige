@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // recordingMetrics captures RecordTokenUsage calls for assertions. It embeds
@@ -93,11 +94,11 @@ func TestRecordTokenUsage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &recordingMetrics{}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:     tt.provider,
 				SystemPrompt: "s",
 				Metrics:      rec,
-			})
+			}))
 
 			deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 			if errs := collectDeltasByType[types.ErrorDelta](deltas); len(errs) != 0 {
@@ -130,11 +131,11 @@ func TestRecordTokenUsage(t *testing.T) {
 // record fresh token usage (no new tokens were produced).
 func TestRecordTokenUsage_CacheHitSkipped(t *testing.T) {
 	rec := &recordingMetrics{}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     cacheHitProvider{prompt: 100, completion: 42},
 		SystemPrompt: "s",
 		Metrics:      rec,
-	})
+	}))
 
 	_ = collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 	if calls := rec.tokenCalls(); len(calls) != 0 {

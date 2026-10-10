@@ -54,7 +54,7 @@ func (c Config) meter() metric.Meter {
 	return mp.Meter(name)
 }
 
-// WithTracing returns an AgentOption that wraps the provider and tools
+// WithTracing returns an Option that wraps the provider and tools
 // with OpenTelemetry tracing, and bridges the Metrics interface to OTel.
 //
 // Tools are wrapped with WrapTool, so marked tools still prompt for approval,
@@ -62,13 +62,13 @@ func (c Config) meter() metric.Meter {
 // tools keep transferring control. Sub-agent and handoff members already
 // configured when the option runs get the same treatment for their own
 // provider and tools; place WithSubAgents and WithHandoffs before WithTracing,
-// or set them on the base AgentConfig.
+// or set them on the base Config.
 //
 // A Metrics sink set before this option keeps receiving every record
 // alongside the OTel bridge. A meter that fails to create its instruments is
 // logged and leaves the existing sink in place.
-func WithTracing(cfg Config) agent.AgentOption {
-	return func(c *agent.AgentConfig) {
+func WithTracing(cfg Config) agent.Option {
+	return func(c *agent.Config) {
 		tracer := cfg.tracer()
 
 		m, err := NewMetrics(cfg.meter())

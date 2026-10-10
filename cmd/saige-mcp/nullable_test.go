@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/urmzd/saige/agent/types"
 	"reflect"
 	"testing"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 func TestMCPExportPreservesNullableAndRequired(t *testing.T) {

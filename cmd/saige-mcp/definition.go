@@ -62,7 +62,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 	if len(packs.Definitions()) > 0 {
 		env.Tools = packs
 	}
-	var opts []agentsdk.AgentOption
+	var opts []agentsdk.Option
 	if f.set["agent-max-iter"] {
 		opts = append(opts, agentsdk.WithMaxIter(f.maxIter))
 	}
@@ -89,7 +89,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 			if err != nil {
 				return agenthost.Agent{}, err
 			}
-			return agenthost.FromBound(b, opts...), nil
+			return agenthost.FromBound(b, opts...)
 		},
 	}
 	if !f.set["agent-tool"] {

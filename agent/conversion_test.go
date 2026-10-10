@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // offeringProvider declares an offering and records what each call sent.
@@ -78,7 +79,7 @@ func doc(text string) types.DocumentPart {
 // instead of reaching it as a placeholder.
 func TestAgentRejectsUnsupportedMediaByDefault(t *testing.T) {
 	p := &offeringProvider{name: "acme", offering: textModel("t")}
-	a := NewAgent(AgentConfig{Provider: p})
+	a := must.Get(New(Config{Provider: p}))
 	_, err := runConverting(t, a, types.UserMsg(types.Text("read this"), doc("notes")))
 	if !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want ErrModalityUnsupported", err)
@@ -96,7 +97,7 @@ func TestAgentExtractorsConvertTheView(t *testing.T) {
 	upper := types.ExtractorFunc(func(_ context.Context, data []byte, _ types.MediaType) ([]types.UserPart, error) {
 		return []types.UserPart{types.Text("EXTRACTED: " + strings.ToUpper(string(data)))}, nil
 	})
-	a := NewAgent(AgentConfig{Provider: p}, WithExtractors(map[types.MediaType]types.Extractor{"text/x-notes": upper}))
+	a := must.Get(New(Config{Provider: p}, WithExtractors(map[types.MediaType]types.Extractor{"text/x-notes": upper})))
 	ds, err := runConverting(t, a, types.UserMsg(types.Text("read this"), doc("notes")))
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +141,7 @@ func TestAgentExtractorsConvertTheView(t *testing.T) {
 func TestAgentModalityDialOmits(t *testing.T) {
 	p := &offeringProvider{name: "acme", offering: textModel("t")}
 	omit := types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{types.ModalityDocument: {types.ActOmit}}}
-	a := NewAgent(AgentConfig{Provider: p}, WithDials(types.Dials{Modality: &omit}))
+	a := must.Get(New(Config{Provider: p}, WithDials(types.Dials{Modality: &omit})))
 	if _, err := runConverting(t, a, types.UserMsg(types.Text("read this"), doc("notes"))); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestAgentModalityDialOmits(t *testing.T) {
 // attempt on Anthropic can leave another vendor's reasoning out.
 func TestAgentRecordsThinkingOrigin(t *testing.T) {
 	p := &offeringProvider{name: "google", offering: textModel("t"), thinking: &types.ThinkingPart{Text: "hmm", Signature: "sig"}}
-	a := NewAgent(AgentConfig{Provider: p})
+	a := must.Get(New(Config{Provider: p}))
 	if _, err := runConverting(t, a, types.UserMsg(types.Text("q"))); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestAgentConversionBudgetAndReplay(t *testing.T) {
 	run := func() *types.Budget {
 		b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(1), PerCallCost: 1000})
 		p := &offeringProvider{name: "acme", offering: textModel("t"), pricing: types.Pricing{InputPerMTok: 1, OutputPerMTok: 1}}
-		a := NewAgent(AgentConfig{Provider: p, Budget: b}, WithConversion(pol))
+		a := must.Get(New(Config{Provider: p, Budget: b}, WithConversion(pol)))
 		if _, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("read"), doc("notes"))}, ""); err != nil {
 			t.Fatal(err)
 		}

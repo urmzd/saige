@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestCompactionLive compacts a long conversation with a real model and asks
@@ -48,12 +49,12 @@ func TestCompactionLive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
-			a := agent.NewAgent(agent.AgentConfig{
+			a := must.Get(agent.New(agent.Config{
 				Provider:     anthropic.NewAdapter(key, "claude-haiku-5-5"),
 				SystemPrompt: "You are a concise assistant.",
 				MaxIter:      1,
 				CompactCfg:   &cfg,
-			})
+			}))
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			stream := a.Invoke(ctx, history)

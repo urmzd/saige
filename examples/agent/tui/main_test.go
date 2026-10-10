@@ -9,6 +9,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestStreamVerbose(t *testing.T) {
@@ -27,7 +28,7 @@ func TestStreamVerbose(t *testing.T) {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "coordinator",
 		SystemPrompt: "Coordinate research.",
 		Provider:     provider,
@@ -39,7 +40,7 @@ func TestStreamVerbose(t *testing.T) {
 				Provider:     researcherProvider,
 			},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(t.Context(), []types.Message{
 		types.UserMsg(types.Text("Research Go features")),

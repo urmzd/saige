@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func policyTool(name string, class types.ToolCapability, calls *atomic.Int32) types.Tool {
@@ -139,8 +140,8 @@ func TestGrantScopes(t *testing.T) {
 				policyTool("edit", types.ToolCapabilityWrite, &runs),
 				policyTool("drop", types.ToolCapabilityDestructive, &runs),
 			)
-			a := NewAgent(AgentConfig{Provider: oneCallPerTurn(tt.calls...), Tools: tools},
-				WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true}))
+			a := must.Get(New(Config{Provider: oneCallPerTurn(tt.calls...), Tools: tools},
+				WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true})))
 			asked, _ := drive(t, a, func(m types.MarkerDelta) Resolution {
 				if m.ToolCallID == "c1" {
 					return approveWith(tt.grant)(m)
@@ -163,8 +164,8 @@ func TestGrantRecordedAndApproverVisible(t *testing.T) {
 		seen = rc.Approval
 		return "ok", nil
 	}, Capability(types.ToolCapabilityWrite))
-	a := NewAgent(AgentConfig{Provider: oneCallPerTurn(call("c1", "write", nil), call("c2", "write", nil)), Tools: types.NewToolRegistry(probe)},
-		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true}))
+	a := must.Get(New(Config{Provider: oneCallPerTurn(call("c1", "write", nil), call("c2", "write", nil)), Tools: types.NewToolRegistry(probe)},
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true})))
 	drive(t, a, approveWith(&types.GrantRequest{Scope: types.GrantTool}))
 	recs := approvalRecords(t, a)
 	if len(recs) != 2 || recs[0].Event != types.ApprovalEventGranted || recs[1].Event != types.ApprovalEventAutoApproved {
@@ -203,8 +204,8 @@ func TestGrantExpiry(t *testing.T) {
 			return "ok", nil
 		},
 	}
-	a := NewAgent(AgentConfig{Provider: oneCallPerTurn(calls...), Tools: types.NewToolRegistry(advance)},
-		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }}))
+	a := must.Get(New(Config{Provider: oneCallPerTurn(calls...), Tools: types.NewToolRegistry(advance)},
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }})))
 	asked, _ := drive(t, a, approveWith(&types.GrantRequest{Scope: types.GrantTool, ExpiresAt: start.Add(time.Minute)}))
 	// c2 runs 40s in, inside the minute. c3 runs 80s in, after it.
 	if strings.Join(asked, ",") != "c1,c3" {
@@ -218,7 +219,7 @@ func TestDenialLimit(t *testing.T) {
 
 	t.Run("refuse", func(t *testing.T) {
 		tools := types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil), policyTool("edit", types.ToolCapabilityWrite, nil))
-		a := NewAgent(AgentConfig{Provider: oneCallPerTurn(calls...), Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2}))
+		a := must.Get(New(Config{Provider: oneCallPerTurn(calls...), Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2})))
 		asked, deltas := drive(t, a, deny)
 		if strings.Join(asked, ",") != "c1,c2,c4" {
 			t.Fatalf("asked %v", asked)
@@ -236,7 +237,7 @@ func TestDenialLimit(t *testing.T) {
 	t.Run("hide", func(t *testing.T) {
 		tools := types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil), policyTool("edit", types.ToolCapabilityWrite, nil))
 		p := oneCallPerTurn(calls...)
-		a := NewAgent(AgentConfig{Provider: p, Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2, HideDenied: true}))
+		a := must.Get(New(Config{Provider: p, Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2, HideDenied: true})))
 		_, deltas := drive(t, a, deny)
 		reqs := p.Requests()
 		names := func(i int) string {
@@ -269,8 +270,8 @@ func TestRiskDefaultsAndRamp(t *testing.T) {
 		call("d1", "drop", nil), call("d2", "drop", nil), call("d3", "drop", nil),
 		call("m1", "mystery", nil),
 	}
-	a := NewAgent(AgentConfig{Provider: oneCallPerTurn(calls...), Tools: tools},
-		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, RampAfter: 2}))
+	a := must.Get(New(Config{Provider: oneCallPerTurn(calls...), Tools: tools},
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, RampAfter: 2})))
 	asked, _ := drive(t, a, approveWith(nil))
 	// Reads run, writes ramp after two approvals, destructive calls always
 	// ask, and an undeclared tool asks.
@@ -297,7 +298,7 @@ func TestGrantPersistsAcrossRunsAndRestores(t *testing.T) {
 	p.Responses = append(p.Responses, agenttest.ToolCallResponse("c2", "write", nil), agenttest.TextResponse("again"))
 	tools := types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil))
 	policy := WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true})
-	a := NewAgent(AgentConfig{Provider: p, Tools: tools}, policy)
+	a := must.Get(New(Config{Provider: p, Tools: tools}, policy))
 	if asked, _ := drive(t, a, approveWith(&types.GrantRequest{Scope: types.GrantTool})); len(asked) != 1 {
 		t.Fatalf("first run asked %v", asked)
 	}
@@ -322,7 +323,7 @@ func TestGrantPersistsAcrossRunsAndRestores(t *testing.T) {
 	if gs := Grants(msgs); len(gs) != 1 || gs[0].Tool != "write" {
 		t.Fatalf("grants after restore = %+v", gs)
 	}
-	b := NewAgent(AgentConfig{Provider: p, Tools: tools, Tree: restored}, policy)
+	b := must.Get(New(Config{Provider: p, Tools: tools, Tree: restored}, policy))
 	if asked, _ := drive(t, b, approveWith(nil)); len(asked) != 0 {
 		t.Fatalf("restored conversation asked %v", asked)
 	}
@@ -345,7 +346,7 @@ func TestModelCannotCreateGrant(t *testing.T) {
 		agenttest.TextResponse("done"),
 	}}
 	tools := types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil), echo)
-	a := NewAgent(AgentConfig{Provider: p, Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true}))
+	a := must.Get(New(Config{Provider: p, Tools: tools}, WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true})))
 	// The person refuses c1 while naming a scope: a refusal grants nothing.
 	asked, _ := drive(t, a, func(m types.MarkerDelta) Resolution {
 		return Resolution{Approved: m.ToolCallID != "c1", Grant: &types.GrantRequest{Scope: types.GrantSession}}
@@ -384,8 +385,8 @@ func TestInvalidGrantRejected(t *testing.T) {
 		}
 	}
 	p := oneCallPerTurn(call("c1", "write", nil))
-	a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil))},
-		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true}))
+	a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil))},
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true})))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	for d := range stream.Deltas() {
 		if m, ok := d.(types.MarkerDelta); ok {
@@ -456,8 +457,8 @@ func TestApprovalStateSurvivesCompaction(t *testing.T) {
 		agenttest.ToolCallResponse("c6", "edit", nil),
 		agenttest.TextResponse("again"))
 	tools := types.NewToolRegistry(policyTool("write", types.ToolCapabilityWrite, nil), policyTool("edit", types.ToolCapabilityWrite, nil))
-	a := NewAgent(AgentConfig{Provider: p, Tools: tools, CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 3}},
-		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2}))
+	a := must.Get(New(Config{Provider: p, Tools: tools, CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 3}},
+		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2})))
 	decide := func(m types.MarkerDelta) Resolution {
 		if m.ToolName == "edit" {
 			return Resolution{Approved: false, Message: "no"}
@@ -501,8 +502,8 @@ func TestApprovalStateSurvivesCompaction(t *testing.T) {
 func TestApprovalPolicyComposesWithDials(t *testing.T) {
 	focused := types.CreativityFocused
 	deps := &weatherDeps{base: 1}
-	cfg := AgentConfig{Provider: &agenttest.ScriptedProvider{}}
-	for _, opt := range []AgentOption{
+	cfg := Config{Provider: &agenttest.ScriptedProvider{}}
+	for _, opt := range []Option{
 		WithDials(types.Dials{Creativity: &focused}),
 		WithApprovalPolicy(ApprovalPolicy{RiskDefaults: true, DenyAfter: 2}),
 		WithDeps(deps),
@@ -520,7 +521,7 @@ func TestApprovalPolicyComposesWithDials(t *testing.T) {
 		t.Fatalf("child policy %+v, deps %v", child.ApprovalPolicy, child.Deps)
 	}
 	// A child's own options replace one setting without dropping the other.
-	child = childConfig(t, cfg, SubAgentDef{Name: "worker", Options: []AgentOption{WithApprovalPolicy(ApprovalPolicy{DenyAfter: 5})}})
+	child = childConfig(t, cfg, SubAgentDef{Name: "worker", Options: []Option{WithApprovalPolicy(ApprovalPolicy{DenyAfter: 5})}})
 	if child.ApprovalPolicy.DenyAfter != 5 || child.Dials.Creativity == nil {
 		t.Fatalf("override: policy %+v, dials %+v", child.ApprovalPolicy, child.Dials)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchModel answers each call from its last user text, so concurrent calls
@@ -74,7 +75,7 @@ func (m *batchModel) chatStreamWithSchema(_ context.Context, msgs []types.Messag
 func TestRunBatch(t *testing.T) {
 	m := &batchModel{}
 	tools := types.NewToolRegistry()
-	a := NewAgent(AgentConfig{Name: "bulk", SystemPrompt: "Be brief.", Provider: m, Tools: tools})
+	a := must.Get(New(Config{Name: "bulk", SystemPrompt: "Be brief.", Provider: m, Tools: tools}))
 	inputs := []BatchInput{
 		{ID: "one", Messages: []types.Message{types.UserMsg(types.Text("first"))}},
 		{Messages: []types.Message{types.UserMsg(types.Text("second"))}},
@@ -99,7 +100,7 @@ func TestRunBatch(t *testing.T) {
 func TestRunBatchUsesProviderBatchAPI(t *testing.T) {
 	bp := &recordingBatch{Local: batch.NewLocal(&batchModel{}, 2)}
 	b := types.NewBudget(types.BudgetPolicy{})
-	a := NewAgent(AgentConfig{Name: "bulk", Provider: bp, Budget: b})
+	a := must.Get(New(Config{Name: "bulk", Provider: bp, Budget: b}))
 	if _, err := a.RunBatch(context.Background(), []BatchInput{{Messages: []types.Message{types.UserMsg(types.Text("x"))}}}, BatchConfig{}); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,7 @@ func TestRunBatchConvertsAtSubmit(t *testing.T) {
 	inputs := []BatchInput{{ID: "doc", Messages: []types.Message{types.UserMsg(types.Text("summarize"), doc)}}}
 
 	rejecting := &offeringBatch{recordingBatch: recordingBatch{Local: batch.NewLocal(&batchModel{}, 1)}}
-	a := NewAgent(AgentConfig{Name: "bulk", Provider: rejecting})
+	a := must.Get(New(Config{Name: "bulk", Provider: rejecting}))
 	if _, err := a.RunBatch(context.Background(), inputs, BatchConfig{}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want the PDF rejected", err)
 	}
@@ -193,8 +194,8 @@ func TestRunBatchConvertsAtSubmit(t *testing.T) {
 	extract := types.ExtractorFunc(func(context.Context, []byte, types.MediaType) ([]types.UserPart, error) {
 		return []types.UserPart{types.Text("extracted notes")}, nil
 	})
-	a = NewAgent(AgentConfig{Name: "bulk", Provider: extracting,
-		Extractors: map[types.MediaType]types.Extractor{types.MediaPDF: extract}})
+	a = must.Get(New(Config{Name: "bulk", Provider: extracting,
+		Extractors: map[types.MediaType]types.Extractor{types.MediaPDF: extract}}))
 	res, err := a.RunBatch(context.Background(), inputs, BatchConfig{})
 	if err != nil {
 		t.Fatal(err)

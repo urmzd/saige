@@ -6,6 +6,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestRejectedToolEndCarriesName checks that the terminal ToolExecEndDelta of
@@ -24,13 +25,13 @@ func TestRejectedToolEndCarriesName(t *testing.T) {
 				agenttest.TextResponse("ok"),
 			}}
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "delete"}, Result: "deleted"}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: script,
 				Tools:    types.NewToolRegistry(tool),
 				ToolGate: types.GateFunc(func(context.Context, types.ToolDef, map[string]any) types.GateDecision {
 					return types.Deny("not allowed")
 				}),
-			})
+			}))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {

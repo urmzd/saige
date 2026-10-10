@@ -74,7 +74,7 @@ type CompactConfig struct {
 	// SummaryModel names the model that writes summaries, switched on the
 	// active provider (for example a cheaper model of the same vendor, or
 	// a catalog preset served by a router). Empty uses the active model.
-	// AgentConfig.CompactProvider, when set, writes them instead.
+	// Config.CompactProvider, when set, writes them instead.
 	SummaryModel string `json:",omitempty"`
 	// Chain lists the strategies a chain applies, in order.
 	Chain []CompactConfig `json:",omitempty"`

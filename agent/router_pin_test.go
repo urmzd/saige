@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // A model requested in the conversation must be recorded as the router
@@ -24,7 +25,7 @@ func TestConfigModelPinsRouterSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := r.Session()
-	a := NewAgent(AgentConfig{Provider: session, SystemPrompt: "sys"})
+	a := must.Get(New(Config{Provider: session, SystemPrompt: "sys"}))
 	run := func(msg types.Message) {
 		t.Helper()
 		stream := a.Invoke(context.Background(), []types.Message{msg})

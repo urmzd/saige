@@ -119,14 +119,14 @@ type OutputGuardrail struct {
 
 // WithInputGuardrails adds input guardrails. They run in order, after the
 // UserInput hooks; the first block stops the run.
-func WithInputGuardrails(gs ...InputGuardrail) AgentOption {
-	return func(c *AgentConfig) { c.InputGuardrails = append(c.InputGuardrails, gs...) }
+func WithInputGuardrails(gs ...InputGuardrail) Option {
+	return func(c *Config) { c.InputGuardrails = append(c.InputGuardrails, gs...) }
 }
 
 // WithOutputGuardrails adds output guardrails. They run in order; each sees
 // the previous one's rewrite, and the first block stops the run.
-func WithOutputGuardrails(gs ...OutputGuardrail) AgentOption {
-	return func(c *AgentConfig) { c.OutputGuardrails = append(c.OutputGuardrails, gs...) }
+func WithOutputGuardrails(gs ...OutputGuardrail) Option {
+	return func(c *Config) { c.OutputGuardrails = append(c.OutputGuardrails, gs...) }
 }
 
 // ErrGuardrailTripped is matched by the error of a run a guardrail blocked.

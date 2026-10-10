@@ -8,6 +8,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/tools"
 )
 
@@ -23,8 +24,8 @@ func TestDeferredHarnessToolset(t *testing.T) {
 		agenttest.ToolCallResponse("s1", ToolSearchName, map[string]any{"query": "fetch a web page url", "k": 1}),
 		agenttest.TextResponse("done"),
 	}}
-	a := agent.NewAgent(agent.AgentConfig{Name: "worker", Provider: provider},
-		agent.WithToolset(set), agent.WithToolPolicy(policy), agent.WithTools(policy.Tool()))
+	a := must.Get(agent.New(agent.Config{Name: "worker", Provider: provider},
+		agent.WithToolset(set), agent.WithToolPolicy(policy), agent.WithTools(policy.Tool())))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {

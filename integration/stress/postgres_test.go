@@ -27,6 +27,7 @@ import (
 	"github.com/urmzd/saige/agent/durable/duraturo"
 	"github.com/urmzd/saige/agent/notify"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 	"github.com/urmzd/saige/rag/fusion"
 	"github.com/urmzd/saige/rag/pgstore"
@@ -516,11 +517,11 @@ func TestDurableWorkersCompete(t *testing.T) {
 		}
 		write := types.WithMarkers(&types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: run}, types.Marker{Kind: "approval"})
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: run}
-		return agent.NewAgent(agent.AgentConfig{
+		return must.Get(agent.New(agent.Config{
 			Provider:     durableProvider{run: runID, tool: tool, calls: &modelCalls},
 			SystemPrompt: "stress",
 			Tools:        types.NewToolRegistry(write, read),
-		})
+		}))
 	})
 
 	workerCtx, stopWorkers := context.WithCancel(context.Background())

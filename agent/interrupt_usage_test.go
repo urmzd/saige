@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestInterruptReportsUsageWithoutBudget checks that a call stopped by
@@ -29,7 +30,7 @@ func TestInterruptReportsUsageWithoutBudget(t *testing.T) {
 				stepCall{before: tt.before, hold: make(chan struct{})},
 				stepCall{before: agenttest.TextResponse("replaced")},
 			)
-			a := NewAgent(AgentConfig{Provider: provider})
+			a := must.Get(New(Config{Provider: provider}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})

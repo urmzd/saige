@@ -179,11 +179,11 @@ func acpBinder(h *agentHost, workspace string) acpBindFunc {
 		if err != nil {
 			return agenthost.Agent{}, err
 		}
-		var opts []agentsdk.AgentOption
+		var opts []agentsdk.Option
 		if req.tree != nil {
 			opts = append(opts, agentsdk.WithTree(req.tree))
 		}
-		return agenthost.FromBound(b, opts...), nil
+		return agenthost.FromBound(b, opts...)
 	}
 }
 

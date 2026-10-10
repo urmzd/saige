@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/internal/must"
 )
@@ -49,7 +50,7 @@ func newRich() *richProvider {
 // must see through it. Before this passthrough existed, wrapping an adapter in
 // a cache silently disabled model switching and native media support.
 func TestCacheForwardsModelSwitching(t *testing.T) {
-	p := must.Get(New(newRich(), Config{}))
+	p := must.Get(New(newRich(), Config{Cache: memcache.New[CachedResponse]()}))
 
 	if got := types.ProviderModel(p); got != "base-model" {
 		t.Errorf("Model() = %q, want the inner model", got)
@@ -68,7 +69,7 @@ func TestCacheForwardsModelSwitching(t *testing.T) {
 }
 
 func TestCacheForwardsCapabilities(t *testing.T) {
-	p := must.Get(New(newRich(), Config{}))
+	p := must.Get(New(newRich(), Config{Cache: memcache.New[CachedResponse]()}))
 	caps, ok := types.ProviderCapabilities(p)
 	if !ok {
 		t.Fatal("a cache-wrapped provider must report capabilities")

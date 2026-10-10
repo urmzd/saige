@@ -25,6 +25,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/preset"
 	"github.com/urmzd/saige/agent/skills"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/tools"
 	"github.com/urmzd/saige/tools/exec"
 )
@@ -298,7 +299,7 @@ func TestApprovalRun(t *testing.T) {
 	env := toolEnv(t)
 	env.Preset = fakePreset{model}
 	b := bind(t, resolve(t, "a", file("a", "tools:\n  harness: [exec]\napproval:\n  allow: [\"Bash(echo:*)\"]\n  deny: [\"Bash(rm:*)\"]\n", "p")), env)
-	stream := b.NewAgent().Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
+	stream := must.Get(b.NewAgent()).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	results := map[string]types.ToolExecEndDelta{}
 	for d := range stream.Deltas() {
 		switch v := d.(type) {
@@ -365,7 +366,7 @@ func TestBindSkills(t *testing.T) {
 
 	// A trigger puts the skill's instructions in front of a matching
 	// message, and only a matching one.
-	a := b.NewAgent()
+	a := must.Get(b.NewAgent())
 	for _, msg := range []string{"cut the Release now", "hello"} {
 		if _, err := agent.Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text(msg))}), nil); err != nil {
 			t.Fatal(err)
@@ -428,7 +429,7 @@ func TestBindMemory(t *testing.T) {
 	}
 
 	b = bind(t, resolve(t, "a", file("a", "memory:\n  store: team\n  recall: inject\n  namespace: notes\n", "p")), env)
-	if _, err := agent.Collect(b.NewAgent().Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("when is the deploy window?"))}), nil); err != nil {
+	if _, err := agent.Collect(must.Get(b.NewAgent()).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("when is the deploy window?"))}), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := userText(lastUser(model.Requests()[0].Messages)); !strings.Contains(got, "Tuesday") || !strings.Contains(got, "deploy window?") {
@@ -475,7 +476,7 @@ func TestBindSubagents(t *testing.T) {
 
 	// The worker's options replace what its definition declares on top of
 	// the inherited config.
-	parent := agent.AgentConfig{ToolGate: types.AllowAllGate{}, LLMTimeout: time.Hour, Budget: types.NewBudget(types.BudgetPolicy{})}
+	parent := agent.Config{ToolGate: types.AllowAllGate{}, LLMTimeout: time.Hour, Budget: types.NewBudget(types.BudgetPolicy{})}
 	cfg := parent
 	for _, o := range w.Options {
 		o(&cfg)
@@ -491,7 +492,7 @@ func TestBindSubagents(t *testing.T) {
 	}
 
 	// The handoff member arrives through an option.
-	var full agent.AgentConfig
+	var full agent.Config
 	for _, o := range b.Options {
 		o(&full)
 	}

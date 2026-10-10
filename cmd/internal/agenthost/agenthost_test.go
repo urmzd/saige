@@ -10,11 +10,12 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func scripted(responses ...[]types.Delta) func() (Agent, error) {
 	return func() (Agent, error) {
-		a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &agenttest.ScriptedProvider{Responses: responses}})
+		a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &agenttest.ScriptedProvider{Responses: responses}}))
 		return Agent{Agent: a}, nil
 	}
 }
@@ -73,7 +74,7 @@ func TestSessionOneTurnAtATimeAndIdle(t *testing.T) {
 		p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 			agenttest.ToolCallResponse("c1", "wait", map[string]any{}), agenttest.TextResponse("done"),
 		}}
-		return Agent{Agent: agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p, Tools: types.NewToolRegistry(tool)})}, nil
+		return Agent{Agent: must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p, Tools: types.NewToolRegistry(tool)}))}, nil
 	})
 	if err != nil {
 		t.Fatal(err)

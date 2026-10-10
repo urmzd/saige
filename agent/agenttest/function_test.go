@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -146,7 +147,7 @@ func TestFunctionModelChecksDeclaredCapabilities(t *testing.T) {
 	}
 	// The agent refuses a schema the declared model cannot enforce, before
 	// any call.
-	a := agent.NewAgent(agent.AgentConfig{Provider: m}, agent.WithResponseSchema(&types.ParameterSchema{Type: types.SchemaObject}))
+	a := must.Get(agent.New(agent.Config{Provider: m}, agent.WithResponseSchema(&types.ParameterSchema{Type: types.SchemaObject})))
 	if _, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})); err == nil {
 		t.Fatal("the agent sent a schema to a model without structured output")
 	}
@@ -193,8 +194,8 @@ func TestFunctionModelDrivesAnAgent(t *testing.T) {
 		}
 		return agenttest.Response{ToolCalls: []types.ToolCallPart{{Name: "greet", Arguments: map[string]any{"name": "Ada"}}}}, nil
 	}}
-	a := agent.NewAgent(agent.AgentConfig{Provider: m, Tools: types.NewToolRegistry(greet)},
-		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
+	a := must.Get(agent.New(agent.Config{Provider: m, Tools: types.NewToolRegistry(greet)},
+		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
 	text, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet Ada"))}))
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +222,7 @@ func TestFunctionModelServesStructuredOutput(t *testing.T) {
 		}
 		return agenttest.Response{Text: `{"city": "Paris"}`}, nil
 	}}
-	got, res, err := agent.Structured(context.Background(), agent.NewAgent(agent.AgentConfig{Provider: m}),
+	got, res, err := agent.Structured(context.Background(), must.Get(agent.New(agent.Config{Provider: m})),
 		[]types.Message{types.UserMsg(types.Text("Where?"))}, agent.OutputSpec[city]{})
 	if err != nil {
 		t.Fatal(err)

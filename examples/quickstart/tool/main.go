@@ -30,7 +30,7 @@ func main() {
 			return "18C and sunny in " + in.City, nil
 		})
 
-	a := agent.NewAgent(agent.AgentConfig{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	a := agent.New(agent.Config{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
 	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What's the weather in Lisbon?"))}))
 	if err != nil {
 		log.Fatal(err)

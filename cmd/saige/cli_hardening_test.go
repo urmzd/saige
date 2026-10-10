@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestBaseURLAppliesOnPresetPath(t *testing.T) {
@@ -171,7 +172,7 @@ func TestCatalogFlagNamingProjectFileLoadsOnce(t *testing.T) {
 
 func TestFailedAskPrintsErrorOnce(t *testing.T) {
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{types.ErrorDelta{Error: errors.New("upstream exploded")}}}}
-	ag := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: provider})
+	ag := must.Get(agentsdk.New(agentsdk.Config{Provider: provider}))
 	var stdout, stderr bytes.Buffer
 	out := tui.ResolveOutputWriters(false, tui.TemplateDefault, &stdout, &stderr)
 	err := runAsk(context.Background(), ag, "hi", out, false)

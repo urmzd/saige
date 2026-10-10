@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestSubAgentResponseSchema(t *testing.T) {
@@ -37,8 +38,8 @@ func TestSubAgentResponseSchema(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parent := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}},
-				WithSubAgents(SubAgentDef{Name: "geo", Provider: tt.child, ResponseSchema: cityPopulationSchema}))
+			parent := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}},
+				WithSubAgents(SubAgentDef{Name: "geo", Provider: tt.child, ResponseSchema: cityPopulationSchema})))
 			s, err := parent.InvokeSubAgent(context.Background(), "geo", "Where?")
 			if err != nil {
 				t.Fatal(err)
@@ -132,7 +133,7 @@ func TestSubAgentFailureOutcome(t *testing.T) {
 				childErrs = []error{tt.childErr}
 			}
 			child := SubAgentDef{Name: "child", Provider: &agenttest.ScriptedProvider{Responses: childResponses, Errors: childErrs}}
-			a := NewAgent(AgentConfig{Provider: parentProvider}, WithSubAgents(child), WithOutcomePolicy(tt.policy))
+			a := must.Get(New(Config{Provider: parentProvider}, WithSubAgents(child), WithOutcomePolicy(tt.policy)))
 			var routes []types.RouteDelta
 			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), func(d types.Delta) {
 				if r, ok := d.(types.RouteDelta); ok {

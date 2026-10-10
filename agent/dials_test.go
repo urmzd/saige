@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // dialModel is a scripted provider that declares a catalog model, so dials
@@ -67,7 +68,7 @@ func routesOf(ds []types.Delta) []types.RouteDelta {
 func TestAgentSendsDialScopes(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}
 	focused := types.CreativityFocused
-	a := NewAgent(AgentConfig{Provider: p}, WithDials(types.Dials{Creativity: &focused}))
+	a := must.Get(New(Config{Provider: p}, WithDials(types.Dials{Creativity: &focused})))
 	input := types.UserMessage{Parts: []types.UserPart{types.ConfigPart{Dials: &types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}, types.TextPart{Text: "hi"}}}
 	agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{input}).Deltas())
 	calls := p.Requests()
@@ -85,12 +86,12 @@ func TestAgentSendsDialScopes(t *testing.T) {
 
 func TestSubAgentInheritsDialsUnlessOverridden(t *testing.T) {
 	focused, creative := types.CreativityFocused, types.CreativityCreative
-	parent := AgentConfig{Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}, DialPolicy: &types.StrictDials}
+	parent := Config{Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}, DialPolicy: &types.StrictDials}
 	child := childConfig(t, parent, SubAgentDef{Name: "worker"})
 	if child.Dials.Creativity == nil || *child.Dials.Creativity != focused || child.DialPolicy == nil || !child.DialPolicy.Strict {
 		t.Fatalf("inherited: %+v %+v", child.Dials, child.DialPolicy)
 	}
-	child = childConfig(t, parent, SubAgentDef{Name: "worker", Options: []AgentOption{WithDials(types.Dials{Creativity: &creative})}})
+	child = childConfig(t, parent, SubAgentDef{Name: "worker", Options: []Option{WithDials(types.Dials{Creativity: &creative})}})
 	if *child.Dials.Creativity != creative {
 		t.Fatalf("override: %+v", child.Dials)
 	}
@@ -98,8 +99,8 @@ func TestSubAgentInheritsDialsUnlessOverridden(t *testing.T) {
 
 func TestHandoffMemberUsesItsOwnDials(t *testing.T) {
 	focused, creative := types.CreativityFocused, types.CreativityCreative
-	a := NewAgent(AgentConfig{Name: "front", Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}},
-		WithHandoffs(HandoffDef{Name: "writer", Dials: &types.Dials{Creativity: &creative}}, HandoffDef{Name: "triage"}))
+	a := must.Get(New(Config{Name: "front", Provider: &agenttest.ScriptedProvider{}, Dials: types.Dials{Creativity: &focused}},
+		WithHandoffs(HandoffDef{Name: "writer", Dials: &types.Dials{Creativity: &creative}}, HandoffDef{Name: "triage"})))
 	for _, tc := range []struct {
 		member, scope string
 		want          types.Creativity
@@ -151,7 +152,7 @@ func openLoopTree(t *testing.T) *tree.Tree {
 func TestReasoningChangeDeferredInSignedLoop(t *testing.T) {
 	model := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("done"), agenttest.TextResponse("again"))
 	tr := openLoopTree(t)
-	a := NewAgent(AgentConfig{Provider: routed(t, model), Tree: tr})
+	a := must.Get(New(Config{Provider: routed(t, model), Tree: tr}))
 
 	adaptive := types.Dials{Reasoning: &types.ReasoningDial{Mode: types.ReasoningAdaptive}}
 	first := routesOf(agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{dialConfig(adaptive)}).Deltas()))
@@ -185,7 +186,7 @@ func TestOutcomePolicyRaisesDepthOnSameModel(t *testing.T) {
 		return &types.Switch{Dials: &high, Reason: "escalate"}, nil
 	})
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}
-	a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithOutcomePolicy(policy))
+	a := must.Get(New(Config{Provider: p, SystemPrompt: "s"}, WithOutcomePolicy(policy)))
 	tr, branch := a.Tree(), a.Tree().Active()
 	var routes []types.RouteDelta
 	emit := func(d types.Delta) {
@@ -217,12 +218,12 @@ func TestDurableReplayKeepsDialDecisions(t *testing.T) {
 	focused := types.CreativityFocused
 	runner := newRecordingRunner()
 	live := newDialModel("openai", "gpt-6-luna", agenttest.TextResponse("live"))
-	a := NewAgent(AgentConfig{Provider: routed(t, live), SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused}))
+	a := must.Get(New(Config{Provider: routed(t, live), SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused})))
 	first, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := NewAgent(AgentConfig{Provider: panicProvider{}, SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused}))
+	b := must.Get(New(Config{Provider: panicProvider{}, SystemPrompt: "s"}, WithDials(types.Dials{Creativity: &focused})))
 	replayed, err := b.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +261,7 @@ func TestReloadRestoresDials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, _ := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}}).prepareMessages([]types.Message{msg})
+	rc, _ := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}})).prepareMessages([]types.Message{msg})
 	if rc.dials.Reasoning == nil || rc.dials.Reasoning.Depth != types.DepthHigh {
 		t.Fatalf("restored dials: %+v (%s)", rc.dials, data)
 	}
@@ -282,7 +283,7 @@ func TestSingleAdapterReportsDials(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
-			a := NewAgent(AgentConfig{Provider: p, SystemPrompt: "s"}, WithDials(tc.dials))
+			a := must.Get(New(Config{Provider: p, SystemPrompt: "s"}, WithDials(tc.dials)))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 			routes := routesOf(agenttest.CollectDeltas(stream.Deltas()))
 			if err := stream.Wait(); err != nil {
@@ -303,7 +304,7 @@ func TestSingleAdapterReportsDials(t *testing.T) {
 	}
 	// Without dials nothing is reported, as before.
 	p := newDialModel("anthropic", "claude-haiku-5-5", agenttest.TextResponse("ok"))
-	stream := NewAgent(AgentConfig{Provider: p}).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
+	stream := must.Get(New(Config{Provider: p})).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	if routes := routesOf(agenttest.CollectDeltas(stream.Deltas())); len(routes) != 0 {
 		t.Fatalf("routes without dials: %+v", routes)
 	}

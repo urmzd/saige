@@ -17,6 +17,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/cmd/internal/agenthost"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // agentsSandbox isolates discovery from the developer's own definitions
@@ -195,14 +196,14 @@ func TestServeSessionAgent(t *testing.T) {
 	calls, released := &atomic.Int32{}, &atomic.Int32{}
 	opts := serveOptions{approvalTimeout: 2 * time.Second}
 	opts.newSessionAgent = func() (agenthost.Agent, error) {
-		a := agentsdk.NewAgent(agentsdk.AgentConfig{
+		a := must.Get(agentsdk.New(agentsdk.Config{
 			Name: "pinned",
 			Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 				agenttest.ToolCallResponse("call_1", "danger", map[string]any{}),
 				agenttest.TextResponse("finished"),
 			}},
 			Tools: types.NewToolRegistry(countedDanger(calls)),
-		}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{}))
+		}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})))
 		return agenthost.Agent{
 			Agent:   a,
 			Release: func() { released.Add(1) },

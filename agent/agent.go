@@ -20,8 +20,8 @@ import (
 	"github.com/urmzd/saige/agent/workspace"
 )
 
-// AgentConfig holds configuration for an Agent.
-type AgentConfig struct {
+// Config holds configuration for an Agent.
+type Config struct {
 	Name         string
 	SystemPrompt string
 	Provider     types.Provider
@@ -247,41 +247,41 @@ type AgentConfig struct {
 	OutputGuardrails []OutputGuardrail
 }
 
-// AgentOption configures an AgentConfig using the functional options pattern.
-type AgentOption func(*AgentConfig)
+// Option configures an Config using the functional options pattern.
+type Option func(*Config)
 
 // WithCompactConfig sets the compaction strategy. Sub-agents inherit it
 // unless their own options set one.
-func WithCompactConfig(cfg *types.CompactConfig) AgentOption {
-	return func(c *AgentConfig) { c.CompactCfg = cfg }
+func WithCompactConfig(cfg *types.CompactConfig) Option {
+	return func(c *Config) { c.CompactCfg = cfg }
 }
 
 // WithoutCompaction turns automatic compaction off: no strategy runs before a
 // turn, CompactNow is ignored, and a context-length error is returned instead
 // of compacted. Sub-agents inherit it unless their options set a strategy.
 // A handoff group accepts it.
-func WithoutCompaction() AgentOption {
+func WithoutCompaction() Option {
 	return WithCompactConfig(&types.CompactConfig{Strategy: types.CompactNone})
 }
 
 // WithCompactProvider sets the provider that writes compaction summaries.
-func WithCompactProvider(p types.Provider) AgentOption {
-	return func(c *AgentConfig) { c.CompactProvider = p }
+func WithCompactProvider(p types.Provider) Option {
+	return func(c *Config) { c.CompactProvider = p }
 }
 
 // WithSubAgents registers sub-agents for delegation.
-func WithSubAgents(subs ...SubAgentDef) AgentOption {
-	return func(c *AgentConfig) { c.SubAgents = append(c.SubAgents, subs...) }
+func WithSubAgents(subs ...SubAgentDef) Option {
+	return func(c *Config) { c.SubAgents = append(c.SubAgents, subs...) }
 }
 
 // WithTree attaches a pre-existing conversation tree.
-func WithTree(t *tree.Tree) AgentOption {
-	return func(c *AgentConfig) { c.Tree = t }
+func WithTree(t *tree.Tree) Option {
+	return func(c *Config) { c.Tree = t }
 }
 
 // WithResolvers sets URI scheme resolvers for file content.
-func WithResolvers(resolvers map[string]types.Resolver) AgentOption {
-	return func(c *AgentConfig) { c.Resolvers = resolvers }
+func WithResolvers(resolvers map[string]types.Resolver) Option {
+	return func(c *Config) { c.Resolvers = resolvers }
 }
 
 // WithExtractors registers an extract converter for each media type and
@@ -293,8 +293,8 @@ func WithResolvers(resolvers map[string]types.Resolver) AgentOption {
 //
 // It is shorthand for WithConversion with convert.Extract converters and
 // the dial {document: [extract]} (per modality of the registered types).
-func WithExtractors(extractors map[types.MediaType]types.Extractor) AgentOption {
-	return func(c *AgentConfig) { c.Extractors = extractors }
+func WithExtractors(extractors map[types.MediaType]types.Extractor) Option {
+	return func(c *Config) { c.Extractors = extractors }
 }
 
 // WithConversion sets how the parts of a request are fitted to the model
@@ -305,8 +305,8 @@ func WithExtractors(extractors map[types.MediaType]types.Extractor) AgentOption 
 // (provider.Config.Conversion), on every attempt of a router or fallback
 // chain. Without it, a part the serving model cannot take natively rejects
 // the call; see package convert.
-func WithConversion(p types.ConversionPolicy) AgentOption {
-	return func(c *AgentConfig) { c.Conversion = p }
+func WithConversion(p types.ConversionPolicy) Option {
+	return func(c *Config) { c.Conversion = p }
 }
 
 // WithResponseSchema constrains the final answer to a JSON schema.
@@ -322,84 +322,84 @@ func WithConversion(p types.ConversionPolicy) AgentOption {
 // The run fails with types.ErrInvalidModelConfig when the provider cannot
 // constrain output: its declared capabilities report no structured output
 // for a known model, or it does not implement types.StructuredOutputProvider. A schema is never dropped silently.
-func WithResponseSchema(schema *types.ParameterSchema) AgentOption {
-	return func(c *AgentConfig) { c.ResponseSchema = schema }
+func WithResponseSchema(schema *types.ParameterSchema) Option {
+	return func(c *Config) { c.ResponseSchema = schema }
 }
 
 // WithLogger sets the agent's logger.
-func WithLogger(logger *slog.Logger) AgentOption {
-	return func(c *AgentConfig) { c.Logger = logger }
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *Config) { c.Logger = logger }
 }
 
 // WithMetrics sets the metrics collector.
-func WithMetrics(metrics types.Metrics) AgentOption {
-	return func(c *AgentConfig) { c.Metrics = metrics }
+func WithMetrics(metrics types.Metrics) Option {
+	return func(c *Config) { c.Metrics = metrics }
 }
 
 // WithToolGate sets the pre-execution gate for tool calls. Compose several
 // with types.Gates; the most restrictive verdict wins.
-func WithToolGate(g types.ToolGate) AgentOption {
-	return func(c *AgentConfig) { c.ToolGate = g }
+func WithToolGate(g types.ToolGate) Option {
+	return func(c *Config) { c.ToolGate = g }
 }
 
 // WithToolContext sets the knobs tools read at call time.
-func WithToolContext(tc types.ToolContext) AgentOption {
-	return func(c *AgentConfig) { c.ToolContext = tc }
+func WithToolContext(tc types.ToolContext) Option {
+	return func(c *Config) { c.ToolContext = tc }
 }
 
 // WithToolRedactor sets the redactor applied at the tool boundary.
-func WithToolRedactor(r types.ToolRedactor) AgentOption {
-	return func(c *AgentConfig) { c.ToolRedactor = r }
+func WithToolRedactor(r types.ToolRedactor) Option {
+	return func(c *Config) { c.ToolRedactor = r }
 }
 
 // WithWorkspace sets the scratch store attached to tool calls.
-func WithWorkspace(ws workspace.Workspace) AgentOption {
-	return func(c *AgentConfig) { c.Workspace = ws }
+func WithWorkspace(ws workspace.Workspace) Option {
+	return func(c *Config) { c.Workspace = ws }
 }
 
 // WithBudget caps what the run may spend. Share one budget across an agent and
 // its sub-agents to cap the whole run; give a sub-agent its own to cap that
 // delegation separately.
-func WithBudget(b *types.Budget) AgentOption {
-	return func(c *AgentConfig) { c.Budget = b }
+func WithBudget(b *types.Budget) Option {
+	return func(c *Config) { c.Budget = b }
 }
 
 // WithServerTools records provider-executed tools for this agent. It does not
 // enable them: configure server tools on the adapter (for example
 // google.WithServerTools), which validates them against the model.
-func WithServerTools(tools ...types.ServerTool) AgentOption {
-	return func(c *AgentConfig) { c.ServerTools = append(c.ServerTools, tools...) }
+func WithServerTools(tools ...types.ServerTool) Option {
+	return func(c *Config) { c.ServerTools = append(c.ServerTools, tools...) }
 }
 
 // WithMaxIter overrides the maximum agent loop iterations.
-func WithMaxIter(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxIter = n }
+func WithMaxIter(n int) Option {
+	return func(c *Config) { c.MaxIter = n }
 }
 
 // WithStepRunner sets a durable step runner. The default NoopStepRunner runs
 // steps inline (today's streaming behavior). A durable runner (see
 // agent/durable/local and agent/durable/duraturo) memoizes LLM and tool calls
 // so a crashed process resumes without repeating them.
-func WithStepRunner(r types.StepRunner) AgentOption {
-	return func(c *AgentConfig) { c.StepRunner = r }
+func WithStepRunner(r types.StepRunner) Option {
+	return func(c *Config) { c.StepRunner = r }
 }
 
 // WithStore configures a types.Store so the conversation tree is persisted.
 // With no Store (the default) the tree is in-memory only. See
-// AgentConfig.Store for what is written. Loading a persisted tree is done
+// Config.Store for what is written. Loading a persisted tree is done
 // explicitly via LoadTreeFromStore before NewAgent (pass the rebuilt tree,
 // built with tree.WithStore, through WithTree).
-func WithStore(s types.Store) AgentOption {
-	return func(c *AgentConfig) { c.Store = s }
+func WithStore(s types.Store) Option {
+	return func(c *Config) { c.Store = s }
 }
 
 // WithPreset uses a declared preset: its provider chain becomes the agent's
 // provider, and its tool choice, output mode and LLM timeout become the
-// agent's defaults. A field already set, in the AgentConfig or by an earlier
+// agent's defaults. A field already set, in the Config or by an earlier
 // option, is kept; options applied after WithPreset override it. An unknown
 // output mode is rejected when a run starts, as with WithOutputMode.
-func WithPreset(p types.Preset) AgentOption {
-	return func(c *AgentConfig) {
+func WithPreset(p types.Preset) Option {
+	return func(c *Config) {
 		if p == nil {
 			return
 		}
@@ -425,22 +425,22 @@ func WithPreset(p types.Preset) AgentOption {
 // WithLLMTimeout bounds each provider (LLM) call with a child context deadline.
 // A slow provider is cancelled and surfaces a timeout error instead of hanging.
 // A non-positive duration disables the timeout.
-func WithLLMTimeout(d time.Duration) AgentOption {
-	return func(c *AgentConfig) { c.LLMTimeout = d }
+func WithLLMTimeout(d time.Duration) Option {
+	return func(c *Config) { c.LLMTimeout = d }
 }
 
 // WithToolTimeout bounds each individual tool execution with a child context
 // deadline. A slow tool is cancelled and surfaces a timeout error. A
 // non-positive duration disables the timeout.
-func WithToolTimeout(d time.Duration) AgentOption {
-	return func(c *AgentConfig) { c.ToolTimeout = d }
+func WithToolTimeout(d time.Duration) Option {
+	return func(c *Config) { c.ToolTimeout = d }
 }
 
 // WithMaxParallelTools caps how many tool goroutines run concurrently when tools
 // are fanned out. A non-positive value means unlimited (today's behavior). A
 // value of 1 runs tools sequentially in request order; see WithSequentialTools.
-func WithMaxParallelTools(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxParallelTools = n }
+func WithMaxParallelTools(n int) Option {
+	return func(c *Config) { c.MaxParallelTools = n }
 }
 
 // WithSequentialTools runs tool calls one at a time, in the order the model
@@ -454,7 +454,7 @@ func WithMaxParallelTools(n int) AgentOption {
 // observable order still varies run to run.
 //
 // This is sugar for WithMaxParallelTools(1).
-func WithSequentialTools() AgentOption {
+func WithSequentialTools() Option {
 	return WithMaxParallelTools(1)
 }
 
@@ -470,7 +470,7 @@ func WithSequentialTools() AgentOption {
 // concurrent use. Two calls to the same tool in one turn run on the same
 // instance at the same time.
 type Agent struct {
-	cfg      AgentConfig
+	cfg      Config
 	tools    *types.ToolRegistry
 	handoffs *handoffGroup // nil unless WithHandoffs configured an entry group
 	// citations numbers every source cited during this agent's life, so a
@@ -488,13 +488,23 @@ type Agent struct {
 	scratch workspace.Workspace
 }
 
-// NewAgent creates a new Agent. If no Tree is provided, one is created
+// New creates a new Agent. If no Tree is provided, one is created
 // automatically from the SystemPrompt. Initial config is seeded into the
 // tree so that serialise/restore round-trips include the full agent config.
 // Options are applied after the base config, allowing incremental composition.
-func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
+//
+// A configuration New cannot run is an error wrapping
+// types.ErrInvalidConfig: a negative LLMTimeout, ToolTimeout or
+// InterruptTTL, or an invalid handoff group (an unknown or duplicate
+// member, a member without a provider).
+func New(cfg Config, opts ...Option) (*Agent, error) {
 	for _, opt := range opts {
-		opt(&cfg)
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
 	switch {
 	case cfg.MaxIter == 0:
@@ -579,12 +589,25 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 		}
 		grp, err := buildHandoffGroup(entry, cfg.Handoffs, cfg.LinkPolicy)
 		if err != nil {
-			panic(fmt.Sprintf("agent: invalid handoff configuration: %v", err))
+			return nil, fmt.Errorf("%w: agent %q: handoffs: %w", types.ErrInvalidConfig, cfg.Name, err)
 		}
 		a.handoffs = grp
 	}
 
-	return a
+	return a, nil
+}
+
+// validateConfig rejects the fields New cannot give a meaning to.
+func validateConfig(cfg Config) error {
+	for _, f := range []struct {
+		name string
+		d    time.Duration
+	}{{"LLMTimeout", cfg.LLMTimeout}, {"ToolTimeout", cfg.ToolTimeout}, {"InterruptTTL", cfg.InterruptTTL}} {
+		if f.d < 0 {
+			return fmt.Errorf("%w: agent %q: negative %s %v", types.ErrInvalidConfig, cfg.Name, f.name, f.d)
+		}
+	}
+	return nil
 }
 
 // registerSubAgent registers a SubAgentDef as a delegate tool. Each invocation
@@ -594,7 +617,7 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 // parent is the delegating agent's config; the child inherits its operational
 // settings (see inheritConfig) so a delegated run carries the same timeouts,
 // logging, metrics, compaction and file pipeline as the run that spawned it.
-func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent AgentConfig) {
+func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent Config) {
 	policy := sa.ResultPolicy
 	if policy == nil && sa.ResponseSchema != nil {
 		policy = SchemaResult{Schema: sa.ResponseSchema}
@@ -625,7 +648,10 @@ func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent Agent
 			// The output mode is chosen last, from the provider the
 			// options leave in place.
 			opts := append(slices.Clone(sa.Options), resolveChildOutputMode)
-			child := NewAgent(cfg, opts...)
+			child, err := New(cfg, opts...)
+			if err != nil {
+				return nil, err
+			}
 			child.scratch = scratch
 			// A child with no tools of its own answers in one turn, so
 			// scratch tools would only add a schema-free draft turn.

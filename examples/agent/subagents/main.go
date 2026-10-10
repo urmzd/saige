@@ -40,7 +40,7 @@ func main() {
 	}
 
 	// Build the parent agent with a researcher sub-agent.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "coordinator",
 		SystemPrompt: "You coordinate research tasks. Delegate research to the researcher.",
 		Provider:     adapter,

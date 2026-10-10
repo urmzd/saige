@@ -21,8 +21,8 @@ func (f ToolPolicyFunc) Select(ctx context.Context, name string, defs []types.To
 	return f(ctx, name, defs)
 }
 
-func WithToolPolicy(policy ToolPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.ToolPolicy = policy }
+func WithToolPolicy(policy ToolPolicy) Option {
+	return func(cfg *Config) { cfg.ToolPolicy = policy }
 }
 
 func (a *Agent) selectTools(ctx context.Context, active activeContext) (activeContext, error) {

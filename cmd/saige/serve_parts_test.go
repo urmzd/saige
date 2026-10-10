@@ -16,6 +16,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // partsFixture is a server whose one-session agent streams a scripted
@@ -24,11 +25,11 @@ func partsFixture(t *testing.T, responses [][]types.Delta, opts serveOptions, to
 	t.Helper()
 	provider := &agenttest.ScriptedProvider{Responses: responses}
 	opts.newAgent = func() (*agentsdk.Agent, error) {
-		cfg := agentsdk.AgentConfig{Name: "test", Provider: provider}
+		cfg := agentsdk.Config{Name: "test", Provider: provider}
 		if len(tools) > 0 {
 			cfg.Tools = types.NewToolRegistry(tools...)
 		}
-		return agentsdk.NewAgent(cfg), nil
+		return must.Get(agentsdk.New(cfg)), nil
 	}
 	return newServeFixtureWith(t, opts, nil), provider
 }

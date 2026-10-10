@@ -59,20 +59,24 @@ type Agent struct {
 // apply after the binding's. An agent whose definition declares no
 // approval block still gets an empty approval policy, so the grants a host
 // accepts take effect.
-func FromBound(b *bind.Bound, extra ...agentsdk.AgentOption) Agent {
+func FromBound(b *bind.Bound, extra ...agentsdk.Option) (Agent, error) {
 	opts := extra
 	if b.Config.ApprovalPolicy == nil {
-		opts = append([]agentsdk.AgentOption{agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}, extra...)
+		opts = append([]agentsdk.Option{agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}, extra...)
+	}
+	a, err := b.NewAgent(opts...)
+	if err != nil {
+		return Agent{}, err
 	}
 	return Agent{
-		Agent:      b.NewAgent(opts...),
+		Agent:      a,
 		Release:    func() { _ = b.Close(context.Background()) },
 		CheckGrant: b.CheckGrant,
 		MaxGrant:   b.MaxGrant,
 		Tools:      b.Config.Tools,
 		Pin:        b.Pin(),
 		Info:       b.Pin(),
-	}
+	}, nil
 }
 
 // AllowsGrant reports whether a grant of scope is within the agent's cap.

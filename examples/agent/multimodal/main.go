@@ -45,7 +45,7 @@ func main() {
 	})
 
 	// Build agent with the file resolver.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "multimodal-agent",
 		SystemPrompt: "You are a helpful assistant that can analyze images and files.",
 		Provider:     adapter,

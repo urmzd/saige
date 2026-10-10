@@ -40,7 +40,7 @@ func main() {
 	}
 
 	// Build the agent.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "calculator",
 		SystemPrompt: "You are a helpful calculator. Use the add tool to perform addition.",
 		Provider:     adapter,

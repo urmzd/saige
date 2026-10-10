@@ -13,6 +13,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestParseApproval(t *testing.T) {
@@ -127,11 +128,11 @@ func markedAgent() (*agentsdk.Agent, *atomic.Int32) {
 		agenttest.ToolCallResponse("c1", "danger", map[string]any{}),
 		agenttest.TextResponse("finished"),
 	}}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "test",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(types.WithMarkers(tool, types.Marker{Kind: "human_approval", Message: "needs approval"})),
-	})
+	}))
 	return a, &calls
 }
 

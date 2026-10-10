@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type ticket struct {
@@ -114,7 +115,7 @@ func TestAIFuncTool(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "triage", map[string]any{"body": "typo"}),
 		agenttest.TextResponse("low"),
 	}}
-	a := NewAgent(AgentConfig{Provider: outer, Tools: types.NewToolRegistry(tool)})
+	a := must.Get(New(Config{Provider: outer, Tools: types.NewToolRegistry(tool)}))
 	if err := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("triage"))}).Wait(); err != nil {
 		t.Fatal(err)
 	}

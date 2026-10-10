@@ -71,7 +71,7 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name: "coordinator",
 		SystemPrompt: `You coordinate research and fact-checking tasks.
 You have two specialists available:

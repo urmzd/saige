@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // Hook and guardrail outcomes are saved with the run, so a resumed run
@@ -24,7 +25,7 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 	}}
 	read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { return "read", nil }}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{
+		return must.Get(agent.New(agent.Config{
 			Provider: recordingInput{provider{&calls}, &seen}, SystemPrompt: "rules", MaxParallelTools: 1,
 			Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read),
 		},
@@ -46,7 +47,7 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 				hookCalls.Add(1)
 				return agent.Rewrite(strings.ToUpper(in.Text), "shout"), nil
 			})}),
-		)
+		))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {

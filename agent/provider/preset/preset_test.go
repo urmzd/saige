@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/split"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // call is one request a fake adapter received, with the options it would
@@ -263,7 +264,7 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ag := agent.NewAgent(agent.AgentConfig{SystemPrompt: "sys"}, agent.WithPreset(b))
+	ag := must.Get(agent.New(agent.Config{SystemPrompt: "sys"}, agent.WithPreset(b)))
 	run := func(msg types.Message) []types.RouteDelta {
 		t.Helper()
 		stream := ag.Invoke(context.Background(), []types.Message{msg})

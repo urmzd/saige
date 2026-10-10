@@ -37,7 +37,7 @@ func main() {
 	composed := fallback.New(retryProvider, secondaryAdapter)
 
 	// Build agent with the composed provider.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "resilient-agent",
 		SystemPrompt: "You are a helpful assistant.",
 		Provider:     composed,

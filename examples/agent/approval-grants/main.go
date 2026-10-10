@@ -51,7 +51,7 @@ func main() {
 		agenttest.TextResponse("Done."),
 	}}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:     "editor",
 		Provider: model,
 		Tools:    types.NewToolRegistry(write, read, remove),

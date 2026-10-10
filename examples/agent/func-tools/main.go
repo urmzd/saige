@@ -79,7 +79,7 @@ func main() {
 	}
 	fmt.Printf("sentiment %s (version %s)\n", s.Label, sentiment.Version())
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "clerk",
 		SystemPrompt: "You manage inventory. Use the tools.",
 		Provider:     llm,

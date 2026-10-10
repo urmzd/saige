@@ -9,6 +9,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestAgentToolCalling runs the full agent loop against a live model: the LLM
@@ -18,12 +19,12 @@ func TestAgentToolCalling(t *testing.T) {
 	ctx := testContext(t, 10*time.Minute)
 
 	tool, calls := addTool()
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "calculator",
 		SystemPrompt: "You are a calculator. You must use the add tool for any addition; never compute it yourself.",
 		Provider:     ollama.NewAdapter(client),
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(ctx, []types.Message{
 		types.UserMsg(types.Text("What is 2 + 3? Use the add tool.")),
@@ -49,7 +50,7 @@ func TestAgentHandoff(t *testing.T) {
 	ctx := testContext(t, 10*time.Minute)
 	adapter := ollama.NewAdapter(client)
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name: "triage",
 		SystemPrompt: "You are a triage agent. You must never answer math questions yourself. " +
 			"For any question involving numbers or arithmetic, immediately call the handoff_to_math tool.",
@@ -59,7 +60,7 @@ func TestAgentHandoff(t *testing.T) {
 		Description:  "Expert at arithmetic. Transfer every math question to this agent.",
 		SystemPrompt: "You are a math expert. Answer arithmetic questions directly and concisely.",
 		Provider:     adapter,
-	}))
+	})))
 
 	stream := agent.Invoke(ctx, []types.Message{
 		types.UserMsg(types.Text("What is 2 + 3?")),
@@ -90,7 +91,7 @@ func TestAgentStructuredResponse(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 10*time.Minute)
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "extractor",
 		SystemPrompt: "Extract the requested fields and respond in JSON.",
 		Provider:     ollama.NewAdapter(client),
@@ -101,7 +102,7 @@ func TestAgentStructuredResponse(t *testing.T) {
 			"city":                {Type: "string", Description: "The city name"},
 			"population_millions": {Type: "number", Description: "Approximate population in millions"},
 		},
-	}))
+	})))
 
 	stream := agent.Invoke(ctx, []types.Message{
 		types.UserMsg(types.Text("Tokyo has a metropolitan population of roughly 37 million people.")),

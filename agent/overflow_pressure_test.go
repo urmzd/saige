@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // countingTokenizer sizes a request at one token per character.
@@ -51,13 +52,13 @@ func (p *summarizingProvider) Stream(_ context.Context, req types.Request) (<-ch
 func TestPressureCompactionLoopsUntilUnderLimit(t *testing.T) {
 	provider := &summarizingProvider{}
 	const limit = 1200
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		MaxIter:      1,
 		Tokenizer:    countingTokenizer{},
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: limit},
-	})
+	}))
 	var input []types.Message
 	for i := range 6 {
 		long := strings.Repeat(fmt.Sprint(i), 200)
@@ -82,13 +83,13 @@ func TestPressureCompactionLoopsUntilUnderLimit(t *testing.T) {
 // sent instead of compacted forever.
 func TestPressureCompactionStopsWithoutProgress(t *testing.T) {
 	provider := &summarizingProvider{}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		MaxIter:      1,
 		Tokenizer:    countingTokenizer{},
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: 1},
-	})
+	}))
 	stream := a.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("a")),
 		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "b"}}},

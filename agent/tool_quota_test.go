@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func quotaTool(name string) *agenttest.MockTool {
@@ -35,18 +36,18 @@ func TestToolQuotaAtDispatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := quotaTool("search")
 			budget := types.NewBudget(types.BudgetPolicy{}).ToolQuota("search", tt.quota)
-			opts := []AgentOption{WithBudget(budget), WithMaxIter(5), WithSequentialTools()}
+			opts := []Option{WithBudget(budget), WithMaxIter(5), WithSequentialTools()}
 			if tt.gate != nil {
 				opts = append(opts, WithToolGate(tt.gate))
 			}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 					two("c1", "c2"),
 					agenttest.ToolCallResponse("c3", "search", map[string]any{}),
 					agenttest.TextResponse("done"),
 				}},
 				Tools: types.NewToolRegistry(tool),
-			}, opts...)
+			}, opts...))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
@@ -73,10 +74,10 @@ func TestToolQuotaSharedWithParallelCalls(t *testing.T) {
 		deltas = append(deltas, agenttest.ToolCallResponse("c"+string(rune('a'+i)), "search", map[string]any{})...)
 	}
 	budget := types.NewBudget(types.BudgetPolicy{}).ToolQuota("search", 4)
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{deltas, agenttest.TextResponse("done")}},
 		Tools:    types.NewToolRegistry(tool),
-	}, WithBudget(budget))
+	}, WithBudget(budget)))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
@@ -114,14 +115,14 @@ func TestRunScopeReachesPolicyAndTools(t *testing.T) {
 			return "ok", nil
 		},
 	}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name: "worker",
 		Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 			agenttest.ToolCallResponse("c1", "probe", map[string]any{}),
 			agenttest.TextResponse("done"),
 		}},
 		Tools: types.NewToolRegistry(tool),
-	}, WithToolPolicy(policy))
+	}, WithToolPolicy(policy)))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
@@ -160,10 +161,10 @@ func TestRunScopeDiffersPerConversation(t *testing.T) {
 		return nil, nil
 	})
 	for range 2 {
-		a := NewAgent(AgentConfig{
+		a := must.Get(New(Config{
 			Name:     "worker",
 			Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}},
-		}, WithToolPolicy(policy))
+		}, WithToolPolicy(policy)))
 		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 		agenttest.CollectDeltas(stream.Deltas())
 		if err := stream.Wait(); err != nil {

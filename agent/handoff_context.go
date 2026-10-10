@@ -81,8 +81,8 @@ func (FullHandoffContext) Select(_ context.Context, request HandoffContext) ([]t
 	return append([]types.Message(nil), request.Messages...), nil
 }
 
-func WithHandoffContextPolicy(policy HandoffContextPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.HandoffContextPolicy = policy }
+func WithHandoffContextPolicy(policy HandoffContextPolicy) Option {
+	return func(cfg *Config) { cfg.HandoffContextPolicy = policy }
 }
 
 func (a *Agent) selectHandoffContext(ctx context.Context, active activeContext, messages []types.Message) (activeContext, error) {

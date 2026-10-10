@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // userTexts returns the text blocks of the user messages in msgs.
@@ -37,7 +38,7 @@ func runDelegation(t *testing.T, def SubAgentDef) (types.ToolExecEndDelta, []typ
 	}}
 	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("child answer")}}
 	def.Name, def.Provider = "child", child
-	a := NewAgent(AgentConfig{Name: "coordinator", Provider: parent, SubAgents: []SubAgentDef{def}})
+	a := must.Get(New(Config{Name: "coordinator", Provider: parent, SubAgents: []SubAgentDef{def}}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("first question"))})); err != nil {
@@ -204,10 +205,10 @@ func TestDelegationToAncestorIsRefused(t *testing.T) {
 		agenttest.ToolCallResponse("delegate", "delegate_to_child", map[string]any{"task": "work"}),
 		agenttest.TextResponse("finished"),
 	}}
-	a := NewAgent(AgentConfig{Name: "coordinator", Provider: parent, SubAgents: []SubAgentDef{{
+	a := must.Get(New(Config{Name: "coordinator", Provider: parent, SubAgents: []SubAgentDef{{
 		Name: "child", Provider: child,
 		SubAgents: []SubAgentDef{{Name: "coordinator", Provider: &agenttest.ScriptedProvider{}}},
-	}}})
+	}}}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
@@ -282,7 +283,7 @@ func TestHandoffCarriesMessageAndContext(t *testing.T) {
 		}),
 	}}
 	billing := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("refunded")}}
-	a := NewAgent(AgentConfig{Name: "triage", Provider: entry}, WithHandoffs(HandoffDef{Name: "billing", Provider: billing}))
+	a := must.Get(New(Config{Name: "triage", Provider: entry}, WithHandoffs(HandoffDef{Name: "billing", Provider: billing})))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("refund please"))})); err != nil {

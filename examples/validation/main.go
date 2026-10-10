@@ -108,7 +108,7 @@ func main() {
 // ── Feature checks ──────────────────────────────────────────────────
 
 func checkBasicGeneration(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Answer in one short sentence."})
+	a := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Answer in one short sentence."})
 	text, _, err := run(a, "What is the capital of France?")
 	if err != nil {
 		return "", err
@@ -138,7 +138,7 @@ func checkToolCalling(p types.Provider) (string, error) {
 			return fmt.Sprintf("%g", a*b), nil
 		},
 	}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := agentsdk.New(agentsdk.Config{
 		Provider: p, Tools: types.NewToolRegistry(mul),
 		SystemPrompt: "Use the multiply tool for arithmetic. Then state the result.",
 	})
@@ -183,7 +183,7 @@ func checkResponseCaching(p types.Provider) (string, error) {
 
 func checkTokenMetrics(p types.Provider) (string, error) {
 	m := &recordingMetrics{}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Be brief."}, agentsdk.WithMetrics(m))
+	a := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Be brief."}, agentsdk.WithMetrics(m))
 	if _, _, err := run(a, "Say hello."); err != nil {
 		return "", err
 	}
@@ -197,7 +197,7 @@ func checkTokenMetrics(p types.Provider) (string, error) {
 }
 
 func checkHandoff(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := agentsdk.New(agentsdk.Config{
 		Name: "triage", Provider: p,
 		SystemPrompt: "You are ONLY a router and cannot do arithmetic yourself. " +
 			"For ANY math or calculation request you MUST call the handoff_to_math tool " +
@@ -221,7 +221,7 @@ func checkHandoff(p types.Provider) (string, error) {
 
 func checkDurable(p types.Provider) (string, error) {
 	counter := &countingProvider{inner: p}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: counter, SystemPrompt: "Be brief."})
+	a := agentsdk.New(agentsdk.Config{Provider: counter, SystemPrompt: "Be brief."})
 	runner := newMemoRunner()
 	input := []types.Message{types.UserMsg(types.Text("Name one planet."))}
 
@@ -231,7 +231,7 @@ func checkDurable(p types.Provider) (string, error) {
 	}
 	// "Replay": a fresh agent on a fresh tree with the SAME runner must reuse the
 	// recorded LLM step and NOT call the provider again.
-	a2 := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: counter, SystemPrompt: "Be brief."})
+	a2 := agentsdk.New(agentsdk.Config{Provider: counter, SystemPrompt: "Be brief."})
 	second, err := a2.RunDurable(context.Background(), runner, input, "")
 	if err != nil {
 		return "", err
@@ -245,7 +245,7 @@ func checkDurable(p types.Provider) (string, error) {
 }
 
 func checkTimeout(p types.Provider) (string, error) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Provider: p, SystemPrompt: "Be brief."},
+	a := agentsdk.New(agentsdk.Config{Provider: p, SystemPrompt: "Be brief."},
 		agentsdk.WithLLMTimeout(time.Millisecond))
 	_, deltas, _ := run(a, "Write a long essay about the ocean.")
 	for _, d := range deltas {
@@ -263,7 +263,7 @@ func checkTimeout(p types.Provider) (string, error) {
 func checkMultimodal(p types.Provider) (string, error) {
 	red := solidPNG(color.RGBA{R: 220, G: 20, B: 20, A: 255})
 	imgTool := &imageTool{data: red}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := agentsdk.New(agentsdk.Config{
 		Provider: p, Tools: types.NewToolRegistry(imgTool),
 		SystemPrompt: "When asked about an image, call make_image, then describe the dominant color you see in one word.",
 	})

@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // orderRecorder collects tool names in the order their bodies actually run,
@@ -68,13 +69,13 @@ func threeCallTurn() [][]types.Delta {
 	}
 }
 
-func runTurn(t *testing.T, tools []types.Tool, opts ...AgentOption) {
+func runTurn(t *testing.T, tools []types.Tool, opts ...Option) {
 	t.Helper()
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:     "ordering",
 		Provider: &agenttest.ScriptedProvider{Responses: threeCallTurn()},
 		Tools:    types.NewToolRegistry(tools...),
-	}, append([]AgentOption{WithMaxIter(5)}, opts...)...)
+	}, append([]Option{WithMaxIter(5)}, opts...)...))
 
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
@@ -84,7 +85,7 @@ func runTurn(t *testing.T, tools []types.Tool, opts ...AgentOption) {
 func TestSequentialToolsPreservesRequestOrder(t *testing.T) {
 	tests := []struct {
 		name string
-		opt  AgentOption
+		opt  Option
 	}{
 		{name: "WithSequentialTools", opt: WithSequentialTools()},
 		{name: "WithMaxParallelTools(1)", opt: WithMaxParallelTools(1)},
@@ -110,10 +111,10 @@ func TestSequentialToolsPreservesRequestOrder(t *testing.T) {
 func TestFannedOutToolsDoNotPreserveRequestOrder(t *testing.T) {
 	tests := []struct {
 		name string
-		opts []AgentOption
+		opts []Option
 	}{
 		{name: "unlimited", opts: nil},
-		{name: "cap above one", opts: []AgentOption{WithMaxParallelTools(3)}},
+		{name: "cap above one", opts: []Option{WithMaxParallelTools(3)}},
 	}
 
 	for _, tt := range tests {

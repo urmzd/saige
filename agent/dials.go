@@ -13,15 +13,15 @@ import (
 // with every call and compiled for the model that serves it, so a failover
 // re-targets them instead of failing on a vendor parameter. Sub-agents
 // inherit them unless their Options set WithDials.
-func WithDials(d types.Dials) AgentOption {
-	return func(c *AgentConfig) { c.Dials = d.Clone() }
+func WithDials(d types.Dials) Option {
+	return func(c *Config) { c.Dials = d.Clone() }
 }
 
 // WithDialPolicy sets how dials the serving model cannot honor are handled.
 // Use types.StrictDials to fail any call whose dials would be mapped or
 // dropped.
-func WithDialPolicy(p types.DialPolicy) AgentOption {
-	return func(c *AgentConfig) {
+func WithDialPolicy(p types.DialPolicy) Option {
+	return func(c *Config) {
 		p = p.Clone()
 		c.DialPolicy = &p
 	}

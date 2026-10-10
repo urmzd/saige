@@ -49,7 +49,7 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "streaming-demo",
 		SystemPrompt: "You are a helpful calculator. Use the add tool when asked to add numbers.",
 		Provider:     adapter,

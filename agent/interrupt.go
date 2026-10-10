@@ -21,8 +21,8 @@ import (
 // once more, attributed to the caller one level up with a fresh deadline,
 // and denies it when that also expires. A root run has no caller, so it
 // denies at once.
-func WithInterruptExpiry(ttl time.Duration, policy types.InterruptPolicy) AgentOption {
-	return func(c *AgentConfig) {
+func WithInterruptExpiry(ttl time.Duration, policy types.InterruptPolicy) Option {
+	return func(c *Config) {
 		c.InterruptTTL = ttl
 		c.InterruptPolicy = policy
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestLiveCrossSessionRecall runs a real model and a real embedder: the
@@ -55,7 +56,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 
 	run := func(name, conversation string, tools []types.Tool, input ...types.Message) string {
 		t.Helper()
-		cfg := agentsdk.AgentConfig{
+		cfg := agentsdk.Config{
 			Name:         "assistant",
 			SystemPrompt: "You are a concise assistant with long-term memory. Save facts the user asks you to remember with the remember tool. Look facts up with your recall tools before saying you do not know.",
 			Provider:     provider,
@@ -68,7 +69,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 			}
 			cfg.Store = conv
 		}
-		stream := agentsdk.NewAgent(cfg, agentsdk.WithMaxIter(6)).Invoke(ctx, input)
+		stream := must.Get(agentsdk.New(cfg, agentsdk.WithMaxIter(6))).Invoke(ctx, input)
 		text := agenttest.CollectText(stream.Deltas())
 		if err := stream.Wait(); err != nil {
 			t.Fatalf("%s: %v", name, err)

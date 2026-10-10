@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/store/filewal"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestAgentDurabilityRoundTrip proves the durability layers compose end to
@@ -48,13 +49,13 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 		agenttest.ToolCallResponse("call-1", "add", map[string]any{"a": float64(2), "b": float64(3)}),
 		agenttest.TextResponse("first-turn answer: 5"),
 	}}
-	ag := agentsdk.NewAgent(agentsdk.AgentConfig{
+	ag := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "durable",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(tool),
 		Tree:     tr,
 		Store:    store1,
-	})
+	}))
 
 	text, _, err := drainStream(ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is 2 + 3?"))}))
 	if err != nil {
@@ -150,12 +151,12 @@ func TestAgentDurabilityRoundTrip(t *testing.T) {
 	provider2 := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("second-turn answer: continuation-ok"),
 	}}
-	ag2 := agentsdk.NewAgent(agentsdk.AgentConfig{
+	ag2 := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "durable",
 		Provider: provider2,
 		Tree:     recovered,
 		Store:    store2,
-	})
+	}))
 	text2, _, err := drainStream(ag2.Invoke(ctx, []types.Message{types.UserMsg(types.Text("And what did you just compute?"))}))
 	if err != nil {
 		t.Fatalf("second invoke on recovered tree: %v", err)

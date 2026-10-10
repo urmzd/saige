@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // resolveSources only fills locators: it never replaces a part, and a part
@@ -41,11 +42,11 @@ func TestResolveSourcesFillsLocatorsAndNeverReplaces(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var logs bytes.Buffer
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:  &capturingProvider{response: "ok"},
 				Resolvers: tt.resolvers,
 				Logger:    slog.New(slog.NewTextHandler(&logs, nil)),
-			})
+			}))
 			out := a.resolveSources(context.Background(), []types.Message{types.UserMsg(tt.part)})
 			parts := out[0].(types.UserMessage).Parts
 			if len(parts) != 1 || !types.IsMedia(parts[0]) {

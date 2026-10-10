@@ -17,6 +17,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // newEngine returns an engine on an in-memory ledger and queue.
@@ -87,7 +88,7 @@ func TestSuspendDecideResumeAndReplay(t *testing.T) {
 			return "written", nil
 		}}
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { reads.Add(1); return "read", nil }}
-		return agent.NewAgent(agent.AgentConfig{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1})
+		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -160,7 +161,7 @@ func TestToolsReceiveStableIdempotencyKey(t *testing.T) {
 			return "ok", nil
 		}}
 		p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("call-1", "write", nil), agenttest.TextResponse("done")}}
-		return agent.NewAgent(agent.AgentConfig{Provider: p, Tools: types.NewToolRegistry(write), ToolContext: types.NewToolContext(map[string]any{"limit": 3})})
+		return must.Get(agent.New(agent.Config{Provider: p, Tools: types.NewToolRegistry(write), ToolContext: types.NewToolContext(map[string]any{"limit": 3})}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -180,7 +181,7 @@ func TestBudgetReceiptsReplayAfterResume(t *testing.T) {
 	factory := func(string) *agent.Agent {
 		current = types.NewBudget(types.BudgetPolicy{MaxRequests: 5, PerCallTokens: 100})
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { return "ok", nil }}
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "system", Provider: stagedNoUsage{&calls}, Budget: current, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "system", Provider: stagedNoUsage{&calls}, Budget: current, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -251,7 +252,7 @@ func TestChildApprovalReplaysParentAndChildWithoutRepeatingEffects(t *testing.T)
 	e := newEngine()
 	factory := func(string) *agent.Agent {
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { writes.Add(1); return "written", nil }}
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -286,7 +287,7 @@ func TestAdmissionApprovalPersistsBeforeProviderAndRestoresGrant(t *testing.T) {
 	var budget *types.Budget
 	factory := func(string) *agent.Agent {
 		budget = types.NewBudget(types.BudgetPolicy{Limit: types.USD(.25), PerCallCost: types.USD(.4), OnExceed: types.BudgetRequireApproval})
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -320,7 +321,7 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 	e := newEngine()
 	var parentCalls, childCalls atomic.Int32
 	factory := func(string) *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.AgentOption{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.Option{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)
@@ -357,7 +358,7 @@ func TestToolPanicLeavesUncertainStep(t *testing.T) {
 			writes.Add(1)
 			panic("connection lost after the write")
 		}}
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(write)})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(write)}))
 	}
 	wf := e.Register("", factory)
 	startWorker(t, e)

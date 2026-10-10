@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pricedStepProvider is a stepProvider with a rate card: $3 per million
@@ -40,7 +41,7 @@ func TestBudgetOvershootFollowsPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := pricedStepProvider{newStepProvider(stepCall{before: expensive})}
 			budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(1), OnExceed: tt.onExceed})
-			a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
+			a := must.Get(New(Config{Provider: provider}, WithBudget(budget)))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
@@ -92,7 +93,7 @@ func TestInterruptChargesUsedTokens(t *testing.T) {
 				stepCall{before: append([]types.Delta{types.UsageDelta{PromptTokens: 10, CompletionTokens: 2}}, agenttest.TextResponse("replaced")...)},
 			)}
 			budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(5)})
-			a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
+			a := must.Get(New(Config{Provider: provider}, WithBudget(budget)))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
@@ -141,7 +142,7 @@ func TestInterruptDuringAdmissionApproval(t *testing.T) {
 	if _, err := budget.Record("m", provider.Capabilities().Pricing, types.TokenUsage{InputTokens: 1_000_000, Requests: 1}); err != nil {
 		t.Fatal(err)
 	}
-	a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
+	a := must.Get(New(Config{Provider: provider}, WithBudget(budget)))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})

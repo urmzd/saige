@@ -472,7 +472,7 @@ func TestFallbackProvider_WithModel(t *testing.T) {
 }
 
 func TestFallbackProvider_Name(t *testing.T) {
-	fb := must.Get(Of())
+	fb := must.Get(Of(&mockProvider{}))
 	if fb.Name() != "fallback" {
 		t.Errorf("Name() = %q, want %q", fb.Name(), "fallback")
 	}

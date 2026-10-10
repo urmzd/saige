@@ -2,6 +2,7 @@ package fallback
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
@@ -47,8 +48,8 @@ func TestModelReportsThePrimary(t *testing.T) {
 	if got := types.ProviderModel(f); got != "primary-model" {
 		t.Errorf("Model() = %q, want the primary's model", got)
 	}
-	if got := types.ProviderModel(must.Get(Of())); got != "" {
-		t.Errorf("Model() on an empty chain = %q, want empty", got)
+	if _, err := Of(); !errors.Is(err, types.ErrInvalidConfig) {
+		t.Errorf("an empty chain: %v", err)
 	}
 }
 

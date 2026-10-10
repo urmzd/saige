@@ -8,6 +8,7 @@ import (
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/workspace"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestCommitExternalizesMedia checks that media bytes committed to the tree
@@ -18,7 +19,7 @@ func TestCommitExternalizesMedia(t *testing.T) {
 	ws := workspace.NewMemory()
 	prov := &toolCallProvider{toolName: "chart", toolID: "c1", toolArgs: map[string]any{}, response: "all done"}
 	tool := &richToolMock{name: "chart", res: types.ImageResult("here is the chart", types.MediaPNG, []byte{1, 2, 3})}
-	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}, WithWorkspace(ws))
+	a := must.Get(New(Config{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}, WithWorkspace(ws)))
 	collectDeltas(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("draw"))}))
 
 	msgs, err := a.Tree().FlattenBranch("main")
@@ -65,7 +66,7 @@ func TestCommitExternalizesMedia(t *testing.T) {
 }
 
 func TestExternalizeWithoutWorkspace(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &toolCallProvider{}, SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: &toolCallProvider{}, SystemPrompt: "s"}))
 	in := types.UserMsg(types.Image(types.Bytes(types.MediaPNG, []byte{7})))
 	out := a.externalize(context.Background(), in)
 	src, _ := types.SourceOf(out.(types.UserMessage).Parts[0])
@@ -77,12 +78,12 @@ func TestExternalizeWithoutWorkspace(t *testing.T) {
 func TestExternalizeReadOnlyWorkspaceAndNesting(t *testing.T) {
 	ctx := context.Background()
 	ws := workspace.NewMemory()
-	a := NewAgent(AgentConfig{Provider: &toolCallProvider{}, SystemPrompt: "s"}, WithWorkspace(ws.View(true)))
+	a := must.Get(New(Config{Provider: &toolCallProvider{}, SystemPrompt: "s"}, WithWorkspace(ws.View(true))))
 	in := types.AssistantMsg(types.ServerToolResultPart{CallID: "s", Outputs: []types.Part{types.ImageOutPart{Source: types.Bytes(types.MediaPNG, []byte{8})}}})
 	if src, _ := types.SourceOf(a.externalize(ctx, in).(types.AssistantMessage).Parts[0].(types.ServerToolResultPart).Outputs[0]); src.Ref != "" {
 		t.Fatalf("read-only workspace wrote %+v", src)
 	}
-	a = NewAgent(AgentConfig{Provider: &toolCallProvider{}, SystemPrompt: "s"}, WithWorkspace(ws))
+	a = must.Get(New(Config{Provider: &toolCallProvider{}, SystemPrompt: "s"}, WithWorkspace(ws)))
 	out := a.externalize(ctx, in).(types.AssistantMessage)
 	if src, _ := types.SourceOf(out.Parts[0].(types.ServerToolResultPart).Outputs[0]); src.Ref == "" {
 		t.Fatal("server tool output was not stored")

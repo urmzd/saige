@@ -23,7 +23,7 @@ func main() {
 	// The triage agent is the entry agent. WithHandoffs registers the group; the
 	// triage agent automatically gains handoff_to_billing and handoff_to_tech
 	// tools, and each specialist can hand back to triage.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent := agentsdk.New(agentsdk.Config{
 		Name:         "triage",
 		SystemPrompt: "You triage customer questions. Hand off billing questions to the billing agent and technical questions to the tech agent.",
 		Provider:     adapter,

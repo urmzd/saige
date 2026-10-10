@@ -6,6 +6,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // A model inferred from a family prefix still reports what its adapter
@@ -19,7 +20,7 @@ func TestOutputAutoConsultsAdapterForInferredModel(t *testing.T) {
 	if mc, _ := types.ProviderCapabilities(p); mc.Known {
 		t.Fatal("test needs a prefix-inferred model")
 	}
-	a := NewAgent(AgentConfig{Provider: p})
+	a := must.Get(New(Config{Provider: p}))
 	got, err := a.resolveOutputMode(OutputAuto, cityPopulationSchema)
 	if err != nil {
 		t.Fatal(err)
@@ -27,11 +28,11 @@ func TestOutputAutoConsultsAdapterForInferredModel(t *testing.T) {
 	if got != OutputTool {
 		t.Fatalf("mode = %q, want %q", got, OutputTool)
 	}
-	plain := NewAgent(AgentConfig{Provider: anthropic.NewAdapter("key", "claude-3-5-haiku-2099")})
+	plain := must.Get(New(Config{Provider: anthropic.NewAdapter("key", "claude-3-5-haiku-2099")}))
 	if got, _ := plain.resolveOutputMode(OutputAuto, cityPopulationSchema); got != OutputNative {
 		t.Fatalf("a non-thinking model keeps the native path, got %q", got)
 	}
-	adaptive := NewAgent(AgentConfig{Provider: anthropic.NewAdapter("key", "claude-haiku-5-5-2099")})
+	adaptive := must.Get(New(Config{Provider: anthropic.NewAdapter("key", "claude-haiku-5-5-2099")}))
 	if got, _ := adaptive.resolveOutputMode(OutputAuto, cityPopulationSchema); got != OutputNative {
 		t.Fatalf("an adaptive model that accepts forcing keeps the native path, got %q", got)
 	}
@@ -54,7 +55,7 @@ func TestResponseSchemaAutoAvoidsForcedTool(t *testing.T) {
 		{"claude-sonnet-4-5", []anthropic.Option{anthropic.WithThinking(1024)}, OutputTool},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: anthropic.NewAdapter("key", tc.model, tc.opts...)}, WithResponseSchema(cityPopulationSchema))
+			a := must.Get(New(Config{Provider: anthropic.NewAdapter("key", tc.model, tc.opts...)}, WithResponseSchema(cityPopulationSchema)))
 			out := a.output(context.Background())
 			if out.mode != tc.want {
 				t.Fatalf("mode = %q, want %q", out.mode, tc.want)

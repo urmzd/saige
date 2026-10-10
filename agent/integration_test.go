@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/store/memwal"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // ===================================================================
@@ -297,10 +298,10 @@ func textChunks(deltas []types.Delta) []string {
 
 func TestAgentTextOnlyResponse(t *testing.T) {
 	provider := &mockProvider{response: "Hello, world!"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "You are a helper.",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
@@ -343,11 +344,11 @@ func TestAgentSingleToolCall(t *testing.T) {
 		response: "Done!",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet me"))})
 	deltas := collectDeltas(stream)
@@ -435,11 +436,11 @@ func TestAgentMultipleToolCallsInParallel(t *testing.T) {
 		response: "Both done.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(toolA, toolB),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do both"))})
 	deltas := collectDeltas(stream)
@@ -481,10 +482,10 @@ func TestAgentToolNotFound(t *testing.T) {
 		response: "After error",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("call it"))})
 	deltas := collectDeltas(stream)
@@ -525,11 +526,11 @@ func TestAgentToolReturnsError(t *testing.T) {
 		response: "After failure",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do it"))})
 	deltas := collectDeltas(stream)
@@ -563,11 +564,11 @@ func TestAgentMultiTurnToolLoop(t *testing.T) {
 		finalMessage: "All steps done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("multi-step"))})
 	deltas := collectDeltas(stream)
@@ -609,12 +610,12 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     infiniteToolProvider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
 		MaxIter:      3,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("loop"))})
 	collectDeltas(stream)
@@ -631,10 +632,10 @@ func TestAgentMaxIterationsEnforced(t *testing.T) {
 }
 
 func TestAgentDefaultMaxIter(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 	// Default MaxIter is 10
 	if agent.cfg.MaxIter != 10 {
 		t.Errorf("default MaxIter = %d, want 10", agent.cfg.MaxIter)
@@ -648,10 +649,10 @@ func TestAgentDefaultMaxIter(t *testing.T) {
 func TestAgentProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("connection refused")}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
@@ -669,10 +670,10 @@ func TestAgentProviderError(t *testing.T) {
 func TestAgentEmptyProviderResponse(t *testing.T) {
 	provider := &emptyProvider{}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
@@ -703,10 +704,10 @@ func TestAgentCancellation(t *testing.T) {
 		response: "never",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 
@@ -735,10 +736,10 @@ func TestAgentContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Hi"))})
 
@@ -761,10 +762,10 @@ func TestAgentContextCancellation(t *testing.T) {
 
 func TestStreamCancelIdempotent(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	collectDeltas(stream)
@@ -791,7 +792,7 @@ func TestSubAgentDelegation(t *testing.T) {
 		response: "Parent done based on child.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		SubAgents: []SubAgentDef{
@@ -802,7 +803,7 @@ func TestSubAgentDelegation(t *testing.T) {
 				Provider:     childProvider,
 			},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	deltas := collectDeltas(stream)
@@ -833,13 +834,13 @@ func TestSubAgentDelegation(t *testing.T) {
 }
 
 func TestSubAgentRegisteredAsTool(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helps", Provider: &mockProvider{response: "ok"}},
 		},
-	})
+	}))
 
 	// Tool should be registered as delegate_to_helper
 	tool, found := agent.tools.Get("delegate_to_helper")
@@ -868,11 +869,11 @@ func TestSubAgentBlockingExecute(t *testing.T) {
 	sat := &subAgentTool{
 		def: types.ToolDef{Name: "test_sub", Description: "test"},
 		factory: func(_ context.Context, runner types.StepRunner, _ string) (*Agent, error) {
-			return NewAgent(AgentConfig{
+			return must.Get(New(Config{
 				Provider:     childProvider,
 				SystemPrompt: "child",
 				StepRunner:   runner,
-			}), nil
+			})), nil
 		},
 	}
 
@@ -905,7 +906,7 @@ func TestNestedSubAgents(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent",
 		SubAgents: []SubAgentDef{
@@ -924,7 +925,7 @@ func TestNestedSubAgents(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go deep"))})
 	collectDeltas(stream)
@@ -943,11 +944,11 @@ func TestNestedSubAgents(t *testing.T) {
 func TestAgentWithNoopCompactor(t *testing.T) {
 	recording := &recordingProvider{response: "hi"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     recording,
 		SystemPrompt: "sys",
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactNone},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
@@ -982,11 +983,11 @@ func TestAgentWithSlidingWindowCompactor(t *testing.T) {
 		current = node
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:   recording,
 		CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 3},
 		Tree:       tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{})
 	collectDeltas(stream)
@@ -1114,11 +1115,11 @@ func TestSummarizeCompactorProviderError(t *testing.T) {
 func TestAgentCompactorErrorSilentlyIgnored(t *testing.T) {
 	recording := &recordingProvider{response: "hi"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     recording,
 		SystemPrompt: "sys",
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, Threshold: 2},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
@@ -1504,12 +1505,12 @@ func TestInvoke(t *testing.T) {
 
 	provider := &mockProvider{response: "Hello!"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("Hi")),
@@ -1557,12 +1558,12 @@ func TestInvokeOnExplicitBranch(t *testing.T) {
 
 	provider := &mockProvider{response: "side answer"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{}, branchID)
 	for range stream.Deltas() {
@@ -1579,11 +1580,11 @@ func TestInvokeOnExplicitBranch(t *testing.T) {
 func TestInvokeAutoCreatesTree(t *testing.T) {
 	provider := &mockProvider{response: "Hello!"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
-	})
+	}))
 
 	// Tree should be auto-created.
 	if agent.Tree() == nil {
@@ -1622,12 +1623,12 @@ func TestInvokeUsesActiveCursor(t *testing.T) {
 	tr.SetActive(branchID)
 
 	provider := &mockProvider{response: "side answer"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "You are helpful.",
 		Provider:     provider,
 		Tree:         tr,
-	})
+	}))
 
 	// Invoke without explicit branch -- should use active (side)
 	stream := agent.Invoke(context.Background(), []types.Message{})
@@ -1652,10 +1653,10 @@ func TestInvokeUsesActiveCursor(t *testing.T) {
 func TestAgentMultipleInvocationsOnSameTree(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	// First conversation turn
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 1"))})
@@ -1683,10 +1684,10 @@ func TestAgentMultipleInvocationsOnSameTree(t *testing.T) {
 func TestAgentInvokeWithMultipleInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "got both"}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("first")),
@@ -1715,10 +1716,10 @@ func TestAgentBranchAndContinue(t *testing.T) {
 	// Branch from assistant
 	branchID, _, _ := tr.Branch(context.Background(), asst.ID, "edit", types.UserMsg(types.Text("different question")))
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke on the branch
 	stream := agent.Invoke(context.Background(), []types.Message{}, branchID)
@@ -1739,10 +1740,10 @@ func TestAgentBranchAndContinue(t *testing.T) {
 }
 
 func TestAgentInvokeOnNonExistentBranch(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))}, "nonexistent")
 	deltas := collectDeltas(stream)
@@ -1761,10 +1762,10 @@ func TestAgentInvokeOnNonExistentBranch(t *testing.T) {
 
 func TestEventStreamDrainRequired(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 
@@ -1948,10 +1949,10 @@ func TestConcurrentInvocationsOnDifferentBranches(t *testing.T) {
 	}
 
 	provider := &mockProvider{response: "branch response"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke on all branches concurrently
 	var wg sync.WaitGroup
@@ -2024,10 +2025,10 @@ func TestMessagesToTextUserToolResult(t *testing.T) {
 
 func TestAgentInvokeNoInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "unprompted"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{})
 	deltas := collectDeltas(stream)
@@ -2047,10 +2048,10 @@ func TestAgentInvokeNoInputMessages(t *testing.T) {
 
 func TestAgentInvokeNilInputMessages(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), nil)
 	collectDeltas(stream)
@@ -2061,9 +2062,9 @@ func TestAgentInvokeNilInputMessages(t *testing.T) {
 
 func TestAgentEmptySystemPrompt(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 	collectDeltas(stream)
@@ -2294,10 +2295,10 @@ func TestCheckpointRewindAndInvoke(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
 	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// First turn
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("turn 1"))})
@@ -2364,10 +2365,10 @@ func TestUpdateUserMessageAndInvoke(t *testing.T) {
 	provider := &mockProvider{response: "response"}
 
 	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// First turn
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("original question"))})
@@ -2423,10 +2424,10 @@ func TestAgentRespectsSetActive(t *testing.T) {
 	tr.SetActive(bid)
 
 	provider := &mockProvider{response: "on alt branch"}
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tree:     tr,
-	})
+	}))
 
 	// Invoke without explicit branch
 	stream := agent.Invoke(context.Background(), []types.Message{})
@@ -2459,7 +2460,7 @@ func TestDiffAfterAgentInvoke(t *testing.T) {
 
 	// Invoke on both branches
 	provider := &mockProvider{response: "reply"}
-	agent := NewAgent(AgentConfig{Provider: provider, Tree: tr})
+	agent := must.Get(New(Config{Provider: provider, Tree: tr}))
 
 	s1 := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("main q"))})
 	collectDeltas(s1)
@@ -2524,11 +2525,11 @@ func TestEndToEndScenario(t *testing.T) {
 	}
 
 	tr, _ := tree.New(types.SystemMsg(types.Text("You are a helpful assistant.")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider: provider,
 		Tools:    types.NewToolRegistry(searchTool),
 		Tree:     tr,
-	})
+	}))
 
 	// Turn 1
 	s1 := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Tell me about Go testing"))})
@@ -2652,11 +2653,11 @@ func TestToolReceivesCorrectArguments(t *testing.T) {
 		response: "Done.",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("echo"))})
 	collectDeltas(stream)
@@ -2687,10 +2688,10 @@ func TestAgentMultiChunkTextStreaming(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
@@ -2740,11 +2741,11 @@ func TestAgentMixedTextAndToolCallResponse(t *testing.T) {
 		},
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("search"))})
 	deltas := collectDeltas(stream)
@@ -2792,11 +2793,11 @@ func TestReplayRoundTrip(t *testing.T) {
 		response: "Done greeting",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        types.NewToolRegistry(tool),
-	})
+	}))
 
 	// Invoke
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("greet me"))})
@@ -2846,11 +2847,11 @@ func TestAgentWithSummarizeCompactor(t *testing.T) {
 	_ = callIdx
 
 	tr, _ := tree.New(types.SystemMsg(types.Text("You are helpful.")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:   provider,
 		CompactCfg: &types.CompactConfig{Strategy: types.CompactSummarize, Threshold: 5},
 		Tree:       tr,
-	})
+	}))
 
 	// Multiple turns: each Invoke uses tr.Active(), which may change after compaction.
 	for i := 0; i < 4; i++ {
@@ -3249,11 +3250,11 @@ func TestNewIDUniqueness(t *testing.T) {
 // ===================================================================
 
 func TestAgentNilToolsCreatesEmptyRegistry(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		Tools:        nil,
-	})
+	}))
 
 	defs := agent.tools.Definitions()
 	if len(defs) != 0 {
@@ -3272,11 +3273,11 @@ func TestAgentWithToolsField(t *testing.T) {
 	}
 
 	reg := types.NewToolRegistry(tool)
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
 		Tools:        reg,
-	})
+	}))
 
 	_, found := agent.tools.Get("custom")
 	if !found {
@@ -3312,7 +3313,7 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent",
 		SubAgents: []SubAgentDef{
@@ -3325,7 +3326,7 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 				MaxIter:      2, // limit child iterations
 			},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 
@@ -3349,11 +3350,11 @@ func TestSubAgentMaxIterRespected(t *testing.T) {
 // ===================================================================
 
 func TestFeedback(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "I am helpful"},
-	})
+	}))
 
 	// Run a conversation.
 	stream := agent.Invoke(context.Background(), []types.Message{
@@ -3410,11 +3411,11 @@ func TestFeedback(t *testing.T) {
 }
 
 func TestFeedbackIsPermanentLeaf(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "response"},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("Hi")),
@@ -3439,11 +3440,11 @@ func TestFeedbackIsPermanentLeaf(t *testing.T) {
 }
 
 func TestFeedbackNotInFlatten(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Name:         "test",
 		SystemPrompt: "Hello",
 		Provider:     &mockProvider{response: "response"},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("Hi")),
@@ -3513,11 +3514,11 @@ func TestFeedbackReplay(t *testing.T) {
 
 func TestPersistCompactedCreatesBranch(t *testing.T) {
 	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "ok"},
 		SystemPrompt: "sys",
 		Tree:         tr,
-	})
+	}))
 
 	compacted := []types.Message{
 		types.SystemMsg(types.Text("sys")),
@@ -3548,11 +3549,11 @@ func TestPersistCompactedCreatesBranch(t *testing.T) {
 
 func TestPersistCompactedTooShortReturnsError(t *testing.T) {
 	tr, _ := tree.New(types.SystemMsg(types.Text("sys")))
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "ok"},
 		SystemPrompt: "sys",
 		Tree:         tr,
-	})
+	}))
 
 	// Only one message: too short to branch.
 	_, err := agent.persistCompacted(context.Background(), tr, []types.Message{
@@ -3610,7 +3611,7 @@ func TestRunCompactionWithCompactor(t *testing.T) {
 			configured := &mockProvider{response: "wrong provider"}
 			member := &mockProvider{response: "summary of conversation"}
 			tr := compactionHistory(t, tt.messages)
-			a := NewAgent(AgentConfig{Provider: configured, SystemPrompt: "sys", Tree: tr})
+			a := must.Get(New(Config{Provider: configured, SystemPrompt: "sys", Tree: tr}))
 			msgs, err := tr.FlattenBranch("main")
 			if err != nil {
 				t.Fatal(err)

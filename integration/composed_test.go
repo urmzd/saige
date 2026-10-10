@@ -40,7 +40,7 @@ func delegatingParent(subProvider types.Provider) *agentsdk.Agent {
 		agenttest.ToolCallResponse("call-1", "delegate_to_helper", map[string]any{"task": "do the thing"}),
 		agenttest.TextResponse("parent-final: done"),
 	}}
-	return agentsdk.NewAgent(agentsdk.AgentConfig{
+	return must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "parent",
 		SystemPrompt: "You are the parent agent.",
 		Provider:     parentProvider,
@@ -48,7 +48,7 @@ func delegatingParent(subProvider types.Provider) *agentsdk.Agent {
 		Name:        "helper",
 		Description: "Test helper sub-agent.",
 		Provider:    subProvider,
-	}))
+	})))
 }
 
 // toolResults extracts every ToolResultPart persisted on the branch.
@@ -129,11 +129,11 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 
 	// Direct invocation first: a mid-stream ErrorDelta must surface through
 	// Wait() even when wrapped in a fallback with no remaining providers.
-	failing := agentsdk.NewAgent(agentsdk.AgentConfig{
+	failing := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "doomed",
 		SystemPrompt: "You will fail.",
 		Provider:     must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"))),
-	})
+	}))
 	stream := failing.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	sawErrorDelta := false
 	for d := range stream.Deltas() {

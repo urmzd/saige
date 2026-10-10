@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type provider struct{ calls *atomic.Int32 }
@@ -50,7 +51,7 @@ func TestSuspendReleaseResumeAndReplay(t *testing.T) {
 	}}
 	read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { reads.Add(1); return "read", nil }}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1})
+		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1}))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	_, err := engine.Run(ctx, "run", "v1", factory, input)
@@ -243,7 +244,7 @@ func TestBudgetReplayRestoresUnknownSettlement(t *testing.T) {
 		current = types.NewBudget(types.BudgetPolicy{MaxRequests: 5, PerCallTokens: 100})
 		p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}
 		calls.Add(1)
-		return agent.NewAgent(agent.AgentConfig{Provider: p, Budget: current})
+		return must.Get(agent.New(agent.Config{Provider: p, Budget: current}))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "budget", "v1", factory, input); err != nil {
@@ -289,7 +290,7 @@ func TestChildApprovalReplaysParentAndChildWithoutRepeatingEffects(t *testing.T)
 	e := New(t.TempDir())
 	factory := func() *agent.Agent {
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { writes.Add(1); return "written", nil }}
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "write"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", SystemPrompt: "child", Provider: stagedProvider{&childCalls, agenttest.ToolCallResponse("write-call", "write", nil)}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}))}}}))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "child", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
@@ -323,7 +324,7 @@ func TestAdmissionApprovalPersistsBeforeProviderAndRestoresGrant(t *testing.T) {
 	var budget *types.Budget
 	factory := func() *agent.Agent {
 		budget = types.NewBudget(types.BudgetPolicy{Limit: types.USD(.25), PerCallCost: types.USD(.4), OnExceed: types.BudgetRequireApproval})
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "system", Provider: stagedProvider{&calls, agenttest.TextResponse("done")}, Budget: budget}))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := e.Run(context.Background(), "grant", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
@@ -358,7 +359,7 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 	e := New(t.TempDir())
 	var parentCalls, childCalls atomic.Int32
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.AgentOption{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}})
+		return must.Get(agent.New(agent.Config{SystemPrompt: "parent", Provider: stagedProvider{&parentCalls, agenttest.ToolCallResponse("child-call", "delegate_to_child", map[string]any{"task": "go"})}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 10}), SubAgents: []agent.SubAgentDef{{Name: "child", Provider: stagedProvider{&childCalls, agenttest.TextResponse("done")}, Options: []agent.Option{agent.WithBudget(types.NewBudget(types.BudgetPolicy{MaxRequests: 5}))}}}}))
 	}
 	_, err := e.Run(context.Background(), "separate", "v1", factory, []types.Message{types.UserMsg(types.Text("go"))})
 	if err == nil || childCalls.Load() != 0 {
@@ -430,8 +431,8 @@ func TestGrantVerdictReplaysAfterExpiry(t *testing.T) {
 		return "dropped", nil
 	}}
 	factory := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{Provider: grantProvider{}, Tools: types.NewToolRegistry(write, drop), MaxParallelTools: 1},
-			agent.WithApprovalPolicy(agent.ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }}))
+		return must.Get(agent.New(agent.Config{Provider: grantProvider{}, Tools: types.NewToolRegistry(write, drop), MaxParallelTools: 1},
+			agent.WithApprovalPolicy(agent.ApprovalPolicy{RiskDefaults: true, Now: func() time.Time { return time.Unix(0, now.Load()) }})))
 	}
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {

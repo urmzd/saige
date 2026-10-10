@@ -183,7 +183,7 @@ func (a *Agent) recoverOverflow(ctx context.Context, stream *EventStream, st *ov
 }
 
 // runCompaction compacts the branch. Summaries are written by the
-// compaction provider: AgentConfig.CompactProvider, else the active provider
+// compaction provider: Config.CompactProvider, else the active provider
 // switched to CompactConfig.SummaryModel, else the active provider. Every
 // summary call is admitted by the budget before it is sent and settled
 // afterwards, like a turn. It reports the new branch when the history

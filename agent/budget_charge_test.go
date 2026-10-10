@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pricedProvider reports a rate card, which is what chargeBudget needs to cost
@@ -33,10 +34,10 @@ func (p *pricedProvider) Stream(_ context.Context, _ types.Request) (<-chan type
 func chargeFixture(t *testing.T, policy types.BudgetPolicy) (*Agent, *EventStream, *types.Budget) {
 	t.Helper()
 	budget := types.NewBudget(policy)
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     &pricedProvider{model: "primary-model"},
 		SystemPrompt: "sys",
-	}, WithBudget(budget))
+	}, WithBudget(budget)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
