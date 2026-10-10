@@ -1,0 +1,68 @@
+name: Stress
+
+# Load and concurrency tests behind the stress build tag. They take longer
+# than the pull request checks, so they run nightly and on demand, never on
+# pull requests. See docs/load-testing.md.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      live:
+        description: Also run the live provider burst (needs OPENAI_API_KEY or ANTHROPIC_API_KEY secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    name: Stress (race, Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.1-pg18
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      SAIGE_TEST_POSTGRES_DSN: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -tags stress -race -count=1 -v ./integration/stress/
+
+  live:
+    name: Live burst
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SAIGE_LIVE: '1'
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+        if: env.OPENAI_API_KEY != '' || env.ANTHROPIC_API_KEY != ''
+      - uses: actions/setup-go@v6
+        if: env.OPENAI_API_KEY != '' || env.ANTHROPIC_API_KEY != ''
+        with:
+          go-version-file: go.mod
+      - if: env.OPENAI_API_KEY != '' || env.ANTHROPIC_API_KEY != ''
+        run: go test -tags stress -count=1 -v -run TestLiveBurst ./integration/stress/
+      - if: env.OPENAI_API_KEY == '' && env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::No provider secrets configured; live burst skipped"
