@@ -273,7 +273,7 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 	if err != nil {
 		return nil, err
 	}
-	if !ok || !pl.Converts() {
+	if !ok || !pl.Rewrites() {
 		if err := checkView(ctx, out.Messages, pl.Offering); err != nil {
 			return nil, err
 		}
@@ -290,6 +290,11 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 	src, err := p.Inner.Stream(ctx, out)
 	if err != nil {
 		return nil, err
+	}
+	if !pl.Converts() {
+		// Lowering only moves media within the view: no conversion ran,
+		// so there is nothing to report.
+		return src, nil
 	}
 	ch := make(chan types.Delta)
 	go func() {

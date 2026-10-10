@@ -4,7 +4,8 @@
 // A model takes some media natively and not others. Instead of dropping a
 // part it cannot take, or replacing it with a placeholder, every attempt is
 // planned: each media part is native, lowered (an image in a tool result
-// that the adapter moves to a follow-up user message), converted by a
+// that Apply moves to a follow-up user message, for an endpoint whose tool
+// results carry text only), converted by a
 // permitted action, or rejected. Reject is the default. The modality dial
 // (types.Dials.Modality) permits the other actions per modality, in order
 // of preference:

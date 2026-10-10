@@ -1,0 +1,62 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "what color is the snapshot?",
+          "type": "input_text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_1",
+      "name": "snapshot",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_2",
+      "name": "snapshot",
+      "type": "function_call"
+    },
+    {
+      "output": [
+        {
+          "text": "snapshot taken",
+          "type": "input_text"
+        },
+        {
+          "image_url": "data:image/png;base64,iVBORw0KGgpmaXh0dXJl",
+          "detail": "auto",
+          "type": "input_image"
+        }
+      ],
+      "call_id": "call_1",
+      "type": "function_call_output"
+    },
+    {
+      "output": "no change",
+      "call_id": "call_2",
+      "type": "function_call_output"
+    }
+  ],
+  "model": "gpt-6-luna",
+  "tools": [
+    {
+      "strict": false,
+      "parameters": {
+        "type": "object"
+      },
+      "name": "snapshot",
+      "description": "Takes a snapshot",
+      "type": "function"
+    }
+  ],
+  "stream": true
+}

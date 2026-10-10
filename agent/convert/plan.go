@@ -49,6 +49,14 @@ func (p Plan) Converts() bool {
 	})
 }
 
+// Rewrites reports whether Apply changes the view: the plan converts a
+// part, or lowers media from a tool result to a follow-up user message.
+func (p Plan) Rewrites() bool {
+	return p.Converts() || slices.ContainsFunc(p.Decisions, func(d Decision) bool {
+		return d.Action == types.DecisionLowered
+	})
+}
+
 // Report is the plan as a report: the decisions it made, before any ran.
 func (p Plan) Report() types.ConversionReport {
 	r := types.ConversionReport{Offering: p.Offering}
@@ -149,7 +157,7 @@ func (d dial) actions(m types.Modality) ([]types.ModalityAction, string) {
 
 // PlanConversions decides, for every media part of msgs, whether target
 // takes it natively (or lowered from a tool result to a follow-up user
-// message, which the adapter does), which permitted action and converter
+// message, which Apply does), which permitted action and converter
 // fit it to target, or that it is rejected. Reasoning parts the target
 // cannot verify are dropped or sent as text, as the policy says. It does no
 // I/O: converters are only asked for estimates.
@@ -332,7 +340,7 @@ func (pr *planner) takes(ms []types.Modality) bool {
 }
 
 // native returns why target cannot take part as it is, or "" when it can.
-// lowered is true for media in a tool result that the adapter moves to a
+// lowered is true for media in a tool result that Apply moves to a
 // follow-up user message.
 func (pr *planner) native(part types.Part, src types.Source, m types.Modality, inToolResult bool) (reason, cause string, lowered bool) {
 	name := offeringName(pr.target)

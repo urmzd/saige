@@ -787,7 +787,14 @@
         "batch": true
       },
       "default_offering_template": "baseline.openai",
-      "inherit_offerings": "openai-chat"
+      "inherit_offerings": "openai-chat",
+      "overrides": {
+        "modalities": {
+          "tool_result": {
+            "image": "inline"
+          }
+        }
+      }
     }
   },
   "offering_templates": {
