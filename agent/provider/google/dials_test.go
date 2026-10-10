@@ -14,9 +14,7 @@ import (
 func TestDialsCompileToThinkingLevel(t *testing.T) {
 	for _, d := range []types.Depth{types.DepthHigh, types.DepthMax} {
 		var bodies []map[string]any
-		a, err := NewAdapter(context.Background(), "k", "gemini-3.8-flash",
-			WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}),
-			WithDials(types.DialLayer{Scope: types.DialScopeEntry, Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: d}}}))
+		a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-3.8-flash"}, WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}), WithDials(types.DialLayer{Scope: types.DialScopeEntry, Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: d}}}))
 		if err != nil {
 			t.Fatal(err)
 		}

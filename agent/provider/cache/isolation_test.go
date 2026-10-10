@@ -7,12 +7,13 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestPrivateNamespaceAndExplicitConfigurationScope(t *testing.T) {
 	store := memcache.New[CachedResponse]()
 	makeProvider := func(answer, scope, config string) *Provider {
-		return New(&agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}, Config{Cache: store, ScopeKey: scope, ConfigKey: config})
+		return must.Get(New(&agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse(answer)}}, Config{Cache: store, ScopeKey: scope, ConfigKey: config}))
 	}
 	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 	first := makeProvider("first", "", "")
@@ -35,7 +36,7 @@ func TestPrivateNamespaceAndExplicitConfigurationScope(t *testing.T) {
 
 func TestCachedToolArgumentsAndIDsAreIndependent(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("original", "read", map[string]any{"nested": map[string]any{"value": "clean"}})}}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true}))
 	msgs := []types.Message{types.UserMsg(types.Text("read"))}
 	first := agenttest.CollectToolCalls(mustStream(t, p, msgs))
 	first[0].Arguments["nested"].(map[string]any)["value"] = "corrupt"

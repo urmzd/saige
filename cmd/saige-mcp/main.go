@@ -100,7 +100,11 @@ func main() {
 
 	b := bridge{approval: mode}
 	if mode == approvalElicit && *agentRef != "" {
-		b.held = newHeldApprovals(ctx, *approvalsDir, *approvalTimeout, *approvalWait)
+		held, err := newHeldApprovals(ctx, *approvalsDir, *approvalTimeout, *approvalWait)
+		if err != nil {
+			log.Fatalf("saige-mcp: %v", err)
+		}
+		b.held = held
 		defer b.held.close()
 	}
 	server := newServer(version)

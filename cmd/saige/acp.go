@@ -84,9 +84,9 @@ loaded again (session/load) or listed (session/list).`,
 				return err
 			}
 			slog.Info("saige acp agent", "agent", first.Pin().String())
-			_ = first.Close()
+			_ = first.Close(ctx)
 
-			srv := newACPServer(ctx, acpOptions{
+			srv, err := newACPServer(ctx, acpOptions{
 				agent:           agentRef,
 				agents:          func() []string { return definitionNames(h) },
 				models:          presetNames(h),
@@ -95,6 +95,9 @@ loaded again (session/load) or listed (session/list).`,
 				sessionsDir:     sessionsDir,
 				approvalTimeout: approvalTimeout,
 			})
+			if err != nil {
+				return err
+			}
 			conn := acp.NewAgentSideConnection(srv, os.Stdout, os.Stdin)
 			conn.SetLogger(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 			srv.client = conn
@@ -179,11 +182,11 @@ func acpBinder(h *agentHost, workspace string) acpBindFunc {
 		if err != nil {
 			return agenthost.Agent{}, err
 		}
-		var opts []agentsdk.AgentOption
+		var opts []agentsdk.Option
 		if req.tree != nil {
 			opts = append(opts, agentsdk.WithTree(req.tree))
 		}
-		return agenthost.FromBound(b, opts...), nil
+		return agenthost.FromBound(b, opts...)
 	}
 }
 
@@ -242,17 +245,18 @@ var (
 	_ acp.AgentLoader = (*acpServer)(nil)
 )
 
-func newACPServer(ctx context.Context, opts acpOptions) *acpServer {
+func newACPServer(ctx context.Context, opts acpOptions) (*acpServer, error) {
 	if opts.approvalTimeout <= 0 {
 		opts.approvalTimeout = 10 * time.Minute
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	return &acpServer{
-		ctx: ctx, cancel: cancel, opts: opts,
-		// The client owns a session's lifetime: it is never dropped for
-		// being idle while the connection lasts.
-		sessions: agenthost.NewManager[*acpSession](agenthost.Options{Max: opts.maxSessions, Prefix: "sess_", IdleTTL: 100 * 365 * 24 * time.Hour}),
+	// The client owns a session's lifetime: it is never dropped for being
+	// idle while the connection lasts.
+	sessions, err := agenthost.New[*acpSession](agenthost.Config{Max: opts.maxSessions, Prefix: "sess_", IdleTTL: 100 * 365 * 24 * time.Hour})
+	if err != nil {
+		return nil, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	return &acpServer{ctx: ctx, cancel: cancel, opts: opts, sessions: sessions}, nil
 }
 
 // close ends every session.

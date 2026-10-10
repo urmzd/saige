@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type searchInput struct {
@@ -37,7 +38,7 @@ func TestToolCallEmulatorDrivesTheToolLoop(t *testing.T) {
 		Result: "12:00",
 	}
 	em := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{})
-	a := agent.NewAgent(agent.AgentConfig{Provider: em, Tools: types.NewToolRegistry(searchTool(&searches), clock)})
+	a := must.Get(agent.New(agent.Config{Provider: em, Tools: types.NewToolRegistry(searchTool(&searches), clock)}))
 	text, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +68,7 @@ func TestToolCallEmulatorOptions(t *testing.T) {
 		Tools: []string{"search"}, Rounds: 2, RequiredOnly: true, Answer: "finished",
 		Usage: &types.UsageDelta{PromptTokens: 5, CompletionTokens: 2},
 	})
-	a := agent.NewAgent(agent.AgentConfig{Provider: em, Tools: types.NewToolRegistry(searchTool(&searches), clock)})
+	a := must.Get(agent.New(agent.Config{Provider: em, Tools: types.NewToolRegistry(searchTool(&searches), clock)}))
 	tr, err := agent.Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -89,8 +90,8 @@ func TestToolCallEmulatorHonorsToolChoice(t *testing.T) {
 	tools := types.NewToolRegistry(searchTool(&searches), clock)
 
 	em := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{})
-	a := agent.NewAgent(agent.AgentConfig{Provider: em, Tools: tools},
-		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNamed, Name: "clock"}))
+	a := must.Get(agent.New(agent.Config{Provider: em, Tools: tools},
+		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNamed, Name: "clock"})))
 	if _, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})); err != nil {
 		t.Fatal(err)
 	}
@@ -99,8 +100,8 @@ func TestToolCallEmulatorHonorsToolChoice(t *testing.T) {
 	}
 
 	em = agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{Answer: "no tools"})
-	a = agent.NewAgent(agent.AgentConfig{Provider: em, Tools: tools},
-		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNone}))
+	a = must.Get(agent.New(agent.Config{Provider: em, Tools: tools},
+		agent.WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceNone})))
 	text, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 	if err != nil || text != "no tools" || clock.CallCount() != 1 {
 		t.Fatalf("none choice: text %q, err %v, clock %d", text, err, clock.CallCount())
@@ -114,7 +115,7 @@ func TestToolCallEmulatorAnswersASchema(t *testing.T) {
 		Tags  []string `json:"tags"`
 	}
 	em := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{})
-	got, _, err := agent.Structured(context.Background(), agent.NewAgent(agent.AgentConfig{Provider: em}),
+	got, _, err := agent.Structured(context.Background(), must.Get(agent.New(agent.Config{Provider: em})),
 		[]types.Message{types.UserMsg(types.Text("report"))}, agent.OutputSpec[report]{})
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestToolCallEmulatorReportsCatalogCapabilities(t *testing.T) {
 	em.Caps = &types.ModelCapabilities{Provider: "emulator", Model: "no-tools", Known: true,
 		Caps: map[types.Capability]bool{types.CapStreaming: true}}
 	clock := &agenttest.MockTool{Def: types.ToolDef{Name: "clock", Parameters: types.ParameterSchema{Type: types.SchemaObject}}}
-	a := agent.NewAgent(agent.AgentConfig{Provider: em, Tools: types.NewToolRegistry(clock)})
+	a := must.Get(agent.New(agent.Config{Provider: em, Tools: types.NewToolRegistry(clock)}))
 	if _, err := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})); err == nil {
 		t.Fatal("a model declared without tools was offered tools")
 	}

@@ -3,6 +3,7 @@ package fallback
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
 	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
@@ -20,9 +21,23 @@ import (
 // falling back would duplicate partial output, so the error delta is
 // propagated as-is instead.
 type Provider struct {
-	Providers  []types.Provider
-	FallbackOn func(error) bool // nil = DefaultFallbackOn
+	Config
 }
+
+// Config lists a fallback chain's members and its fallback rule.
+type Config struct {
+	// Providers are the members, tried in order. At least one is required.
+	Providers []types.Provider
+	// FallbackOn decides whether an error moves on to the next member. Nil
+	// means DefaultFallbackOn.
+	FallbackOn func(error) bool
+}
+
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithFallbackOn sets Config.FallbackOn.
+func WithFallbackOn(fn func(error) bool) Option { return func(c *Config) { c.FallbackOn = fn } }
 
 // DefaultFallbackOn is the policy used when FallbackOn is nil. It falls back
 // on every error except those no other member can fix, because the request
@@ -52,11 +67,35 @@ func DefaultFallbackOn(err error) bool {
 	return true
 }
 
-// New creates a provider that tries each in order.
-func New(providers ...types.Provider) *Provider {
-	return &Provider{Providers: providers}
+// New creates a provider that tries cfg.Providers in order. An empty or
+// nil member is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if len(cfg.Providers) == 0 {
+		return nil, fmt.Errorf("%w: fallback: no providers", types.ErrInvalidConfig)
+	}
+	for i, p := range cfg.Providers {
+		if p == nil {
+			return nil, fmt.Errorf("%w: fallback: provider %d is nil", types.ErrInvalidConfig, i)
+		}
+	}
+	cfg.Providers = append([]types.Provider(nil), cfg.Providers...)
+	return &Provider{Config: cfg}, nil
 }
 
+// Of is New over providers with the default fallback rule.
+func Of(providers ...types.Provider) (*Provider, error) {
+	return New(Config{Providers: providers})
+}
+
+// derive returns a chain with the same rule over other members.
+func (f *Provider) derive(providers []types.Provider) *Provider {
+	return &Provider{Config: Config{Providers: providers, FallbackOn: f.FallbackOn}}
+}
+
+// Name implements types.NamedProvider.
 func (f *Provider) Name() string { return "fallback" }
 
 // Model implements types.ModelProvider. A fallback chain has no single model,
@@ -91,28 +130,15 @@ func (f *Provider) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(out, f.Providers...)
 }
 
-// WithModel implements types.ModelSwitcher. It returns a new fallback provider
-// whose children each target the given model (children that do not implement
-// types.ModelSwitcher are kept as-is). This lets ConfigPart.Model switching
-// propagate through fallback-wrapped deployments.
-func (f *Provider) WithModel(model string) types.Provider {
-	providers := make([]types.Provider, len(f.Providers))
-	for i, p := range f.Providers {
-		providers[i] = types.ProviderWithModel(p, model)
-	}
-	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}
-}
-
 // WithTarget implements types.TargetSwitcher for a model target: each
-// member is re-targeted, and a member that cannot switch models is kept
-// as-is, as WithModel does. A profile or preset target is not defined
-// on a fallback chain.
+// member is re-targeted, and a member that cannot be re-targeted is kept
+// as-is. A profile or preset target is not defined on a fallback chain.
 func (f *Provider) WithTarget(t types.Target) (types.Provider, error) {
 	providers, err := types.RetargetMembers(f.Providers, t, "fallback")
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{Providers: providers, FallbackOn: f.FallbackOn}, nil
+	return f.derive(providers), nil
 }
 
 // Stream implements types.Provider. A request with a schema skips members
@@ -175,10 +201,10 @@ func (f *Provider) Unwrap() []types.Provider {
 
 // Close implements types.Closer by closing every member and joining their
 // errors.
-func (f *Provider) Close() error {
+func (f *Provider) Close(ctx context.Context) error {
 	var errs []error
 	for _, p := range f.Providers {
-		if err := types.CloseProvider(p); err != nil {
+		if err := types.CloseProvider(ctx, p); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -340,10 +366,12 @@ func drain(ch <-chan types.Delta) {
 	}
 }
 
+// NewSession implements types.SessionProvider: every member gets a session of
+// its own.
 func (f *Provider) NewSession() types.Provider {
 	children := make([]types.Provider, len(f.Providers))
 	for i, p := range f.Providers {
 		children[i] = types.NewProviderSession(p)
 	}
-	return &Provider{Providers: children, FallbackOn: f.FallbackOn}
+	return f.derive(children)
 }

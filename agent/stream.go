@@ -60,7 +60,7 @@ type EventStream struct {
 	terminalErr  error
 	nonStreaming bool
 	// stopToolCallID is the tool call whose result ended the run through
-	// AgentConfig.StopAtTools. It is written before the stream closes.
+	// Config.StopAtTools. It is written before the stream closes.
 	stopToolCallID string
 	// iterations counts the run's model turns, the forced final call
 	// included; forced is set when MaxIterForceFinal produced the answer and
@@ -455,7 +455,7 @@ func (s *EventStream) runError() error {
 }
 
 // StopToolCallID returns the ID of the tool call that ended the run through
-// AgentConfig.StopAtTools, or "" when the run ended another way. The call's
+// Config.StopAtTools, or "" when the run ended another way. The call's
 // result is the last tool result on the run's branch. Read it after Wait.
 func (s *EventStream) StopToolCallID() string {
 	select {

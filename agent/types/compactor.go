@@ -19,6 +19,7 @@ type Compactor interface {
 // CompactStrategy names a compaction algorithm.
 type CompactStrategy string
 
+// Compaction strategy names.
 const (
 	CompactNone          CompactStrategy = "none"
 	CompactSlidingWindow CompactStrategy = "sliding_window"
@@ -74,7 +75,7 @@ type CompactConfig struct {
 	// SummaryModel names the model that writes summaries, switched on the
 	// active provider (for example a cheaper model of the same vendor, or
 	// a catalog preset served by a router). Empty uses the active model.
-	// AgentConfig.CompactProvider, when set, writes them instead.
+	// Config.CompactProvider, when set, writes them instead.
 	SummaryModel string `json:",omitempty"`
 	// Chain lists the strategies a chain applies, in order.
 	Chain []CompactConfig `json:",omitempty"`
@@ -150,6 +151,7 @@ func (cc CompactConfig) ToCompactor() Compactor {
 // NoopCompactor passes messages through unchanged.
 type NoopCompactor struct{}
 
+// Compact implements Compactor.
 func (NoopCompactor) Compact(_ context.Context, messages []Message, _ Provider) ([]Message, error) {
 	return messages, nil
 }
@@ -159,10 +161,13 @@ type SlidingWindowCompactor struct {
 	WindowSize int
 }
 
+// NewSlidingWindowCompactor returns a compactor that keeps the last n
+// messages.
 func NewSlidingWindowCompactor(n int) *SlidingWindowCompactor {
 	return &SlidingWindowCompactor{WindowSize: n}
 }
 
+// Compact implements Compactor.
 func (c *SlidingWindowCompactor) Compact(_ context.Context, messages []Message, _ Provider) ([]Message, error) {
 	if len(messages) <= c.WindowSize+1 {
 		return messages, nil
@@ -212,6 +217,8 @@ type SummarizeCompactor struct {
 	KeepLast  int
 }
 
+// NewSummarizeCompactor returns a compactor that summarizes older messages
+// once there are more than threshold, keeping the last keepLast.
 func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
 	if keepLast <= 0 {
 		keepLast = 4
@@ -219,6 +226,7 @@ func NewSummarizeCompactor(threshold, keepLast int) *SummarizeCompactor {
 	return &SummarizeCompactor{Threshold: threshold, KeepLast: keepLast}
 }
 
+// Compact implements Compactor.
 func (c *SummarizeCompactor) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	// A previous compaction's summary pair doesn't count toward the threshold:
 	// otherwise a compacted history (1 + 2 + KeepLast messages) sits just below

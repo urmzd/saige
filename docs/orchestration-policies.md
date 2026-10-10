@@ -27,7 +27,7 @@ Iteration budgets, private scratch, and passing large tasks and results by refer
 The default result contains only the final assistant text. Intermediate text remains in the trace.
 
 ```go
-parent := agent.NewAgent(agent.AgentConfig{
+parent, err := agent.New(agent.Config{
     Name: "coordinator",
     SubAgents: []agent.SubAgentDef{{
         Name: "extract",
@@ -36,6 +36,9 @@ parent := agent.NewAgent(agent.AgentConfig{
         ResultSink: myResultStore,
     }},
 })
+if err != nil {
+    return err
+}
 stream, err := parent.InvokeSubAgent(ctx, "extract", "Extract the invoice number.")
 if err != nil { return err }
 for delta := range stream.Deltas() {
@@ -92,7 +95,7 @@ A model-driven delegation retains only its selected result in the parent tree.
 Set `Mode: agent.SubAgentSpawn` to run a child while the parent keeps working.
 
 ```go
-lead := agent.NewAgent(agent.AgentConfig{
+lead, err := agent.New(agent.Config{
     Name:     "lead",
     Provider: model,
     SubAgents: []agent.SubAgentDef{{
@@ -103,6 +106,9 @@ lead := agent.NewAgent(agent.AgentConfig{
         Timeout:     5 * time.Minute,
     }},
 })
+if err != nil {
+    return err
+}
 ```
 
 | Tool | Effect |
@@ -136,7 +142,7 @@ type Invoice struct {
     Number string  `json:"number"`
     Total  float64 `json:"total"`
 }
-inv, res, err := agent.Structured(ctx, worker, []types.Message{types.NewUserMessage(doc)}, agent.OutputSpec[Invoice]{
+inv, res, err := agent.Structured(ctx, worker, []types.Message{types.UserMsg(types.Text(doc))}, agent.OutputSpec[Invoice]{
     Repair:   2,
     Validate: func(i Invoice) error { if i.Total < 0 { return errors.New("total is negative") }; return nil },
     OnDelta:  render, // receives PartialJSONDelta as the answer streams
@@ -169,7 +175,7 @@ Each member and the entry agent require a name. A handoff is not a subagent with
 The recipient owns the next turn. It can finish the task or select another owner.
 If it cannot proceed, it calls `handoff_to_<previous-owner>` with the missing data in `reason`.
 The handoff tool also takes `message`, a handover note the previous owner writes for the recipient, and `context`, data the recipient cannot see in its own view.
-Both are stored on the `HandoffContent` node and appended to the recipient's transfer brief.
+Both are stored on the `HandoffPart` node and appended to the recipient's transfer brief.
 
 The default `OwnerContext` sends the shared root instruction, the recipient's own earlier turns, and transfer briefs.
 A new recipient also receives the latest user task.
@@ -208,7 +214,10 @@ routes, err := router.New(router.Config{
     Required: []types.Capability{types.CapTools},
 })
 if err != nil { return err }
-worker := agent.NewAgent(agent.AgentConfig{Provider: routes.Session()})
+worker, err := agent.New(agent.Config{Provider: routes.Session()})
+if err != nil {
+    return err
+}
 ```
 
 Each conversation owner needs its own `Session`. Subagents and handoff members create independent routing sessions.
@@ -233,10 +242,10 @@ Use separate sessions for independent parallel tasks.
 `Candidates()` reports each profile's capabilities. `Session.Capabilities()` reports their common contract.
 The common price estimate uses the conservative rate card across profiles.
 
-For a routing session, `ConfigContent.Model` selects a profile ID.
+For a routing session, `ConfigPart.Model` selects a profile ID.
 It never applies one provider's generation settings to a different model.
-`Session.WithModel(id)` returns a pinned view that shares the session's state, so the pin keeps the sticky history, failure counts and failover order.
-The agent calls `WithModel` on every turn the conversation names a model, also when the session already reports that profile, so the pin is recorded in `RouteState`. `Unpin` clears it.
+`Session.WithTarget(types.ProfileTarget(id))` returns a pinned view that shares the session's state, so the pin keeps the sticky history, failure counts and failover order.
+The agent calls `WithTarget` on every turn the conversation names a model, also when the session already reports that profile, so the pin is recorded in `RouteState`. `Unpin` clears it.
 A plain provider can still be used without a router.
 
 ### Session policies, locks and failover
@@ -269,18 +278,21 @@ A `ShadowArm` mirrors a sample of requests to another provider. Shadow calls spe
 
 An `OutcomePolicy` decides whether a result should move the conversation to another model.
 It sees `schema_invalid` from `Structured` after its repairs run out, and `subagent_failed` after a failed delegation.
-A returned `Switch` is recorded as `ConfigContent{Model, Reason}` on the branch, so later turns use it.
+A returned `Switch` is recorded as `ConfigPart{Model, Reason}` on the branch, so later turns use it.
 The stream reports it as a `RouteDelta` whose `Reason` names the outcome.
 
 ```go
-worker := agent.NewAgent(cfg, agent.WithOutcomePolicy(types.EscalationLadder{
+worker, err := agent.New(cfg, agent.WithOutcomePolicy(types.EscalationLadder{
     Models: []string{"fast-v1", "deep-v3"},
     Kinds:  []types.OutcomeKind{types.OutcomeSchemaInvalid, types.OutcomeSubagentFailed},
 }))
+if err != nil {
+    return err
+}
 ```
 
 `EscalationLadder` moves one step up and stops at the top. For a routing session, the model names a profile ID.
-The provider must implement `ModelSwitcher` for the switch to take effect, as for any `ConfigContent.Model`.
+The provider must implement `TargetSwitcher` for the switch to take effect, as for any `ConfigPart.Model`.
 Cancellation is never reported as an outcome. Sub-agents do not inherit the policy.
 
 ## Tool, skill, and memory policies
@@ -307,10 +319,13 @@ Policies and tools read `agent.RunScopeFromContext` to keep state per owner and 
 
 ```go
 deferred := selector.NewDeferredTools("read_file")
-worker := agent.NewAgent(agent.AgentConfig{
+worker, err := agent.New(agent.Config{
     Provider: model,
     Tools:    types.NewToolRegistry(append(manyTools, deferred.Tool())...),
 }, agent.WithToolPolicy(deferred))
+if err != nil {
+    return err
+}
 ```
 
 `tool_search(query, k)` returns the full schemas of the best matches. They are sent from the next turn for the rest of the conversation.
@@ -323,7 +338,10 @@ Every discovered call still passes the gate.
 ```go
 gate := types.Gates(types.CapabilityGate(nil), myArgumentGate)
 budget := types.NewBudget(policy).ToolQuota("web_search", 20)
-worker := agent.NewAgent(cfg, agent.WithToolGate(gate), agent.WithBudget(budget))
+worker, err := agent.New(cfg, agent.WithToolGate(gate), agent.WithBudget(budget))
+if err != nil {
+    return err
+}
 ```
 
 | Capability | Default outcome |
@@ -345,11 +363,14 @@ sources := append(skills.StandardSources(projectDir, homeDir, skills.Untrusted()
 catalog, err := skills.NewCatalog(ctx, sources)
 if err != nil { return err }
 for _, p := range catalog.Problems() { log.Warn("skipped skill", "error", p) }
-worker := agent.NewAgent(cfg, skills.WithSkills(catalog, skills.AllowListPolicy{
+worker, err := agent.New(cfg, skills.WithSkills(catalog, skills.AllowListPolicy{
     Default: skills.AllowAll(),
     Owners:  map[string]skills.AllowList{"reviewer": skills.AllowNames("code-review")},
     Parents: map[string]string{"reviewer": "coordinator"},
 }))
+if err != nil {
+    return err
+}
 ```
 
 | Tier | Delivery |
@@ -363,7 +384,7 @@ A package with an invalid header, a name that differs from its directory, a link
 Sources are read in order and the first definition of a name wins, but an untrusted definition never shadows a trusted one. Hidden definitions are reported by `Shadowed`.
 While a loaded skill declares `allowed-tools`, each turn's tools are narrowed to that list. The skill tools and `tool_search` stay visible, and an inner `DeferredTools` searches only the allowed tools. `WithoutToolNarrowing` turns this off.
 `WithSkills` wraps the tool policy present when it runs, so pass it after `WithToolPolicy`.
-The listing is added to `AgentConfig.SystemPrompt`. For an agent given an existing tree, add `Toolset.Prompt` to that tree's system message.
+The listing is added to `agent.Config.SystemPrompt`. For an agent given an existing tree, add `Toolset.Prompt` to that tree's system message.
 The skill tools never execute a script.
 
 ### Workspace
@@ -372,8 +393,11 @@ The skill tools never execute a script.
 ws, err := workspace.NewDir(runDir)
 if err != nil { return err }
 tools := append(workspace.Tools(ws), workspace.Spill(searchTool, ws, workspace.SpillOptions{})) // 16 KiB threshold
-worker := agent.NewAgent(agent.AgentConfig{Provider: model, Tools: types.NewToolRegistry(tools...)},
+worker, err := agent.New(agent.Config{Provider: model, Tools: types.NewToolRegistry(tools...)},
     agent.WithWorkspace(ws))
+if err != nil {
+    return err
+}
 ```
 
 | Tool | Capability | Does |
@@ -392,9 +416,12 @@ The loop attaches the workspace to every tool call, and the scratch tools prefer
 
 ```go
 vault := privacy.NewVault(nil) // built-in detectors; one vault per session
-worker := agent.NewAgent(cfg, agent.WithToolRedactor(privacy.NewToolRedactor(vault)))
+worker, err := agent.New(cfg, agent.WithToolRedactor(privacy.NewToolRedactor(vault)))
+if err != nil {
+    return err
+}
 // Or keep data away from the vendor only:
-model = privacy.NewProvider(model, vault)
+model, err = privacy.New(model, privacy.Config{Vault: vault})
 ```
 
 | Label | Validated by |
@@ -424,10 +451,13 @@ policy := memory.Policy{
     },
     Redact: func(ctx context.Context, text string) (string, error) { return privacy.Redact(ctx, nil, text) },
 }
-worker := agent.NewAgent(agent.AgentConfig{
+worker, err := agent.New(agent.Config{
     Provider: model,
     Tools:    types.NewToolRegistry(append(baseTools, memory.Tools(store, policy)...)...),
 })
+if err != nil {
+    return err
+}
 ```
 
 | Tool | Capability | Approval by default |
@@ -466,8 +496,11 @@ Arguments edited during approval are validated and gated again. A gate can still
 An `agent.ApprovalPolicy` lets an approval carry a grant (once, tool, matching arguments, or session, with an optional expiry), stops asking after repeated denials, and applies capability-class defaults. See [approval policy and grants](approval-policy.md).
 
 ```go
-worker := agent.NewAgent(cfg,
+worker, err := agent.New(cfg,
     agent.WithInterruptExpiry(10*time.Minute, types.InterruptPolicy{OnExpire: types.InterruptExpireEscalate}))
+if err != nil {
+    return err
+}
 ```
 
 | `OnExpire` | An unanswered decision |
@@ -521,7 +554,7 @@ Run tests with `go test -race ./...`. A stateful tool that assumes serial calls 
 Set `MaxInputTokens` to compact on input size instead of message count.
 
 ```go
-a := agent.NewAgent(agent.AgentConfig{
+a, err := agent.New(agent.Config{
     Provider: model,
     CompactCfg: &types.CompactConfig{
         Strategy:        types.CompactClearToolResults,
@@ -533,6 +566,9 @@ a := agent.NewAgent(agent.AgentConfig{
     MaxRepeatIterations: 3,
     StopAtTools:         []string{"submit_answer"},
 })
+if err != nil {
+    return err
+}
 ```
 
 | Setting | Effect |
@@ -541,7 +577,7 @@ a := agent.NewAgent(agent.AgentConfig{
 | `MaxInputTokens` with `clear_tool_results` | Replaces all but the newest results with a stub, with no model call |
 | `MaxInputTokens` with `sliding_window` | Keeps the system prompt and the last `WindowSize` messages |
 | `MaxInputTokens` with `keep_recent`, `summary`, `relevant_plus_summary` or `chain` | See [context management](context-management.md#strategies) |
-| `AgentConfig.Tokenizer` | Measures input before the first usage report. The default estimates four characters per token |
+| `agent.Config.Tokenizer` | Measures input before the first usage report. The default estimates four characters per token |
 
 Without `MaxInputTokens`, `clear_tool_results` runs on every turn and copies the history to a new branch each time it clears a result. Set a token limit for long runs.
 Input size is the larger of the last reported prompt tokens and the estimate of the current history.
@@ -566,7 +602,7 @@ Its tool calls never run. A truncated turn with tool calls fails the run with `R
 `StopAtTools` ends the run after a listed tool succeeds. `EventStream.StopToolCallID` names the call.
 For a subagent, `FinalAssistantText` returns that tool's result. A failed call does not stop the run.
 
-`AgentConfig.ToolChoice` and `ConfigContent.ToolChoice` set the provider tool choice.
+`agent.Config.ToolChoice` and `ConfigPart.ToolChoice` set the provider tool choice.
 A required or named choice applies to one turn and then reverts to auto. Auto and none apply to every turn.
 A choice in the conversation takes precedence over the configured one.
 A required or named choice needs a provider that implements `types.OptionsProvider`; otherwise the run fails with `ErrInvalidModelConfig`.
@@ -577,13 +613,13 @@ None is sent as an option when the provider declares tool choice. Otherwise the 
 A message sent while a run is active joins it at a safe point, where every tool call already has its result.
 
 ```go
-stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("draft the report")})
+stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("draft the report"))})
 
 // Later, while the run streams:
-id, err := stream.Submit(types.NewUserMessage("use metric units"), agent.SubmitSteer)
+id, err := stream.Submit(types.UserMsg(types.Text("use metric units")), agent.SubmitSteer)
 
 // Or by branch, which starts a run when the branch is idle:
-stream, id, err = a.Submit(ctx, branch, types.NewUserMessage("then summarize it"), agent.SubmitQueue)
+stream, id, err = a.Submit(ctx, branch, types.UserMsg(types.Text("then summarize it")), agent.SubmitQueue)
 ```
 
 | Mode | When it joins | Effect |

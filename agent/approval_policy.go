@@ -56,8 +56,8 @@ type ApprovalPolicy struct {
 }
 
 // WithApprovalPolicy sets the agent's approval policy. Sub-agents inherit it.
-func WithApprovalPolicy(p ApprovalPolicy) AgentOption {
-	return func(c *AgentConfig) { c.ApprovalPolicy = &p }
+func WithApprovalPolicy(p ApprovalPolicy) Option {
+	return func(c *Config) { c.ApprovalPolicy = &p }
 }
 
 func (p *ApprovalPolicy) now() time.Time {

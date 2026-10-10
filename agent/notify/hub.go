@@ -168,12 +168,13 @@ func (h *Hub) Subscribed(channel string) bool {
 	return len(h.subs[channel]) > 0
 }
 
-// Close ends every subscription and rejects later ones. It is idempotent.
-func (h *Hub) Close() {
+// Close ends every subscription and rejects later ones. It is idempotent
+// and always returns nil.
+func (h *Hub) Close(context.Context) error {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
-		return
+		return nil
 	}
 	h.closed = true
 	var cancels []func()
@@ -186,4 +187,5 @@ func (h *Hub) Close() {
 	for _, cancel := range cancels {
 		cancel()
 	}
+	return nil
 }

@@ -134,6 +134,7 @@ type TextPart struct {
 	Text string `json:"text"`
 }
 
+// Kind implements Part.
 func (TextPart) Kind() PartKind    { return KindText }
 func (TextPart) isPart()           {}
 func (TextPart) isSystemPart()     {}
@@ -147,6 +148,7 @@ type JSONPart struct {
 	JSON json.RawMessage `json:"json"`
 }
 
+// Kind implements Part.
 func (JSONPart) Kind() PartKind    { return KindJSON }
 func (JSONPart) isPart()           {}
 func (JSONPart) isToolOutputPart() {}
@@ -198,6 +200,7 @@ type ImagePart struct {
 	ImageMeta `json:"image,omitzero"`
 }
 
+// Kind implements Part.
 func (ImagePart) Kind() PartKind    { return KindImage }
 func (ImagePart) isPart()           {}
 func (ImagePart) isUserPart()       {}
@@ -209,6 +212,7 @@ type AudioPart struct {
 	AudioMeta `json:"audio,omitzero"`
 }
 
+// Kind implements Part.
 func (AudioPart) Kind() PartKind    { return KindAudio }
 func (AudioPart) isPart()           {}
 func (AudioPart) isUserPart()       {}
@@ -220,6 +224,7 @@ type VideoPart struct {
 	VideoMeta `json:"video,omitzero"`
 }
 
+// Kind implements Part.
 func (VideoPart) Kind() PartKind { return KindVideo }
 func (VideoPart) isPart()        {}
 func (VideoPart) isUserPart()    {}
@@ -231,6 +236,7 @@ type DocumentPart struct {
 	DocumentMeta `json:"document,omitzero"`
 }
 
+// Kind implements Part.
 func (DocumentPart) Kind() PartKind    { return KindDocument }
 func (DocumentPart) isPart()           {}
 func (DocumentPart) isUserPart()       {}
@@ -242,6 +248,7 @@ type FilePart struct {
 	Source Source `json:"source"`
 }
 
+// Kind implements Part.
 func (FilePart) Kind() PartKind    { return KindFile }
 func (FilePart) isPart()           {}
 func (FilePart) isUserPart()       {}
@@ -268,6 +275,7 @@ type ToolResultPart struct {
 	ToolVersion string `json:"tool_version,omitempty"`
 }
 
+// Kind implements Part.
 func (ToolResultPart) Kind() PartKind { return KindToolResult }
 func (ToolResultPart) isPart()        {}
 func (ToolResultPart) isSystemPart()  {}
@@ -321,6 +329,7 @@ type ThinkingPart struct {
 	Origin string `json:"origin,omitempty"`
 }
 
+// Kind implements Part.
 func (ThinkingPart) Kind() PartKind   { return KindThinking }
 func (ThinkingPart) isPart()          {}
 func (ThinkingPart) isAssistantPart() {}
@@ -336,6 +345,7 @@ type ToolCallPart struct {
 	ArgumentsError string `json:"arguments_error,omitempty"`
 }
 
+// Kind implements Part.
 func (ToolCallPart) Kind() PartKind   { return KindToolCall }
 func (ToolCallPart) isPart()          {}
 func (ToolCallPart) isAssistantPart() {}
@@ -349,6 +359,7 @@ type ServerToolCallPart struct {
 	Input    map[string]any `json:"input,omitempty"`
 }
 
+// Kind implements Part.
 func (ServerToolCallPart) Kind() PartKind   { return KindServerToolCall }
 func (ServerToolCallPart) isPart()          {}
 func (ServerToolCallPart) isAssistantPart() {}
@@ -366,6 +377,7 @@ type ServerToolResultPart struct {
 	Outputs []Part `json:"outputs,omitempty"`
 }
 
+// Kind implements Part.
 func (ServerToolResultPart) Kind() PartKind   { return KindServerToolResult }
 func (ServerToolResultPart) isPart()          {}
 func (ServerToolResultPart) isAssistantPart() {}
@@ -415,6 +427,7 @@ type CitationPart struct {
 	Anchor   *Anchor  `json:"anchor,omitempty"`
 }
 
+// Kind implements Part.
 func (CitationPart) Kind() PartKind   { return KindCitation }
 func (CitationPart) isPart()          {}
 func (CitationPart) isAssistantPart() {}
@@ -429,6 +442,7 @@ type AudioOutPart struct {
 	ExpiresAt  time.Time `json:"expires_at,omitzero"`
 }
 
+// Kind implements Part.
 func (AudioOutPart) Kind() PartKind   { return KindAudioOut }
 func (AudioOutPart) isPart()          {}
 func (AudioOutPart) isAssistantPart() {}
@@ -441,6 +455,7 @@ type ImageOutPart struct {
 	Signature     string `json:"signature,omitempty"`
 }
 
+// Kind implements Part.
 func (ImageOutPart) Kind() PartKind   { return KindImageOut }
 func (ImageOutPart) isPart()          {}
 func (ImageOutPart) isAssistantPart() {}
@@ -453,6 +468,7 @@ type VideoOutPart struct {
 	Operation string `json:"operation,omitempty"`
 }
 
+// Kind implements Part.
 func (VideoOutPart) Kind() PartKind   { return KindVideoOut }
 func (VideoOutPart) isPart()          {}
 func (VideoOutPart) isAssistantPart() {}
@@ -465,6 +481,7 @@ type RefusalPart struct {
 	Category string `json:"category,omitempty"`
 }
 
+// Kind implements Part.
 func (RefusalPart) Kind() PartKind   { return KindRefusal }
 func (RefusalPart) isPart()          {}
 func (RefusalPart) isAssistantPart() {}

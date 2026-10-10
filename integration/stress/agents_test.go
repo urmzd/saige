@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // echoTool returns a result derived from its arguments after a short random
@@ -114,7 +115,7 @@ func TestConcurrentAgents(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			began := time.Now()
-			a := agent.NewAgent(agent.AgentConfig{Provider: providers[i], Tools: tools, SystemPrompt: "stress"})
+			a := must.Get(agent.New(agent.Config{Provider: providers[i], Tools: tools, SystemPrompt: "stress"}))
 			for turn := 1; turn <= 2; turn++ {
 				text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(fmt.Sprintf("agent %d turn %d", i, turn)))}))
 				if err == nil && text != fmt.Sprintf("agent %d turn %d done", i, turn) {
@@ -214,7 +215,7 @@ func TestSameBranchContention(t *testing.T) {
 	ctx := testContext(t, time.Minute)
 	before := runtime.NumGoroutine()
 	provider := &gateProvider{}
-	a := agent.NewAgent(agent.AgentConfig{Provider: provider, SystemPrompt: "stress"})
+	a := must.Get(agent.New(agent.Config{Provider: provider, SystemPrompt: "stress"}))
 	branch := a.Tree().Active()
 
 	var (

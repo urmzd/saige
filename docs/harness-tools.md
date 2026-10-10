@@ -8,10 +8,13 @@ import (
     "github.com/urmzd/saige/tools"
 )
 
-a := agent.NewAgent(cfg, agent.WithHarnessTools(tools.HarnessOptions{
+a, err := agent.New(cfg, agent.WithHarnessTools(tools.HarnessOptions{
     Root:   "/path/to/project",
     Groups: tools.AllGroups(), // default: tools.ReadOnly()
 }))
+if err != nil {
+    return err
+}
 ```
 
 An agent has no tools unless you add them. `WithHarnessTools` is the one-call way; `tools.Harness` returns the same toolset when you want to handle errors or inspect it first.
@@ -119,9 +122,12 @@ set, err := tools.Harness(ctx, tools.HarnessOptions{
 if err != nil {
     return err // for example exec.ErrDockerUnavailable
 }
-a := agent.NewAgent(cfg, agent.WithToolset(set), agent.WithApprovalPolicy(agent.ApprovalPolicy{}))
+a, err := agent.New(cfg, agent.WithToolset(set), agent.WithApprovalPolicy(agent.ApprovalPolicy{}))
+if err != nil {
+    return err
+}
 
-stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("Which test fails, and why?")})
+stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Which test fails, and why?"))})
 for d := range stream.Deltas() {
     if m, ok := d.(types.MarkerDelta); ok {
         // Ask the user. Approving with a session grant stops further
@@ -142,11 +148,14 @@ A large toolset costs context on every turn. Pin the core read tools and let the
 
 ```go
 deferred := selector.NewDeferredTools(set.Core()...) // read_file, list_dir, grep, scratch_read
-a := agent.NewAgent(cfg,
+a, err := agent.New(cfg,
     agent.WithToolset(set),
     agent.WithToolPolicy(deferred),
     agent.WithTools(deferred.Tool()),
 )
+if err != nil {
+    return err
+}
 ```
 
 Discovery is disclosure, not permission: a discovered tool still passes through gates and approvals.

@@ -21,8 +21,10 @@ import (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llava", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llava"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Show what the model takes natively, as its catalog offering declares.
 	if offering, ok := convert.Target(adapter); ok {
@@ -45,7 +47,7 @@ func main() {
 	})
 
 	// Build agent with the file resolver.
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "multimodal-agent",
 		SystemPrompt: "You are a helpful assistant that can analyze images and files.",
 		Provider:     adapter,
@@ -58,6 +60,9 @@ func main() {
 			Converters: []types.Converter{convert.Documents()},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Build a message with text and a file attachment.
 	imagePath := "example.png"

@@ -26,8 +26,10 @@ const (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	addTool := &types.ToolFunc{
 		Def: types.ToolDef{
@@ -49,12 +51,15 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "streaming-demo",
 		SystemPrompt: "You are a helpful calculator. Use the add tool when asked to add numbers.",
 		Provider:     adapter,
 		Tools:        types.NewToolRegistry(addTool),
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{
 		types.UserMsg(types.Text("What is 10 + 25? Please use the tool.")),

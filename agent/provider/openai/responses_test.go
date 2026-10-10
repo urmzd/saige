@@ -14,6 +14,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // event renders one Responses API SSE event from its JSON body.
@@ -153,7 +154,7 @@ func TestResponsesStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewResponsesAdapter("test", testModel, WithBaseURL(sseServer(t, false, tt.body...).URL))
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, tt.body...).URL)))
 			var schema *types.ParameterSchema
 			if tt.structured {
 				schema = &types.ParameterSchema{Type: types.SchemaObject, Properties: map[string]types.PropertyDef{"a": {Type: types.SchemaString}}, Required: []string{"a"}}
@@ -224,8 +225,7 @@ func TestResponsesRequest(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	a := NewResponsesAdapter("test", testModel, WithBaseURL(server.URL), WithMaxTokens(64),
-		WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
+	a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), WithMaxTokens(64), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
 	msgs := []types.Message{
 		types.SystemMsg(types.Text("be brief")),
 		types.UserMsg(types.Text("read a.txt")),
@@ -314,7 +314,7 @@ func TestResponsesRejectsUnsupportedControls(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 			t.Cleanup(server.Close)
-			a := NewResponsesAdapter("test", testModel, WithBaseURL(server.URL), tt.opt)
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), tt.opt))
 			_, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if !errors.Is(err, types.ErrInvalidModelConfig) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want an invalid config error naming %s", err, tt.want)
@@ -338,7 +338,7 @@ func TestResponsesPromptCacheRetention(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.retention, func(t *testing.T) {
-			a := NewResponsesAdapter("test", testModel, WithPromptCache("k", tt.retention))
+			a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithPromptCache("k", tt.retention)))
 			params, err := a.buildParams([]types.Message{types.UserMsg(types.Text("go"))}, nil, nil)
 			if err != nil {
 				t.Fatal(err)

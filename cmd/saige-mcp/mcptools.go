@@ -100,7 +100,7 @@ func mcpTools(specs []saigemcp.ServerSpec) []agenttypes.Tool {
 			if err != nil {
 				return "", fmt.Errorf("connect to %s: %w", spec.Name, err)
 			}
-			defer func() { _ = c.Close() }()
+			defer func() { _ = c.Close(ctx) }()
 			cat, err := c.Catalog(cctx)
 			if err != nil {
 				return "", fmt.Errorf("list tools of %s: %w", spec.Name, err)

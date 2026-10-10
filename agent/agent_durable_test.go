@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func assistantText(m *types.AssistantMessage) string {
@@ -39,7 +40,7 @@ func TestNoopStepRunnerPassThrough(t *testing.T) {
 
 func TestRunDurableFirstRunRunsSteps(t *testing.T) {
 	runner := newRecordingRunner()
-	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "live"}, SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: &mockProvider{response: "live"}, SystemPrompt: "s"}))
 
 	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
@@ -62,7 +63,7 @@ func TestRunDurableReplaySkipsProvider(t *testing.T) {
 	runner.seed("llm-main-0", types.StepResult{Kind: types.StepKindLLM, Message: &canned})
 
 	// panicProvider would panic if the LLM step were re-executed.
-	a := NewAgent(AgentConfig{Provider: panicProvider{}, SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: panicProvider{}, SystemPrompt: "s"}))
 
 	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
@@ -80,11 +81,11 @@ func TestRunDurableToolMemoization(t *testing.T) {
 	// Pretend the tool step already completed before a crash.
 	runner.seed("tool-call-1", types.StepResult{Kind: types.StepKindTool, ToolCallID: "call-1", ToolResult: "memoized tool output"})
 
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     prov,
 		Tools:        types.NewToolRegistry(tool),
 		SystemPrompt: "s",
-	})
+	}))
 
 	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("go"))}, "")
 	if err != nil {
@@ -119,7 +120,7 @@ func TestRunDurableDistinctStepNames(t *testing.T) {
 	tool := &countTool{name: "act"}
 	runner := newRecordingRunner()
 
-	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}))
 	if _, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("go"))}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +137,11 @@ func TestRunDurableDistinctStepNames(t *testing.T) {
 // RunDurable relies on the stream's close error.
 func TestRunDurableCancelledReturnsError(t *testing.T) {
 	blocking := &blockingProvider{started: make(chan struct{})}
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "durable-cancel",
 		SystemPrompt: "sys",
 		Provider:     blocking,
-	})
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

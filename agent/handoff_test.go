@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // capturingProvider records the messages it was last called with and replies
@@ -69,8 +70,8 @@ func TestSingleHandoff(t *testing.T) {
 	}}
 	provWorker := &mockProvider{response: "worker finished"}
 
-	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
-		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"}))
+	a := must.Get(New(Config{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
+		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"})))
 
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("do it"))})
 	deltas := collectDeltas(stream)
@@ -96,8 +97,8 @@ func TestHandoffPreservesContext(t *testing.T) {
 	}}
 	provWorker := &capturingProvider{response: "ok"}
 
-	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root constitution"},
-		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"}))
+	a := must.Get(New(Config{Name: "planner", Provider: provPlanner, SystemPrompt: "root constitution"},
+		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "WORKER PERSONA"})))
 
 	collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("remember XYZ"))}))
 
@@ -127,8 +128,8 @@ func TestHandBack(t *testing.T) {
 		agenttest.ToolCallResponse("h2", "handoff_to_planner", map[string]any{}),
 	}}
 
-	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
-		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "worker"}))
+	a := must.Get(New(Config{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
+		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "worker"})))
 
 	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
@@ -148,9 +149,9 @@ func TestPingPongBounded(t *testing.T) {
 	provPlanner := &constHandoffProvider{target: "worker"}
 	provWorker := &constHandoffProvider{target: "planner"}
 
-	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
+	a := must.Get(New(Config{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
 		WithHandoffs(HandoffDef{Name: "worker", Provider: provWorker, SystemPrompt: "worker"}),
-		WithMaxHandoffs(2))
+		WithMaxHandoffs(2)))
 
 	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
@@ -167,8 +168,8 @@ func TestPingPongBounded(t *testing.T) {
 
 func TestHumanForcedHandoff(t *testing.T) {
 	// Planner must never run: the human forces control straight to the worker.
-	a := NewAgent(AgentConfig{Name: "planner", Provider: panicProvider{}, SystemPrompt: "root"},
-		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "worker reply"}, SystemPrompt: "worker"}))
+	a := must.Get(New(Config{Name: "planner", Provider: panicProvider{}, SystemPrompt: "root"},
+		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "worker reply"}, SystemPrompt: "worker"})))
 
 	input := []types.Message{types.UserMessage{Parts: []types.UserPart{
 		types.HandoffPart{To: "worker"},
@@ -181,23 +182,21 @@ func TestHumanForcedHandoff(t *testing.T) {
 	}
 }
 
-func TestHandoffValidationPanicsOnUnknownTarget(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Error("expected NewAgent to panic on an unknown handoff target")
-		}
-	}()
-	NewAgent(AgentConfig{Name: "planner", Provider: &mockProvider{}, Handoffs: []HandoffDef{
+func TestHandoffValidationRejectsUnknownTarget(t *testing.T) {
+	_, err := New(Config{Name: "planner", Provider: &mockProvider{}, Handoffs: []HandoffDef{
 		{Name: "worker", Provider: &mockProvider{}, CanHandOffTo: []string{"ghost"}},
 	}})
+	if !errors.Is(err, types.ErrInvalidConfig) {
+		t.Fatalf("an unknown handoff target: %v", err)
+	}
 }
 
 func TestHandoffSerializeRoundTrip(t *testing.T) {
 	provPlanner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.ToolCallResponse("h1", "handoff_to_worker", map[string]any{}),
 	}}
-	a := NewAgent(AgentConfig{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
-		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "ok"}, SystemPrompt: "worker"}))
+	a := must.Get(New(Config{Name: "planner", Provider: provPlanner, SystemPrompt: "root"},
+		WithHandoffs(HandoffDef{Name: "worker", Provider: &mockProvider{response: "ok"}, SystemPrompt: "worker"})))
 	collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 
 	raw, err := json.Marshal(a.Tree())
@@ -267,4 +266,12 @@ func collectText(deltas []types.Delta) string {
 		}
 	}
 	return s.String()
+}
+
+func TestNewRejectsNegativeTimeouts(t *testing.T) {
+	for _, cfg := range []Config{{LLMTimeout: -1}, {ToolTimeout: -1}, {InterruptTTL: -1}} {
+		if _, err := New(cfg); !errors.Is(err, types.ErrInvalidConfig) {
+			t.Errorf("New(%+v) = %v", cfg, err)
+		}
+	}
 }

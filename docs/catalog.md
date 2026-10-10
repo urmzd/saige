@@ -50,7 +50,7 @@ Two fields describe request shapes a vendor rejects for one model:
 | Field | Meaning |
 | --- | --- |
 | `reasoning.forced_tool_choice: false` | The API rejects a `required` or named tool choice for the model (`ModelCapabilities.RejectsForcedToolChoice`). Validation rejects such a choice locally, and the Anthropic adapter sends schema output as `output_config.format` instead of a forced tool. Declared on claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1 and claude-mythos-5-1. |
-| `chat_completions_tools` | How OpenAI's Chat Completions API takes tools for the model: `any` (the default), `no_reasoning` (only with reasoning effort `none`; the chat adapter sends `none` when tools are offered and no effort is set, and rejects another effort) or `responses_only` (tools need the Responses API; `provider.Build` serves the model through `openai.NewResponsesAdapter`). |
+| `chat_completions_tools` | How OpenAI's Chat Completions API takes tools for the model: `any` (the default), `no_reasoning` (only with reasoning effort `none`; the chat adapter sends `none` when tools are offered and no effort is set, and rejects another effort) or `responses_only` (tools need the Responses API; `provider.Build` serves the model through `openai.NewResponses`). |
 
 ### The options object
 
@@ -248,22 +248,25 @@ bundle, err := preset.Build(ctx, cat, "balanced", []string{"deterministic-extrac
 if err != nil {
 	return err
 }
-defer bundle.Close()
+defer bundle.Close(ctx)
 
-a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "..."}, agent.WithPreset(bundle))
+a, err := agent.New(agent.Config{SystemPrompt: "..."}, agent.WithPreset(bundle))
+if err != nil {
+    return err
+}
 ```
 
 `preset.Build` builds every entry with `provider.Build` and its own resolved options, wraps it in its own retry decorator and optional per-attempt deadline, and puts all entries behind one router. Each preset is a router group in chain order, and the primary is the default group, so failover follows the chain exactly. `preset.BuildFrom(ctx, src, ...)` takes a `Source`. Neither installs anything: hosts touch global state only through `catalog.Install` or `catalog.Use`.
 
 `agent.WithPreset` sets the provider and the preset's tool choice, output mode, LLM timeout and compaction unless they were already set. Options applied after it win.
 
-`ConfigContent.Model` (or an outcome policy's switch) can name another built preset or a single profile ID. The router selects that complete configuration; no options are copied onto another model. A signed-reasoning lock still keeps the previous profile. A name that is neither fails with `router.ErrUnknownProfile`. `fallback.Provider` and `split.Split` copy one model string across members, so do not wrap a bundle in them; use `bundle.Session()` as a split arm instead.
+`ConfigPart.Model` (or an outcome policy's switch) can name another built preset or a single profile ID. The router selects that complete configuration; no options are copied onto another model. A signed-reasoning lock still keeps the previous profile. A name that is neither fails with `router.ErrUnknownProfile`. `fallback.Provider` and `split.Split` copy one model string across members, so do not wrap a bundle in them; use `bundle.Session()` as a split arm instead.
 
 `bundle.ConfigKey(name)` hashes a group's configuration hashes with the catalog revision, for `cache.Config.ConfigKey`.
 
 ## Recording the serving configuration
 
-Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision`, the effective `Options` (the entry's options merged with the request override, every dial compiled) and, when the attempt had dials, a `Dials` report of each decision ([dials](dials.md#seeing-what-was-sent)). The agent attaches the last route of the committed call to the assistant turn as `types.RouteContent`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
+Every attempt's `types.RouteDelta` carries `Preset`, `ConfigHash`, `CatalogRevision`, the effective `Options` (the entry's options merged with the request override, every dial compiled) and, when the attempt had dials, a `Dials` report of each decision ([dials](dials.md#seeing-what-was-sent)). The agent attaches the last route of the committed call to the assistant turn as `types.RoutePart`, which is persisted with the tree and stripped before provider calls. Traces add `saige.route.preset`, `saige.route.config_hash` and `saige.catalog.revision`, a `saige.route.attempt` event per attempt, and set `gen_ai.request.*` from the serving attempt. Evals record served configurations with `AgentRun.AddProvenance`, and `eval.WithProvenance` makes a comparison warn when the same profile ran with a different hash.
 
 ## CLI
 

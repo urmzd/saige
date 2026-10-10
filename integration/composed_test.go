@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/provider/fallback"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // These tests need no external services: they prove that three agent-core
@@ -39,7 +40,7 @@ func delegatingParent(subProvider types.Provider) *agentsdk.Agent {
 		agenttest.ToolCallResponse("call-1", "delegate_to_helper", map[string]any{"task": "do the thing"}),
 		agenttest.TextResponse("parent-final: done"),
 	}}
-	return agentsdk.NewAgent(agentsdk.AgentConfig{
+	return must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "parent",
 		SystemPrompt: "You are the parent agent.",
 		Provider:     parentProvider,
@@ -47,7 +48,7 @@ func delegatingParent(subProvider types.Provider) *agentsdk.Agent {
 		Name:        "helper",
 		Description: "Test helper sub-agent.",
 		Provider:    subProvider,
-	}))
+	})))
 }
 
 // toolResults extracts every ToolResultPart persisted on the branch.
@@ -88,12 +89,9 @@ func composedContext(t *testing.T) context.Context {
 func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 	ctx := composedContext(t)
 
-	subProvider := fallback.New(
-		errorProvider("provider boom: simulated mid-stream 529"),
-		&agenttest.ScriptedProvider{Responses: [][]types.Delta{
-			agenttest.TextResponse("recovered: sub-agent result"),
-		}},
-	)
+	subProvider := must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"), &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.TextResponse("recovered: sub-agent result"),
+	}}))
 	ag := delegatingParent(subProvider)
 
 	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
@@ -131,11 +129,11 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 
 	// Direct invocation first: a mid-stream ErrorDelta must surface through
 	// Wait() even when wrapped in a fallback with no remaining providers.
-	failing := agentsdk.NewAgent(agentsdk.AgentConfig{
+	failing := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "doomed",
 		SystemPrompt: "You will fail.",
-		Provider:     fallback.New(errorProvider("provider boom: simulated mid-stream 529")),
-	})
+		Provider:     must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"))),
+	}))
 	stream := failing.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	sawErrorDelta := false
 	for d := range stream.Deltas() {
@@ -161,7 +159,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 	// Composed: the same failing provider behind a sub-agent. The parent run
 	// itself completes (a failed delegation is a tool error, not a crash), but
 	// the persisted tool result must record the failure.
-	ag := delegatingParent(fallback.New(errorProvider("provider boom: simulated mid-stream 529")))
+	ag := delegatingParent(must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"))))
 	pstream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
 	var delegationErr string
 	for d := range pstream.Deltas() {

@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
+	"sync"
 	"time"
+
+	"github.com/urmzd/saige/agent/selector/rank"
 )
 
 // WireVersion is the envelope version this package writes. Readers accept
 // every version up to it and reject a higher one instead of guessing at its
 // meaning. Version 2 streams model output as part deltas; version 1 kinds
-// stay decodable (see NewV1Upgrader) and writable (see EncodeOptions).
+// stay decodable (see Decoder) and writable (see EncodeOptions).
 const WireVersion = 2
 
 // DefaultMaxInlineBytes is the default limit on inline media bytes in one
@@ -53,7 +57,7 @@ const (
 	WirePartEnd    = "part.end"
 	WireConversion = "conversion"
 
-	// Version 1 model output, decodable through NewV1Upgrader.
+	// Version 1 model output, decodable through Decoder.
 	WireTextStart          = "text.start"
 	WireTextDelta          = "text.delta"
 	WireTextEnd            = "text.end"
@@ -243,9 +247,31 @@ func (e *Encoder) Encode(d Delta) ([]Envelope, error) {
 	return out, nil
 }
 
-// Delta decodes the envelope's payload.
+// Delta decodes the envelope's payload. A v1 model-output envelope
+// decodes to a v1 delta that only NewV1Upgrader understands; use a Decoder
+// to read a stream that may be v1.
 func (e Envelope) Delta() (Delta, error) {
 	return decodeDelta(e.Kind, e.Data)
+}
+
+// Decoder reads the envelopes of one stream as part deltas, upgrading v1
+// model output on the way. It keeps state, because a v1 stream's indices
+// are assigned in order, so use one per stream.
+type Decoder struct {
+	up func(Delta) []Delta
+}
+
+// NewDecoder returns a decoder for one stream.
+func NewDecoder() *Decoder { return &Decoder{up: NewV1Upgrader()} }
+
+// Decode returns the deltas env carries: usually one, none for a v1 delta
+// that only closes state, or several when an upgrade splits one.
+func (d *Decoder) Decode(env Envelope) ([]Delta, error) {
+	x, err := env.Delta()
+	if err != nil {
+		return nil, err
+	}
+	return d.up(x), nil
 }
 
 // NewInterruptEnvelope builds the envelope for an Interrupt. RunID and Path
@@ -354,21 +380,28 @@ func (e *RemoteError) Error() string { return e.Message }
 
 func (e *RemoteError) Unwrap() error { return e.Err }
 
+// Is matches every sentinel whose wire code the error carries.
 func (e *RemoteError) Is(target error) bool {
 	for _, c := range e.Codes {
-		if s, ok := sentinelByCode[c]; ok && s == target {
+		if s := sentinelForCode(c); s != nil && s == target {
 			return true
 		}
 	}
 	return false
 }
 
-// wireSentinels lists the sentinel errors with a stable wire code, in match
-// order. Codes are part of the wire contract: never rename one.
-var wireSentinels = []struct {
+// ErrorKind implements KindReporter.
+func (e *RemoteError) ErrorKind() ErrorKind { return e.Kind }
+
+type wireSentinel struct {
 	code string
 	err  error
-}{
+}
+
+// wireSentinels lists the sentinel errors with a stable wire code, in match
+// order: this package's, then those other packages register. Codes are part
+// of the wire contract: never rename one.
+var wireSentinels = []wireSentinel{
 	{"stream_canceled", ErrStreamCanceled},
 	{"context_canceled", context.Canceled},
 	{"deadline_exceeded", context.DeadlineExceeded},
@@ -399,21 +432,98 @@ var wireSentinels = []struct {
 	{"modality_unsupported", ErrModalityUnsupported},
 	{"wire_unrepresentable", ErrWireUnrepresentable},
 	{"wire_inline_too_large", ErrWireInlineTooLarge},
+	{"invalid_config", ErrInvalidConfig},
+	{"interrupt_payload", ErrInterruptPayload},
+	// rank cannot import this package, so its sentinel is listed here.
+	{"selector.rank.empty_query", rank.ErrEmptyQuery},
+	{"batch_ambiguous", ErrBatchAmbiguous},
+	{"batch_not_found", ErrBatchNotFound},
+	{"batch_request", ErrBatchRequest},
+	{"invalid_channel", ErrInvalidChannel},
+	{"invalid_grant", ErrInvalidGrant},
+	{"invalid_target", ErrInvalidTarget},
+	{"invalid_tool_arguments", ErrInvalidToolArguments},
+	{"notifier_closed", ErrNotifierClosed},
+	{"options_unsupported", ErrOptionsUnsupported},
+	{"part_role", ErrPartRole},
+	{"reservation_active", ErrReservationActive},
+	{"schema_mismatch", ErrSchemaMismatch},
+	{"schema_unsupported", ErrSchemaUnsupported},
+	{"split_tool_call", ErrSplitToolCall},
+	{"tool_exists", ErrToolExists},
+	{"tool_quota_exceeded", ErrToolQuotaExceeded},
+	{"unknown_part_kind", ErrUnknownPartKind},
+	{"unknown_reservation", ErrUnknownReservation},
+	{"unknown_target", ErrUnknownTarget},
+	{"unknown_wire_kind", ErrUnknownWireKind},
+	{"untrusted_locator", ErrUntrustedLocator},
+	{"version_conflict", ErrVersionConflict},
+	{"wire_version", ErrWireVersion},
 }
 
-var sentinelByCode = func() map[string]error {
-	m := make(map[string]error, len(wireSentinels))
-	for _, s := range wireSentinels {
-		m[s.code] = s.err
-	}
-	return m
-}()
+var (
+	sentinelMu     sync.RWMutex
+	sentinelByCode = func() map[string]error {
+		m := make(map[string]error, len(wireSentinels))
+		for _, s := range wireSentinels {
+			m[s.code] = s.err
+		}
+		return m
+	}()
+)
 
-// ErrorCodes returns the stable wire codes of every known sentinel err matches.
+// RegisterWireSentinel gives err the stable wire code code, so that after
+// an error crosses a process boundary (EncodeError, DecodeError, an error
+// envelope, a durable record) errors.Is(decoded, err) still holds. A
+// package that defines a sentinel the agent loop can surface registers it
+// from init; this package cannot import those packages, so it cannot list
+// them itself. Codes are part of the wire contract: never rename one.
+//
+// It panics when code is empty or taken by another error, or err is nil:
+// those are programming errors, found when the program starts.
+// Registering the same pair twice is a no-op.
+func RegisterWireSentinel(code string, err error) {
+	if code == "" || err == nil {
+		panic("types: RegisterWireSentinel needs a code and an error")
+	}
+	sentinelMu.Lock()
+	defer sentinelMu.Unlock()
+	if prev, ok := sentinelByCode[code]; ok {
+		if prev == err {
+			return
+		}
+		panic("types: wire code " + strconv.Quote(code) + " is already registered")
+	}
+	sentinelByCode[code] = err
+	wireSentinels = append(wireSentinels, wireSentinel{code: code, err: err})
+}
+
+// WireSentinels returns every registered sentinel by its wire code.
+func WireSentinels() map[string]error {
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
+	out := make(map[string]error, len(sentinelByCode))
+	for c, e := range sentinelByCode {
+		out[c] = e
+	}
+	return out
+}
+
+// sentinelForCode returns the sentinel registered under code, or nil.
+func sentinelForCode(code string) error {
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
+	return sentinelByCode[code]
+}
+
+// ErrorCodes returns the stable wire codes of every registered sentinel err
+// matches, in registration order.
 func ErrorCodes(err error) []string {
 	if err == nil {
 		return nil
 	}
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
 	var codes []string
 	for _, s := range wireSentinels {
 		if errors.Is(err, s.err) {
@@ -423,15 +533,21 @@ func ErrorCodes(err error) []string {
 	return codes
 }
 
-type wireError struct {
-	Message   string             `json:"message"`
-	Kind      string             `json:"kind"`
-	Retryable bool               `json:"retryable"`
-	Codes     []string           `json:"codes,omitempty"`
-	Provider  *wireProviderError `json:"provider,omitempty"`
+// EncodedError is the wire form of an error: its message, its ErrorKind,
+// the wire codes of every registered sentinel it matches (see
+// RegisterWireSentinel), and the provider details of a *ProviderError in its
+// chain. It is the data of an error envelope, and what a durable record
+// stores for a failed step.
+type EncodedError struct {
+	Message   string                `json:"message"`
+	Kind      string                `json:"kind"`
+	Retryable bool                  `json:"retryable"`
+	Codes     []string              `json:"codes,omitempty"`
+	Provider  *EncodedProviderError `json:"provider,omitempty"`
 }
 
-type wireProviderError struct {
+// EncodedProviderError is the wire form of a *ProviderError.
+type EncodedProviderError struct {
 	Name         string   `json:"name,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	Kind         string   `json:"kind"`
@@ -440,11 +556,12 @@ type wireProviderError struct {
 	Cause        string   `json:"cause"`
 }
 
-func encodeError(err error) *wireError {
+// EncodeError returns the wire form of err, or nil for a nil error.
+func EncodeError(err error) *EncodedError {
 	if err == nil {
 		return nil
 	}
-	w := &wireError{
+	w := &EncodedError{
 		Message:   err.Error(),
 		Kind:      KindOf(err).String(),
 		Retryable: IsTransient(err),
@@ -452,7 +569,7 @@ func encodeError(err error) *wireError {
 	}
 	var pe *ProviderError
 	if errors.As(err, &pe) {
-		wp := &wireProviderError{Name: pe.Provider, Model: pe.Model, Kind: pe.Kind.String(), Status: pe.Code}
+		wp := &EncodedProviderError{Name: pe.Provider, Model: pe.Model, Kind: pe.Kind.String(), Status: pe.Code}
 		if pe.Err != nil {
 			wp.Cause = pe.Err.Error()
 		}
@@ -464,7 +581,11 @@ func encodeError(err error) *wireError {
 	return w
 }
 
-func decodeError(w *wireError) error {
+// DecodeError rebuilds an error from its wire form. The result keeps the
+// message and the kind, matches with errors.Is every registered sentinel the
+// original matched, and carries a *ProviderError when the original did. A
+// nil form decodes to nil.
+func DecodeError(w *EncodedError) error {
 	if w == nil {
 		return nil
 	}
@@ -553,13 +674,13 @@ type wireConversion struct {
 // wireBlock carries raw bytes too: a live consumer needs the image a tool
 // produced, even though tree persistence keeps only the URI.
 type wireBlock struct {
-	Kind      ToolResultBlockKind `json:"kind"`
-	Text      string              `json:"text,omitempty"`
-	MediaType MediaType           `json:"media_type,omitempty"`
-	URI       string              `json:"uri,omitempty"`
-	Filename  string              `json:"filename,omitempty"`
-	Data      []byte              `json:"data,omitempty"`
-	JSON      json.RawMessage     `json:"json,omitempty"`
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	MediaType MediaType       `json:"media_type,omitempty"`
+	URI       string          `json:"uri,omitempty"`
+	Filename  string          `json:"filename,omitempty"`
+	Data      []byte          `json:"data,omitempty"`
+	JSON      json.RawMessage `json:"json,omitempty"`
 }
 
 type wireFile struct {
@@ -782,29 +903,29 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 		return WirePartEnd, 2, w, nil
 	case ConversionDelta:
 		return WireConversion, 2, wireConversion(x), nil
-	case TextStartDelta:
+	case v1TextStart:
 		return WireTextStart, 1, wireEmpty{}, nil
-	case TextContentDelta:
+	case v1TextContent:
 		return WireTextDelta, 1, wireContent(x), nil
-	case TextEndDelta:
+	case v1TextEnd:
 		return WireTextEnd, 1, wireEmpty{}, nil
-	case ThinkingStartDelta:
+	case v1ThinkingStart:
 		return WireReasoningStart, 1, wireEmpty{}, nil
-	case ThinkingContentDelta:
+	case v1ThinkingContent:
 		return WireReasoningDelta, 1, wireContent(x), nil
-	case ThinkingEndDelta:
+	case v1ThinkingEnd:
 		return WireReasoningEnd, 1, wireSignature(x), nil
-	case ToolCallStartDelta:
+	case v1ToolCallStart:
 		return WireToolCallStart, 1, wireToolCall{ID: x.ID, Name: x.Name}, nil
-	case ToolCallArgumentDelta:
+	case v1ToolCallArgument:
 		return WireToolCallArgs, 1, wireToolCall{ID: x.ID, Content: x.Content}, nil
-	case ToolCallEndDelta:
+	case v1ToolCallEnd:
 		return WireToolCallEnd, 1, wireToolCall{ID: x.ID, Arguments: x.Arguments, ArgumentsError: x.ArgumentsError}, nil
-	case ServerToolCallDelta:
+	case v1ServerToolCall:
 		return WireServerToolCall, 1, wireServerTool{ID: x.ID, Kind: x.Kind, Name: x.Name, Input: x.Input}, nil
-	case ServerToolResultDelta:
+	case v1ServerToolResult:
 		return WireServerToolResult, 1, wireServerTool{
-			ID: x.ID, Kind: x.Kind, Text: x.Text, Result: x.Result, IsError: x.IsError, Files: toWireFiles(x.Files),
+			ID: x.ID, Kind: x.Kind, Text: x.Text, Result: x.Result, IsError: x.IsError, Files: x.Files,
 		}, nil
 	case ToolExecStartDelta:
 		return WireToolExecStart, v, wireToolExec{ToolCallID: x.ToolCallID, Name: x.Name}, nil
@@ -821,7 +942,7 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 		w := wireToolExec{ToolCallID: x.ToolCallID, Name: x.Name, Result: x.Result, Error: x.Error, Version: x.Version,
 			Citations: x.Citations}
 		if v == 1 {
-			w.Blocks = toWireBlocks(partsToBlocks(x.Parts))
+			w.Blocks = partsToBlocks(x.Parts)
 		} else {
 			for _, p := range x.Parts {
 				raw, err := marshalPart(p, o.codec)
@@ -846,7 +967,7 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 	case CitationDelta:
 		return WireCitation, v, wireCitation(x), nil
 	case ErrorDelta:
-		w := encodeError(x.Error)
+		w := EncodeError(x.Error)
 		if w == nil {
 			return WireError, v, wireEmpty{}, nil
 		}
@@ -919,29 +1040,29 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		w, err := decodeAs[wireConversion](kind, data)
 		return ConversionDelta(w), err
 	case WireTextStart:
-		return TextStartDelta{}, nil
+		return v1TextStart{}, nil
 	case WireTextDelta:
 		w, err := decodeAs[wireContent](kind, data)
-		return TextContentDelta(w), err
+		return v1TextContent(w), err
 	case WireTextEnd:
-		return TextEndDelta{}, nil
+		return v1TextEnd{}, nil
 	case WireReasoningStart:
-		return ThinkingStartDelta{}, nil
+		return v1ThinkingStart{}, nil
 	case WireReasoningDelta:
 		w, err := decodeAs[wireContent](kind, data)
-		return ThinkingContentDelta(w), err
+		return v1ThinkingContent(w), err
 	case WireReasoningEnd:
 		w, err := decodeAs[wireSignature](kind, data)
-		return ThinkingEndDelta(w), err
+		return v1ThinkingEnd(w), err
 	case WireToolCallStart:
 		w, err := decodeAs[wireToolCall](kind, data)
-		return ToolCallStartDelta{ID: w.ID, Name: w.Name}, err
+		return v1ToolCallStart{ID: w.ID, Name: w.Name}, err
 	case WireToolCallArgs:
 		w, err := decodeAs[wireToolCall](kind, data)
-		return ToolCallArgumentDelta{ID: w.ID, Content: w.Content}, err
+		return v1ToolCallArgument{ID: w.ID, Content: w.Content}, err
 	case WireToolCallEnd:
 		w, err := decodeAs[wireToolCall](kind, data)
-		return ToolCallEndDelta{ID: w.ID, Arguments: w.Arguments, ArgumentsError: w.ArgumentsError}, err
+		return v1ToolCallEnd{ID: w.ID, Arguments: w.Arguments, ArgumentsError: w.ArgumentsError}, err
 	case WireToolExecStart:
 		w, err := decodeAs[wireToolExec](kind, data)
 		return ToolExecStartDelta{ToolCallID: w.ToolCallID, Name: w.Name}, err
@@ -964,7 +1085,7 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 			return nil, err
 		}
 		end := ToolExecEndDelta{ToolCallID: w.ToolCallID, Name: w.Name, Result: w.Result, Error: w.Error,
-			Version: w.Version, Citations: w.Citations, Parts: blocksToParts(fromWireBlocks(w.Blocks))}
+			Version: w.Version, Citations: w.Citations, Parts: blocksToParts(w.Blocks)}
 		for _, raw := range w.Parts {
 			p, err := UnmarshalRolePart[ToolOutputPart](raw)
 			if err != nil {
@@ -994,11 +1115,11 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		if isEmptyObject(data) {
 			return ErrorDelta{}, nil
 		}
-		w, err := decodeAs[wireError](kind, data)
+		w, err := decodeAs[EncodedError](kind, data)
 		if err != nil {
 			return nil, err
 		}
-		return ErrorDelta{Error: decodeError(&w)}, nil
+		return ErrorDelta{Error: DecodeError(&w)}, nil
 	case WireDone:
 		return DoneDelta{}, nil
 	case WireFeedback:
@@ -1034,11 +1155,11 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		return InterruptedDelta{Reason: w.Reason, SubmissionID: w.SubmissionID}, err
 	case WireServerToolCall:
 		w, err := decodeAs[wireServerTool](kind, data)
-		return ServerToolCallDelta{ID: w.ID, Kind: w.Kind, Name: w.Name, Input: w.Input}, err
+		return v1ServerToolCall{ID: w.ID, Kind: w.Kind, Name: w.Name, Input: w.Input}, err
 	case WireServerToolResult:
 		w, err := decodeAs[wireServerTool](kind, data)
-		return ServerToolResultDelta{
-			ID: w.ID, Kind: w.Kind, Text: w.Text, Result: w.Result, IsError: w.IsError, Files: fromWireFiles(w.Files),
+		return v1ServerToolResult{
+			ID: w.ID, Kind: w.Kind, Text: w.Text, Result: w.Result, IsError: w.IsError, Files: w.Files,
 		}, err
 	case WirePartialJSON:
 		w, err := decodeAs[wirePartialJSON](kind, data)
@@ -1080,50 +1201,6 @@ func isEmptyObject(data json.RawMessage) bool {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-func toWireBlocks(bs []ToolResultBlock) []wireBlock {
-	if bs == nil {
-		return nil
-	}
-	out := make([]wireBlock, len(bs))
-	for i, b := range bs {
-		out[i] = wireBlock(b)
-	}
-	return out
-}
-
-func fromWireBlocks(ws []wireBlock) []ToolResultBlock {
-	if ws == nil {
-		return nil
-	}
-	out := make([]ToolResultBlock, len(ws))
-	for i, w := range ws {
-		out[i] = ToolResultBlock(w)
-	}
-	return out
-}
-
-func toWireFiles(fs []FileContent) []wireFile {
-	if fs == nil {
-		return nil
-	}
-	out := make([]wireFile, len(fs))
-	for i, f := range fs {
-		out[i] = wireFile{URI: f.URI, MediaType: f.MediaType, Filename: f.Filename, Data: f.Data}
-	}
-	return out
-}
-
-func fromWireFiles(ws []wireFile) []FileContent {
-	if ws == nil {
-		return nil
-	}
-	out := make([]FileContent, len(ws))
-	for i, w := range ws {
-		out[i] = FileContent{URI: w.URI, MediaType: w.MediaType, Filename: w.Filename, Data: w.Data}
-	}
-	return out
-}
 
 func toWireMarkers(ms []Marker) []wireMarker {
 	if ms == nil {

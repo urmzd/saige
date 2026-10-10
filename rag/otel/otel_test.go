@@ -166,7 +166,7 @@ func TestPipelineSearchSpans(t *testing.T) {
 	obs, tracer := newObserver(t, nil)
 	store := memstore.New()
 	emb := tableEmbedder{}
-	pipe, err := rag.NewPipeline(
+	pipe, err := rag.New(rag.Config{},
 		rag.WithStore(store),
 		rag.WithContentExtractor(oneSection{}),
 		rag.WithEmbedders(emb),

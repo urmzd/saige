@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // modelSwitchProvider is a fake types.ModelSwitcher that records which model
@@ -34,16 +35,17 @@ func (p *modelSwitchProvider) Stream(_ context.Context, _ types.Request) (<-chan
 
 func (p *modelSwitchProvider) Model() string { return p.model }
 
-func (p *modelSwitchProvider) WithModel(model string) types.Provider {
+func (p *modelSwitchProvider) WithTarget(t types.Target) (types.Provider, error) {
+	model := string(t.Model)
 	c := *p
 	c.model = model
-	return &c
+	return &c, nil
 }
 
 // A ConfigPart block that sets Model must re-target the provider call.
 func TestConfigContentModelSwitchesProvider(t *testing.T) {
 	provider := newModelSwitchProvider("base-model")
-	agent := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
+	agent := must.Get(New(Config{Provider: provider, SystemPrompt: "sys"}))
 
 	msg := types.UserMessage{Parts: []types.UserPart{
 		types.ConfigPart{Target: types.ModelTarget("fast-model")},
@@ -67,7 +69,7 @@ func TestConfigContentModelSwitchesProvider(t *testing.T) {
 // Without a ConfigPart model the provider is used as configured.
 func TestNoConfigModelUsesConfiguredProvider(t *testing.T) {
 	provider := newModelSwitchProvider("base-model")
-	agent := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
+	agent := must.Get(New(Config{Provider: provider, SystemPrompt: "sys"}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	for range stream.Deltas() {

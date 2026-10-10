@@ -21,6 +21,7 @@ type StepRunner interface {
 // StepKind discriminates the payload carried by a StepResult.
 type StepKind string
 
+// Step kinds.
 const (
 	StepKindLLM  StepKind = "llm"
 	StepKindTool StepKind = "tool"
@@ -77,6 +78,7 @@ type NoopStepRunner struct{}
 
 var _ StepRunner = NoopStepRunner{}
 
+// RunStep implements StepRunner.
 func (NoopStepRunner) RunStep(ctx context.Context, _ string, fn func(ctx context.Context) (StepResult, error)) (StepResult, error) {
 	return fn(ctx)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // mockProvider returns a fixed text response.
@@ -36,7 +37,7 @@ func (p *errorProviderSimple) Stream(_ context.Context, _ types.Request) (<-chan
 
 func TestRetryProvider_SucceedsFirstTry(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
-	rp := New(inner, DefaultConfig())
+	rp := must.Get(New(inner, DefaultConfig()))
 
 	ch, err := rp.Stream(context.Background(), types.Request{})
 	if err != nil {
@@ -73,7 +74,7 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 		MaxDelay:    5 * time.Millisecond,
 		Multiplier:  2.0,
 	}
-	rp := New(inner, cfg)
+	rp := must.Get(New(inner, cfg))
 
 	ch, err := rp.Stream(context.Background(), types.Request{})
 	if err != nil {
@@ -105,7 +106,7 @@ func TestRetryProvider_StopsOnPermanent(t *testing.T) {
 		MaxAttempts: 5,
 		BaseDelay:   1 * time.Millisecond,
 	}
-	rp := New(inner, cfg)
+	rp := must.Get(New(inner, cfg))
 
 	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
@@ -129,7 +130,7 @@ func TestRetryProvider_ExhaustsAttempts(t *testing.T) {
 		MaxAttempts: 2,
 		BaseDelay:   1 * time.Millisecond,
 	}
-	rp := New(inner, cfg)
+	rp := must.Get(New(inner, cfg))
 
 	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
@@ -161,7 +162,7 @@ func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
 		MaxAttempts: 10,
 		BaseDelay:   1 * time.Second, // long delay
 	}
-	rp := New(inner, cfg)
+	rp := must.Get(New(inner, cfg))
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -179,7 +180,7 @@ func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
 
 func TestRetryProvider_Name(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
-	rp := New(inner, DefaultConfig())
+	rp := must.Get(New(inner, DefaultConfig()))
 	if rp.Name() != "retry(unknown)" {
 		t.Errorf("Name() = %q, want %q", rp.Name(), "retry(unknown)")
 	}
@@ -317,7 +318,7 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 				MaxDelay:    2 * time.Millisecond,
 				Multiplier:  2.0,
 			}
-			rp := New(inner, cfg)
+			rp := must.Get(New(inner, cfg))
 
 			ch, err := rp.Stream(context.Background(), types.Request{})
 			if err != nil {
@@ -351,7 +352,7 @@ func TestRetryProvider_ChannelErrorExhausted(t *testing.T) {
 		{types.ErrorDelta{Error: transientErr()}},
 	}}
 	cfg := Config{MaxAttempts: 2, BaseDelay: 1 * time.Millisecond}
-	rp := New(inner, cfg)
+	rp := must.Get(New(inner, cfg))
 
 	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
@@ -403,16 +404,17 @@ func (p *switchableProvider) Stream(_ context.Context, _ types.Request) (<-chan 
 
 func (p *switchableProvider) Model() string { return p.model }
 
-func (p *switchableProvider) WithModel(m string) types.Provider {
-	return &switchableProvider{model: m}
+func (p *switchableProvider) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
+	return &switchableProvider{model: m}, nil
 }
 
 // WithModel must re-target the inner provider so ConfigPart.Model works
 // through retry-wrapped deployments.
 func TestWithModelRetargetsInner(t *testing.T) {
-	r := New(&switchableProvider{model: "base"}, DefaultConfig())
+	r := must.Get(New(&switchableProvider{model: "base"}, DefaultConfig()))
 
-	switched := r.WithModel("fast")
+	switched := must.Get(r.WithTarget(types.ModelTarget("fast")))
 	if got := types.ProviderModel(switched); got != "fast" {
 		t.Errorf("switched model = %q, want fast", got)
 	}
@@ -459,7 +461,7 @@ func TestRetryProvider_RoutePreamble(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inner := &scriptedStreamProvider{Scripts: tt.scripts}
-			rp := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, Multiplier: 1})
+			rp := must.Get(New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, Multiplier: 1}))
 			ch, err := rp.Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatal(err)

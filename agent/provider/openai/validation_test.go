@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // finishedStream is the smallest complete chat completion stream: one chunk
@@ -41,7 +42,7 @@ func TestInvalidOptionsRejectBeforeHTTP(t *testing.T) {
 		{"oversized limit", "o3", []Option{WithMaxTokens(100001)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", tc.model, tc.opts...)
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(tc.model)}, tc.opts...))
 			calls := 0
 			a.client = sdk.NewClient(option.WithHTTPClient(&http.Client{Transport: requestTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
@@ -75,7 +76,7 @@ func TestAcceptedSettingsReachWire(t *testing.T) {
 		{"gpt-5.2", []Option{WithReasoningEffort("none"), WithTemperature(0), WithPromptCache("scope", "in_memory")}, map[string]any{"temperature": float64(0), "prompt_cache_key": "scope", "prompt_cache_retention": "in_memory"}, nil},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			a := NewAdapter("test", tc.model, tc.opts...)
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(tc.model)}, tc.opts...))
 			calls := 0
 			a.client = sdk.NewClient(option.WithHTTPClient(&http.Client{Transport: requestTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
@@ -112,12 +113,12 @@ func TestAcceptedSettingsReachWire(t *testing.T) {
 }
 
 func TestModelSwitchAndRetryCannotHideInvalidSettings(t *testing.T) {
-	a := NewAdapter("test", "gpt-4o", WithTemperature(0))
+	a := must.Get(New(Config{APIKey: "test", Model: "gpt-4o"}, WithTemperature(0)))
 	if err := a.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	switched := a.WithModel("o3")
-	wrapped := retry.New(switched, retry.Config{MaxAttempts: 2})
+	switched := must.Get(a.WithTarget(types.ModelTarget("o3")))
+	wrapped := must.Get(retry.New(switched, retry.Config{MaxAttempts: 2}))
 	_, err := wrapped.Stream(context.Background(), types.Request{})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("got %v", err)

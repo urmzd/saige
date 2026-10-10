@@ -61,30 +61,3 @@ func TestNewToolResultMessage(t *testing.T) {
 		t.Fatalf("Content len = %d, want 2", len(msg.Parts))
 	}
 }
-
-func TestNewFileMessage(t *testing.T) {
-	msg := NewFileMessage("file:///test.pdf", MediaPDF)
-	if len(msg.Parts) != 1 {
-		t.Fatalf("Content len = %d, want 1", len(msg.Parts))
-	}
-	doc, ok := msg.Parts[0].(DocumentPart)
-	if !ok {
-		t.Fatalf("Parts[0] = %T, want DocumentPart", msg.Parts[0])
-	}
-	if doc.Source.URI != "file:///test.pdf" {
-		t.Errorf("URI = %q", doc.Source.URI)
-	}
-	if doc.Source.MediaType != MediaPDF {
-		t.Errorf("MediaType = %q, want %q", doc.Source.MediaType, MediaPDF)
-	}
-}
-
-func TestNewUserMessageWithFiles(t *testing.T) {
-	msg := NewUserMessageWithFiles("check this",
-		FileContent{URI: "file:///a.jpg", MediaType: MediaJPEG},
-		FileContent{URI: "file:///b.png", MediaType: MediaPNG},
-	)
-	if len(msg.Parts) != 3 {
-		t.Fatalf("Content len = %d, want 3", len(msg.Parts))
-	}
-}

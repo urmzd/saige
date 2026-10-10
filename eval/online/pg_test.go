@@ -72,7 +72,7 @@ func freshPool(t *testing.T) *pgxpool.Pool {
 // agent/pgstore store.
 func storedConversation(t *testing.T, pool *pgxpool.Pool, scope, conv string) []types.NodeID {
 	t.Helper()
-	st, err := agentpg.NewScopedStore(pool, scope, conv, nil)
+	st, err := agentpg.New(agentpg.Config{Pool: pool, Scope: scope, ConversationID: conv})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,12 +149,12 @@ func TestPGSourceIsScopedAndFindsFinishedRuns(t *testing.T) {
 func TestWatchWithPostgresNotifier(t *testing.T) {
 	pool := freshPool(t)
 	ids := storedConversation(t, pool, "acme", "conv-1")
-	results, err := pgstore.New(context.Background(), pool, "acme")
+	results, err := pgstore.New(context.Background(), pgstore.Config{Pool: pool, Tenant: "acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
-	defer n.Close()
+	defer n.Close(context.Background())
 
 	s := &online.Sampler{Store: results, Scorers: []eval.Scorer{eval.ContainsScorer("30 days")}}
 	ctx, cancel := context.WithCancel(context.Background())

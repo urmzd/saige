@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func ExampleFunctionModel() {
@@ -19,7 +20,7 @@ func ExampleFunctionModel() {
 			}, nil
 		},
 	}
-	a := agent.NewAgent(agent.AgentConfig{Provider: model})
+	a := must.Get(agent.New(agent.Config{Provider: model}))
 	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 	fmt.Println(text)
 	// Output: call 0, 0 tools offered
@@ -32,7 +33,7 @@ func ExampleNewToolCallEmulator() {
 		return "sunny in " + in.City, nil
 	})
 	model := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{})
-	a := agent.NewAgent(agent.AgentConfig{Provider: model, Tools: types.NewToolRegistry(weather)})
+	a := must.Get(agent.New(agent.Config{Provider: model, Tools: types.NewToolRegistry(weather)}))
 	text, _ := agent.CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}))
 	fmt.Println(text)
 	// Output: weather: sunny in sample city

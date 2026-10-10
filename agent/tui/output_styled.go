@@ -22,6 +22,7 @@ func NewStyledOutput(w, errW io.Writer, tmpl Template) *StyledOutput {
 	return &StyledOutput{W: w, Err: errW, Template: tmpl, Width: 80}
 }
 
+// Header implements Output.
 func (o *StyledOutput) Header(h OutputHeader) {
 	if !o.Template.ShowHeader {
 		return
@@ -35,6 +36,7 @@ func (o *StyledOutput) Header(h OutputHeader) {
 	fmt.Fprintln(o.W)
 }
 
+// Result implements Output.
 func (o *StyledOutput) Result(v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -59,6 +61,7 @@ func (o *StyledOutput) Error(err error) {
 	fmt.Fprintln(o.Err, statusError.Render(fmt.Sprintf("%s Error: %v", iconError, err)))
 }
 
+// Status implements Output.
 func (o *StyledOutput) Status(msg string) {
 	fmt.Fprintln(o.W, statusDone.Render(fmt.Sprintf("%s %s", iconDone, msg)))
 }

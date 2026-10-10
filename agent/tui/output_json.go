@@ -21,10 +21,12 @@ func NewJSONOutput(w, errW io.Writer) *JSONOutput {
 	return &JSONOutput{W: w, Err: errW}
 }
 
+// Header implements Output.
 func (o *JSONOutput) Header(h OutputHeader) {
 	// JSON mode: no header chrome
 }
 
+// Result implements Output.
 func (o *JSONOutput) Result(v any) error {
 	enc := json.NewEncoder(o.W)
 	enc.SetIndent("", "  ")
@@ -83,6 +85,7 @@ func (o *JSONOutput) Error(err error) {
 	fmt.Fprintf(o.Err, "error: %v\n", err)
 }
 
+// Status implements Output.
 func (o *JSONOutput) Status(msg string) {
 	enc := json.NewEncoder(o.W)
 	enc.SetIndent("", "  ")

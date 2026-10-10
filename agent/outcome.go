@@ -17,8 +17,8 @@ const maxOutcomeSwitches = 3
 
 // WithOutcomePolicy sets the policy that may switch models after an outcome
 // such as a failed sub-agent or structured output that never validated.
-func WithOutcomePolicy(p types.OutcomePolicy) AgentOption {
-	return func(c *AgentConfig) { c.OutcomePolicy = p }
+func WithOutcomePolicy(p types.OutcomePolicy) Option {
+	return func(c *Config) { c.OutcomePolicy = p }
 }
 
 // observeOutcome asks the OutcomePolicy about o. An accepted switch to a

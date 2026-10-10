@@ -9,13 +9,14 @@ import (
 type GateOutcome int
 
 const (
-	// GateAllow: run the call as-is.
+	// GateAllow runs the call as-is.
 	GateAllow GateOutcome = iota
-	// GateRequireApproval: pause and ask a human before running it. The agent
-	// loop emits a MarkerDelta and waits, exactly as it does for a MarkedTool.
+	// GateRequireApproval pauses and asks a human before running the call.
+	// The agent loop emits a MarkerDelta and waits, exactly as it does for a
+	// MarkedTool.
 	GateRequireApproval
-	// GateDeny: do not run it. The model is told the call was refused, which
-	// keeps the transcript coherent and lets it try something else.
+	// GateDeny does not run the call. The model is told the call was refused,
+	// which keeps the transcript coherent and lets it try something else.
 	GateDeny
 )
 
@@ -35,13 +36,16 @@ type GateDecision struct {
 	ModifiedArgs map[string]any
 }
 
-// Allow, Deny and RequireApproval build the three decisions.
+// Allow returns the decision that runs the call as-is.
 func Allow() GateDecision { return GateDecision{Outcome: GateAllow} }
 
+// Deny returns the decision that refuses the call, telling the model reason.
 func Deny(reason string) GateDecision {
 	return GateDecision{Outcome: GateDeny, Reason: reason}
 }
 
+// RequireApproval returns the decision that holds the call for a person,
+// showing them reason.
 func RequireApproval(reason string) GateDecision {
 	return GateDecision{Outcome: GateRequireApproval, Reason: reason}
 }
@@ -69,6 +73,7 @@ type ToolGate interface {
 // GateFunc adapts a plain function to the ToolGate interface.
 type GateFunc func(ctx context.Context, def ToolDef, args map[string]any) GateDecision
 
+// Check calls f.
 func (f GateFunc) Check(ctx context.Context, def ToolDef, args map[string]any) GateDecision {
 	return f(ctx, def, args)
 }
@@ -77,6 +82,7 @@ func (f GateFunc) Check(ctx context.Context, def ToolDef, args map[string]any) G
 // never has to nil-check a gate.
 type AllowAllGate struct{}
 
+// Check implements ToolGate.
 func (AllowAllGate) Check(context.Context, ToolDef, map[string]any) GateDecision {
 	return Allow()
 }

@@ -17,8 +17,7 @@ func TestFunctionCallSignatureRoundTrip(t *testing.T) {
 	events := []string{`{"candidates":[{"content":{"role":"model","parts":[` +
 		`{"functionCall":{"name":"get_weather","args":{"city":"Oslo"}},"thoughtSignature":"c2lnLTE="},` +
 		`{"functionCall":{"name":"get_weather","args":{"city":"Rome"}}}]},"finishReason":"STOP"}]}`}
-	a, err := NewAdapter(context.Background(), "test-key", "gemini-3.1-flash-lite",
-		WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
+	a, err := New(context.Background(), Config{APIKey: "test-key", Model: "gemini-3.1-flash-lite"}, WithHTTPClient(&http.Client{Transport: sseTransport{events: events}}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/urmzd/saige/agent/provider"
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // The live checks run only with SAIGE_LIVE=1 and the credentials each one
@@ -140,8 +141,8 @@ func TestLivePDFToChatViaExtract(t *testing.T) {
 	live(t, "OPENAI_API_KEY")
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01)})
 	p := build(t, provider.Config{Provider: provider.OpenAI, Model: "gpt-6-luna"})
-	a := agent.NewAgent(agent.AgentConfig{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
-		Dial: perAction(types.ModalityDocument, types.ActExtract), Converters: []types.Converter{convert.Documents()}}))
+	a := must.Get(agent.New(agent.Config{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
+		Dial: perAction(types.ModalityDocument, types.ActExtract), Converters: []types.Converter{convert.Documents()}})))
 	doc := types.DocumentPart{Source: types.Bytes(types.MediaPDF, onePagePDF("Invoice 4417: total due 92 dollars"))}
 	doc.Source.Filename = "invoice.pdf"
 	answer, convs, _, _ := run(t, a, types.UserMsg(types.Text("What is the total due on the invoice? Reply with the number only."), doc))
@@ -179,8 +180,8 @@ func TestLiveAudioToClaudeViaTranscribe(t *testing.T) {
 	clip := speech(t, "The secret code word is pineapple.")
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01)})
 	p := build(t, provider.Config{Provider: provider.Anthropic, Model: "claude-haiku-5-5"})
-	a := agent.NewAgent(agent.AgentConfig{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
-		Dial: perAction(types.ModalityAudio, types.ActTranscribe), Converters: []types.Converter{convert.Transcribe(gemini(t))}}))
+	a := must.Get(agent.New(agent.Config{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
+		Dial: perAction(types.ModalityAudio, types.ActTranscribe), Converters: []types.Converter{convert.Transcribe(gemini(t))}})))
 	audio := types.AudioPart{Source: types.Bytes(types.MediaWAV, clip)}
 	answer, convs, _, _ := run(t, a, types.UserMsg(types.Text("What is the code word in the recording? Reply with the word only."), audio))
 	if !strings.Contains(strings.ToLower(answer), "pineapple") {
@@ -219,8 +220,8 @@ func ollamaText(t *testing.T) types.Provider {
 func TestLiveImageToTextModelViaDescribe(t *testing.T) {
 	text := ollamaText(t)
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01), AllowUnpriced: true})
-	a := agent.NewAgent(agent.AgentConfig{Provider: text, Budget: b}, agent.WithConversion(types.ConversionPolicy{
-		Dial: perAction(types.ModalityImage, types.ActDescribe), Converters: []types.Converter{convert.Describe(gemini(t))}}))
+	a := must.Get(agent.New(agent.Config{Provider: text, Budget: b}, agent.WithConversion(types.ConversionPolicy{
+		Dial: perAction(types.ModalityImage, types.ActDescribe), Converters: []types.Converter{convert.Describe(gemini(t))}})))
 	img := types.Image(types.Bytes(types.MediaPNG, redSquare(t)))
 	answer, convs, _, _ := run(t, a, types.UserMsg(types.Text("What color is the image? Reply with one word."), img))
 	if !strings.Contains(strings.ToLower(answer), "red") {
@@ -250,7 +251,7 @@ func TestLiveFailoverReplansForATextOnlyMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01), AllowUnpriced: true})
-	a := agent.NewAgent(agent.AgentConfig{Provider: r.Session(), Budget: b}, agent.WithConversion(pol))
+	a := must.Get(agent.New(agent.Config{Provider: r.Session(), Budget: b}, agent.WithConversion(pol)))
 	img := types.Image(types.Bytes(types.MediaPNG, redSquare(t)))
 	answer, convs, routes, _ := run(t, a, types.UserMsg(types.Text("What color is the image? Reply with one word."), img))
 	if !strings.Contains(strings.ToLower(answer), "red") {
@@ -275,8 +276,8 @@ func TestLiveBatchPDFViaExtract(t *testing.T) {
 	live(t, "OPENAI_API_KEY")
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01)})
 	p := build(t, provider.Config{Provider: provider.OpenAI, Model: "gpt-6-luna"})
-	a := agent.NewAgent(agent.AgentConfig{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
-		Dial: perAction(types.ModalityDocument, types.ActExtract), Converters: []types.Converter{convert.Documents()}}))
+	a := must.Get(agent.New(agent.Config{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
+		Dial: perAction(types.ModalityDocument, types.ActExtract), Converters: []types.Converter{convert.Documents()}})))
 	doc := types.DocumentPart{Source: types.Bytes(types.MediaPDF, onePagePDF("Invoice 5120: total due 37 dollars"))}
 	doc.Source.Filename = "invoice.pdf"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -297,7 +298,7 @@ func TestLiveBatchPDFViaExtract(t *testing.T) {
 // Vertex, which rejects a system instruction that holds no text.
 func TestLiveImageWithoutSystemPromptOnVertex(t *testing.T) {
 	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01), AllowUnpriced: true})
-	a := agent.NewAgent(agent.AgentConfig{Provider: gemini(t), Budget: b})
+	a := must.Get(agent.New(agent.Config{Provider: gemini(t), Budget: b}))
 	img := types.Image(types.Bytes(types.MediaPNG, redSquare(t)))
 	answer, _, _, _ := run(t, a, types.UserMsg(types.Text("What color is the image? Reply with one word."), img))
 	if !strings.Contains(strings.ToLower(answer), "red") {

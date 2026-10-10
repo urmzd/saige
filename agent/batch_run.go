@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -83,13 +82,16 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 			bp = BatchProviderFor(p, cfg.Concurrency)
 		}
 		if bp == nil {
-			return nil, errors.New("agent: batch needs a provider")
+			return nil, fmt.Errorf("%w: agent: batch needs a provider", types.ErrInvalidConfig)
 		}
 		var ropts []batch.RunnerOption
 		if budget != nil {
 			ropts = append(ropts, batch.WithBudget(budget))
 		}
-		r = batch.NewRunner(bp, batch.NewMemoryStore(), ropts...)
+		var err error
+		if r, err = batch.NewRunner(batch.RunnerConfig{Provider: bp, Store: batch.NewMemoryStore()}, ropts...); err != nil {
+			return nil, err
+		}
 	}
 	id := cfg.JobID
 	if id == "" {
@@ -121,7 +123,11 @@ func BatchProviderFor(p types.Provider, concurrency int) types.BatchProvider {
 		if cp, ok := wrapper.As[*convert.Provider](p); ok {
 			return cp.Batch(bp)
 		}
-		return convert.NewBatch(bp, types.ConversionPolicy{})
+		cb, err := convert.NewBatch(bp, convert.Config{})
+		if err != nil {
+			return bp
+		}
+		return cb
 	}
 	return batch.NewLocal(p, concurrency)
 }

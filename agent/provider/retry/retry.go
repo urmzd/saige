@@ -2,12 +2,12 @@ package retry
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
-	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -42,63 +42,66 @@ func DefaultConfig() Config {
 	}
 }
 
-// Provider wraps a Provider with retry logic and exponential backoff.
+// Provider wraps a Provider with retry logic and exponential backoff. It
+// embeds wrapper.Base, so every optional interface reaches the inner
+// provider.
 type Provider struct {
-	Inner  types.Provider
+	wrapper.Base
 	Config Config
 }
 
-// New wraps a provider with the given retry config.
-func New(inner types.Provider, cfg Config) *Provider {
-	if cfg.MaxAttempts <= 0 {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithMaxAttempts sets Config.MaxAttempts.
+func WithMaxAttempts(n int) Option { return func(c *Config) { c.MaxAttempts = n } }
+
+// WithShouldRetry sets Config.ShouldRetry.
+func WithShouldRetry(fn func(error) bool) Option { return func(c *Config) { c.ShouldRetry = fn } }
+
+// New wraps inner with retries. Zero fields of cfg take the defaults of
+// DefaultConfig; a negative field, or a nil inner, is an error wrapping
+// types.ErrInvalidConfig.
+func New(inner types.Provider, cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: retry: no provider to wrap", types.ErrInvalidConfig)
+	}
+	if cfg.MaxAttempts < 0 || cfg.BaseDelay < 0 || cfg.MaxDelay < 0 || cfg.Multiplier < 0 || cfg.MaxRetryAfter < 0 {
+		return nil, fmt.Errorf("%w: retry: negative attempts, delay or multiplier", types.ErrInvalidConfig)
+	}
+	if cfg.MaxAttempts == 0 {
 		cfg.MaxAttempts = 3
 	}
-	if cfg.Multiplier <= 0 {
+	if cfg.Multiplier == 0 {
 		cfg.Multiplier = 2.0
 	}
-	if cfg.BaseDelay <= 0 {
+	if cfg.BaseDelay == 0 {
 		cfg.BaseDelay = 500 * time.Millisecond
 	}
-	if cfg.MaxDelay <= 0 {
+	if cfg.MaxDelay == 0 {
 		cfg.MaxDelay = 10 * time.Second
 	}
-	if cfg.MaxRetryAfter <= 0 {
+	if cfg.MaxRetryAfter == 0 {
 		cfg.MaxRetryAfter = 60 * time.Second
 	}
-	return &Provider{Inner: inner, Config: cfg}
+	p := &Provider{Config: cfg}
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
 }
 
+// rewrap keeps the retry config around another inner provider.
+func (r *Provider) rewrap(inner types.Provider) types.Provider {
+	c := *r
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
+}
+
+// Name implements types.NamedProvider.
 func (r *Provider) Name() string {
 	return "retry(" + types.NameOf(r.Inner) + ")"
-}
-
-// Model implements types.ModelProvider by delegating to the inner provider.
-func (r *Provider) Model() string { return types.ProviderModel(r.Inner) }
-
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// when it supports model switching, keeping the same retry config.
-func (r *Provider) WithModel(model string) types.Provider {
-	return &Provider{Inner: types.ProviderWithModel(r.Inner, model), Config: r.Config}
-}
-
-// WithTarget implements types.TargetSwitcher: it re-targets the inner
-// provider, keeping the same retry config.
-func (r *Provider) WithTarget(t types.Target) (types.Provider, error) {
-	inner, err := types.ProviderWithTarget(r.Inner, t)
-	if err != nil {
-		return nil, err
-	}
-	return &Provider{Inner: inner, Config: r.Config}, nil
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. When the inner provider does not report, the zero value is
-// returned: it declares nothing and has Known false, so a caller that must
-// fail closed still can. Capabilities that need request options are dropped
-// when the inner provider cannot receive them.
-func (r *Provider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(r.Inner)
-	return optionscheck.Narrow(caps, r.Inner)
 }
 
 // Stream implements types.Provider. A schema or options the inner provider
@@ -106,30 +109,13 @@ func (r *Provider) Capabilities() types.ModelCapabilities {
 // silently dropped: the caller asked for them and must not receive output
 // made without them.
 func (r *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	if req.Schema != nil && !types.AcceptsSchema(r.Inner) {
-		return nil, schemacheck.Unsupported(r.Inner, "provider cannot enforce a response schema")
-	}
-	if req.Options != nil && !types.AcceptsOptions(r.Inner) {
-		return nil, optionscheck.Unsupported(r.Inner)
+	if err := r.Check(req); err != nil {
+		return nil, err
 	}
 	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
 		return r.Inner.Stream(ctx, req)
 	})
 }
-
-// SupportsSchema implements types.StructuredOutputProvider. A schema the
-// inner provider cannot enforce is rejected when the request arrives.
-func (r *Provider) SupportsSchema() bool { return true }
-
-// SupportsOptions implements types.OptionsProvider. Options the inner
-// provider cannot receive are rejected when the request arrives.
-func (r *Provider) SupportsOptions() bool { return true }
-
-// Unwrap returns the inner provider. See package wrapper.
-func (r *Provider) Unwrap() types.Provider { return r.Inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (r *Provider) Close() error { return types.CloseProvider(r.Inner) }
 
 // retryLoop runs the call function with exponential backoff.
 //
@@ -328,16 +314,4 @@ func replay(ctx context.Context, buffered []types.Delta, errAfter error, rest <-
 func drain(ch <-chan types.Delta) {
 	for range ch {
 	}
-}
-
-func (p *Provider) NewSession() types.Provider {
-	return &Provider{Inner: types.NewProviderSession(p.Inner), Config: p.Config}
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the inner
-// provider. A retry replays the identical adapter, so every attempt sends
-// these options.
-func (r *Provider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(r.Inner)
-	return o
 }

@@ -86,25 +86,26 @@ func (p Pin) String() string { return p.Name + "@" + p.Version + " " + p.Digest 
 // opened, such as MCP connections.
 type Bound struct {
 	Resolved *definition.Resolved
-	Config   agent.AgentConfig
-	Options  []agent.AgentOption
+	Config   agent.Config
+	Options  []agent.Option
 	// MaxGrant is the widest grant scope an approval may carry, from the
 	// definition's approval.grant. Empty allows every scope. Hosts that
 	// accept grants check them with CheckGrant.
 	MaxGrant types.GrantScope
 
-	closers []func() error
+	closers []func(context.Context) error
 }
 
 // NewAgent builds the root agent. extra options apply after the binding's.
 // Each agent gets a budget of its own, with the definition's policy, so two
-// agents built from one Bound never share an allowance.
-func (b *Bound) NewAgent(extra ...agent.AgentOption) *agent.Agent {
+// agents built from one Bound never share an allowance. It returns
+// agent.New's error.
+func (b *Bound) NewAgent(extra ...agent.Option) (*agent.Agent, error) {
 	cfg := b.Config
 	if cfg.Budget != nil {
 		cfg.Budget = types.NewBudget(cfg.Budget.Policy())
 	}
-	return agent.NewAgent(cfg, append(slices.Clone(b.Options), extra...)...)
+	return agent.New(cfg, append(slices.Clone(b.Options), extra...)...)
 }
 
 // Pin returns the bound definition's pin.
@@ -124,10 +125,10 @@ func (b *Bound) CheckGrant(g *types.GrantRequest) error {
 }
 
 // Close releases every resource binding opened.
-func (b *Bound) Close() error {
+func (b *Bound) Close(ctx context.Context) error {
 	var errs []error
 	for i := len(b.closers) - 1; i >= 0; i-- {
-		errs = append(errs, b.closers[i]())
+		errs = append(errs, b.closers[i](ctx))
 	}
 	b.closers = nil
 	return errors.Join(errs...)
@@ -145,10 +146,10 @@ func Bind(ctx context.Context, res *definition.Resolved, env Env) (*Bound, error
 	}
 	p, err := bindParts(ctx, &env, res, true, b)
 	if err != nil {
-		_ = b.Close()
+		_ = b.Close(ctx)
 		return nil, err
 	}
-	b.Config = agent.AgentConfig{
+	b.Config = agent.Config{
 		Name:             res.Name,
 		SystemPrompt:     p.prompt,
 		Tools:            p.registry(),
@@ -185,7 +186,7 @@ func Bind(ctx context.Context, res *definition.Resolved, env Env) (*Bound, error
 	return b, nil
 }
 
-// parts is one bound definition, before it becomes a root AgentConfig, a
+// parts is one bound definition, before it becomes a root Config, a
 // SubAgentDef or a HandoffDef.
 type parts struct {
 	def         *definition.Definition
@@ -232,7 +233,7 @@ func bindParts(ctx context.Context, env *Env, res *definition.Resolved, root boo
 			return nil, err
 		}
 		prov := p.preset.Provider()
-		b.closers = append(b.closers, func() error { return types.CloseProvider(prov) })
+		b.closers = append(b.closers, func(ctx context.Context) error { return types.CloseProvider(ctx, prov) })
 	case root:
 		return nil, fmt.Errorf("%w: agent %s names no model and the host provides none", ErrUnsupported, d.Name)
 	}
@@ -377,7 +378,7 @@ func subAgentDef(env *Env, sub definition.ResolvedSubagent, cp *parts) agent.Sub
 		budgetPolicy = &p
 	}
 	hostGate := env.ToolGate
-	sd.Options = append(sd.Options, func(c *agent.AgentConfig) {
+	sd.Options = append(sd.Options, func(c *agent.Config) {
 		if cp.gate != nil || cp.approval != nil {
 			c.ToolGate = gates(hostGate, cp.gate)
 			if c.ToolGate == nil {

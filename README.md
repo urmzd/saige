@@ -158,9 +158,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is RAG?"))}))
 	if err != nil {
 		log.Fatal(err)
@@ -201,14 +204,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
 	weather := agent.Func("weather", "Current weather for a city",
 		func(rc agent.RunContext[agent.NoDeps], in WeatherIn) (string, error) {
 			return "18C and sunny in " + in.City, nil
 		})
 
-	a := agent.NewAgent(agent.AgentConfig{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What's the weather in Lisbon?"))}))
 	if err != nil {
 		log.Fatal(err)
@@ -251,9 +257,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	ticket := []types.Message{types.UserMsg(types.Text("Checkout returns HTTP 500 for every customer."))}
 	out, _, err := agent.Structured(ctx, a, ticket, agent.OutputSpec[Triage]{Repair: 1})
 	if err != nil {
@@ -320,9 +329,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	emb := ollama.NewEmbedder(ollama.NewClient("http://localhost:11434", "", "nomic-embed-text"))
-	pipe, err := rag.NewPipeline(
-		rag.WithStore(pgstore.NewStore(pool, nil)),
+	client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := pgstore.New(pgstore.Config{Pool: pool})
+	if err != nil {
+		log.Fatal(err)
+	}
+	emb := ollama.NewEmbedder(client)
+	pipe, err := rag.New(rag.Config{Store: store},
 		rag.WithContentExtractor(extractor.NewAuto()),
 		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
 		rag.WithRecursiveChunker(512, 64),

@@ -32,6 +32,7 @@ const (
 	statusReady     = "ready"
 )
 
+// Engine errors.
 var (
 	ErrBusy          = errors.New("durable run already has a worker")
 	ErrIndeterminate = errors.New("attempt outcome requires reconciliation")
@@ -44,6 +45,7 @@ var (
 // Completed steps reconstruct conversation state without repeating operations.
 type Factory func() *agent.Agent
 
+// Engine runs durable agent runs on files in a private directory.
 type Engine struct {
 	Directory   string
 	ApprovalTTL time.Duration
@@ -56,6 +58,7 @@ type Engine struct {
 // New uses a host-owned private directory. A zero TTL defaults to 24 hours.
 func New(directory string) *Engine { return &Engine{Directory: directory, ApprovalTTL: 24 * time.Hour} }
 
+// Step is the recorded outcome of one durable step.
 type Step struct {
 	Status      string    `json:"status"`
 	StartedAt   time.Time `json:"started_at"`
@@ -68,6 +71,7 @@ type Step struct {
 	Idempotent bool `json:"idempotent,omitempty"`
 }
 
+// Interrupt is a pending or decided approval or interrupt of a run.
 type Interrupt struct {
 	Request     types.ApprovalRequest   `json:"request"`
 	CreatedAt   time.Time               `json:"created_at"`
@@ -82,8 +86,8 @@ type Interrupt struct {
 	Answer json.RawMessage `json:"answer,omitempty"`
 }
 
-// State is a detached inspection snapshot. Input and step Result are durablecodec records.
-// Do not put credentials in input, tool arguments, or approval messages.
+// Event is one entry of a run's event log, part of a State snapshot. Do
+// not put credentials in input, tool arguments, or approval messages.
 type Event struct {
 	Sequence int       `json:"sequence"`
 	At       time.Time `json:"at"`
@@ -91,6 +95,8 @@ type Event struct {
 	ID       string    `json:"id,omitempty"`
 }
 
+// State is a detached inspection snapshot. Input and step Result are
+// durablecodec records.
 type State struct {
 	History            []Event               `json:"history"`
 	ReconciledReceipts []types.BudgetReceipt `json:"reconciled_receipts,omitempty"`

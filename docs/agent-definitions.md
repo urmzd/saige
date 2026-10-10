@@ -206,14 +206,14 @@ b, err := bind.Bind(ctx, res, bind.Env{
     Harness: tools.HarnessOptions{Root: "."},
     Skills:  skillCatalog,
 })
-defer b.Close()
-a := b.NewAgent()
+defer b.Close(ctx)
+a, err := b.NewAgent()
 ```
 
 | Definition | Becomes |
 | --- | --- |
 | `model` | A `preset.Build` bundle, applied with `agent.WithPreset`. `Env.Preset` overrides the root agent's model |
-| `dials` | `AgentConfig.Dials` |
+| `dials` | `agent.Config.Dials` |
 | `tools.harness` | A `tools.Harness` toolset under `Env.Harness.Root`, one per agent |
 | `tools.mcp` | An `mcp.Pool` over `Env.MCPServers`, its tools and its gate. `allow` may only narrow the host's own allow list |
 | `tools.registry` | Tools from `Env.Tools` |
@@ -221,7 +221,7 @@ a := b.NewAgent()
 | `memory` | `memory.Tools` over `Env.MemoryStores` and `Env.MemoryScope`; a `UserInput` hook for `inject` and `select` |
 | `subagents` | `agent.SubAgentDef` (delegate, spawn) or `agent.HandoffDef` (handoff) |
 | `approval` | A `ToolGate` behind `Env.ToolGate`, and `agent.ApprovalPolicy` |
-| `compaction` | `AgentConfig.CompactCfg` |
+| `compaction` | `agent.Config.CompactCfg` |
 | `guardrails` | `agent.InputGuardrail` and `agent.OutputGuardrail` from `agent/guardrail`; a classifier runs on the agent's model |
 | `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`. Each `NewAgent` call, and each delegation, gets a budget of its own |
 

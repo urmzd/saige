@@ -11,6 +11,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // panicTool panics on every call.
@@ -90,12 +91,12 @@ func TestToolPanicBecomesToolError(t *testing.T) {
 				agenttest.ToolCallResponse("c1", name, nil),
 				agenttest.TextResponse("recovered"),
 			}}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:         provider,
 				Tools:            types.NewToolRegistry(tt.tool),
 				ToolGate:         tt.gate,
 				MaxParallelTools: tt.parallel,
-			})
+			}))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
@@ -121,7 +122,7 @@ func TestToolPanicUnderDurableRunnerStopsRun(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "boom", nil),
 		agenttest.TextResponse("unreachable"),
 	}}
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(panicTool{name: "boom"}), StepRunner: runner})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(panicTool{name: "boom"}), StepRunner: runner}))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
@@ -189,7 +190,7 @@ func TestInvalidToolArgumentsNeverRunTheTool(t *testing.T) {
 			tool := &agenttest.MockTool{Def: def, Result: "written"}
 			gate := &countingGate{}
 			provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{tt.call, agenttest.TextResponse("ok")}}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate}))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range stream.Deltas() {
 			}
@@ -247,7 +248,7 @@ func TestApprovalEditsAreGatedAgain(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "write_file", map[string]any{"path": "/tmp/a"}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool), ToolGate: gate}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
@@ -286,7 +287,7 @@ func TestOpenToolCallAtStreamEndIsTruncation(t *testing.T) {
 		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "write"},
 		types.PartDelta{Index: 0, Args: `{"path":`},
 	}}}
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool)}))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	for range stream.Deltas() {
 	}
@@ -313,7 +314,7 @@ func TestMarkerFoundThroughDecorator(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "write", map[string]any{}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool)}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})

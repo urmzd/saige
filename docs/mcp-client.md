@@ -5,7 +5,7 @@ Every imported tool is gateable, logged, and durable through the `StepRunner`, l
 
 ```go
 pool := mcp.NewPool()
-defer pool.Close()
+defer pool.Close(ctx)
 
 spec := mcp.Remote("docs", "https://mcp.example.com/mcp")
 spec.Retry = mcp.DefaultRetryPolicy()

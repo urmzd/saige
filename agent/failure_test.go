@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // ===================================================================
@@ -18,10 +19,10 @@ import (
 func TestStreamWaitReturnsProviderError(t *testing.T) {
 	provider := &errorProvider{err: errors.New("connection refused")}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
@@ -48,12 +49,12 @@ func TestStreamWaitReturnsMaxIterationsError(t *testing.T) {
 	registry := types.NewToolRegistry()
 	registry.Register(&staticTool{name: "noop", result: "ok"})
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     provider,
 		SystemPrompt: "sys",
 		Tools:        registry,
 		MaxIter:      2,
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	collectDeltas(stream)
@@ -64,10 +65,10 @@ func TestStreamWaitReturnsMaxIterationsError(t *testing.T) {
 }
 
 func TestStreamWaitNilOnCleanFinish(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "done"},
 		SystemPrompt: "sys",
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	collectDeltas(stream)
@@ -103,13 +104,13 @@ func TestSubAgentFailureFailsParentToolResult(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helper", SystemPrompt: "child sys", Provider: childProvider},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	deltas := collectDeltas(stream)
@@ -176,14 +177,14 @@ func TestSubAgentInheritsStepRunner(t *testing.T) {
 		response: "parent done",
 	}
 
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     parentProvider,
 		SystemPrompt: "parent sys",
 		StepRunner:   runner,
 		SubAgents: []SubAgentDef{
 			{Name: "helper", Description: "helper", SystemPrompt: "child sys", Provider: childProvider},
 		},
-	})
+	}))
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	collectDeltas(stream)
@@ -205,10 +206,10 @@ func TestSubAgentInheritsStepRunner(t *testing.T) {
 // A child invoked outside any durable run (NoopStepRunner parent) keeps inline
 // execution: nothing is recorded because there is no runner to thread.
 func TestSubAgentNoopRunnerNotWrapped(t *testing.T) {
-	agent := NewAgent(AgentConfig{
+	agent := must.Get(New(Config{
 		Provider:     &mockProvider{response: "hi"},
 		SystemPrompt: "sys",
-	})
+	}))
 	if r := agent.childStepRunner("call-1"); r != nil {
 		t.Errorf("childStepRunner under NoopStepRunner = %T, want nil", r)
 	}

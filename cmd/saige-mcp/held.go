@@ -101,16 +101,20 @@ type heldCall struct {
 	claimed bool
 }
 
-func newHeldApprovals(ctx context.Context, dir string, timeout, wait time.Duration) *heldApprovals {
+func newHeldApprovals(ctx context.Context, dir string, timeout, wait time.Duration) (*heldApprovals, error) {
+	runs, err := agenthost.New[*agentRun](agenthost.Config{Max: 256, Prefix: "run_"})
+	if err != nil {
+		return nil, err
+	}
 	return &heldApprovals{
 		ctx:     ctx,
-		runs:    agenthost.NewManager[*agentRun](agenthost.Options{Max: 256, Prefix: "run_"}),
+		runs:    runs,
 		dir:     dir,
 		timeout: timeout,
 		wait:    wait,
 		poll:    250 * time.Millisecond,
 		byToken: map[string]*heldCall{},
-	}
+	}, nil
 }
 
 // openStore opens the store on first use, so a server that never holds an

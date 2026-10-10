@@ -347,10 +347,10 @@ func (m *Mapper) custom(d types.Delta) ([]Event, error) {
 	return []Event{ev}, nil
 }
 
-// Close ends a run whose stream closed without a done or error delta. It
+// Flush ends a run whose stream closed without a done or error delta. It
 // closes any open message and returns RUN_ERROR with CodeIncompleteStream.
 // After a finished run it returns nothing.
-func (m *Mapper) Close() []Event {
+func (m *Mapper) Flush() []Event {
 	if m.finished {
 		return nil
 	}
@@ -471,7 +471,7 @@ func Stream(ctx context.Context, w io.Writer, threadID, runID string, deltas <-c
 			return ctx.Err()
 		case d, ok := <-deltas:
 			if !ok {
-				return write(m.Close()...)
+				return write(m.Flush()...)
 			}
 			events, err := m.Map(d)
 			if err != nil {

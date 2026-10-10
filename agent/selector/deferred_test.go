@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func mockTool(name, description string) *agenttest.MockTool {
@@ -38,11 +39,11 @@ func toolNames(defs []types.ToolDef) []string {
 func runDeferred(t *testing.T, policy *DeferredTools, responses [][]types.Delta, tools ...types.Tool) (*agenttest.ScriptedProvider, []types.Delta, agent.RunScope) {
 	t.Helper()
 	provider := &agenttest.ScriptedProvider{Responses: responses}
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:     "worker",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(tools...),
-	}, agent.WithToolPolicy(policy), agent.WithMaxIter(6))
+	}, agent.WithToolPolicy(policy), agent.WithMaxIter(6)))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {

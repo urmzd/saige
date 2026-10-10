@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // member is a profile's adapter: it reports an offering and records the
@@ -97,8 +98,8 @@ func TestMemberRemovedOnRejectNeverOnConvert(t *testing.T) {
 	text := &member{name: "texty", offering: textOnly("texty")}
 	see := &member{name: "seer", offering: vision("seer")}
 	r, err := New(Config{Profiles: []Profile{
-		{ID: "texty", Provider: convert.New(text, types.ConversionPolicy{})},
-		{ID: "seer", Provider: convert.New(see, types.ConversionPolicy{})},
+		{ID: "texty", Provider: must.Get(convert.New(text, convert.Config{Policy: types.ConversionPolicy{}}))},
+		{ID: "seer", Provider: must.Get(convert.New(see, convert.Config{Policy: types.ConversionPolicy{}}))},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -120,8 +121,8 @@ func TestMemberRemovedOnRejectNeverOnConvert(t *testing.T) {
 		Converters: []types.Converter{d}}
 	text2 := &member{name: "texty", offering: textOnly("texty")}
 	r, _ = New(Config{Profiles: []Profile{
-		{ID: "texty", Provider: convert.New(text2, pol)},
-		{ID: "seer", Provider: convert.New(see, types.ConversionPolicy{})},
+		{ID: "texty", Provider: must.Get(convert.New(text2, convert.Config{Policy: pol}))},
+		{ID: "seer", Provider: must.Get(convert.New(see, convert.Config{Policy: types.ConversionPolicy{}}))},
 	}})
 	ds, err = streamAll(t, r.Session(), imageRequest())
 	if err != nil {
@@ -145,8 +146,8 @@ func TestMemberRemovedOnRejectNeverOnConvert(t *testing.T) {
 
 func TestEveryMemberRejectingNamesEachReason(t *testing.T) {
 	r, _ := New(Config{Profiles: []Profile{
-		{ID: "a", Provider: convert.New(&member{name: "a", offering: textOnly("a")}, types.ConversionPolicy{})},
-		{ID: "b", Provider: convert.New(&member{name: "b", offering: textOnly("b")}, types.ConversionPolicy{})},
+		{ID: "a", Provider: must.Get(convert.New(&member{name: "a", offering: textOnly("a")}, convert.Config{Policy: types.ConversionPolicy{}}))},
+		{ID: "b", Provider: must.Get(convert.New(&member{name: "b", offering: textOnly("b")}, convert.Config{Policy: types.ConversionPolicy{}}))},
 	}})
 	_, err := streamAll(t, r.Session(), imageRequest())
 	if !errors.Is(err, types.ErrModalityUnsupported) || !strings.Contains(err.Error(), "profile a") || !strings.Contains(err.Error(), "profile b") {
@@ -163,8 +164,8 @@ func TestFailoverReplansForTheNextMember(t *testing.T) {
 	pol := types.ConversionPolicy{Dial: types.ModalityDial{Per: map[types.Modality][]types.ModalityAction{types.ModalityImage: {types.ActDescribe}}},
 		Converters: []types.Converter{d}}
 	r, _ := New(Config{Profiles: []Profile{
-		{ID: "seer", Provider: convert.New(see, pol)},
-		{ID: "texty", Provider: convert.New(text, pol)},
+		{ID: "seer", Provider: must.Get(convert.New(see, convert.Config{Policy: pol}))},
+		{ID: "texty", Provider: must.Get(convert.New(text, convert.Config{Policy: pol}))},
 	}})
 	ds, err := streamAll(t, r.Session(), imageRequest())
 	if err != nil {

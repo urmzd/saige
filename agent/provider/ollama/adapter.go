@@ -16,7 +16,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 )
 
@@ -26,12 +26,17 @@ func (a *Adapter) Name() string { return "ollama" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.Client.Model }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// (and its client) targeting the given model, sharing the HTTP client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter (and its client) targeting that model, sharing the HTTP
+// client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	client := *a.Client
-	client.Model = model
-	return &Adapter{Client: &client, toolChoice: a.toolChoice, dials: a.dials, dialPolicy: a.dialPolicy}
+	client.Model = string(m)
+	return &Adapter{Client: &client, toolChoice: a.toolChoice, dials: a.dials, dialPolicy: a.dialPolicy}, nil
 }
 
 // Adapter wraps the Ollama Client and implements types.Provider.
@@ -43,13 +48,26 @@ type Adapter struct {
 	dialPolicy *types.DialPolicy
 }
 
-// NewAdapter creates a new Ollama Provider adapter.
-func NewAdapter(client *Client, opts ...AdapterOption) *Adapter {
+// New creates an Ollama provider adapter over cfg.Client, or over a client
+// built from cfg's host and models when cfg.Client is nil. A missing model
+// or an invalid host is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...AdapterOption) (*Adapter, error) {
+	client := cfg.Client
+	if client == nil {
+		c, err := NewClient(cfg)
+		if err != nil {
+			return nil, err
+		}
+		client = c
+	}
+	if client.Model == "" {
+		return nil, fmt.Errorf("%w: ollama: no model", types.ErrInvalidConfig)
+	}
 	a := &Adapter{Client: client}
 	for _, o := range opts {
 		o(a)
 	}
-	return a
+	return a, nil
 }
 
 // Validate checks explicitly configured controls. The low-level Client remains

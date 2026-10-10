@@ -25,9 +25,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{SystemPrompt: "Triage support tickets."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	ticket := []types.Message{types.UserMsg(types.Text("Checkout returns HTTP 500 for every customer."))}
 	out, _, err := agent.Structured(ctx, a, ticket, agent.OutputSpec[Triage]{Repair: 1})
 	if err != nil {

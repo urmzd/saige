@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-func TestWriteReadExperiment(t *testing.T) {
+func TestWriteReadComparison(t *testing.T) {
 	dir := t.TempDir()
 
-	original := &ExperimentResult{
+	original := &Comparison{
 		Name:      "round-trip",
 		CreatedAt: time.Now().Truncate(time.Second),
 		BaseResults: []ObservationResult{
@@ -39,7 +39,7 @@ func TestWriteReadExperiment(t *testing.T) {
 		Deltas:        map[string]float64{"accuracy": 0.05},
 	}
 
-	if err := WriteExperiment(dir, original); err != nil {
+	if err := WriteComparison(dir, original); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestWriteReadExperiment(t *testing.T) {
 	}
 
 	// Read back.
-	loaded, err := ReadExperiment(dir)
+	loaded, err := ReadComparison(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestWriteExperimentPairsArmsByCase(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := WriteExperiment(dir, &ExperimentResult{Name: "cancelled", BaseResults: tc.base, ExpResults: tc.exp}); err != nil {
+			if err := WriteComparison(dir, &Comparison{Name: "cancelled", BaseResults: tc.base, ExpResults: tc.exp}); err != nil {
 				t.Fatal(err)
 			}
 			for num, want := range tc.want {

@@ -16,6 +16,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -47,7 +48,7 @@ func requireOllama(t *testing.T) *ollama.Client {
 			t.Fatalf("model %q not available on %s: run `ollama pull %s`", m, host, m)
 		}
 	}
-	return ollama.NewClient(host, model, embedModel)
+	return must.Get(ollama.NewClient(ollama.Config{Host: host, Model: types.ModelID(model), EmbeddingModel: types.ModelID(embedModel)}))
 }
 
 // ollamaTags fetches /api/tags and returns a lookup that matches both exact

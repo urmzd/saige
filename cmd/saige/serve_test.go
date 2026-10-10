@@ -19,6 +19,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type sseFrame struct {
@@ -41,11 +42,11 @@ func newServeFixture(t *testing.T, responses [][]types.Delta, opts serveOptions)
 	calls := &atomic.Int32{}
 	tool := countedDanger(calls)
 	opts.newAgent = func() (*agentsdk.Agent, error) {
-		return agentsdk.NewAgent(agentsdk.AgentConfig{
+		return must.Get(agentsdk.New(agentsdk.Config{
 			Name:     "test",
 			Provider: &agenttest.ScriptedProvider{Responses: responses},
 			Tools:    types.NewToolRegistry(tool),
-		}), nil
+		})), nil
 	}
 	return newServeFixtureWith(t, opts, calls)
 }
@@ -56,7 +57,7 @@ func newServeFixtureWith(t *testing.T, opts serveOptions, calls *atomic.Int32) *
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	app := newServer(ctx, opts)
+	app := must.Get(newServer(ctx, opts))
 	srv := httptest.NewServer(app.handler())
 	t.Cleanup(srv.Close)
 	return &serveFixture{t: t, srv: srv, app: app, calls: calls}
@@ -309,8 +310,8 @@ func TestServeOneTurnAtATime(t *testing.T) {
 }
 
 func TestServeGuard(t *testing.T) {
-	h := newServer(context.Background(), serveOptions{}).handler()
-	withToken := newServer(context.Background(), serveOptions{token: "s3cret"}).handler()
+	h := must.Get(newServer(context.Background(), serveOptions{})).handler()
+	withToken := must.Get(newServer(context.Background(), serveOptions{token: "s3cret"})).handler()
 	tests := []struct {
 		name    string
 		handler http.Handler
@@ -416,7 +417,7 @@ func TestServeSubAgentApproval(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := &atomic.Int32{}
 			f := newServeFixtureWith(t, serveOptions{newAgent: func() (*agentsdk.Agent, error) {
-				return agentsdk.NewAgent(agentsdk.AgentConfig{
+				return must.Get(agentsdk.New(agentsdk.Config{
 					Name: "parent",
 					Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 						agenttest.ToolCallResponse("delegate", "delegate_to_child", map[string]any{"task": "work"}),
@@ -430,7 +431,7 @@ func TestServeSubAgentApproval(t *testing.T) {
 						}},
 						Tools: types.NewToolRegistry(countedDanger(calls)),
 					}},
-				}), nil
+				})), nil
 			}}, calls)
 			sid, tid := f.startTurn("delegate it")
 			frames := f.events(sid, tid, "", func(fr sseFrame) bool { return fr.kind == types.WireMarker })
@@ -490,7 +491,7 @@ func TestServeSessionCapUnderConcurrency(t *testing.T) {
 	const limit, clients = 3, 24
 	f := newServeFixtureWith(t, serveOptions{maxSessions: limit, newAgent: func() (*agentsdk.Agent, error) {
 		time.Sleep(20 * time.Millisecond)
-		return agentsdk.NewAgent(agentsdk.AgentConfig{Name: "test", Provider: &agenttest.ScriptedProvider{}}), nil
+		return must.Get(agentsdk.New(agentsdk.Config{Name: "test", Provider: &agenttest.ScriptedProvider{}})), nil
 	}}, nil)
 	var created atomic.Int32
 	var wg sync.WaitGroup
@@ -705,7 +706,7 @@ func TestServeApprovalGrant(t *testing.T) {
 		tool := countedDanger(calls)
 		opts := serveOptions{approvalTimeout: 2 * time.Second}
 		opts.newAgent = func() (*agentsdk.Agent, error) {
-			return agentsdk.NewAgent(agentsdk.AgentConfig{
+			return must.Get(agentsdk.New(agentsdk.Config{
 				Name: "test",
 				Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 					agenttest.ToolCallResponse("call_1", "danger", map[string]any{}),
@@ -713,7 +714,7 @@ func TestServeApprovalGrant(t *testing.T) {
 					agenttest.TextResponse("finished"),
 				}},
 				Tools: types.NewToolRegistry(tool),
-			}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})), nil
+			}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{}))), nil
 		}
 		return newServeFixtureWith(t, opts, calls)
 	}

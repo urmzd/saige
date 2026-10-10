@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -99,8 +100,8 @@ func TestConversationIsolation(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	storeA := NewStore(pool, "conv-a", nil)
-	storeB := NewStore(pool, "conv-b", nil)
+	storeA := must.Get(New(Config{Pool: pool, ConversationID: "conv-a"}))
+	storeB := must.Get(New(Config{Pool: pool, ConversationID: "conv-b"}))
 
 	saveConversation(t, storeA, "root-a", "tip-a")
 	saveConversation(t, storeB, "root-b", "tip-b")
@@ -183,7 +184,7 @@ func TestBranchUpsertSameConversation(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	store := NewStore(pool, "conv-a", nil)
+	store := must.Get(New(Config{Pool: pool, ConversationID: "conv-a"}))
 	if err := store.SaveBranch(ctx, "main", "n1"); err != nil {
 		t.Fatalf("save branch: %v", err)
 	}
@@ -253,7 +254,7 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 
 	// The orphan legacy row (tip has no agent_node) is preserved in the ""
 	// namespace: with no ancestry to walk, there is no root to assign.
-	legacy := NewStore(pool, "", nil)
+	legacy := must.Get(New(Config{Pool: pool}))
 	tip, err := legacy.LoadBranch(ctx, "main")
 	if err != nil {
 		t.Fatalf("load legacy branch: %v", err)
@@ -285,7 +286,7 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 		{"root-1", "conv1-main", "child-1", "cp-1", "child-1"},
 		{"root-2", "conv2-main", "child-2", "cp-2", "root-2"},
 	} {
-		store := NewStore(pool, conv.root, nil)
+		store := must.Get(New(Config{Pool: pool, ConversationID: conv.root}))
 		tip, err := store.LoadBranch(ctx, types.BranchID(conv.branch))
 		if err != nil {
 			t.Fatalf("load backfilled branch %s in %s: %v", conv.branch, conv.root, err)
@@ -344,13 +345,13 @@ func TestMigrationUpgradeFromUnscopedSchema(t *testing.T) {
 
 	// Post-upgrade, two conversations can both use "main".
 	for _, conv := range []struct{ id, tip string }{{"conv-a", "tip-a"}, {"conv-b", "tip-b"}} {
-		store := NewStore(pool, conv.id, nil)
+		store := must.Get(New(Config{Pool: pool, ConversationID: conv.id}))
 		if err := store.SaveBranch(ctx, "main", types.NodeID(conv.tip)); err != nil {
 			t.Fatalf("save branch for %s: %v", conv.id, err)
 		}
 	}
 	for _, conv := range []struct{ id, tip string }{{"conv-a", "tip-a"}, {"conv-b", "tip-b"}} {
-		store := NewStore(pool, conv.id, nil)
+		store := must.Get(New(Config{Pool: pool, ConversationID: conv.id}))
 		tip, err := store.LoadBranch(ctx, "main")
 		if err != nil {
 			t.Fatalf("load branch for %s: %v", conv.id, err)

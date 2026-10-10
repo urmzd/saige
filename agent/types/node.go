@@ -85,6 +85,7 @@ type CheckpointID string
 // NodeState represents the lifecycle state of a node.
 type NodeState int
 
+// Node states.
 const (
 	NodeActive    NodeState = iota // Normal, visible node
 	NodeArchived                   // Soft-deleted

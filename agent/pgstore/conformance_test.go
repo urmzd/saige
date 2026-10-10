@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/store/storetest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestConformance runs the shared Store suite against PostgreSQL. Stores for
@@ -14,7 +15,7 @@ import (
 func TestConformance(t *testing.T) {
 	pool := testPool(t)
 	storetest.RunConformance(t, func(t *testing.T, conversationID string) types.Store {
-		return NewStore(pool, conversationID, nil)
+		return must.Get(New(Config{Pool: pool, ConversationID: conversationID}))
 	})
 }
 
@@ -24,8 +25,8 @@ func TestConformance(t *testing.T) {
 func TestSaveNodeRejectsOtherConversationsNode(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	a := NewStore(pool, "conv-a", nil)
-	b := NewStore(pool, "conv-b", nil)
+	a := must.Get(New(Config{Pool: pool, ConversationID: "conv-a"}))
+	b := must.Get(New(Config{Pool: pool, ConversationID: "conv-b"}))
 	if err := a.SaveNode(ctx, testNode("shared", "", "main", 0)); err != nil {
 		t.Fatal(err)
 	}

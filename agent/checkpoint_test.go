@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/store/memstore"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // Agent.Checkpoint must persist through the Store so a store-only reload can
@@ -18,11 +19,11 @@ func TestAgentCheckpointRoundTripsThroughStore(t *testing.T) {
 		agenttest.TextResponse("first answer"),
 	}}
 
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "cp-agent",
 		SystemPrompt: "sys",
 		Provider:     provider,
-	}, WithStore(store))
+	}, WithStore(store)))
 
 	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	for range stream.Deltas() {
@@ -65,11 +66,11 @@ func TestAgentCheckpointStoreFailureReported(t *testing.T) {
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("ok"),
 	}}
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "cp-agent",
 		SystemPrompt: "sys",
 		Provider:     provider,
-	}, WithStore(failingCheckpointStore{Store: memstore.New()}))
+	}, WithStore(failingCheckpointStore{Store: memstore.New()})))
 
 	cpID, err := ag.Checkpoint(context.Background(), "", "save")
 	if err == nil {

@@ -218,6 +218,7 @@ func newSpinner() spinner.Model {
 
 // ── tea.Model implementation ────────────────────────────────────────
 
+// Init implements tea.Model.
 func (m StreamModel) Init() tea.Cmd {
 	if !m.animate {
 		return listenForDelta(0, m.deltaCh)
@@ -228,6 +229,7 @@ func (m StreamModel) Init() tea.Cmd {
 	)
 }
 
+// Update implements tea.Model.
 func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -383,6 +385,7 @@ func (m StreamModel) footerView() string {
 	return strings.Join(lines, "\n")
 }
 
+// View implements tea.Model.
 func (m StreamModel) View() string {
 	var b strings.Builder
 	if h := m.headerView(); h != "" {
@@ -432,38 +435,47 @@ func listenForDelta(gen int, ch <-chan types.Delta) tea.Cmd {
 
 // ── Verbose-mode formatting helpers ─────────────────────────────────
 
+// FormatDelegateStart renders the line that opens a delegation to name.
 func FormatDelegateStart(name string) string {
 	return agentDelegateStyle.Render(fmt.Sprintf("%s Delegating to %s...", iconAgent, name))
 }
 
+// FormatAgentOutput renders a sub-agent's output.
 func FormatAgentOutput(name, content string) string {
 	return agentPrefixStyle.Render(fmt.Sprintf("[%s] ", name)) + content
 }
 
+// FormatAgentDone renders the line that ends a delegation.
 func FormatAgentDone(name string) string {
 	return statusDone.Render(fmt.Sprintf("%s %s complete", iconDone, name))
 }
 
+// FormatAgentError renders a sub-agent's failure.
 func FormatAgentError(name, errMsg string) string {
 	return statusError.Render(fmt.Sprintf("%s %s error: %s", iconError, name, errMsg))
 }
 
+// FormatToolCall renders a tool call.
 func FormatToolCall(name string) string {
 	return toolCallStyle.Render(fmt.Sprintf("%s %s", iconTool, name))
 }
 
+// FormatToolResult renders a finished tool call.
 func FormatToolResult(name string) string {
 	return statusDone.Render(fmt.Sprintf("%s %s", iconDone, name))
 }
 
+// FormatToolError renders a failed tool call.
 func FormatToolError(name, errMsg string) string {
 	return statusError.Render(fmt.Sprintf("%s %s: %s", iconError, name, errMsg))
 }
 
+// FormatMarker renders a tool call waiting for a decision.
 func FormatMarker(toolName string) string {
 	return markerStyle.Render(fmt.Sprintf("%s Approval required: %s", iconMarker, toolName))
 }
 
+// FormatUsage renders token usage and latency.
 func FormatUsage(prompt, completion int, latency string) string {
 	return usageStyle.Render(fmt.Sprintf("%s %d prompt + %d completion tokens, %s", iconUsage, prompt, completion, latency))
 }

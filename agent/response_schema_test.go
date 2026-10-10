@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var cityPopulationSchema = &types.ParameterSchema{
@@ -131,7 +132,7 @@ func TestResponseSchemaUnsupportedFailsFast(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: tt.provider}, WithResponseSchema(cityPopulationSchema))
+			a := must.Get(New(Config{Provider: tt.provider}, WithResponseSchema(cityPopulationSchema)))
 			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range s.Deltas() {
 			}
@@ -183,7 +184,7 @@ func TestResponseSchemaWithTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &schemaProvider{plain: tt.plain, schema: tt.schema}
-			a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(lookup)}, WithResponseSchema(cityPopulationSchema))
+			a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(lookup)}, WithResponseSchema(cityPopulationSchema)))
 			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Where?"))})
 			for range s.Deltas() {
 			}
@@ -246,7 +247,7 @@ func TestToolChoiceNoneKeepsResponseSchema(t *testing.T) {
 				plain:  [][]types.Delta{agenttest.TextResponse("not json")},
 				schema: [][]types.Delta{agenttest.TextResponse(`{"city":"Tokyo"}`)},
 			}}
-			a := NewAgent(AgentConfig{Provider: p}, WithResponseSchema(cityPopulationSchema), WithToolChoice(types.ToolChoice{Mode: mode}))
+			a := must.Get(New(Config{Provider: p}, WithResponseSchema(cityPopulationSchema), WithToolChoice(types.ToolChoice{Mode: mode})))
 			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range s.Deltas() {
 			}

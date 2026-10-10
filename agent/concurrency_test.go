@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // One Agent serves concurrent runs on distinct branches of one tree, and the
@@ -27,7 +28,7 @@ func TestConcurrentInvokeOnDistinctBranches(t *testing.T) {
 		calls++
 		return "ok", nil
 	}}
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(count)})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(count)}))
 	tr := a.Tree()
 	root := tr.Root().ID
 

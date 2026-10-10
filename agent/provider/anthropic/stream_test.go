@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 const testModel = "claude-sonnet-4-5"
@@ -143,7 +144,7 @@ func TestToolArgumentIntegrity(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, tc.events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, tc.events...).URL)))
 			r := run(t, a, nil)
 			var ends []types.ToolCallPart
 			argsErrs := 0
@@ -224,7 +225,7 @@ func TestTruncatedStructuredOutput(t *testing.T) {
 		{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_s","name":"structured_output","input":{}}}`},
 		{"content_block_delta", evArgs(`{"answer":"par`)},
 		{"content_block_stop", evBlockStop}, {"message_delta", evMessageDelta("max_tokens", 4096)}, {"message_stop", evStop}}
-	a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, events...).URL))
+	a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, events...).URL)))
 	r := run(t, a, &types.ParameterSchema{Type: "object", Properties: map[string]types.PropertyDef{"answer": {Type: "string"}}})
 	if len(r.errs) != 1 || !types.IsTruncated(r.errs[0]) {
 		t.Fatalf("errors = %v, want one truncation", r.errs)
@@ -245,7 +246,7 @@ func TestStreamFailureClassification(t *testing.T) {
 		{"overloaded error event", false, []sseEvent{{"message_start", evStart}, {"error", `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`}}, true, types.ErrorKindUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, tc.hangUp, tc.events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, tc.hangUp, tc.events...).URL)))
 			r := run(t, a, nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v, want 1", r.errs)
@@ -285,7 +286,7 @@ func TestHTTPErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(server.URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL))), nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v", r.errs)
 			}
@@ -319,9 +320,9 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 				_, _ = w.Write([]byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`))
 			}))
 			defer server.Close()
-			var p types.Provider = NewAdapter("test", testModel, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			var p types.Provider = must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
 			if tc.outer > 0 {
-				p = retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+				p = must.Get(retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 			}
 			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if err == nil {
@@ -360,7 +361,7 @@ func TestStopReasonsThatAreNotAnswers(t *testing.T) {
 			events := []sseEvent{{"message_start", evStart}, {"content_block_start", evTextStart},
 				{"content_block_delta", evText("partial")}, {"content_block_stop", evBlockStop},
 				{"message_delta", evMessageDelta(tc.stop, 5)}, {"message_stop", evStop}}
-			a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, events...).URL))
+			a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, events...).URL)))
 			r := run(t, a, nil)
 			if !tc.wantErr {
 				if len(r.errs) != 0 {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // offered reports an offering and answers with its name.
@@ -34,7 +35,7 @@ func TestFallbackSkipsAMemberThatRejectsTheParts(t *testing.T) {
 	vision := &offered{name: "vision", offering: types.Offering{ID: "vision", Model: types.ModelInfo{Vendor: "b", Known: true},
 		Modalities: types.Modalities{In: map[types.Modality]types.ModalityLimit{
 			types.ModalityImage: {Media: []types.MediaType{types.MediaPNG}}}}}}
-	f := New(convert.New(text, types.ConversionPolicy{}), convert.New(vision, types.ConversionPolicy{}))
+	f := must.Get(Of(must.Get(convert.New(text, convert.Config{Policy: types.ConversionPolicy{}})), must.Get(convert.New(vision, convert.Config{Policy: types.ConversionPolicy{}}))))
 	img := types.Image(types.Bytes(types.MediaPNG, []byte("png")))
 	ch, err := f.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(img)}})
 	if err != nil {
@@ -46,7 +47,7 @@ func TestFallbackSkipsAMemberThatRejectsTheParts(t *testing.T) {
 		t.Fatalf("calls text %d, vision %d", text.calls, vision.calls)
 	}
 
-	f = New(convert.New(text, types.ConversionPolicy{}))
+	f = must.Get(Of(must.Get(convert.New(text, convert.Config{Policy: types.ConversionPolicy{}}))))
 	if _, err := f.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(img)}}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want the rejection", err)
 	}

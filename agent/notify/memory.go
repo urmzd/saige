@@ -46,7 +46,6 @@ func (m *Memory) Subscribe(ctx context.Context, channel string) (<-chan types.No
 }
 
 // Close ends every subscription. Later calls return types.ErrNotifierClosed.
-func (m *Memory) Close() error {
-	m.hub.Close()
-	return nil
+func (m *Memory) Close(ctx context.Context) error {
+	return m.hub.Close(ctx)
 }

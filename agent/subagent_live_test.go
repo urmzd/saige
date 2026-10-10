@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // recordingProvider keeps the size of every request it forwards.
@@ -40,9 +41,9 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	var inner types.Provider
 	switch {
 	case os.Getenv("OPENAI_API_KEY") != "":
-		inner = openai.NewAdapter(os.Getenv("OPENAI_API_KEY"), "gpt-6-luna")
+		inner = must.Get(openai.New(openai.Config{APIKey: os.Getenv("OPENAI_API_KEY"), Model: "gpt-6-luna"}))
 	case os.Getenv("ANTHROPIC_API_KEY") != "":
-		inner = anthropic.NewAdapter(os.Getenv("ANTHROPIC_API_KEY"), "claude-haiku-5-5")
+		inner = must.Get(anthropic.New(anthropic.Config{APIKey: os.Getenv("ANTHROPIC_API_KEY"), Model: "claude-haiku-5-5"}))
 	default:
 		t.Skip("no OPENAI_API_KEY or ANTHROPIC_API_KEY")
 	}
@@ -58,13 +59,13 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	task := "Using the document below, what is the serial number of the backup generator? Reply with the serial number only.\n\n" + doc.String()
 
 	provider := &recordingProvider{inner: inner}
-	parent := agent.NewAgent(agent.AgentConfig{Name: "lead", Provider: inner}, agent.WithSubAgents(agent.SubAgentDef{
+	parent := must.Get(agent.New(agent.Config{Name: "lead", Provider: inner}, agent.WithSubAgents(agent.SubAgentDef{
 		Name:         "reader",
 		Description:  "Answers questions about documents.",
 		SystemPrompt: "You answer questions about documents you are given by reference. Use search_artifact to find the passage you need.",
 		Provider:     provider,
 		MaxIter:      4,
-	}))
+	})))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s, err := parent.InvokeSubAgent(ctx, "reader", task)

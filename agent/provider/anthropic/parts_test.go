@@ -16,6 +16,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var update = flag.Bool("update", false, "rewrite the request goldens in testdata/requests")
@@ -94,7 +95,7 @@ func TestRequestGoldens(t *testing.T) {
 			types.UserMsg(types.Text("ok"))}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("k", testModel, tc.opts...)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, tc.opts...))
 			system, msgs, err := a.toAnthropicParams(tc.msgs)
 			if err != nil {
 				t.Fatal(err)
@@ -184,7 +185,7 @@ func TestUnsupportedPartsAreRejected(t *testing.T) {
 			types.ErrModalityUnsupported, "part 1.0 (image_out image/png)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("k", testModel, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
 			_, err := a.Stream(context.Background(), types.Request{Messages: tc.msgs})
 			if err == nil {
 				t.Fatal("request was accepted")
@@ -219,7 +220,7 @@ func TestSchemaWithOptions(t *testing.T) {
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			server, bodies := captureServer(t)
-			a := NewAdapter("k", tc.model, WithBaseURL(server.URL))
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(tc.model)}, WithBaseURL(server.URL)))
 			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("q"))},
 				Schema: schema, Options: &types.RequestOptions{StopSequences: []string{"END"}, MaxOutputTokens: &maxOut}})
 			if err != nil {

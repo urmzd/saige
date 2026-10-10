@@ -1,13 +1,14 @@
 package google
 
 import (
-	"cloud.google.com/go/auth"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"cloud.google.com/go/auth"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
@@ -24,7 +25,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 )
 
@@ -179,11 +180,25 @@ type Adapter struct {
 	speech      *genai.SpeechConfig
 }
 
-// NewAdapter creates a new Google provider adapter using the official SDK. It
-// targets the Gemini Developer API by default; pass WithVertex to target Vertex
-// AI, in which case apiKey may be empty and Application Default Credentials are
-// used.
-func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Adapter, error) {
+// Config names the account and model an adapter or embedder serves.
+type Config struct {
+	// APIKey authenticates Gemini Developer API requests. With WithVertex it
+	// may be empty, and Application Default Credentials are used.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates a Google provider adapter using the official SDK. It targets
+// the Gemini Developer API by default; pass WithVertex to target Vertex AI.
+// ctx bounds the credential lookup. A missing model, an incomplete Vertex
+// target, or controls the model does not take are errors; the first two
+// wrap types.ErrInvalidConfig.
+func New(ctx context.Context, cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: google: Config.Model is required", types.ErrInvalidConfig)
+	}
+	model, apiKey := string(cfg.Model), cfg.APIKey
 	a := &Adapter{model: model, backend: backend{kind: genai.BackendGeminiAPI}}
 	for _, o := range opts {
 		o(a)
@@ -269,12 +284,16 @@ func (a *Adapter) Name() string { return providerName }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.model }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// targeting the given model, sharing the underlying client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter targeting that model, sharing the underlying client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	c := *a
-	c.model = model
-	return &c
+	c.model = string(m)
+	return &c, nil
 }
 
 // Generate sends a single-turn user prompt with no tools and returns the

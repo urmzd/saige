@@ -41,7 +41,7 @@ func TestWithScopeIsTheGraphNamespace(t *testing.T) {
 				rag.WithGraph(g),
 				rag.WithFuser(fusion.Weighted{Default: 1}),
 			}, tt.opts...)
-			pipe, err := rag.NewPipeline(opts...)
+			pipe, err := rag.New(rag.Config{}, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +66,7 @@ func (oneDocSource) Fetch(context.Context) ([]ragtypes.RawDocument, error) {
 
 func TestSyncSourceHelper(t *testing.T) {
 	ctx := context.Background()
-	pipe, err := rag.NewPipeline(rag.WithStore(memstore.New()), rag.WithContentExtractor(&stubExtractor{}))
+	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(&stubExtractor{}))
 	if err != nil {
 		t.Fatal(err)
 	}

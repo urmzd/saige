@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -37,7 +38,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 	_ types.OptionsReporter          = (*Adapter)(nil)
 )
@@ -143,23 +144,40 @@ func WithRequestOptions(opts ...option.RequestOption) Option {
 	return func(a *Adapter) { a.requestOpts = append(a.requestOpts, opts...) }
 }
 
-// NewAdapter creates a new Anthropic provider adapter using the official SDK.
-func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
+// Config names the account and model an adapter serves.
+type Config struct {
+	// APIKey authenticates every request.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates an Anthropic provider adapter using the official SDK. A
+// missing model is an error wrapping types.ErrInvalidConfig. Option
+// combinations are checked against the model by Validate and before every
+// request.
+func New(cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: anthropic: Config.Model is required", types.ErrInvalidConfig)
+	}
 	a := &Adapter{
-		model:     anthropic.Model(model),
+		model:     anthropic.Model(cfg.Model),
 		maxTokens: 4096,
 	}
 	for _, o := range opts {
 		o(a)
 	}
-	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if a.maxTokens <= 0 {
+		return nil, fmt.Errorf("%w: anthropic: max tokens must be positive", types.ErrInvalidConfig)
+	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if a.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(a.baseURL))
 	}
 	clientOpts = append(clientOpts, option.WithMaxRetries(a.maxRetries))
 	clientOpts = append(clientOpts, a.requestOpts...)
 	a.client = anthropic.NewClient(clientOpts...)
-	return a
+	return a, nil
 }
 
 // applyParams encodes controls already checked by Validate.
@@ -267,12 +285,16 @@ func (a *Adapter) Name() string { return "anthropic" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// targeting the given model, sharing the underlying client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter targeting that model, sharing the underlying client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	c := *a
-	c.model = anthropic.Model(model)
-	return &c
+	c.model = anthropic.Model(m)
+	return &c, nil
 }
 
 // Generate sends a single-turn user prompt with no tools and returns the

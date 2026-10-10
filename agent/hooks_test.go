@@ -12,6 +12,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // hookLog records the hook events a run produced, in order.
@@ -79,10 +80,10 @@ func runText(t *testing.T, a *Agent, input string) (Transcript, error) {
 
 func TestHooksRunInOrder(t *testing.T) {
 	log := &hookLog{}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name: "root", SystemPrompt: "s", Provider: toolThenText("done"),
 		Tools: types.NewToolRegistry(hookTool("lookup")),
-	}, WithHooks(recordingHooks("a", log), recordingHooks("b", log)))
+	}, WithHooks(recordingHooks("a", log), recordingHooks("b", log))))
 
 	if _, err := runText(t, a, "hi"); err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestHookEventsCarryRequestAndOutcome(t *testing.T) {
 	)
 	p := toolThenText("done")
 	p.Responses[1] = append(p.Responses[1], types.UsageDelta{PromptTokens: 7, CompletionTokens: 3})
-	a := NewAgent(AgentConfig{Name: "root", SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
+	a := must.Get(New(Config{Name: "root", SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
 		WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}),
 		WithHooks(Hooks{
 			BeforeModelCall: func(_ context.Context, ev *BeforeModelCallEvent) error {
@@ -133,7 +134,7 @@ func TestHookEventsCarryRequestAndOutcome(t *testing.T) {
 				return nil
 			},
 			RunStop: func(_ context.Context, ev *RunStopEvent) error { stop = *ev; return nil },
-		}))
+		})))
 	if _, err := runText(t, a, "hi"); err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +178,8 @@ func TestHookAbortStopsTheRun(t *testing.T) {
 			tc.hooks.Name = "guard"
 			var stop RunStopEvent
 			p := toolThenText("done")
-			a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
-				WithHooks(tc.hooks, Hooks{RunStop: func(_ context.Context, ev *RunStopEvent) error { stop = *ev; return nil }}))
+			a := must.Get(New(Config{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
+				WithHooks(tc.hooks, Hooks{RunStop: func(_ context.Context, ev *RunStopEvent) error { stop = *ev; return nil }})))
 			_, err := runText(t, a, "hi")
 			var ab *HookAbortError
 			if !errors.Is(err, ErrHookAborted) || !errors.As(err, &ab) {
@@ -206,11 +207,11 @@ func TestHookAbortStopsTheRun(t *testing.T) {
 
 // Observing hooks cannot stop the run: their errors and panics are logged.
 func TestObservingHookErrorsDoNotStopTheRun(t *testing.T) {
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
 		WithHooks(Hooks{
 			AfterModelCall: func(context.Context, *AfterModelCallEvent) error { return Abort("ignored") },
 			RunStop:        func(context.Context, *RunStopEvent) error { panic("boom") },
-		}))
+		})))
 	tr, err := runText(t, a, "hi")
 	if err != nil || tr.Text != "ok" {
 		t.Fatalf("text %q err %v", tr.Text, err)
@@ -220,7 +221,7 @@ func TestObservingHookErrorsDoNotStopTheRun(t *testing.T) {
 func TestHooksChangeInputArgumentsAndResults(t *testing.T) {
 	p := toolThenText("done")
 	tool := hookTool("lookup")
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(tool)},
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(tool)},
 		WithHooks(
 			Hooks{UserInput: func(_ context.Context, ev *UserInputEvent) error {
 				ev.Message = types.UserMsg(types.Text(userText(ev.Message) + " [annotated]"))
@@ -243,7 +244,7 @@ func TestHooksChangeInputArgumentsAndResults(t *testing.T) {
 					return nil
 				},
 			},
-		))
+		)))
 	if _, err := runText(t, a, "hi"); err != nil {
 		t.Fatal(err)
 	}
@@ -261,11 +262,11 @@ func TestHooksChangeInputArgumentsAndResults(t *testing.T) {
 }
 
 func TestBeforeToolArgumentsAreValidatedAgain(t *testing.T) {
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: toolThenText("done"), Tools: types.NewToolRegistry(hookTool("lookup"))},
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: toolThenText("done"), Tools: types.NewToolRegistry(hookTool("lookup"))},
 		WithHooks(Hooks{BeforeTool: func(_ context.Context, ev *BeforeToolEvent) error {
 			ev.Arguments = map[string]any{"q": 42}
 			return nil
-		}}))
+		}})))
 	if _, err := runText(t, a, "hi"); err != nil {
 		t.Fatal(err)
 	}
@@ -292,12 +293,12 @@ func resultsIn(msgs []types.Message) []types.ToolResultPart {
 }
 
 func TestHookTimeoutAborts(t *testing.T) {
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
 		WithHookTimeout(20*time.Millisecond),
 		WithHooks(Hooks{BeforeModelCall: func(ctx context.Context, _ *BeforeModelCallEvent) error {
 			<-ctx.Done()
 			return nil
-		}}))
+		}})))
 	_, err := runText(t, a, "hi")
 	if !errors.Is(err, ErrHookTimeout) || !errors.Is(err, ErrHookAborted) {
 		t.Fatalf("err = %v, want a hook timeout abort", err)
@@ -305,8 +306,8 @@ func TestHookTimeoutAborts(t *testing.T) {
 }
 
 func TestHookPanicAborts(t *testing.T) {
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
-		WithHooks(Hooks{RunStart: func(context.Context, *RunStartEvent) error { panic("bad hook") }}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "ok"}},
+		WithHooks(Hooks{RunStart: func(context.Context, *RunStartEvent) error { panic("bad hook") }})))
 	_, err := runText(t, a, "hi")
 	if !errors.Is(err, ErrHookAborted) || !strings.Contains(err.Error(), "bad hook") {
 		t.Fatalf("err = %v", err)
@@ -322,7 +323,7 @@ func TestCompactionHooksCanSkip(t *testing.T) {
 				agenttest.ToolCallResponse("c2", "lookup", map[string]any{"q": "b"}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup")),
+			a := must.Get(New(Config{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup")),
 				CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 3}},
 				WithHooks(Hooks{
 					BeforeCompaction: func(_ context.Context, ev *CompactionEvent) error {
@@ -334,7 +335,7 @@ func TestCompactionHooksCanSkip(t *testing.T) {
 						after = append(after, *ev)
 						return nil
 					},
-				}))
+				})))
 			if _, err := runText(t, a, "hi"); err != nil {
 				t.Fatal(err)
 			}
@@ -363,8 +364,8 @@ func TestInterruptHooksSeeApprovals(t *testing.T) {
 		return nil
 	}
 	tool := &types.MarkedTool{Inner: hookTool("lookup"), Markers: []types.Marker{{Kind: "human_approval", Message: "ok?"}}}
-	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: toolThenText("done"), Tools: types.NewToolRegistry(tool)},
-		WithHooks(Hooks{InterruptRaised: record, InterruptResolved: record}))
+	a := must.Get(New(Config{SystemPrompt: "s", Provider: toolThenText("done"), Tools: types.NewToolRegistry(tool)},
+		WithHooks(Hooks{InterruptRaised: record, InterruptResolved: record})))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
@@ -391,7 +392,7 @@ func TestHooksAreDeterministicUnderDurableReplay(t *testing.T) {
 	runner := newRecordingRunner()
 	calls, replaying := 0, false
 	build := func(p types.Provider) *Agent {
-		return NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
+		return must.Get(New(Config{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(hookTool("lookup"))},
 			WithHooks(Hooks{
 				UserInput: func(_ context.Context, ev *UserInputEvent) error {
 					calls++
@@ -410,7 +411,7 @@ func TestHooksAreDeterministicUnderDurableReplay(t *testing.T) {
 					}
 					return nil
 				},
-			}))
+			})))
 	}
 	input := []types.Message{types.UserMsg(types.Text("hi"))}
 
@@ -447,13 +448,13 @@ func TestHooksAreDeterministicUnderDurableReplay(t *testing.T) {
 
 	// A recorded abort replays as an abort.
 	abortRunner := newRecordingRunner()
-	aborting := NewAgent(AgentConfig{SystemPrompt: "s", Provider: &mockProvider{response: "x"}},
-		WithHooks(Hooks{Name: "once", TurnEnd: func(context.Context, *TurnEndEvent) error { return Abort("first run") }}))
+	aborting := must.Get(New(Config{SystemPrompt: "s", Provider: &mockProvider{response: "x"}},
+		WithHooks(Hooks{Name: "once", TurnEnd: func(context.Context, *TurnEndEvent) error { return Abort("first run") }})))
 	if _, err := aborting.RunDurable(context.Background(), abortRunner, input, ""); !errors.Is(err, ErrHookAborted) {
 		t.Fatalf("err = %v", err)
 	}
-	relaxed := NewAgent(AgentConfig{SystemPrompt: "s", Provider: panicProvider{}},
-		WithHooks(Hooks{TurnEnd: func(context.Context, *TurnEndEvent) error { return nil }}))
+	relaxed := must.Get(New(Config{SystemPrompt: "s", Provider: panicProvider{}},
+		WithHooks(Hooks{TurnEnd: func(context.Context, *TurnEndEvent) error { return nil }})))
 	_, err = relaxed.RunDurable(context.Background(), abortRunner, input, "")
 	var ab *HookAbortError
 	if !errors.As(err, &ab) || ab.Hook != "once" || ab.Reason != "first run" {
@@ -478,7 +479,7 @@ func stripRoutes(msgs []types.Message) []types.Message {
 }
 
 func TestHooksAndGuardrailsAreInherited(t *testing.T) {
-	parent := AgentConfig{
+	parent := Config{
 		Name: "parent", Provider: &namedProvider{id: "p"},
 		Hooks:            []Hooks{{Name: "audit"}},
 		HookTimeout:      time.Second,
@@ -486,7 +487,7 @@ func TestHooksAndGuardrailsAreInherited(t *testing.T) {
 		OutputGuardrails: []OutputGuardrail{{Guardrail: NewGuardrail("out", nil)}},
 	}
 	child := childConfig(t, parent, SubAgentDef{Name: "worker", Description: "w",
-		Options: []AgentOption{WithHooks(Hooks{Name: "own"})}})
+		Options: []Option{WithHooks(Hooks{Name: "own"})}})
 	if len(child.Hooks) != 2 || child.Hooks[0].Name != "audit" || child.Hooks[1].Name != "own" {
 		t.Errorf("child hooks = %v, want the parent's then its own", child.Hooks)
 	}
@@ -503,7 +504,7 @@ func TestSubagentHooksAndChildRunHooks(t *testing.T) {
 		agenttest.TextResponse("all done"),
 	}}
 	childProvider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("child result")}}
-	a := NewAgent(AgentConfig{Name: "parent", SystemPrompt: "s", Provider: parentProvider,
+	a := must.Get(New(Config{Name: "parent", SystemPrompt: "s", Provider: parentProvider,
 		SubAgents: []SubAgentDef{{Name: "worker", Description: "w", Provider: childProvider}},
 		Hooks: []Hooks{{
 			SubagentStart: func(_ context.Context, ev *SubagentStartEvent) error {
@@ -522,7 +523,7 @@ func TestSubagentHooksAndChildRunHooks(t *testing.T) {
 				return nil
 			},
 		}},
-	})
+	}))
 	if _, err := runText(t, a, "hi"); err != nil {
 		t.Fatal(err)
 	}

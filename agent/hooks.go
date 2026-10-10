@@ -36,7 +36,7 @@ const (
 )
 
 // DefaultHookTimeout bounds each hook and guardrail call when
-// AgentConfig.HookTimeout is zero.
+// Config.HookTimeout is zero.
 const DefaultHookTimeout = 30 * time.Second
 
 // Hooks is one set of run-lifecycle callbacks. Every field is optional.
@@ -59,7 +59,7 @@ const DefaultHookTimeout = 30 * time.Second
 //     tool_result. The other events only observe: an error is logged and
 //     the run goes on.
 //   - Timeouts and panics. Each call gets a context bounded by
-//     AgentConfig.HookTimeout (DefaultHookTimeout when zero, none when
+//     Config.HookTimeout (DefaultHookTimeout when zero, none when
 //     negative). A hook that returns after its deadline, or panics, has
 //     failed: an abortable point aborts, an observing one logs. The agent
 //     waits for a hook to return rather than abandon it, because a hook
@@ -97,14 +97,14 @@ type Hooks struct {
 
 // WithHooks adds hook sets to the agent. They run after any set added
 // before, including those a sub-agent inherits.
-func WithHooks(hooks ...Hooks) AgentOption {
-	return func(c *AgentConfig) { c.Hooks = append(c.Hooks, hooks...) }
+func WithHooks(hooks ...Hooks) Option {
+	return func(c *Config) { c.Hooks = append(c.Hooks, hooks...) }
 }
 
 // WithHookTimeout bounds each hook and guardrail call. Zero uses
 // DefaultHookTimeout; a negative value removes the bound.
-func WithHookTimeout(d time.Duration) AgentOption {
-	return func(c *AgentConfig) { c.HookTimeout = d }
+func WithHookTimeout(d time.Duration) Option {
+	return func(c *Config) { c.HookTimeout = d }
 }
 
 // HookRun identifies the run an event belongs to.

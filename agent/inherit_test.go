@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // namedProvider is a minimal provider that can be identified by name, so a test
@@ -22,10 +25,10 @@ func (n *namedProvider) Name() string { return n.id }
 
 // childConfig builds the sub-agent and returns the config it was constructed
 // with, by reaching through the registered delegate tool.
-func childConfig(t *testing.T, parent AgentConfig, sa SubAgentDef) AgentConfig {
+func childConfig(t *testing.T, parent Config, sa SubAgentDef) Config {
 	t.Helper()
 	parent.SubAgents = []SubAgentDef{sa}
-	a := NewAgent(parent)
+	a := must.Get(New(parent))
 
 	tool, ok := a.tools.Get("delegate_to_" + sa.Name)
 	if !ok {
@@ -53,7 +56,7 @@ func TestSubAgentInheritsOperationalConfig(t *testing.T) {
 	resolvers := map[string]types.Resolver{"file": nil}
 	extractors := map[types.MediaType]types.Extractor{types.MediaPDF: nil}
 
-	parent := AgentConfig{
+	parent := Config{
 		Name:             "parent",
 		Provider:         &namedProvider{id: "parent-provider"},
 		Logger:           logger,
@@ -93,7 +96,7 @@ func TestSubAgentInheritsOperationalConfig(t *testing.T) {
 }
 
 func TestSubAgentInheritsProviderWhenUnset(t *testing.T) {
-	parent := AgentConfig{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
+	parent := Config{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
 
 	child := childConfig(t, parent, SubAgentDef{Name: "worker"})
 	if got := types.NameOf(child.Provider); got != "parent-provider" {
@@ -102,7 +105,7 @@ func TestSubAgentInheritsProviderWhenUnset(t *testing.T) {
 }
 
 func TestSubAgentProviderOverridesParent(t *testing.T) {
-	parent := AgentConfig{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
+	parent := Config{Name: "parent", Provider: &namedProvider{id: "parent-provider"}}
 
 	child := childConfig(t, parent, SubAgentDef{Name: "worker", Provider: &namedProvider{id: "child-provider"}})
 	if got := types.NameOf(child.Provider); got != "child-provider" {
@@ -111,7 +114,7 @@ func TestSubAgentProviderOverridesParent(t *testing.T) {
 }
 
 func TestSubAgentInheritsMaxIterWhenUnset(t *testing.T) {
-	parent := AgentConfig{Name: "parent", Provider: &namedProvider{id: "p"}, MaxIter: 25}
+	parent := Config{Name: "parent", Provider: &namedProvider{id: "p"}, MaxIter: 25}
 
 	if got := childConfig(t, parent, SubAgentDef{Name: "a"}).MaxIter; got != 25 {
 		t.Errorf("MaxIter = %d, want the parent's 25", got)
@@ -127,7 +130,7 @@ func TestSubAgentInheritsMaxIterWhenUnset(t *testing.T) {
 // a new tree per call.
 func TestSubAgentDoesNotInheritParentOnlyConfig(t *testing.T) {
 	schema := &types.ParameterSchema{Type: "object"}
-	parent := AgentConfig{
+	parent := Config{
 		Name:           "parent",
 		Provider:       &namedProvider{id: "p"},
 		ResponseSchema: schema,
@@ -146,7 +149,7 @@ func TestSubAgentDoesNotInheritParentOnlyConfig(t *testing.T) {
 }
 
 func TestSubAgentOptionsOverrideInheritance(t *testing.T) {
-	parent := AgentConfig{
+	parent := Config{
 		Name:       "parent",
 		Provider:   &namedProvider{id: "p"},
 		LLMTimeout: 30 * time.Second,
@@ -154,7 +157,7 @@ func TestSubAgentOptionsOverrideInheritance(t *testing.T) {
 
 	child := childConfig(t, parent, SubAgentDef{
 		Name:    "worker",
-		Options: []AgentOption{WithLLMTimeout(2 * time.Second)},
+		Options: []Option{WithLLMTimeout(2 * time.Second)},
 	})
 	if child.LLMTimeout != 2*time.Second {
 		t.Errorf("LLMTimeout = %v, want the option's 2s: Options are the escape hatch and must win", child.LLMTimeout)
@@ -165,13 +168,13 @@ func TestSubAgentOptionsOverrideInheritance(t *testing.T) {
 
 func TestHandoffMemberInheritsEntryProvider(t *testing.T) {
 	entry := &namedProvider{id: "entry-provider"}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:     "entry",
 		Provider: entry,
 		Handoffs: []HandoffDef{
 			{Name: "specialist", Description: "handles the hard part"},
 		},
-	})
+	}))
 
 	m := a.activeMember("specialist")
 	if m == nil {
@@ -183,13 +186,13 @@ func TestHandoffMemberInheritsEntryProvider(t *testing.T) {
 }
 
 func TestHandoffMemberProviderOverridesEntry(t *testing.T) {
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:     "entry",
 		Provider: &namedProvider{id: "entry-provider"},
 		Handoffs: []HandoffDef{
 			{Name: "specialist", Provider: &namedProvider{id: "specialist-provider"}},
 		},
-	})
+	}))
 
 	if got := types.NameOf(a.activeMember("specialist").provider); got != "specialist-provider" {
 		t.Errorf("provider = %q, want the member's own", got)
@@ -197,12 +200,12 @@ func TestHandoffMemberProviderOverridesEntry(t *testing.T) {
 }
 
 func TestHandoffMemberInheritsEntryMaxIter(t *testing.T) {
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Name:     "entry",
 		Provider: &namedProvider{id: "p"},
 		MaxIter:  17,
 		Handoffs: []HandoffDef{{Name: "specialist"}},
-	})
+	}))
 
 	if got := a.activeMember("specialist").maxIter; got != 17 {
 		t.Errorf("maxIter = %d, want the entry agent's 17", got)
@@ -212,13 +215,11 @@ func TestHandoffMemberInheritsEntryMaxIter(t *testing.T) {
 // With no provider anywhere the group genuinely cannot run, and the error must
 // name the real problem: the entry agent, which is the inheritance root.
 func TestHandoffGroupWithNoProviderAnywhereIsRejected(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("a handoff group with no provider anywhere must be rejected")
-		}
-	}()
-	NewAgent(AgentConfig{
+	_, err := New(Config{
 		Name:     "entry",
 		Handoffs: []HandoffDef{{Name: "specialist"}},
 	})
+	if !errors.Is(err, types.ErrInvalidConfig) || !strings.Contains(err.Error(), "entry") {
+		t.Fatalf("a handoff group with no provider anywhere: %v", err)
+	}
 }

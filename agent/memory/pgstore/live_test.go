@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestLiveCrossSessionRecall runs a real model and a real embedder: the
@@ -42,7 +43,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
 	}
-	store, err := New(pool, Config{Embedder: ollama.NewEmbedder(ollama.NewClient(host, "", embedModel))})
+	store, err := New(Config{Pool: pool, Embedder: ollama.NewEmbedder(must.Get(ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: types.ModelID(embedModel)})))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,24 +52,24 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 		AutoApprove: true,
 		Scope:       func(context.Context, string) (memory.Scope, error) { return scope, nil },
 	}
-	provider := anthropic.NewAdapter(key, model)
+	provider := must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)}))
 
 	run := func(name, conversation string, tools []types.Tool, input ...types.Message) string {
 		t.Helper()
-		cfg := agentsdk.AgentConfig{
+		cfg := agentsdk.Config{
 			Name:         "assistant",
 			SystemPrompt: "You are a concise assistant with long-term memory. Save facts the user asks you to remember with the remember tool. Look facts up with your recall tools before saying you do not know.",
 			Provider:     provider,
 			Tools:        types.NewToolRegistry(tools...),
 		}
 		if conversation != "" {
-			conv, err := agentpg.NewScopedStore(pool, scope.Tenant, conversation, nil)
+			conv, err := agentpg.New(agentpg.Config{Pool: pool, Scope: scope.Tenant, ConversationID: conversation})
 			if err != nil {
 				t.Fatal(err)
 			}
 			cfg.Store = conv
 		}
-		stream := agentsdk.NewAgent(cfg, agentsdk.WithMaxIter(6)).Invoke(ctx, input)
+		stream := must.Get(agentsdk.New(cfg, agentsdk.WithMaxIter(6))).Invoke(ctx, input)
 		text := agenttest.CollectText(stream.Deltas())
 		if err := stream.Wait(); err != nil {
 			t.Fatalf("%s: %v", name, err)

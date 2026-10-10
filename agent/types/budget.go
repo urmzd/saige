@@ -76,11 +76,11 @@ type BudgetPolicy struct {
 type BudgetStatus int
 
 const (
-	// BudgetStatusOK: under every limit.
+	// BudgetStatusOK means under every limit.
 	BudgetStatusOK BudgetStatus = iota
-	// BudgetStatusWarn: past WarnAt but under the limit.
+	// BudgetStatusWarn means past WarnAt but under the limit.
 	BudgetStatusWarn
-	// BudgetStatusExceeded: at or past a limit.
+	// BudgetStatusExceeded means at or past a limit.
 	BudgetStatusExceeded
 )
 

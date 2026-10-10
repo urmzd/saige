@@ -18,7 +18,7 @@ import (
 
 // TracedProvider wraps a Provider and emits OTel spans for Stream calls.
 type TracedProvider struct {
-	Inner  types.Provider
+	wrapper.Base
 	tracer trace.Tracer
 	opts   providerOptions
 }
@@ -43,30 +43,26 @@ func WithProviderRedactor(redact func(string) string) ProviderOption {
 	return func(o *providerOptions) { o.redactor = redact }
 }
 
-// NewTracedProvider wraps a provider with tracing.
-func NewTracedProvider(inner types.Provider, tracer trace.Tracer, opts ...ProviderOption) *TracedProvider {
-	p := &TracedProvider{Inner: inner, tracer: tracer}
+// NewTracedProvider wraps a provider with tracing. A nil inner provider or
+// tracer is an error wrapping types.ErrInvalidConfig.
+func NewTracedProvider(inner types.Provider, tracer trace.Tracer, opts ...ProviderOption) (*TracedProvider, error) {
+	if inner == nil || tracer == nil {
+		return nil, fmt.Errorf("%w: otel: a traced provider needs a provider and a tracer", types.ErrInvalidConfig)
+	}
+	p := &TracedProvider{tracer: tracer}
 	for _, opt := range opts {
 		opt(&p.opts)
 	}
-	return p
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
 }
 
-// Unwrap returns the inner provider, so optional interfaces behind the tracing
-// layer stay discoverable through the provider wrapper chain.
-func (p *TracedProvider) Unwrap() types.Provider { return p.Inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (p *TracedProvider) Close() error { return types.CloseProvider(p.Inner) }
-
-// Name delegates to the inner provider.
-func (p *TracedProvider) Name() string {
-	return types.NameOf(p.Inner)
-}
-
-// Model delegates to the inner provider.
-func (p *TracedProvider) Model() string {
-	return types.ProviderModel(p.Inner)
+// rewrap keeps tracing attached around another inner provider, so a model
+// switch or a new session stays traced.
+func (p *TracedProvider) rewrap(inner types.Provider) types.Provider {
+	c := *p
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
 }
 
 // vendor names the provider for gen_ai.provider.name and metrics: the
@@ -146,13 +142,6 @@ func (p *TracedProvider) Stream(ctx context.Context, req types.Request) (<-chan 
 	return p.wrapDeltaChannel(ctx, ch, span, start), nil
 }
 
-// SupportsSchema implements types.StructuredOutputProvider.
-func (p *TracedProvider) SupportsSchema() bool { return true }
-
-// SupportsOptions implements types.OptionsProvider, so per-request controls
-// such as a tool choice reach the inner provider through the tracing layer.
-func (p *TracedProvider) SupportsOptions() bool { return true }
-
 // unsupported builds the permanent error for a request the inner provider
 // cannot serve. It never reached the network.
 func (p *TracedProvider) unsupported(sentinel error) error {
@@ -195,53 +184,6 @@ func requestAttributes(o types.RequestOptions) []attribute.KeyValue {
 		}
 	}
 	return attrs
-}
-
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// and keeps tracing attached. Without it a ConfigPart model switch was
-// dropped whenever tracing was enabled, so traced runs silently ignored the
-// requested model.
-func (p *TracedProvider) WithModel(model string) types.Provider {
-	return &TracedProvider{Inner: types.ProviderWithModel(p.Inner, model), tracer: p.tracer, opts: p.opts}
-}
-
-// WithTarget implements types.TargetSwitcher: it re-targets the inner
-// provider and keeps tracing attached.
-func (p *TracedProvider) WithTarget(t types.Target) (types.Provider, error) {
-	inner, err := types.ProviderWithTarget(p.Inner, t)
-	if err != nil {
-		return nil, err
-	}
-	return &TracedProvider{Inner: inner, tracer: p.tracer, opts: p.opts}, nil
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. Tracing changes observability, not what the model accepts.
-//
-// TracedProvider always implements types.OptionsProvider, but it can only
-// forward options the inner provider accepts. When the inner provider takes
-// no options, the controls that travel only as options are removed, so the
-// agent loop falls back to what it does for the unwrapped provider (for
-// example withholding tools for ToolChoiceNone) instead of sending options
-// that Stream must reject.
-func (p *TracedProvider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(p.Inner)
-	if !types.AcceptsOptions(p.Inner) {
-		caps = caps.Without(types.CapToolChoice, types.CapParallelToolControl)
-	}
-	return caps
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the inner
-// provider.
-func (p *TracedProvider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(p.Inner)
-	return o
-}
-
-// NewSession returns a traced session of the inner provider.
-func (p *TracedProvider) NewSession() types.Provider {
-	return &TracedProvider{Inner: types.NewProviderSession(p.Inner), tracer: p.tracer, opts: p.opts}
 }
 
 // wrapDeltaChannel forwards the inner channel and ends the span when it

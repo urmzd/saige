@@ -2,8 +2,10 @@ package openai
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/urmzd/saige/agent/types"
 )
 
 // Embedder implements types.Embedder using the official OpenAI SDK.
@@ -22,15 +24,20 @@ type Embedder struct {
 // embedderregistry.NewBatching to split large inputs. OpenAI embedding
 // models are symmetric, so the embed purpose carried by the context does not
 // change the request.
-func NewEmbedder(apiKey, model string, opts ...Option) *Embedder {
-	cfg := &config{}
+//
+// A missing model is an error wrapping types.ErrInvalidConfig.
+func NewEmbedder(cfg Config, opts ...Option) (*Embedder, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: openai: embedder Config.Model is required", types.ErrInvalidConfig)
+	}
+	c := &config{}
 	for _, o := range opts {
-		o(cfg)
+		o(c)
 	}
 	return &Embedder{
-		client: openai.NewClient(cfg.clientOptions(apiKey, nil)...),
-		model:  openai.EmbeddingModel(model),
-	}
+		client: openai.NewClient(c.clientOptions(cfg.APIKey, nil)...),
+		model:  openai.EmbeddingModel(cfg.Model),
+	}, nil
 }
 
 // Embed implements types.Embedder.

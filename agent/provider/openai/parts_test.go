@@ -16,6 +16,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -125,9 +126,9 @@ func TestRecordedStreams(t *testing.T) {
 			req := types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}}
 			var ch <-chan types.Delta
 			if strings.HasPrefix(name, "chat_") {
-				ch, err = NewAdapter("k", partsModel, opts...).Stream(context.Background(), req)
+				ch, err = must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, opts...)).Stream(context.Background(), req)
 			} else {
-				ch, err = NewResponsesAdapter("k", partsModel, opts...).Stream(context.Background(), req)
+				ch, err = must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, opts...)).Stream(context.Background(), req)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -153,7 +154,7 @@ func TestStreamIndicesFollowVendorOrder(t *testing.T) {
 		completed,
 	}, "")
 	srv := sseServer(t, false, body)
-	ch, err := NewResponsesAdapter("k", partsModel, WithBaseURL(srv.URL)).Stream(context.Background(),
+	ch, err := must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithBaseURL(srv.URL))).Stream(context.Background(),
 		types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
@@ -290,13 +291,13 @@ func TestRequestMappingGoldens(t *testing.T) {
 			t.Run(surface+"_"+tc.name, func(t *testing.T) {
 				var body any
 				if surface == "chat" {
-					_, p, err := NewAdapter("k", partsModel, tc.opts...).chatParams(tc.req)
+					_, p, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, tc.opts...)).chatParams(tc.req)
 					if err != nil {
 						t.Fatal(err)
 					}
 					body = p
 				} else {
-					_, p, err := NewResponsesAdapter("k", partsModel, tc.opts...).requestParams(tc.req)
+					_, p, err := must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, tc.opts...)).requestParams(tc.req)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -361,9 +362,9 @@ func TestUnsupportedPartsRejected(t *testing.T) {
 				req := types.Request{Messages: tc.msgs, Tools: tools}
 				var err error
 				if surface == "chat" {
-					_, err = NewAdapter("k", partsModel, WithBaseURL(srv.URL)).Stream(context.Background(), req)
+					_, err = must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithBaseURL(srv.URL))).Stream(context.Background(), req)
 				} else {
-					_, err = NewResponsesAdapter("k", partsModel, WithBaseURL(srv.URL)).Stream(context.Background(), req)
+					_, err = must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithBaseURL(srv.URL))).Stream(context.Background(), req)
 				}
 				if err == nil {
 					t.Fatal("expected a rejection")
@@ -385,19 +386,19 @@ func TestUnsupportedPartsRejected(t *testing.T) {
 // TestSurfaceOnlyOptionsRejected checks the options one surface lacks.
 func TestSurfaceOnlyOptionsRejected(t *testing.T) {
 	req := types.Request{Messages: []types.Message{types.UserMsg(types.Text("x"))}}
-	if _, _, err := NewAdapter("k", partsModel, WithReasoningSummary("auto")).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithReasoningSummary("auto"))).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Errorf("chat reasoning summary: %v", err)
 	}
-	if _, _, err := NewResponsesAdapter("k", partsModel, WithAudioOutput("alloy", "wav")).requestParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, _, err := must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithAudioOutput("alloy", "wav"))).requestParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Errorf("responses audio output: %v", err)
 	}
-	if _, _, err := NewResponsesAdapter("k", partsModel, WithReasoningSummary("verbose")).requestParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, _, err := must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithReasoningSummary("verbose"))).requestParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Errorf("bad summary mode: %v", err)
 	}
-	if _, _, err := NewAdapter("k", partsModel, WithAudioOutput("alloy", "ogg")).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithAudioOutput("alloy", "ogg"))).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Errorf("bad audio format: %v", err)
 	}
-	if _, _, err := NewAdapter("k", partsModel, WithAudioOutput("", "wav")).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithAudioOutput("", "wav"))).chatParams(req); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Errorf("missing voice: %v", err)
 	}
 }
@@ -409,14 +410,14 @@ func TestBatchBodiesMapToParts(t *testing.T) {
 		"annotations":[{"type":"url_citation","url_citation":{"url":"https://go.dev","title":"Go","start_index":0,"end_index":7}}],
 		"audio":{"id":"audio_1","data":"AAEC","transcript":"Go 1.26 shipped.","expires_at":1791609449}}}],"usage":{"total_tokens":3}}`
 	var res types.BatchResult
-	if err := NewAdapter("k", partsModel, WithAudioOutput("alloy", "wav")).decodeChatBody(json.RawMessage(chat), &res); err != nil {
+	if err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithAudioOutput("alloy", "wav"))).decodeChatBody(json.RawMessage(chat), &res); err != nil {
 		t.Fatal(err)
 	}
 	golden(t, "batch_chat.golden.json", indentJSON(t, marshalParts(t, res.Message.Parts)))
 
 	refusal := `{"id":"c","model":"m","choices":[{"finish_reason":"stop","message":{"content":null,"refusal":"No."}}]}`
 	res = types.BatchResult{}
-	if err := NewAdapter("k", partsModel).decodeChatBody(json.RawMessage(refusal), &res); err != nil {
+	if err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)})).decodeChatBody(json.RawMessage(refusal), &res); err != nil {
 		t.Fatal(err)
 	}
 	if rp, ok := res.Message.Parts[0].(types.RefusalPart); !ok || rp.Text != "No." || res.FinishReason != finishContentFilter {
@@ -458,10 +459,10 @@ func TestBatchSubmitMapsParts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
 	defer srv.Close()
 	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Video(types.Bytes(types.MediaMP4, []byte{1})))}}}
-	if _, err := NewAdapter("k", partsModel, WithBaseURL(srv.URL)).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrModalityUnsupported) {
+	if _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithBaseURL(srv.URL))).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("chat submit: %v", err)
 	}
-	if _, err := NewResponsesAdapter("k", partsModel, WithBaseURL(srv.URL)).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrModalityUnsupported) {
+	if _, err := must.Get(NewResponses(Config{APIKey: "k", Model: types.ModelID(partsModel)}, WithBaseURL(srv.URL))).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("responses submit: %v", err)
 	}
 	if hits != 0 {

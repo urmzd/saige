@@ -62,6 +62,7 @@ type RequestOptions struct {
 // ToolChoiceMode says how the model may use the offered tools.
 type ToolChoiceMode string
 
+// Tool choice modes.
 const (
 	ToolChoiceAuto     ToolChoiceMode = "auto"     // the model decides; the zero value means the same
 	ToolChoiceNone     ToolChoiceMode = "none"     // the model must not call a tool

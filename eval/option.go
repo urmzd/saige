@@ -142,40 +142,6 @@ func WithLowerIsBetter(metrics ...string) Option {
 	}
 }
 
-// ExperimentConfig is the former name of [Config].
-//
-// Deprecated: Use [Config].
-type ExperimentConfig = Config
-
-// ExperimentOption is the former name of [Option].
-//
-// Deprecated: Use [Option].
-type ExperimentOption = Option
-
-// WithExperimentName sets the comparison name.
-//
-// Deprecated: Use [WithName].
-func WithExperimentName(name string) Option { return WithName(name) }
-
-// WithExperimentLogger sets the logger.
-//
-// Deprecated: Use [WithLogger].
-func WithExperimentLogger(l *slog.Logger) Option { return WithLogger(l) }
-
-// WithRunOptions applies opts. Comparisons now take run options such as
-// [WithConcurrency] directly.
-//
-// Deprecated: Pass the options directly.
-func WithRunOptions(opts ...Option) Option {
-	return func(c *Config) {
-		for _, o := range opts {
-			if o != nil {
-				o(c)
-			}
-		}
-	}
-}
-
 // WithDialPolicy runs every subject under p: the context passed to a
 // subject carries it (types.ContextWithDialPolicy), and an agent uses it
 // instead of its own. Use types.StrictDials to hold dials constant across

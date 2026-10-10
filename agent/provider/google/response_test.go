@@ -144,7 +144,7 @@ func renderDeltas(t *testing.T, deltas []types.Delta) string {
 func streamFixture(t *testing.T, events []string, opts ...Option) []types.Delta {
 	t.Helper()
 	opts = append([]Option{WithHTTPClient(&http.Client{Transport: sseTransport{events: events}})}, opts...)
-	a, err := NewAdapter(context.Background(), "k", "gemini-3.1-flash-lite", opts...)
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-3.1-flash-lite"}, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

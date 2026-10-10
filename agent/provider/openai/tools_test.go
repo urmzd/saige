@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func captureServer(t *testing.T) (*httptest.Server, *[]map[string]any) {
@@ -57,7 +58,7 @@ func TestToolChoiceWire(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			ch, err := NewAdapter("k", testModel, opts...).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
+			ch, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, opts...)).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 					t.Fatalf("err = %v, requests = %d; want a local configuration error", err, len(*bodies))
@@ -94,11 +95,11 @@ func TestToolChoiceNeedsCapability(t *testing.T) {
 		{types.ToolChoiceRequired, true},
 		{types.ToolChoiceNone, true},
 	} {
-		if err := NewAdapter("k", testModel, WithToolChoice(types.ToolChoice{Mode: tc.mode})).Validate(); (err == nil) != tc.ok {
+		if err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithToolChoice(types.ToolChoice{Mode: tc.mode}))).Validate(); (err == nil) != tc.ok {
 			t.Errorf("mode %s: Validate = %v, want ok=%v", tc.mode, err, tc.ok)
 		}
 	}
-	if err := NewAdapter("k", "text-embedding-3-small", WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})).Validate(); err == nil {
+	if err := must.Get(New(Config{APIKey: "k", Model: "text-embedding-3-small"}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))).Validate(); err == nil {
 		t.Error("an embedding model does not declare tool choice")
 	}
 }
@@ -113,7 +114,7 @@ func TestListModels(t *testing.T) {
 		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-4o","object":"model","created":1715367049,"owned_by":"system"},{"id":"o3","object":"model","created":0,"owned_by":"system"}]}`)
 	}))
 	t.Cleanup(server.Close)
-	models, err := NewAdapter("k", testModel, WithBaseURL(server.URL)).ListModels(context.Background())
+	models, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(server.URL))).ListModels(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestListModels(t *testing.T) {
 		http.Error(w, `{"error":{"message":"bad key","type":"invalid_request_error"}}`, http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	if _, err := NewAdapter("k", testModel, WithBaseURL(failing.URL)).ListModels(context.Background()); !types.IsAuth(err) {
+	if _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL))).ListModels(context.Background()); !types.IsAuth(err) {
 		t.Fatalf("err = %v, want an auth error", err)
 	}
 }

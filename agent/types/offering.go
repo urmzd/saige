@@ -39,6 +39,7 @@ const (
 // ServiceTier is a vendor service class an offering is sold under.
 type ServiceTier string
 
+// Service tiers.
 const (
 	ServiceStandard ServiceTier = "standard"
 	ServicePriority ServiceTier = "priority"

@@ -11,6 +11,7 @@ import (
 
 // --- Errors ---
 
+// Knowledge graph errors.
 var (
 	ErrNodeNotFound  = errors.New("node not found")
 	ErrStoreNotReady = errors.New("store not ready")

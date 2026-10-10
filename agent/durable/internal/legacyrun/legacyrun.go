@@ -21,6 +21,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // RunID is the recorded run's ID, and Interrupt its pending approval.
@@ -168,7 +169,7 @@ func Agent(c *Counters) *agent.Agent {
 		c.Writes.Add(1)
 		return "written", nil
 	}}
-	return agent.NewAgent(agent.AgentConfig{
+	return must.Get(agent.New(agent.Config{
 		Provider:         provider{c},
 		SystemPrompt:     "rules",
 		Tools:            types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), snapshot{c}),
@@ -176,7 +177,7 @@ func Agent(c *Counters) *agent.Agent {
 	}, agent.WithHooks(agent.Hooks{Name: "tag", UserInput: func(_ context.Context, e *agent.UserInputEvent) error {
 		e.Message.Parts = append(e.Message.Parts, types.Text("(tagged)"))
 		return nil
-	}}))
+	}})))
 }
 
 // Approve is the decision that lets the run continue.

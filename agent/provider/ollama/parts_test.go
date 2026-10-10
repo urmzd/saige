@@ -18,6 +18,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -141,7 +142,7 @@ func TestRequestMappingGolden(t *testing.T) {
 			if model == "" {
 				model = "qwen3.5:4b"
 			}
-			ch, err := NewAdapter(NewClient(server.URL, model, "")).Stream(context.Background(), tc.req)
+			ch, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: types.ModelID(model)}))})).Stream(context.Background(), tc.req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +213,7 @@ func TestRequestRejections(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, _, hits := rawChat(t)
-			_, err := NewAdapter(NewClient(server.URL, "test-model", "")).Stream(context.Background(), types.Request{Messages: tc.msgs})
+			_, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))})).Stream(context.Background(), types.Request{Messages: tc.msgs})
 			if !errors.Is(err, tc.sentinel) || !errors.Is(err, types.ErrInvalidModelConfig) {
 				t.Fatalf("err = %v, want %v", err, tc.sentinel)
 			}
@@ -286,7 +287,7 @@ func TestStreamFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			server := lineServer(t, 0, false, strings.Split(strings.TrimSpace(string(raw)), "\n")...)
-			ch, err := NewAdapter(NewClient(server.URL, "qwen3.5:4b", "")).Stream(context.Background(),
+			ch, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "qwen3.5:4b"}))})).Stream(context.Background(),
 				types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 			if err != nil {
 				t.Fatal(err)

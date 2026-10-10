@@ -15,6 +15,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func bufioScanner(s string) *bufio.Scanner { return bufio.NewScanner(strings.NewReader(s)) }
@@ -199,7 +200,7 @@ func TestRunnerErrorEndsTurnNotSession(t *testing.T) {
 		responses: [][]types.Delta{nil, agenttest.TextResponse("second answer")},
 		hold:      -1,
 	}
-	l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+	l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 
 	l.typeText("first")
 	l.key(tea.KeyEnter)
@@ -234,7 +235,7 @@ func TestRunnerStopKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("never")}, release: make(chan struct{})}
-			l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+			l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 
 			l.typeText("hello")
 			l.key(tea.KeyEnter)
@@ -279,7 +280,7 @@ func TestRunnerDoubleCtrlCQuits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
+			a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &gatedProvider{hold: -1}}))
 			var m tea.Model = newRunnerModel(a, context.Background(), TemplateMinimal)
 			quit := false
 			for _, k := range tt.keys {
@@ -319,7 +320,7 @@ func TestRunnerQueueAndSteer(t *testing.T) {
 				release:   make(chan struct{}),
 				called:    make(chan struct{}, 4),
 			}
-			l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+			l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 
 			l.typeText("first")
 			l.key(tea.KeyEnter)
@@ -362,7 +363,7 @@ func TestRunnerQueueAndSteer(t *testing.T) {
 
 func TestRunnerQueuedMessagesReturnToInputOnStop(t *testing.T) {
 	p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("never")}, release: make(chan struct{}), called: make(chan struct{}, 4)}
-	l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+	l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 
 	l.typeText("first")
 	l.key(tea.KeyEnter)
@@ -389,7 +390,7 @@ func TestRunnerQueuedMessagesReturnToInputOnStop(t *testing.T) {
 }
 
 func TestRunnerIgnoresStaleStreams(t *testing.T) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
+	a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &gatedProvider{hold: -1}}))
 	m := newRunnerModel(a, context.Background(), TemplateMinimal)
 	deltas := make(chan types.Delta)
 	defer close(deltas)
@@ -431,7 +432,7 @@ func TestRunnerMarkerPromptShowsArguments(t *testing.T) {
 }
 
 func TestRunnerShortTerminal(t *testing.T) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
+	a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &gatedProvider{hold: -1}}))
 	m := newRunnerModel(a, context.Background(), TemplateDefault)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 3})
 	if h := model.(runnerModel).scroll.vp.Height; h < 1 {
@@ -441,7 +442,7 @@ func TestRunnerShortTerminal(t *testing.T) {
 }
 
 func TestRunnerScrollKeysMoveViewport(t *testing.T) {
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
+	a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &gatedProvider{hold: -1}}))
 	m := newRunnerModel(a, context.Background(), TemplateMinimal)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	m = model.(runnerModel)
@@ -466,7 +467,7 @@ func TestRunnerScrollKeysMoveViewport(t *testing.T) {
 
 func TestRunnerJSONOutputUsesLineMode(t *testing.T) {
 	p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("json answer")}, hold: -1}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p})
+	a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p}))
 	var out, errOut bytes.Buffer
 	r := &Runner{In: strings.NewReader("hi\n/quit\n"), Out: &out, Output: NewJSONOutput(&out, &errOut)}
 
@@ -508,11 +509,11 @@ func parallelMarkedAgent() (*agentsdk.Agent, *atomic.Int32) {
 	turn := append(agenttest.ToolCallResponse("c1", "danger", map[string]any{"n": 1}),
 		agenttest.ToolCallResponse("c2", "danger", map[string]any{"n": 2})...)
 	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{turn, agenttest.TextResponse("finished")}}
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := must.Get(agentsdk.New(agentsdk.Config{
 		Name:     "test",
 		Provider: provider,
 		Tools:    types.NewToolRegistry(types.WithMarkers(tool, types.Marker{Kind: "human_approval", Message: "needs approval"})),
-	})
+	}))
 	return a, &calls
 }
 
@@ -593,7 +594,7 @@ func TestRunnerLateSubmitResultAfterStopReturnsToInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &gatedProvider{responses: [][]types.Delta{agenttest.TextResponse("never")}, release: make(chan struct{})}
-			l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+			l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 
 			l.typeText("first")
 			l.key(tea.KeyEnter)
@@ -645,7 +646,7 @@ func TestRunnerContinue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &gatedProvider{hold: tt.holdAt, release: make(chan struct{})}
-			l := newLoop(t, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}))
+			l := newLoop(t, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})))
 			for _, turn := range tt.turns {
 				l.typeText(turn)
 				l.key(tea.KeyEnter)
@@ -712,7 +713,7 @@ func TestRunVerboseContinue(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := r.Run(ctx, agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p})); err != nil {
+			if err := r.Run(ctx, must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p}))); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			if n := len(p.requests()); n != tt.wantCalls {

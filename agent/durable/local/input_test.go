@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // echoProvider answers each call with the text of the last user message, so a
@@ -110,7 +111,7 @@ func TestRunAppendsInputWithoutRepeatingEarlierSteps(t *testing.T) {
 	ctx := context.Background()
 	e := New(t.TempDir())
 	var calls atomic.Int32
-	factory := func() *agent.Agent { return agent.NewAgent(agent.AgentConfig{Provider: echoProvider{&calls}}) }
+	factory := func() *agent.Agent { return must.Get(agent.New(agent.Config{Provider: echoProvider{&calls}})) }
 	first := []types.Message{types.UserMsg(types.Text("one"))}
 	got, err := e.Run(ctx, "run", "v1", factory, first)
 	if err != nil {
@@ -195,7 +196,7 @@ func TestAppend(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := New(t.TempDir())
 			var calls atomic.Int32
-			factory := func() *agent.Agent { return agent.NewAgent(agent.AgentConfig{Provider: echoProvider{&calls}}) }
+			factory := func() *agent.Agent { return must.Get(agent.New(agent.Config{Provider: echoProvider{&calls}})) }
 			if _, err := e.Run(ctx, "run", "v1", factory, []types.Message{types.UserMsg(types.Text("one"))}); err != nil {
 				t.Fatal(err)
 			}

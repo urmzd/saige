@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // replayFixture streams testdata/streams/<name>.sse, a recorded (or, for
@@ -29,7 +30,7 @@ func replayFixture(t *testing.T, name string, schema *types.ParameterSchema) ([]
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("q"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +218,7 @@ func TestBatchMessageParts(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		t.Fatal(err)
 	}
-	a := NewAdapter("k", "claude-haiku-5-5", WithEndpoint("ws1"))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithEndpoint("ws1")))
 	msg, err := a.assistantFromMessage(m)
 	if err != nil {
 		t.Fatal(err)

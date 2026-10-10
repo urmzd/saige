@@ -12,16 +12,16 @@ import (
 type CitationKind string
 
 const (
-	// CitationWeb: a page returned by a web search, whether the search ran
+	// CitationWeb means a page returned by a web search, whether the search ran
 	// provider-side (Anthropic web_search, Gemini google_search grounding,
 	// OpenAI web_search) or locally through one of this SDK's tools.
 	CitationWeb CitationKind = "web"
-	// CitationDocument: a document supplied in the request, e.g. an Anthropic
+	// CitationDocument means a document supplied in the request, e.g. an Anthropic
 	// document block with citations enabled.
 	CitationDocument CitationKind = "document"
-	// CitationTool: a source a locally-executed tool attributed its output to.
+	// CitationTool means a source a locally-executed tool attributed its output to.
 	CitationTool CitationKind = "tool"
-	// CitationRetrieval: a chunk from a RAG or knowledge-graph retriever.
+	// CitationRetrieval means a chunk from a RAG or knowledge-graph retriever.
 	CitationRetrieval CitationKind = "retrieval"
 )
 

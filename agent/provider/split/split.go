@@ -169,7 +169,7 @@ var (
 	_ types.Provider                 = (*Split)(nil)
 	_ types.NamedProvider            = (*Split)(nil)
 	_ types.ModelProvider            = (*Split)(nil)
-	_ types.ModelSwitcher            = (*Split)(nil)
+	_ types.TargetSwitcher           = (*Split)(nil)
 	_ types.CapabilityReporter       = (*Split)(nil)
 	_ types.StructuredOutputProvider = (*Split)(nil)
 	_ types.OptionsProvider          = (*Split)(nil)
@@ -177,22 +177,32 @@ var (
 	_ types.Closer                   = (*Split)(nil)
 )
 
-// New validates cfg and returns a split session.
-func New(cfg Config) (*Split, error) {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithSample sets Config.Sample.
+func WithSample(fn func() float64) Option { return func(c *Config) { c.Sample = fn } }
+
+// New validates cfg and returns a split session. An invalid configuration
+// is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Split, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if cfg.Experiment == "" {
-		return nil, errors.New("split requires an experiment name")
+		return nil, fmt.Errorf("%w: split requires an experiment name", types.ErrInvalidConfig)
 	}
 	if len(cfg.Arms) == 0 {
-		return nil, errors.New("split requires at least one arm")
+		return nil, fmt.Errorf("%w: split requires at least one arm", types.ErrInvalidConfig)
 	}
 	labels := map[string]bool{}
 	total, control := 0, -1
 	for i, a := range cfg.Arms {
 		if a.Label == "" || labels[a.Label] || a.Provider == nil || a.Weight < 0 {
-			return nil, fmt.Errorf("invalid or duplicate split arm %q", a.Label)
+			return nil, fmt.Errorf("%w: invalid or duplicate split arm %q", types.ErrInvalidConfig, a.Label)
 		}
 		if a.Canary != nil && (a.Canary.MaxErrorRate < 0 || a.Canary.MaxErrorRate > 1) {
-			return nil, fmt.Errorf("split arm %q: canary error rate must be between 0 and 1", a.Label)
+			return nil, fmt.Errorf("%w: split arm %q: canary error rate must be between 0 and 1", types.ErrInvalidConfig, a.Label)
 		}
 		labels[a.Label] = true
 		total += a.Weight
@@ -201,17 +211,17 @@ func New(cfg Config) (*Split, error) {
 		}
 	}
 	if total == 0 {
-		return nil, errors.New("split arms need a positive total weight")
+		return nil, fmt.Errorf("%w: split arms need a positive total weight", types.ErrInvalidConfig)
 	}
 	if control < 0 {
-		return nil, errors.New("split requires a control arm without a canary guard")
+		return nil, fmt.Errorf("%w: split requires a control arm without a canary guard", types.ErrInvalidConfig)
 	}
 	for _, s := range cfg.Shadow {
 		if s.Label == "" || labels[s.Label] || s.Provider == nil || s.Rate < 0 || s.Rate > 1 {
-			return nil, fmt.Errorf("invalid or duplicate shadow arm %q", s.Label)
+			return nil, fmt.Errorf("%w: invalid or duplicate shadow arm %q", types.ErrInvalidConfig, s.Label)
 		}
 		if s.Budget == nil {
-			return nil, fmt.Errorf("shadow arm %q requires its own budget", s.Label)
+			return nil, fmt.Errorf("%w: shadow arm %q requires its own budget", types.ErrInvalidConfig, s.Label)
 		}
 		labels[s.Label] = true
 	}
@@ -260,18 +270,9 @@ func (s *Split) Model() string {
 	return types.ProviderModel(s.arms[i])
 }
 
-// WithModel implements types.ModelSwitcher by re-targeting every arm, as a
-// fallback chain does. The result is a fresh session.
-func (s *Split) WithModel(model string) types.Provider {
-	arms := make([]types.Provider, len(s.arms))
-	for i, p := range s.arms {
-		arms[i] = types.ProviderWithModel(p, model)
-	}
-	return &Split{shared: s.shared, arms: arms, key: s.key, assigned: -1}
-}
-
 // WithTarget implements types.TargetSwitcher for a model target by
-// re-targeting every arm, as WithModel does.
+// re-targeting every arm, as a fallback chain does. The result is a fresh
+// session.
 func (s *Split) WithTarget(t types.Target) (types.Provider, error) {
 	arms, err := types.RetargetMembers(s.arms, t, "split")
 	if err != nil {
@@ -309,19 +310,20 @@ func (s *Split) Drain(ctx context.Context) error {
 	}
 }
 
-// Close implements types.Closer. It waits for shadow calls, then closes every
+// Close implements types.Closer. It waits for shadow calls (until ctx
+// ends), then closes every
 // arm and shadow provider. Sessions share these providers, so close the split
 // only after its last session.
-func (s *Split) Close() error {
-	_ = s.Drain(context.Background())
+func (s *Split) Close(ctx context.Context) error {
+	_ = s.Drain(ctx)
 	var errs []error
 	for _, p := range s.arms {
-		if err := types.CloseProvider(p); err != nil {
+		if err := types.CloseProvider(ctx, p); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	for _, sh := range s.shared.cfg.Shadow {
-		if err := types.CloseProvider(sh.Provider); err != nil {
+		if err := types.CloseProvider(ctx, sh.Provider); err != nil {
 			errs = append(errs, err)
 		}
 	}

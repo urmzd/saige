@@ -26,9 +26,9 @@ const DefaultWrapUpPrompt = "Stop starting new work and return your result now. 
 	"Put everything your caller needs in your final message."
 
 // WithWrapUpAt adds a wrap-up note after n model turns of a user turn (see
-// AgentConfig.WrapUpAt). 0 turns it off.
-func WithWrapUpAt(n int) AgentOption {
-	return func(c *AgentConfig) { c.WrapUpAt = n }
+// Config.WrapUpAt). 0 turns it off.
+func WithWrapUpAt(n int) Option {
+	return func(c *Config) { c.WrapUpAt = n }
 }
 
 // childIterBudget returns a sub-agent's iteration cap and wrap-up point.

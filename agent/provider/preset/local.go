@@ -33,7 +33,11 @@ func ListOllama(ctx context.Context, cfg provider.Config) ([]catalog.RemoteModel
 	if cfg.HTTPClient != nil {
 		opts = append(opts, ollama.WithHTTPClient(cfg.HTTPClient))
 	}
-	return ollama.NewClient(ollamaHost(cfg), "", "", opts...).ListModels(ctx)
+	c, err := ollama.NewClient(ollama.Config{Host: ollamaHost(cfg)}, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return c.ListModels(ctx)
 }
 
 // ollamaHost is the entry's base URL, then OLLAMA_HOST, then

@@ -25,7 +25,7 @@ type testCloserProvider struct {
 	closed bool
 }
 
-func (p *testCloserProvider) Close() error {
+func (p *testCloserProvider) Close(context.Context) error {
 	p.closed = true
 	return nil
 }
@@ -41,13 +41,13 @@ func TestNameOf(t *testing.T) {
 
 func TestCloseProvider(t *testing.T) {
 	// Non-closer returns nil
-	if err := CloseProvider(testProvider{}); err != nil {
+	if err := CloseProvider(context.Background(), testProvider{}); err != nil {
 		t.Errorf("CloseProvider(non-closer) = %v, want nil", err)
 	}
 
 	// Closer gets called
 	p := &testCloserProvider{}
-	if err := CloseProvider(p); err != nil {
+	if err := CloseProvider(context.Background(), p); err != nil {
 		t.Errorf("CloseProvider(closer) = %v, want nil", err)
 	}
 	if !p.closed {

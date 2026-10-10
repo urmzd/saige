@@ -6,6 +6,7 @@ import (
 
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 )
 
@@ -33,7 +34,7 @@ func TestMigrationBackfillsNodeConversation(t *testing.T) {
 		t.Fatalf("migrations: %v", err)
 	}
 
-	store := NewStore(pool, "conv-x", nil)
+	store := must.Get(New(Config{Pool: pool, ConversationID: "conv-x"}))
 	nodes, _, err := store.LoadTree(ctx, "bf-root")
 	if err != nil {
 		t.Fatalf("LoadTree: %v", err)
@@ -41,7 +42,7 @@ func TestMigrationBackfillsNodeConversation(t *testing.T) {
 	if len(nodes) != 4 {
 		t.Fatalf("backfilled tree = %d nodes, want 4", len(nodes))
 	}
-	if _, err := NewStore(pool, "", nil).LoadNode(ctx, "bf-root"); err == nil {
+	if _, err := must.Get(New(Config{Pool: pool})).LoadNode(ctx, "bf-root"); err == nil {
 		t.Error("backfilled node is still visible in the legacy namespace")
 	}
 }
@@ -55,7 +56,7 @@ func TestTreeWriteThroughSurvivesCancelledContext(t *testing.T) {
 	ctx := context.Background()
 
 	conv := "conv-" + types.NewID()
-	store := NewStore(pool, conv, nil)
+	store := must.Get(New(Config{Pool: pool, ConversationID: conv}))
 	tr, err := tree.New(types.SystemMsg(types.Text("system")), tree.WithStore(store))
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func TestTreeWriteThroughSurvivesCancelledContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reloaded, err := tree.LoadFromStore(ctx, NewStore(pool, conv, nil), root.ID, "")
+	reloaded, err := tree.LoadFromStore(ctx, must.Get(New(Config{Pool: pool, ConversationID: conv})), root.ID, "")
 	if err != nil {
 		t.Fatalf("LoadFromStore: %v", err)
 	}

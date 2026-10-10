@@ -4,6 +4,8 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	agenttypes "github.com/urmzd/saige/agent/types"
 	"log/slog"
 	"sync"
 
@@ -37,18 +39,34 @@ type Store struct {
 	iterativeOK  bool
 }
 
-// NewStore creates a new PostgreSQL-backed RAG store. Options tune filtered
-// vector search; see WithIterativeScan, WithEFSearch, and WithMaxScanTuples.
-// An invalid option makes every SearchByEmbedding call return an error.
-func NewStore(pool *pgxpool.Pool, logger *slog.Logger, opts ...Option) *Store {
+// Config names the database a Store uses.
+type Config struct {
+	// Pool is the database, from postgres.NewPool. Required. The caller
+	// owns it: Close does not close it.
+	Pool *pgxpool.Pool
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// New creates a PostgreSQL-backed RAG store. Options tune filtered vector
+// search; see WithIterativeScan, WithEFSearch, and WithMaxScanTuples. A nil
+// pool or an invalid option is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Store, error) {
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("%w: rag pgstore: Config.Pool is required", agenttypes.ErrInvalidConfig)
+	}
+	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Store{pool: pool, logger: logger}
+	s := &Store{pool: cfg.Pool, logger: logger}
 	for _, opt := range opts {
 		opt(s)
 	}
-	return s
+	if s.optionErr != nil {
+		return nil, fmt.Errorf("%w: %w", agenttypes.ErrInvalidConfig, s.optionErr)
+	}
+	return s, nil
 }
 
 // Close is a no-op; the pool is externally managed.

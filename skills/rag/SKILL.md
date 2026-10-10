@@ -45,8 +45,8 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-pipe, err := rag.NewPipeline(
-    rag.WithStore(pgstore.NewStore(pool, nil)),
+store, _ := pgstore.New(pgstore.Config{Pool: pool})
+pipe, err := rag.New(rag.Config{Store: store},
     rag.WithContentExtractor(myExtractor),
     rag.WithEmbedders(myEmbedderRegistry),
     rag.WithRecursiveChunker(512, 50),
@@ -75,8 +75,7 @@ fmt.Println(results.Context.Prompt) // context with citations
 ### With knowledge graph integration
 
 ```go
-pipe, err := rag.NewPipeline(
-    rag.WithStore(store),
+pipe, err := rag.New(rag.Config{Store: store},
     rag.WithContentExtractor(extractor),
     rag.WithGraph(kgGraph),  // enables entity extraction + graph retrieval
 )

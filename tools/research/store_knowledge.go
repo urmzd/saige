@@ -15,14 +15,17 @@ type StoreKnowledgeTool struct {
 	groupID string
 }
 
+// NewStoreKnowledgeTool returns a tool that stores findings in graph.
 func NewStoreKnowledgeTool(graph kgtypes.Graph) *StoreKnowledgeTool {
 	return &StoreKnowledgeTool{graph: graph}
 }
 
+// WithGroupID stores into one graph group.
 func (t *StoreKnowledgeTool) WithGroupID(id string) *StoreKnowledgeTool {
 	return &StoreKnowledgeTool{graph: t.graph, groupID: id}
 }
 
+// Definition implements types.Tool.
 func (t *StoreKnowledgeTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "store_knowledge",
@@ -39,6 +42,7 @@ func (t *StoreKnowledgeTool) Definition() types.ToolDef {
 	}
 }
 
+// Execute implements types.Tool.
 func (t *StoreKnowledgeTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	text, _ := args["text"].(string)
 	if text == "" {

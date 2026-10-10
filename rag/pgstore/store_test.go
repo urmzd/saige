@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/postgres"
 	"github.com/urmzd/saige/rag/types"
 )
@@ -107,7 +108,7 @@ func singleSectionDoc(uuid, fingerprint string, meta map[string]string, variants
 func TestCreateDocumentPersistsTree(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	now := testTime()
 	doc := &types.Document{
@@ -237,7 +238,7 @@ func TestCreateDocumentPersistsTree(t *testing.T) {
 func TestReplaceDocumentSwapsAtomically(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	old := singleSectionDoc("doc-old", "fp-old", map[string]string{"v": "1"},
 		types.ContentVariant{
@@ -308,7 +309,7 @@ func TestReplaceDocumentSwapsAtomically(t *testing.T) {
 func TestReplaceDocumentFailureKeepsOldDocument(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	old := singleSectionDoc("doc-keep", "fp-keep", map[string]string{"v": "1"},
 		types.ContentVariant{
@@ -380,7 +381,7 @@ func TestReplaceDocumentFailureKeepsOldDocument(t *testing.T) {
 func TestSearchMetadataFilterPushdownDeepRows(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	// Query axis is e0. Non-matching variants sit at tiny angles from e0
 	// (cos > 0.94); matching ones sit much further out (cos < 0.45), so all
@@ -437,7 +438,7 @@ func TestSearchMetadataFilterPushdownDeepRows(t *testing.T) {
 func TestSearchFilterNeqAndContains(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	doc := singleSectionDoc("doc-flt", "fp-flt", nil,
 		types.ContentVariant{
@@ -508,7 +509,7 @@ func TestSearchFilterNeqAndContains(t *testing.T) {
 func TestSearchVariantMetadataOverridesDocument(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	doc := singleSectionDoc("doc-merge", "fp-merge",
 		map[string]string{"lang": "python", "team": "core"},
@@ -558,7 +559,7 @@ func TestSearchVariantMetadataOverridesDocument(t *testing.T) {
 func TestSearchOrderingAndMinScore(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	// cos to query e0: var-near = 1.0, var-mid ~ 0.707, var-far ~ 0.196.
 	doc := singleSectionDoc("doc-ord", "fp-ord", nil,

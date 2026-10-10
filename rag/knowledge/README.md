@@ -22,8 +22,8 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: "postgres://localhost:5432/mydb"})
 postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "nomic-embed-text")
-graph, _ := knowledge.NewGraph(ctx,
+client, _ := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b", EmbeddingModel: "nomic-embed-text"})
+graph, _ := knowledge.New(knowledge.Config{},
     knowledge.WithPostgres(pool),
     knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),
     knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)),
@@ -123,7 +123,7 @@ detail, _ := graph.GetNode(ctx, entityUUID, 2) // BFS to depth 2
 sub := knowledge.Subgraph(detail)              // extract visualization data
 ```
 
-The Postgres store runs one query per hop and returns each edge once. It stops at 1000 nodes or 5000 edges by default and sets `NodeDetail.Truncated`; change the caps with `pgstore.NewStore(pool, logger, pgstore.WithTraversalLimits(nodes, edges))`.
+The Postgres store runs one query per hop and returns each edge once. It stops at 1000 nodes or 5000 edges by default and sets `NodeDetail.Truncated`; change the caps with `pgstore.New(pgstore.Config{Pool: pool}, pgstore.WithTraversalLimits(nodes, edges))`.
 
 ## Graph Formatting
 

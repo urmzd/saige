@@ -14,6 +14,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // pauseServer replies to the nth request with the nth fixture (the last one
@@ -80,7 +81,7 @@ func drainTurn(t *testing.T, a *Adapter) ([]types.AssistantPart, []types.Delta, 
 // ones already sent. Usage covers both requests.
 func TestPauseTurnContinues(t *testing.T) {
 	server, requests := pauseServer(t, "pause_first", "pause_rest")
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	parts, deltas, usage, err := drainTurn(t, a)
 	if err != nil {
 		t.Fatalf("err = %v, want the continued turn to succeed", err)
@@ -162,7 +163,7 @@ func TestPauseTurnContinues(t *testing.T) {
 // permanent error after the continuations are spent, rather than looping.
 func TestPauseTurnGivesUp(t *testing.T) {
 	server, requests := pauseServer(t, "pause_first")
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	_, _, usage, err := drainTurn(t, a)
 	if !errors.Is(err, errPausedTurn) || types.KindOf(err) != types.ErrorKindPermanent {
 		t.Fatalf("err = %v, want the paused-turn error", err)
@@ -184,7 +185,7 @@ func TestCitationsSurviveALaterFailure(t *testing.T) {
 	events := []sseEvent{{"message_start", evStart}, {"content_block_start", evTextStart},
 		{"content_block_delta", cite}, {"content_block_delta", evText("Cited.")}, {"content_block_stop", evBlockStop},
 		{"content_block_start", second}}
-	a := NewAdapter("test", testModel, WithBaseURL(sseServer(t, true, events...).URL))
+	a := must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, true, events...).URL)))
 	r := run(t, a, nil)
 	if len(r.errs) != 1 {
 		t.Fatalf("errors = %v, want the dropped stream", r.errs)

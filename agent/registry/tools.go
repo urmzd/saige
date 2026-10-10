@@ -70,14 +70,26 @@ func (s *ToolSet) At(name string, rev Revision) (types.Tool, bool) {
 	return e.Value, ok
 }
 
-// History, Pin, Unpin, Pinned, Rollback and Names delegate to the underlying
-// registry, so a tool set is operated with the same verbs as a model registry.
+// The methods below delegate to the underlying registry, so a tool set is
+// operated with the same verbs as a model registry.
+
+// History returns every revision of the named tool, oldest first.
 func (s *ToolSet) History(name string) []Entry[types.Tool] { return s.reg.History(name) }
-func (s *ToolSet) Pin(name string, rev Revision) error     { return s.reg.Pin(name, rev) }
-func (s *ToolSet) Unpin(name string)                       { s.reg.Unpin(name) }
-func (s *ToolSet) Pinned(name string) (Revision, bool)     { return s.reg.Pinned(name) }
-func (s *ToolSet) Names() []string                         { return s.reg.Names() }
-func (s *ToolSet) Len() int                                { return s.reg.Len() }
+
+// Pin makes rev the revision the named tool resolves to.
+func (s *ToolSet) Pin(name string, rev Revision) error { return s.reg.Pin(name, rev) }
+
+// Unpin returns the named tool to its latest revision.
+func (s *ToolSet) Unpin(name string) { s.reg.Unpin(name) }
+
+// Pinned reports the revision the named tool is pinned to, if any.
+func (s *ToolSet) Pinned(name string) (Revision, bool) { return s.reg.Pinned(name) }
+
+// Names returns the registered tool names.
+func (s *ToolSet) Names() []string { return s.reg.Names() }
+
+// Len returns how many tools are registered.
+func (s *ToolSet) Len() int { return s.reg.Len() }
 
 // Rollback pins a tool to its previous revision and returns it.
 func (s *ToolSet) Rollback(name string) (types.Tool, error) {

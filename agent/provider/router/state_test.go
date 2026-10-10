@@ -11,6 +11,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // scripted answers each call from fail: a nil error streams "ok" from the
@@ -303,7 +304,7 @@ func (cacheBound) RouteLocks() []string { return []string{LockContextCache} }
 
 func TestLockReporterFoundThroughDecorators(t *testing.T) {
 	inner := cacheBound{newScripted("g", "google", 0, nil)}
-	wrapped := retry.New(inner, retry.DefaultConfig())
+	wrapped := must.Get(retry.New(inner, retry.DefaultConfig()))
 	locks := detectLocks([]types.Message{types.UserMsg(types.Text("q"))}, wrapped)
 	if !reflect.DeepEqual(locks, []string{LockContextCache}) {
 		t.Fatalf("locks = %v", locks)

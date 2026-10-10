@@ -22,7 +22,6 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -61,6 +60,9 @@ var (
 
 // Config configures a Store.
 type Config struct {
+	// Pool is the database, from postgres.NewPool. Required. The caller
+	// owns it.
+	Pool *pgxpool.Pool
 	// Embedder embeds record text for vector recall. Required. Its vectors
 	// must have the dimension of memory_record.embedding (see
 	// postgres.MigrationOptions.MemoryEmbeddingDim). Records are embedded
@@ -100,14 +102,27 @@ type Store struct {
 	cfg  Config
 }
 
-// New returns a store over pool. The pool should come from postgres.NewPool,
-// which registers the pgvector types.
-func New(pool *pgxpool.Pool, cfg Config) (*Store, error) {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithRedact sets Config.Redact.
+func WithRedact(fn func(ctx context.Context, text string) (string, error)) Option {
+	return func(c *Config) { c.Redact = fn }
+}
+
+// New returns a store over cfg.Pool. The pool should come from
+// postgres.NewPool, which registers the pgvector types. A nil pool or
+// embedder is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Store, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	pool := cfg.Pool
 	if pool == nil {
-		return nil, errors.New("pgstore: nil pool")
+		return nil, fmt.Errorf("%w: memory pgstore: Config.Pool is required", types.ErrInvalidConfig)
 	}
 	if cfg.Embedder == nil {
-		return nil, errors.New("pgstore: Config.Embedder is required")
+		return nil, fmt.Errorf("%w: memory pgstore: Config.Embedder is required", types.ErrInvalidConfig)
 	}
 	if cfg.Candidates <= 0 {
 		cfg.Candidates = DefaultCandidates

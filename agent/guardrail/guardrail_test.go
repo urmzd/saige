@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/guardrail"
 	"github.com/urmzd/saige/agent/privacy"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func check(t *testing.T, g agent.Guardrail, text string) agent.GuardrailVerdict {
@@ -104,9 +105,9 @@ func TestClassifierKeepsContentAsData(t *testing.T) {
 // must fit a length limit on the way out.
 func TestBuiltinsInARun(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("a long answer that is too long")}}
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "s", Provider: p},
+	a := must.Get(agent.New(agent.Config{SystemPrompt: "s", Provider: p},
 		agent.WithInputGuardrails(agent.InputGuardrail{Guardrail: guardrail.PII(true)}),
-		agent.WithOutputGuardrails(agent.OutputGuardrail{Guardrail: guardrail.MaxLength(10)}))
+		agent.WithOutputGuardrails(agent.OutputGuardrail{Guardrail: guardrail.MaxLength(10)})))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := agent.Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("I am ana@example.com"))}), nil)

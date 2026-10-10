@@ -36,6 +36,7 @@ type SearchTool struct {
 	groupID string
 }
 
+// Definition implements agenttypes.Tool.
 func (t *SearchTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "kg_search",
@@ -45,6 +46,7 @@ func (t *SearchTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	query, _ := args["query"].(string)
 	if query == "" {
@@ -88,6 +90,7 @@ type ingestOutput struct {
 	Warning string `json:"warning,omitempty"`
 }
 
+// Definition implements agenttypes.Tool.
 func (t *IngestTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "kg_ingest",
@@ -97,6 +100,7 @@ func (t *IngestTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *IngestTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	name, _ := args["name"].(string)
 	body, _ := args["body"].(string)

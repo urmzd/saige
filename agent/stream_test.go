@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestResolveMarkerErr(t *testing.T) {
@@ -141,7 +142,7 @@ func TestTerminalSendDoesNotBlockAbandonedStream(t *testing.T) {
 
 func TestInvokeCancelReportsStreamCanceled(t *testing.T) {
 	provider := &delayedProvider{ready: make(chan struct{}), response: "never"}
-	a := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
+	a := must.Get(New(Config{Provider: provider, SystemPrompt: "sys"}))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	stream.Cancel()
 	var sawDone bool

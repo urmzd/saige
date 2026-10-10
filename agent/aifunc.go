@@ -111,11 +111,14 @@ func (f *AIFunction[In, Out]) Call(ctx context.Context, in In) (Out, error) {
 	if err != nil {
 		return zero, err
 	}
-	var opts []AgentOption
+	var opts []Option
 	if f.cfg.Preset != nil {
 		opts = append(opts, WithPreset(f.cfg.Preset))
 	}
-	a := NewAgent(AgentConfig{Name: f.name, SystemPrompt: f.cfg.System, Provider: f.cfg.Provider}, opts...)
+	a, err := New(Config{Name: f.name, SystemPrompt: f.cfg.System, Provider: f.cfg.Provider}, opts...)
+	if err != nil {
+		return zero, err
+	}
 	out, _, err := Structured[Out](ctx, a, []types.Message{types.UserMsg(types.Text(prompt))}, OutputSpec[Out]{
 		Mode:   f.cfg.Mode,
 		Repair: f.cfg.Repair,

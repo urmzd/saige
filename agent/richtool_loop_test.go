@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type richToolMock struct {
@@ -25,7 +26,7 @@ func TestRichToolFlowsThroughLoop(t *testing.T) {
 	prov := &toolCallProvider{toolName: "chart", toolID: "c1", toolArgs: map[string]any{}, response: "all done"}
 	tool := &richToolMock{name: "chart", res: types.ImageResult("here is the chart", types.MediaPNG, []byte{1, 2, 3})}
 
-	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}))
 	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("draw"))}))
 
 	// The terminal tool-exec delta carries both the text projection and Parts.
@@ -59,7 +60,7 @@ func TestPlainToolYieldsNilParts(t *testing.T) {
 		Def: types.ToolDef{Name: "echo"},
 		Fn:  func(context.Context, map[string]any) (string, error) { return "plain", nil },
 	}
-	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"})
+	a := must.Get(New(Config{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"}))
 	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 
 	for _, end := range collectDeltasByType[types.ToolExecEndDelta](deltas) {

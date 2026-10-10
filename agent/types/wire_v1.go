@@ -8,10 +8,11 @@ import (
 )
 
 // Wire version 1 streamed model output as content-specific deltas without
-// indices. They stay decodable (D-35): UnmarshalEnvelope returns them for a
-// v1 envelope, and NewV1Upgrader turns a v1 stream into part deltas. The
-// agent loop, the aggregator and every consumer in this module see only
-// part deltas.
+// indices. They stay decodable (D-35): the unexported types below are what
+// a v1 envelope decodes to, Decoder and NewV1Upgrader turn them into part
+// deltas, and NewV1Downgrader produces them for a v1 encoder. The agent
+// loop, the aggregator and every consumer in this module see only part
+// deltas.
 
 // ErrWireUnrepresentable reports output that has no form in the wire
 // version a client asked for, such as an image or a refusal for a v1
@@ -19,114 +20,90 @@ import (
 // the output.
 var ErrWireUnrepresentable = errors.New("output has no form in this wire version")
 
-// TextStartDelta signals the beginning of a text block.
-//
-// Deprecated: v1 stream form. Emit PartStart{Kind: KindText}.
-type TextStartDelta struct{}
+// v1TextStart signals the beginning of a text block.
+type v1TextStart struct{}
 
-func (TextStartDelta) isDelta() {}
+func (v1TextStart) isDelta() {}
 
-// TextContentDelta carries an incremental text fragment.
-//
-// Deprecated: v1 stream form. Emit PartDelta{Text: ...}.
-type TextContentDelta struct {
+// v1TextContent carries an incremental text fragment.
+type v1TextContent struct {
 	Content string
 }
 
-func (TextContentDelta) isDelta() {}
+func (v1TextContent) isDelta() {}
 
-// TextEndDelta signals the end of a text block.
-//
-// Deprecated: v1 stream form. Emit PartEnd.
-type TextEndDelta struct{}
+// v1TextEnd signals the end of a text block.
+type v1TextEnd struct{}
 
-func (TextEndDelta) isDelta() {}
+func (v1TextEnd) isDelta() {}
 
-// ToolCallStartDelta signals the LLM is generating a tool call.
-//
-// Deprecated: v1 stream form. Emit PartStart{Kind: KindToolCall, ID, Name}.
-type ToolCallStartDelta struct {
+// v1ToolCallStart signals the LLM is generating a tool call.
+type v1ToolCallStart struct {
 	ID   string
 	Name string
 }
 
-func (ToolCallStartDelta) isDelta() {}
+func (v1ToolCallStart) isDelta() {}
 
-// ToolCallArgumentDelta carries a JSON fragment of arguments. An empty ID
+// v1ToolCallArgument carries a JSON fragment of arguments. An empty ID
 // means the most recently started call.
-//
-// Deprecated: v1 stream form. Emit PartDelta{Args: ...}.
-type ToolCallArgumentDelta struct {
+type v1ToolCallArgument struct {
 	ID      string
 	Content string
 }
 
-func (ToolCallArgumentDelta) isDelta() {}
+func (v1ToolCallArgument) isDelta() {}
 
-// ToolCallEndDelta signals the LLM finished generating a tool call. An
+// v1ToolCallEnd signals the LLM finished generating a tool call. An
 // empty ID closes the oldest open call.
-//
-// Deprecated: v1 stream form. Emit PartEnd{Part: ToolCallPart{...}}.
-type ToolCallEndDelta struct {
+type v1ToolCallEnd struct {
 	ID             string
 	Arguments      map[string]any
 	ArgumentsError string
 }
 
-func (ToolCallEndDelta) isDelta() {}
+func (v1ToolCallEnd) isDelta() {}
 
-// ThinkingStartDelta signals the beginning of an extended thinking block.
-//
-// Deprecated: v1 stream form. Emit PartStart{Kind: KindThinking}.
-type ThinkingStartDelta struct{}
+// v1ThinkingStart signals the beginning of an extended thinking block.
+type v1ThinkingStart struct{}
 
-func (ThinkingStartDelta) isDelta() {}
+func (v1ThinkingStart) isDelta() {}
 
-// ThinkingContentDelta carries an incremental thinking fragment.
-//
-// Deprecated: v1 stream form. Emit PartDelta{Thinking: ...}.
-type ThinkingContentDelta struct {
+// v1ThinkingContent carries an incremental thinking fragment.
+type v1ThinkingContent struct {
 	Content string
 }
 
-func (ThinkingContentDelta) isDelta() {}
+func (v1ThinkingContent) isDelta() {}
 
-// ThinkingEndDelta signals the end of an extended thinking block.
-//
-// Deprecated: v1 stream form. Emit PartDelta{Signature: ...} and PartEnd.
-type ThinkingEndDelta struct {
+// v1ThinkingEnd signals the end of an extended thinking block.
+type v1ThinkingEnd struct {
 	Signature string
 }
 
-func (ThinkingEndDelta) isDelta() {}
+func (v1ThinkingEnd) isDelta() {}
 
-// ServerToolCallDelta reports a tool call the provider executes itself.
-//
-// Deprecated: v1 stream form. Emit PartStart and PartEnd with a
-// ServerToolCallPart.
-type ServerToolCallDelta struct {
+// v1ServerToolCall reports a tool call the provider executes itself.
+type v1ServerToolCall struct {
 	ID    string
 	Kind  ServerToolKind
 	Name  string
 	Input map[string]any
 }
 
-func (ServerToolCallDelta) isDelta() {}
+func (v1ServerToolCall) isDelta() {}
 
-// ServerToolResultDelta carries the outcome of a ServerToolCallDelta.
-//
-// Deprecated: v1 stream form. Emit PartStart and PartEnd with a
-// ServerToolResultPart.
-type ServerToolResultDelta struct {
+// v1ServerToolResult carries the outcome of a ServerToolCallDelta.
+type v1ServerToolResult struct {
 	ID      string
 	Kind    ServerToolKind
 	Text    string
 	Result  json.RawMessage
 	IsError bool
-	Files   []FileContent
+	Files   []wireFile
 }
 
-func (ServerToolResultDelta) isDelta() {}
+func (v1ServerToolResult) isDelta() {}
 
 // DecodeToolArguments parses streamed argument text. Empty text is a call
 // with no arguments. Text that is not a JSON object yields an error message
@@ -159,22 +136,6 @@ func NewV1Upgrader() func(Delta) []Delta {
 	return u.upgrade
 }
 
-// UpgradeV1Stream returns a stream carrying in upgraded by NewV1Upgrader. It
-// lets a producer that emits v1 deltas feed consumers that read parts.
-func UpgradeV1Stream(in <-chan Delta) <-chan Delta {
-	out := make(chan Delta, cap(in))
-	go func() {
-		defer close(out)
-		up := NewV1Upgrader()
-		for d := range in {
-			for _, u := range up(d) {
-				out <- u
-			}
-		}
-	}()
-	return out
-}
-
 type v1Tool struct {
 	idx      int
 	id, name string
@@ -199,10 +160,10 @@ func (u *v1Upgrader) alloc() int {
 //nolint:gocyclo // one case per v1 delta
 func (u *v1Upgrader) upgrade(d Delta) []Delta {
 	switch v := d.(type) {
-	case TextStartDelta:
+	case v1TextStart:
 		u.text = u.alloc()
 		return []Delta{PartStart{Index: u.text, Kind: KindText}}
-	case TextContentDelta:
+	case v1TextContent:
 		var out []Delta
 		if u.text < 0 {
 			// v1 allowed text without a start; open one rather than drop it.
@@ -213,17 +174,17 @@ func (u *v1Upgrader) upgrade(d Delta) []Delta {
 			return out
 		}
 		return append(out, PartDelta{Index: u.text, Text: v.Content})
-	case TextEndDelta:
+	case v1TextEnd:
 		if u.text < 0 {
 			return nil
 		}
 		i := u.text
 		u.text = -1
 		return []Delta{PartEnd{Index: i}}
-	case ThinkingStartDelta:
+	case v1ThinkingStart:
 		u.think = u.alloc()
 		return []Delta{PartStart{Index: u.think, Kind: KindThinking}}
-	case ThinkingContentDelta:
+	case v1ThinkingContent:
 		var out []Delta
 		if u.think < 0 {
 			u.think = u.alloc()
@@ -233,7 +194,7 @@ func (u *v1Upgrader) upgrade(d Delta) []Delta {
 			return out
 		}
 		return append(out, PartDelta{Index: u.think, Thinking: v.Content})
-	case ThinkingEndDelta:
+	case v1ThinkingEnd:
 		if u.think < 0 {
 			return nil
 		}
@@ -244,7 +205,7 @@ func (u *v1Upgrader) upgrade(d Delta) []Delta {
 			out = append(out, PartDelta{Index: i, Signature: v.Signature})
 		}
 		return append(out, PartEnd{Index: i})
-	case ToolCallStartDelta:
+	case v1ToolCallStart:
 		// A repeated start for an open ID restarts that call at its index.
 		if v.ID != "" {
 			for i, t := range u.tools {
@@ -258,14 +219,14 @@ func (u *v1Upgrader) upgrade(d Delta) []Delta {
 		t := &v1Tool{idx: u.alloc(), id: v.ID, name: v.Name}
 		u.tools = append(u.tools, t)
 		return []Delta{PartStart{Index: t.idx, Kind: KindToolCall, ID: v.ID, Name: v.Name}}
-	case ToolCallArgumentDelta:
+	case v1ToolCallArgument:
 		t := u.argTarget(v.ID)
 		if t == nil || v.Content == "" {
 			return nil
 		}
 		t.args.WriteString(v.Content)
 		return []Delta{PartDelta{Index: t.idx, Args: v.Content}}
-	case ToolCallEndDelta:
+	case v1ToolCallEnd:
 		i := u.endTarget(v.ID)
 		if i < 0 {
 			return nil
@@ -280,17 +241,17 @@ func (u *v1Upgrader) upgrade(d Delta) []Delta {
 			args = nil
 		}
 		return []Delta{PartEnd{Index: t.idx, Part: ToolCallPart{ID: t.id, Name: t.name, Arguments: args, ArgumentsError: argsErr}}}
-	case ServerToolCallDelta:
+	case v1ServerToolCall:
 		i := u.alloc()
 		return []Delta{
 			PartStart{Index: i, Kind: KindServerToolCall, ID: v.ID, Name: v.Name},
 			PartEnd{Index: i, Part: ServerToolCallPart{ID: v.ID, ToolKind: v.Kind, Name: v.Name, Input: v.Input}},
 		}
-	case ServerToolResultDelta:
+	case v1ServerToolResult:
 		i := u.alloc()
 		p := ServerToolResultPart{CallID: v.ID, ToolKind: v.Kind, Text: v.Text, Result: v.Result, IsError: v.IsError}
 		for _, f := range v.Files {
-			p.Outputs = append(p.Outputs, f.Part())
+			p.Outputs = append(p.Outputs, Media(f.source()))
 		}
 		return []Delta{PartStart{Index: i, Kind: KindServerToolResult, ID: v.ID}, PartEnd{Index: i, Part: p}}
 	case CitationDelta:
@@ -402,11 +363,11 @@ func (g *v1Downgrader) downgrade(d Delta) []Delta {
 		}
 		switch v.Kind {
 		case KindText:
-			return []Delta{TextStartDelta{}}
+			return []Delta{v1TextStart{}}
 		case KindThinking:
-			return []Delta{ThinkingStartDelta{}}
+			return []Delta{v1ThinkingStart{}}
 		case KindToolCall:
-			return []Delta{ToolCallStartDelta{ID: v.ID, Name: v.Name}}
+			return []Delta{v1ToolCallStart{ID: v.ID, Name: v.Name}}
 		}
 		return nil
 	case PartDelta:
@@ -417,15 +378,15 @@ func (g *v1Downgrader) downgrade(d Delta) []Delta {
 		switch {
 		case v.Text != "" && o.kind == KindText:
 			o.text.WriteString(v.Text)
-			return []Delta{TextContentDelta{Content: v.Text}}
+			return []Delta{v1TextContent{Content: v.Text}}
 		case v.Thinking != "" && o.kind == KindThinking:
 			o.text.WriteString(v.Thinking)
-			return []Delta{ThinkingContentDelta{Content: v.Thinking}}
+			return []Delta{v1ThinkingContent{Content: v.Thinking}}
 		case v.Signature != "" && o.kind == KindThinking:
 			o.sig.WriteString(v.Signature)
 		case v.Args != "" && o.kind == KindToolCall:
 			o.args.WriteString(v.Args)
-			return []Delta{ToolCallArgumentDelta{ID: o.id, Content: v.Args}}
+			return []Delta{v1ToolCallArgument{ID: o.id, Content: v.Args}}
 		}
 		return nil
 	case PartEnd:
@@ -478,44 +439,44 @@ func (g *v1Downgrader) end(o *v2Open, part AssistantPart) []Delta {
 	case KindText:
 		var out []Delta
 		if t, ok := part.(TextPart); ok && o.text.Len() == 0 && t.Text != "" {
-			out = append(out, TextContentDelta{Content: t.Text})
+			out = append(out, v1TextContent{Content: t.Text})
 		}
-		return append(out, TextEndDelta{})
+		return append(out, v1TextEnd{})
 	case KindThinking:
 		var out []Delta
 		sig := o.sig.String()
 		if t, ok := part.(ThinkingPart); ok {
 			if o.text.Len() == 0 && t.Text != "" {
-				out = append(out, ThinkingContentDelta{Content: t.Text})
+				out = append(out, v1ThinkingContent{Content: t.Text})
 			}
 			if t.Signature != "" {
 				sig = t.Signature
 			}
 		}
-		return append(out, ThinkingEndDelta{Signature: sig})
+		return append(out, v1ThinkingEnd{Signature: sig})
 	case KindToolCall:
 		if tc, ok := part.(ToolCallPart); ok {
-			return []Delta{ToolCallEndDelta{ID: firstNonEmpty(tc.ID, o.id), Arguments: tc.Arguments, ArgumentsError: tc.ArgumentsError}}
+			return []Delta{v1ToolCallEnd{ID: firstNonEmpty(tc.ID, o.id), Arguments: tc.Arguments, ArgumentsError: tc.ArgumentsError}}
 		}
 		args, argsErr := DecodeToolArguments(o.args.String())
-		return []Delta{ToolCallEndDelta{ID: o.id, Arguments: args, ArgumentsError: argsErr}}
+		return []Delta{v1ToolCallEnd{ID: o.id, Arguments: args, ArgumentsError: argsErr}}
 	case KindServerToolCall:
 		if sc, ok := part.(ServerToolCallPart); ok {
-			return []Delta{ServerToolCallDelta{ID: sc.ID, Kind: sc.ToolKind, Name: sc.Name, Input: sc.Input}}
+			return []Delta{v1ServerToolCall{ID: sc.ID, Kind: sc.ToolKind, Name: sc.Name, Input: sc.Input}}
 		}
-		return []Delta{ServerToolCallDelta{ID: o.id, Name: o.name}}
+		return []Delta{v1ServerToolCall{ID: o.id, Name: o.name}}
 	case KindServerToolResult:
 		sr, ok := part.(ServerToolResultPart)
 		if !ok {
-			return []Delta{ServerToolResultDelta{ID: o.id}}
+			return []Delta{v1ServerToolResult{ID: o.id}}
 		}
-		r := ServerToolResultDelta{ID: sr.CallID, Kind: sr.ToolKind, Text: sr.Text, Result: sr.Result, IsError: sr.IsError}
+		r := v1ServerToolResult{ID: sr.CallID, Kind: sr.ToolKind, Text: sr.Text, Result: sr.Result, IsError: sr.IsError}
 		for _, p := range sr.Outputs {
 			src, ok := SourceOf(p)
 			if !ok || p.Kind() == KindVideo || p.Kind() == KindAudioOut || p.Kind() == KindImageOut || p.Kind() == KindVideoOut {
 				return []Delta{unrepresentable(p.Kind())}
 			}
-			r.Files = append(r.Files, FileContent{URI: src.URI, MediaType: src.MediaType, Filename: src.Filename, Data: src.Inline})
+			r.Files = append(r.Files, wireFile{URI: src.URI, MediaType: src.MediaType, Filename: src.Filename, Data: src.Inline})
 		}
 		return []Delta{r}
 	case KindCitation:
@@ -535,24 +496,32 @@ func firstNonEmpty(s ...string) string {
 	return ""
 }
 
+// v1 tool output block kinds.
+const (
+	v1BlockText  = "text"
+	v1BlockImage = "image"
+	v1BlockFile  = "file"
+	v1BlockJSON  = "json"
+)
+
 // partsToBlocks is the v1 wire form of tool output parts.
-func partsToBlocks(parts []ToolOutputPart) []ToolResultBlock {
+func partsToBlocks(parts []ToolOutputPart) []wireBlock {
 	if parts == nil {
 		return nil
 	}
-	out := make([]ToolResultBlock, 0, len(parts))
+	out := make([]wireBlock, 0, len(parts))
 	for _, p := range parts {
 		switch v := p.(type) {
 		case TextPart:
-			out = append(out, ToolResultBlock{Kind: ToolResultBlockText, Text: v.Text})
+			out = append(out, wireBlock{Kind: v1BlockText, Text: v.Text})
 		case JSONPart:
-			out = append(out, ToolResultBlock{Kind: ToolResultBlockJSON, JSON: v.JSON})
+			out = append(out, wireBlock{Kind: v1BlockJSON, JSON: v.JSON})
 		case ImagePart:
-			out = append(out, ToolResultBlock{Kind: ToolResultBlockImage, MediaType: v.Source.MediaType,
+			out = append(out, wireBlock{Kind: v1BlockImage, MediaType: v.Source.MediaType,
 				URI: v.Source.URI, Filename: v.Source.Filename, Data: v.Source.Inline})
 		default:
 			if src, ok := SourceOf(p); ok {
-				out = append(out, ToolResultBlock{Kind: ToolResultBlockFile, MediaType: src.MediaType,
+				out = append(out, wireBlock{Kind: v1BlockFile, MediaType: src.MediaType,
 					URI: src.URI, Filename: src.Filename, Data: src.Inline})
 			}
 		}
@@ -561,13 +530,47 @@ func partsToBlocks(parts []ToolOutputPart) []ToolResultBlock {
 }
 
 // blocksToParts upgrades v1 tool output blocks.
-func blocksToParts(bs []ToolResultBlock) []ToolOutputPart {
+func blocksToParts(bs []wireBlock) []ToolOutputPart {
 	if bs == nil {
 		return nil
 	}
 	out := make([]ToolOutputPart, len(bs))
 	for i, b := range bs {
-		out[i] = b.Part()
+		out[i] = b.part()
 	}
 	return out
+}
+
+// source returns the media source a v1 file names.
+func (f wireFile) source() Source {
+	s := Source{URI: f.URI, MediaType: f.MediaType, Filename: f.Filename}
+	if len(f.Data) > 0 {
+		s = Bytes(f.MediaType, f.Data).With(s)
+	}
+	return s
+}
+
+// part returns the tool output part for a v1 block. A file block becomes a
+// document, audio or opaque file part by its media type.
+func (b wireBlock) part() ToolOutputPart {
+	switch b.Kind {
+	case v1BlockText:
+		return Text(b.Text)
+	case v1BlockJSON:
+		return JSONPart{JSON: b.JSON}
+	}
+	src := wireFile{URI: b.URI, MediaType: b.MediaType, Filename: b.Filename, Data: b.Data}.source()
+	if b.Kind == v1BlockImage {
+		return Image(src)
+	}
+	switch src.MediaType.Modality() {
+	case ModalityImage:
+		return Image(src)
+	case ModalityAudio:
+		return Audio(src)
+	case ModalityDocument:
+		return Document(src)
+	default:
+		return File(src)
+	}
 }

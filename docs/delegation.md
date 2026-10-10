@@ -24,7 +24,7 @@ An agent can pass work to another agent in two ways. A **handoff** moves ownersh
 | Runs | In the entry agent's loop, one owner at a time | A new `Agent` and tree per call | A new `Agent` and tree per call, in the background |
 | Source | `agent/handoff.go`, `agent/handoff_context.go`, `agent/links.go` | `agent/subagent.go`, `agent/subagent_result.go` | `agent/spawn.go`, `agent/subagent_tools.go` |
 
-A handoff tool is a signal, not a normal tool. Its `Execute` returns `Transferring control to <name>.` as the tool result, and the loop then appends a `HandoffContent` node to the branch (`applyHandoff` in `agent/agent.go`). A member that finishes with a text answer ends the run while it still owns the branch. The next `Invoke` on that branch resumes with the same owner, because the active member is resolved from the last `HandoffContent` on the branch.
+A handoff tool is a signal, not a normal tool. Its `Execute` returns `Transferring control to <name>.` as the tool result, and the loop then appends a `HandoffPart` node to the branch (`applyHandoff` in `agent/agent.go`). A member that finishes with a text answer ends the run while it still owns the branch. The next `Invoke` on that branch resumes with the same owner, because the active member is resolved from the last `HandoffPart` on the branch.
 
 Keep these rules in mind:
 
@@ -35,7 +35,7 @@ Keep these rules in mind:
 - Expect delegation to refuse cycles. A delegation or spawn whose target is the caller or one of its ancestors is refused with `ErrAncestorDelegation` (`agent/subagent_context.go`).
 
 ```go
-triage := agent.NewAgent(agent.AgentConfig{
+triage, err := agent.New(agent.Config{
 	Name:         "triage",
 	SystemPrompt: "Route each request to the right specialist.",
 	Provider:     model,
@@ -57,6 +57,9 @@ triage := agent.NewAgent(agent.AgentConfig{
 	),
 	agent.WithMaxHandoffs(4),
 )
+if err != nil {
+	return err
+}
 ```
 
 ## Context in
@@ -81,7 +84,7 @@ Handover note: <message>
 Context: <context>
 ```
 
-The `Handover note` and `Context` lines appear only when the caller filled `message` and `context`. All three arguments are stored on the `HandoffContent` node.
+The `Handover note` and `Context` lines appear only when the caller filled `message` and `context`. All three arguments are stored on the `HandoffPart` node.
 
 ### Subagent
 
@@ -180,7 +183,7 @@ type Summary struct {
 	Points []string `json:"points"`
 }
 
-lead := agent.NewAgent(agent.AgentConfig{
+lead, err := agent.New(agent.Config{
 	Name:     "lead",
 	Provider: model,
 	SubAgents: []agent.SubAgentDef{{
@@ -199,6 +202,9 @@ lead := agent.NewAgent(agent.AgentConfig{
 		},
 	}},
 })
+if err != nil {
+	return err
+}
 
 stream, err := lead.InvokeSubAgent(ctx, "summarizer", doc)
 if err != nil {
@@ -249,12 +255,12 @@ A handoff has no result to return. Every owner's turns, tool calls, and results 
 | Spawn | Same as delegate | `EventStream.SubAgents()`, then `SubAgentHandle.Wait(ctx)` |
 | `InvokeSubAgent` | Same as delegate | `stream.SubAgentResult()` on the returned stream |
 
-On a handoff branch, each transfer is a system-message node holding `HandoffContent{From, To, Reason, Message, Context}`. A `HandoffContent` placed in a user message forces a transfer from the host side. Both are metadata: the loop strips them before every provider call. The stream reports each transfer as `HandoffDelta{From, To, Reason}`, and `From` names the entry agent for a transfer out of it.
+On a handoff branch, each transfer is a system-message node holding `HandoffPart{From, To, Reason, Message, Context}`. A `HandoffPart` placed in a user message forces a transfer from the host side. Both are metadata: the loop strips them before every provider call. The stream reports each transfer as `HandoffDelta{From, To, Reason}`, and `From` names the entry agent for a transfer out of it.
 
 Provenance comes from these records:
 
-- **Owner of a turn**: the last `HandoffContent` before it on the branch. Tools read it as `RunScope.Agent` (`agent.RunScopeFromContext`) and `types.ToolCallInfo.Agent`.
-- **Model that produced a turn**: a `RouteContent` on the assistant turn, recorded when the provider reports a route or dials were compiled for the call.
+- **Owner of a turn**: the last `HandoffPart` before it on the branch. Tools read it as `RunScope.Agent` (`agent.RunScopeFromContext`) and `types.ToolCallInfo.Agent`.
+- **Model that produced a turn**: a `RoutePart` on the assistant turn, recorded when the provider reports a route or dials were compiled for the call.
 - **Child events**: forwarded live as `ToolExecDelta{ToolCallID, Inner}` under the delegating or spawning call ID.
 - **Delegation path**: interrupts carry the run ID and the path of tool call IDs from the root run.
 
@@ -280,13 +286,13 @@ Compaction (`agent/overflow.go`, `agent/types/compactor.go`, `agent/types/compac
 | `MaxInputTokens` set | Before a turn whose input exceeds it. Input is the larger of the last reported prompt tokens and the tokenizer's estimate. `summarize` and an empty strategy summarize the older half of the branch; a `chain` stops once the history fits `TargetTokens` (default `MaxInputTokens`). A turn is compacted again while it is still over and the last compaction shrank it, up to 5 times |
 | Context-length error | The branch is compacted and the turn retried, up to 3 times. It needs a `CompactCfg` whose strategy is not `none`. Otherwise, or after 3 attempts, the run returns the first context-length error |
 
-Compaction writes a new branch, makes it active, records a `CompactionContent` on it and streams a `CompactionDelta`. It does not count as an iteration.
+Compaction writes a new branch, makes it active, records a `CompactionPart` on it and streams a `CompactionDelta`. It does not count as an iteration.
 
 **Handoff groups reject active compaction** (D-11 in `DESIGN_DECISIONS.md`). A shared summary would erase ownership boundaries. A handoff group with an active strategy, including an empty one, fails the run before its first provider call with `handoff context compaction requires per-owner checkpoints; automatic compaction is unsupported`. A disabled policy (`Strategy: types.CompactNone` or `agent.WithoutCompaction()`) is accepted. A context-length error in a handoff group is returned at once. A subagent inherits the parent's `CompactCfg` unless its `Options` set one, and compacts its own tree, so an orchestrator with compaction off can delegate to children that compact; under a durable approval runner only a disabled policy is accepted. See [durable execution](durable-execution.md).
 
 Output truncation (`agent/forcing.go`, `agent/submit.go`):
 
-- **`max_tokens` cut**: the completed text is committed with a `TruncationContent` marker and reported with `TruncatedDelta{NodeID, Reason}`. Its tool calls never run. A cut turn with tool calls fails the run with `*types.ResponseTruncatedError`. A text-only cut ends the run cleanly.
+- **`max_tokens` cut**: the completed text is committed with a `TruncationPart` marker and reported with `TruncatedDelta{NodeID, Reason}`. Its tool calls never run. A cut turn with tool calls fails the run with `*types.ResponseTruncatedError`. A text-only cut ends the run cleanly.
 - **`WithAutoContinue(n)`**: resume a text-only cut turn up to n times. A provider that declares `CapAssistantPrefill` continues the partial turn; any other receives `DefaultContinuePrompt`.
 - **`Agent.Continue(ctx, branch)`**: resume a branch that ends with a text-only assistant turn later.
 - **Interrupt**: `SubmitInterruptReplace` stops the provider call, commits its completed text with reason `interrupted`, drops its tool calls, and sends `InterruptedDelta` and `TruncatedDelta`.
@@ -296,9 +302,9 @@ Output truncation (`agent/forcing.go`, `agent/submit.go`):
 
 | Limit | Default | Scope | At the limit |
 | --- | --- | --- | --- |
-| `AgentConfig.MaxIter` | 10 | Completed model turns per user turn of a run. Compactions and retries do not count. One counter covers every handoff owner in the run | `types.ErrMaxIterations` when tool results are still unanswered; otherwise a clean finish |
-| `HandoffDef.MaxIter` | 0, which uses the entry agent's | The cap while that member owns the turn, checked against the shared counter. A `ConfigContent.MaxIter` on the branch overrides it | Same as `MaxIter` |
-| `AgentConfig.MaxIter` set to `NoIterLimit` | | No cap. Suits an orchestrator whose children stay bounded | None |
+| `agent.Config.MaxIter` | 10 | Completed model turns per user turn of a run. Compactions and retries do not count. One counter covers every handoff owner in the run | `types.ErrMaxIterations` when tool results are still unanswered; otherwise a clean finish |
+| `HandoffDef.MaxIter` | 0, which uses the entry agent's | The cap while that member owns the turn, checked against the shared counter. A `ConfigPart.MaxIter` on the branch overrides it | Same as `MaxIter` |
+| `agent.Config.MaxIter` set to `NoIterLimit` | | No cap. Suits an orchestrator whose children stay bounded | None |
 | `SubAgentDef.MaxIter` | 0, which uses the parent's cap, or `DefaultSubAgentMaxIter` (10) under an uncapped parent | The child's own counter, independent of the parent's | A forced answer without tools. The delegation succeeds and the result is marked `Forced` |
 | `SubAgentDef.WrapUpAt` | `MaxIter - 2`, at least 1 | The child's turns before its wrap-up note | The note says how many turns remain and to return the result now |
 | `MaxHandoffs` | 8 | Transfers per run, not reset by queued user turns | `ErrHandoffLimitExceeded`. The over-limit transfer is neither streamed nor persisted |
@@ -333,7 +339,7 @@ Each child has an iteration budget, counted in model turns per user turn.
 The orchestrator follows its own config. Set `MaxIter: agent.NoIterLimit` on the parent to remove its cap. Its children stay bounded:
 
 ```go
-lead := agent.NewAgent(agent.AgentConfig{
+lead, err := agent.New(agent.Config{
     Name:     "lead",
     Provider: model,
     MaxIter:  agent.NoIterLimit,
@@ -344,6 +350,9 @@ lead := agent.NewAgent(agent.AgentConfig{
         MaxIter:     6, // wrap-up note after turn 4, forced answer at turn 6
     }},
 })
+if err != nil {
+    return err
+}
 ```
 
 The wrap-up note is a system message. It joins the child's branch at the next safe point after the threshold, once per user turn, and only while the child still has tool results to answer. It states how many iterations remain and tells the child to return its result now. When the child answers through `final_answer`, the note tells it to call `final_answer`. The child's stream reports the note as an `InjectedDelta` with `Mode` `"wrap_up"`.
@@ -361,7 +370,7 @@ Every result carries its budget metadata:
 
 The parent model sees the same facts. A forced delegation result starts with a note that the child reached its step limit after N iterations. A spawned child's `<subagent_result>` message carries `iterations="N"`, plus `forced="true"` when forced.
 
-`AgentConfig.WrapUpAt` and `WithWrapUpAt` give the same note to any agent, a top-level one included.
+`agent.Config.WrapUpAt` and `WithWrapUpAt` give the same note to any agent, a top-level one included.
 
 ## Private scratch
 

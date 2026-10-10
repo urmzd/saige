@@ -9,10 +9,11 @@ import (
 
 	"github.com/urmzd/saige/agent/notify"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func fastRunner(p types.BatchProvider, store Store, opts ...RunnerOption) *Runner {
-	return NewRunner(p, store, append([]RunnerOption{WithPollInterval(time.Millisecond, 5*time.Millisecond)}, opts...)...)
+	return must.Get(NewRunner(RunnerConfig{Provider: p, Store: store}, append([]RunnerOption{WithPollInterval(time.Millisecond, 5*time.Millisecond)}, opts...)...))
 }
 
 // TestRunnerMapsOutOfOrderResults checks that results the vendor returns in
@@ -264,8 +265,8 @@ func TestRunnerNotifierWakesWait(t *testing.T) {
 	v.autoEnd = false
 	n := notify.NewMemory(16)
 	store := NewMemoryStore()
-	waiter := NewRunner(v, store, WithNotifier(n, ""), WithPollInterval(time.Hour, time.Hour))
-	sweeper := NewRunner(v, store, WithNotifier(n, ""))
+	waiter := must.Get(NewRunner(RunnerConfig{Provider: v, Store: store}, WithNotifier(n, ""), WithPollInterval(time.Hour, time.Hour)))
+	sweeper := must.Get(NewRunner(RunnerConfig{Provider: v, Store: store}, WithNotifier(n, "")))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	job, err := waiter.Submit(ctx, "job", requests("a"))

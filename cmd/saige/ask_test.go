@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tui"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestRunAskResolvesMarkers(t *testing.T) {
@@ -39,10 +40,10 @@ func TestRunAskResolvesMarkers(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "rag_delete", map[string]any{"uuid": "doc"}),
 				agenttest.TextResponse("finished"),
 			}}
-			agent := agentsdk.NewAgent(agentsdk.AgentConfig{
+			agent := must.Get(agentsdk.New(agentsdk.Config{
 				Provider: provider,
 				Tools:    types.NewToolRegistry(types.WithMarkers(tool, types.Marker{Kind: "human_approval"})),
-			})
+			}))
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()

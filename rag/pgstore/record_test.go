@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/types"
 )
@@ -13,7 +14,7 @@ import (
 func TestGetVariantRecordAndListDocuments(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	docs := []*types.Document{
 		singleSectionDoc("rec-a", "fp-rec-a", map[string]string{"team": "core"},
@@ -71,7 +72,7 @@ func TestGetVariantRecordAndListDocuments(t *testing.T) {
 func TestBM25RebuildFromPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	doc := singleSectionDoc("bm25-a", "fp-bm25-a", map[string]string{"team": "core"},
 		types.ContentVariant{UUID: "bm25-a-v", ContentType: types.ContentText, Text: "the okapi grazes"})
 	if err := store.CreateDocument(ctx, doc); err != nil {
@@ -96,7 +97,7 @@ func TestBM25RebuildFromPostgres(t *testing.T) {
 func TestGetVariantRecordsBatch(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	for _, d := range []*types.Document{
 		singleSectionDoc("batch-a", "fp-batch-a", map[string]string{"team": "core"},
 			types.ContentVariant{UUID: "batch-a-v", ContentType: types.ContentText, Text: "alpha"}),

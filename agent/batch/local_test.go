@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // echoProvider answers "echo: <last user text>", tracking concurrency.
@@ -189,11 +190,11 @@ func TestLocalCancel(t *testing.T) {
 // TestLocalPricedInteractive checks that a local batch is charged at the
 // interactive rates: its calls are ordinary calls.
 func TestLocalPricedInteractive(t *testing.T) {
-	r := NewRunner(NewLocal(&echoProvider{}, 1), NewMemoryStore(), WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5}))
+	r := must.Get(NewRunner(RunnerConfig{Provider: NewLocal(&echoProvider{}, 1), Store: NewMemoryStore()}, WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5})))
 	if got := r.batchPricing().InputPerMTok; got != 2 {
 		t.Fatalf("input rate = %v, want 2", got)
 	}
-	r = NewRunner(newFakeVendor(), NewMemoryStore())
+	r = must.Get(NewRunner(RunnerConfig{Provider: newFakeVendor(), Store: NewMemoryStore()}))
 	if got := r.batchPricing().InputPerMTok; got != 1 {
 		t.Fatalf("vendor batch input rate = %v, want 1", got)
 	}

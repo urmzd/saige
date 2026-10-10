@@ -108,21 +108,21 @@ type BatchHandle struct {
 type BatchState string
 
 const (
-	// BatchPending: accepted, not yet running (validating or queued).
+	// BatchPending means accepted, not yet running (validating or queued).
 	BatchPending BatchState = "pending"
-	// BatchRunning: requests are being processed.
+	// BatchRunning means requests are being processed.
 	BatchRunning BatchState = "running"
-	// BatchCanceling: a cancel was requested and is being applied.
+	// BatchCanceling means a cancel was requested and is being applied.
 	BatchCanceling BatchState = "canceling"
-	// BatchEnded: processing finished; results are available. Individual
+	// BatchEnded means processing finished; results are available. Individual
 	// requests may still have failed.
 	BatchEnded BatchState = "ended"
-	// BatchExpired: the completion window passed. Requests that finished
+	// BatchExpired means the completion window passed. Requests that finished
 	// have results; the rest report BatchExpiredOutcome.
 	BatchExpired BatchState = "expired"
-	// BatchCanceled: canceled. Requests that finished have results.
+	// BatchCanceled means canceled. Requests that finished have results.
 	BatchCanceled BatchState = "canceled"
-	// BatchFailed: the batch as a whole was rejected, such as a malformed
+	// BatchFailed means the batch as a whole was rejected, such as a malformed
 	// input file. There are no per-request results.
 	BatchFailed BatchState = "failed"
 )
@@ -168,6 +168,7 @@ type BatchStatus struct {
 // BatchOutcome is how one request in a batch ended.
 type BatchOutcome string
 
+// Outcomes of one batch request.
 const (
 	BatchSucceeded       BatchOutcome = "succeeded"
 	BatchErrored         BatchOutcome = "errored"
@@ -236,4 +237,5 @@ func (e *BatchRequestError) Error() string {
 
 func (e *BatchRequestError) Unwrap() error { return e.Err }
 
+// Is matches ErrBatchRequest.
 func (e *BatchRequestError) Is(target error) bool { return target == ErrBatchRequest }

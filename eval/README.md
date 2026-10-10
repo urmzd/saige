@@ -294,8 +294,6 @@ Without `Metrics` it checks the metrics either arm gated, or every shared metric
 
 Cases pair by ID, Turn, Sample, and the `variant` label, so two suites from `Experiment.Run` compare each variant with itself and `CaseDiff.Variant` names it. When each arm holds one variant and they differ, as in `CompareVariants`, cases pair without the variant.
 
-`RunExperiment`, `ExperimentResult`, `ExperimentOption`, `WithExperimentName`, `WithRunOptions`, `WriteExperiment`, and `ReadExperiment` remain as deprecated names for `Compare`, `Comparison`, `Option`, `WithName`, plain options, `WriteComparison`, and `ReadComparison`.
-
 ## Experiments
 
 An `Experiment` states intent: a claim, the variants under test, the scorers, and the gates. It owns no data, so a run pairs it with a dataset.
@@ -412,7 +410,7 @@ The `store.Store` interface has three implementations: `memstore` (in memory), `
 
 `CaptureProvenance` reads the commit and dirty flag from git when it is available and from the binary's VCS stamp otherwise; a run outside any repository records no commit rather than failing.
 
-`saige eval run --store DIR` records each harness run there (set `harness.Runner.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
+`saige eval run --store DIR` records each harness run there (set `harness.Config.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
 
 ## Storing Results in Postgres
 
@@ -485,8 +483,12 @@ import (
 )
 
 budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.50), MaxRequests: 200})
+model, err := openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"}) // a cheap judge model
+if err != nil {
+    return err
+}
 judge := eval.NewJudgeScorer(&online.BudgetedGenerator{
-    Provider: openai.NewAdapter(key, "gpt-6-luna"), // a cheap judge model
+    Provider: model,
     Budget:   budget,
 }, eval.WithJudgeRubric("Score 1 when the answer is correct and complete."))
 

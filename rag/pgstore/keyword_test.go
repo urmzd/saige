@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -61,7 +62,7 @@ func keywordUUIDs(t *testing.T, s *Store, query string, opts *types.SearchOption
 // returns provenance and document timestamps.
 func TestKeywordSearchFilters(t *testing.T) {
 	ctx := context.Background()
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 
 	add := func(uuid, scope string, meta map[string]string, variants ...types.ContentVariant) {
 		t.Helper()
@@ -142,7 +143,7 @@ func TestKeywordSearchFilters(t *testing.T) {
 // swaps old terms for new ones, and DeleteDocument removes them.
 func TestKeywordIndexFollowsDocumentLifecycle(t *testing.T) {
 	ctx := context.Background()
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	opts := &types.SearchOptions{Scope: "life"}
 
 	doc := singleSectionDoc("life", "fp-life-1", nil,
@@ -178,7 +179,7 @@ func TestKeywordIndexFollowsDocumentLifecycle(t *testing.T) {
 
 func TestKeywordRetriever(t *testing.T) {
 	ctx := context.Background()
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	doc := singleSectionDoc("ret", "fp-ret", nil,
 		types.ContentVariant{UUID: "ret-v", ContentType: types.ContentText, Text: "a pangolin rolls up"})
 	if err := s.CreateDocument(ctx, doc); err != nil {

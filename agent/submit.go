@@ -483,8 +483,8 @@ func treeRoundTrips(msg types.Message) bool {
 // WithAutoContinue lets a run resume up to n times when the output token
 // limit cuts a text-only turn short. A truncated turn with a tool call still
 // fails with ResponseTruncatedError; the cut-off call never runs.
-func WithAutoContinue(n int) AgentOption {
-	return func(c *AgentConfig) { c.AutoContinue = n }
+func WithAutoContinue(n int) Option {
+	return func(c *Config) { c.AutoContinue = n }
 }
 
 // Continue resumes the last assistant turn on branch, typically one cut short

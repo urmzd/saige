@@ -23,7 +23,10 @@ reserve := agent.Func("reserve", "Reserve units of a SKU",
     agent.Idempotent(),
 )
 
-a := agent.NewAgent(cfg, agent.WithDeps(&Inventory{db: db}))
+a, err := agent.New(cfg, agent.WithDeps(&Inventory{db: db}))
+if err != nil {
+    return err
+}
 ```
 
 | Behavior | Rule |
@@ -62,7 +65,7 @@ A Func tool reports a version: `types.DefinitionHash` of its name, description, 
 Changing `In` changes the version.
 
 - `registry.ToolSet.Register` registers a versioned tool with that version. Registering it again unchanged returns the current revision. A changed schema adds a revision. `ToolSet.AtVersion` finds the revision a transcript names.
-- The loop records the version in `ToolExecEndDelta.Version` and `ToolResultContent.ToolVersion`, so the tree names the schema that produced each result.
+- The loop records the version in `ToolExecEndDelta.Version` and `ToolResultPart.ToolVersion`, so the tree names the schema that produced each result.
 - `eval.AgentRun.AddProvenance` records versions in `eval.Provenance.Tools`. `eval.ConfigDrift` reports a tool that ran at different versions in two runs.
 
 ## AIFunc

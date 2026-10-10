@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestSubmitJoinsRunAfterCompaction checks that a run which moved to a
@@ -28,11 +29,11 @@ func TestSubmitJoinsRunAfterCompaction(t *testing.T) {
 				stepCall{before: agenttest.TextResponse("summary of the request")},
 				stepCall{hold: hold, after: agenttest.TextResponse("answer")},
 			)
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Provider:     provider,
 				SystemPrompt: "sys",
 				CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: 1},
-			})
+			}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			before := a.Tree().Active()
@@ -85,7 +86,7 @@ func TestInterruptOnLastStepIsAnswered(t *testing.T) {
 				stepCall{hold: make(chan struct{})},
 				stepCall{before: agenttest.TextResponse("replaced")},
 			)
-			a := NewAgent(AgentConfig{Provider: provider, MaxIter: tt.maxIter})
+			a := must.Get(New(Config{Provider: provider, MaxIter: tt.maxIter}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -151,7 +152,7 @@ func TestDurableRunRefusesSubmissions(t *testing.T) {
 		t.Run(mode.String(), func(t *testing.T) {
 			hold := make(chan struct{})
 			provider := newStepProvider(stepCall{hold: hold, after: agenttest.TextResponse("done")})
-			a := NewAgent(AgentConfig{Provider: provider}, WithStepRunner(newRecordingRunner()))
+			a := must.Get(New(Config{Provider: provider}, WithStepRunner(newRecordingRunner())))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -198,7 +199,7 @@ func TestSubmitFromConsumerWithFullBuffer(t *testing.T) {
 				stepCall{before: flood, hold: hold, after: []types.Delta{types.PartEnd{Index: 0}}},
 				stepCall{before: agenttest.TextResponse("second")},
 			)
-			a := NewAgent(AgentConfig{Provider: provider})
+			a := must.Get(New(Config{Provider: provider}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -259,7 +260,7 @@ func TestAgentSubmitReportsStartedRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := newStepProvider(stepCall{before: agenttest.TextResponse("hi")})
-			a := NewAgent(AgentConfig{Provider: provider})
+			a := must.Get(New(Config{Provider: provider}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 

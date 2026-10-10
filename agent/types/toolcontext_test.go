@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func (c *configurableTool) ContextSchema() ParameterSchema {
 }
 func (c *configurableTool) Requires() []string { return []string{"db"} }
 func (c *configurableTool) Configure(tc ToolContext, deps Deps) (Tool, error) {
-	db, err := Dep[string](deps, "db")
+	db, err := Dep(deps, NewKey[string]("db"))
 	if err != nil {
 		return nil, err
 	}
@@ -133,13 +134,13 @@ func TestToolContextTravelsThroughContext(t *testing.T) {
 func TestDepReportsMissingAndMistypedDependencies(t *testing.T) {
 	deps := NewDeps(map[string]any{"db": "postgres://x", "count": 5})
 
-	if got, err := Dep[string](deps, "db"); err != nil || got != "postgres://x" {
+	if got, err := Dep(deps, NewKey[string]("db")); err != nil || got != "postgres://x" {
 		t.Errorf("Dep = %q, %v", got, err)
 	}
-	if _, err := Dep[string](deps, "absent"); err == nil {
+	if _, err := Dep(deps, NewKey[string]("absent")); err == nil {
 		t.Error("a missing dependency must error, not return a zero value that panics later")
 	}
-	if _, err := Dep[string](deps, "count"); err == nil {
+	if _, err := Dep(deps, NewKey[string]("count")); err == nil {
 		t.Error("a dependency of the wrong type must error at lookup, not panic mid-run")
 	}
 }
@@ -255,5 +256,31 @@ func TestKeyArgumentsAreDeterministic(t *testing.T) {
 func TestPolicyForReportsUncachedForPlainTools(t *testing.T) {
 	if got := PolicyFor(&ToolFunc{Def: ToolDef{Name: "x"}}); got.Enabled {
 		t.Error("a tool that declares nothing must be uncached")
+	}
+}
+
+var (
+	limitKey = NewKey[int]("limit")
+	poolKey  = NewKey[*strings.Builder]("pool")
+)
+
+func TestTypedKeys(t *testing.T) {
+	tc := Put(NewToolContext(nil), limitKey, 5)
+	if v, ok := Get(tc, limitKey); !ok || v != 5 {
+		t.Fatalf("Get = %d, %v", v, ok)
+	}
+	if tc.Int(limitKey.Name(), 0) != 5 {
+		t.Fatal("a typed knob is not visible to the untyped accessor")
+	}
+	if _, ok := Get(tc.With("limit", "five"), limitKey); ok {
+		t.Fatal("a knob of another type was returned")
+	}
+	b := &strings.Builder{}
+	deps := WithDep(NewDeps(nil), poolKey, b)
+	if got, err := Dep(deps, poolKey); err != nil || got != b {
+		t.Fatalf("Dep = %v, %v", got, err)
+	}
+	if _, err := Dep(deps, NewKey[int]("pool")); err == nil {
+		t.Fatal("a dependency of another type was returned")
 	}
 }

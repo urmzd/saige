@@ -15,6 +15,7 @@ import (
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store"
 	"github.com/urmzd/saige/eval/store/memstore"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // failingServer answers every chat request, failing those whose last
@@ -69,13 +70,13 @@ func TestRunnerConcurrency(t *testing.T) {
 				t.Fatal(err)
 			}
 			results := memstore.New()
-			runner := &Runner{
+			runner := must.Get(New(Config{
 				Client:      NewClient(server.URL, "k", "mock"),
 				Flows:       []Flow{BaseFlow{}},
 				Concurrency: tt.concurrency,
 				Results:     results,
 				RunID:       "run",
-			}
+			}))
 			if err := runner.Run(context.Background(), scripts); err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +110,7 @@ func TestRunnerConcurrentStopsLaunchingOnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Concurrency: 2}
+	runner := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Concurrency: 2}))
 	if err := runner.Run(context.Background(), scripts); err == nil || !strings.Contains(err.Error(), "a:") {
 		t.Fatalf("err = %v, want a to fail", err)
 	}
@@ -131,7 +132,7 @@ func TestRunnerResume(t *testing.T) {
 	}
 	results := memstore.New()
 	ctx := context.Background()
-	first := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, ContinueOnError: true, Results: results, RunID: "first"}
+	first := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, ContinueOnError: true, Results: results, RunID: "first"}))
 	if err := first.Run(ctx, scripts); err == nil {
 		t.Fatal("first run should fail on b")
 	}
@@ -143,7 +144,7 @@ func TestRunnerResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls.Store(0)
-	second := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Results: results, RunID: "second", Resume: "first"}
+	second := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Results: results, RunID: "second", Resume: "first"}))
 	plan, err := second.Plan(ctx, scripts)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +166,7 @@ func TestRunnerResume(t *testing.T) {
 		t.Errorf("resumed run = %+v", run)
 	}
 
-	otherModel := &Runner{Client: NewClient(server.URL, "k", "other"), Flows: []Flow{BaseFlow{}}, Results: results, RunID: "third", Resume: "first"}
+	otherModel := must.Get(New(Config{Client: NewClient(server.URL, "k", "other"), Flows: []Flow{BaseFlow{}}, Results: results, RunID: "third", Resume: "first"}))
 	calls.Store(0)
 	if err := otherModel.Run(ctx, scripts); err == nil || !strings.Contains(err.Error(), "other") {
 		t.Errorf("resume with a different model = %v, want a model mismatch error", err)
@@ -174,11 +175,11 @@ func TestRunnerResume(t *testing.T) {
 		t.Errorf("resume with a different model made %d calls", calls.Load())
 	}
 
-	missing := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Resume: "first"}
+	missing := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Resume: "first"}))
 	if err := missing.Run(ctx, scripts); err == nil {
 		t.Error("resume without a store should fail")
 	}
-	unknown := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Results: results, Resume: "nope"}
+	unknown := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Results: results, Resume: "nope"}))
 	if err := unknown.Run(ctx, scripts); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("resume of an unknown run = %v, want ErrNotFound", err)
 	}
@@ -208,13 +209,13 @@ func TestRunnerAssert(t *testing.T) {
 				t.Fatal(err)
 			}
 			var gated *eval.SuiteResult
-			runner := &Runner{
+			runner := must.Get(New(Config{
 				Client:  NewClient(server.URL, "k", "mock"),
 				Flows:   []Flow{BaseFlow{}},
 				Assert:  tt.assert,
 				RunID:   "gated",
 				OnGated: func(s *eval.SuiteResult) { gated = s },
-			}
+			}))
 			results := memstore.New()
 			if tt.withStore {
 				runner.Results = results
@@ -260,7 +261,7 @@ func TestRunnerReuseMetrics(t *testing.T) {
 	}
 	gate := []eval.Assertion{{Metric: MetricTurnSucceeded, Op: eval.GTE, Threshold: 1}}
 	newRunner := func(reuse bool) *Runner {
-		return &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Assert: gate, ReuseMetrics: reuse}
+		return must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}, Assert: gate, ReuseMetrics: reuse}))
 	}
 	if err := newRunner(true).Run(context.Background(), scripts); err != nil {
 		t.Fatal(err)
@@ -310,7 +311,7 @@ func TestRunnerPlan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			plan, err := (&Runner{Flows: tt.flows, Force: tt.force}).Plan(context.Background(), scripts)
+			plan, err := (must.Get(New(Config{Client: &Client{Model: "mock"}, Flows: tt.flows, Force: tt.force}))).Plan(context.Background(), scripts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -336,7 +337,7 @@ func TestRunnerReuseMetricsRequiresSameModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Runner{Client: NewClient(server.URL, "k", "model-a"), Flows: []Flow{BaseFlow{}}}).Run(context.Background(), scripts); err != nil {
+	if err := (must.Get(New(Config{Client: NewClient(server.URL, "k", "model-a"), Flows: []Flow{BaseFlow{}}}))).Run(context.Background(), scripts); err != nil {
 		t.Fatal(err)
 	}
 	gate := []eval.Assertion{{Metric: MetricTurnSucceeded, Op: eval.GTE, Threshold: 1}}
@@ -349,7 +350,7 @@ func TestRunnerReuseMetricsRequiresSameModel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			runner := &Runner{Client: NewClient(server.URL, "k", tt.model), Flows: []Flow{BaseFlow{}}, Assert: gate, ReuseMetrics: true}
+			runner := must.Get(New(Config{Client: NewClient(server.URL, "k", tt.model), Flows: []Flow{BaseFlow{}}, Assert: gate, ReuseMetrics: true}))
 			err := runner.Run(context.Background(), scripts)
 			if got := errors.Is(err, ErrAssertionsFailed); got != tt.wantFail {
 				t.Errorf("err = %v, want assertion failure %v", err, tt.wantFail)
@@ -367,7 +368,7 @@ func TestRunnerReuseMetricsRequiresEveryFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Runner{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}}).Run(context.Background(), scripts); err != nil {
+	if err := (must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: []Flow{BaseFlow{}}}))).Run(context.Background(), scripts); err != nil {
 		t.Fatal(err)
 	}
 	gate := []eval.Assertion{{Metric: MetricTurnSucceeded, Op: eval.GTE, Threshold: 1}}
@@ -381,7 +382,7 @@ func TestRunnerReuseMetricsRequiresEveryFlow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &Runner{Client: NewClient(server.URL, "k", "mock"), Flows: tt.flows, Assert: gate, ReuseMetrics: true}
+			runner := must.Get(New(Config{Client: NewClient(server.URL, "k", "mock"), Flows: tt.flows, Assert: gate, ReuseMetrics: true}))
 			err := runner.Run(context.Background(), scripts)
 			if got := errors.Is(err, ErrAssertionsFailed); got != tt.wantFail {
 				t.Errorf("err = %v, want assertion failure %v", err, tt.wantFail)

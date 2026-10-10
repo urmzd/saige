@@ -36,10 +36,19 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// ErrSessionBusy reports a request on a routing session that is already
+// serving one. A session is single-flight; use NewSession per caller.
 var ErrSessionBusy = errors.New("routing session already has an active request")
 
-// ErrUnknownProfile reports a profile ID that the router does not define.
+// ErrUnknownProfile reports a profile ID that the router does not define,
+// including one a routing policy returned.
 var ErrUnknownProfile = errors.New("unknown routing profile")
+
+// ErrNoEligibleProfile reports a request no profile can serve: every
+// candidate lacks a required capability, cannot take the request's schema,
+// options or parts, or the policy chose none. It joins each candidate's
+// reason when there is one.
+var ErrNoEligibleProfile = errors.New("no eligible routing profile")
 
 // Route reasons reported on types.RouteDelta.Reason. An empty reason means the
 // policy's first choice.
@@ -134,8 +143,10 @@ type Policy interface {
 	Order(context.Context, Request) ([]types.ProfileID, error)
 }
 
+// PolicyFunc adapts a function to a Policy.
 type PolicyFunc func(context.Context, Request) ([]types.ProfileID, error)
 
+// Order calls f.
 func (f PolicyFunc) Order(ctx context.Context, r Request) ([]types.ProfileID, error) {
 	return f(ctx, r)
 }
@@ -145,6 +156,7 @@ func (f PolicyFunc) Order(ctx context.Context, r Request) ([]types.ProfileID, er
 // Use Affinity for a failure threshold and recovery probes.
 type Sticky struct{}
 
+// Order implements Policy.
 func (Sticky) Order(_ context.Context, r Request) ([]types.ProfileID, error) {
 	start := 0
 	for i, candidate := range r.Candidates {
@@ -163,7 +175,10 @@ func (Sticky) Order(_ context.Context, r Request) ([]types.ProfileID, error) {
 	return order, nil
 }
 
+// Config lists a router's profiles and how it orders them.
 type Config struct {
+	// Profiles are the provider configurations the router can serve. At
+	// least one is required, each with a unique ID and a provider.
 	Profiles []Profile
 	// Groups name ordered sets of profile IDs, such as the chain of one
 	// preset. A preset target names a group and then restricts candidates
@@ -208,16 +223,35 @@ func DefaultFailoverOn(err error) bool {
 	return types.IsTransient(err) || types.IsContextLength(err)
 }
 
+// Router holds a validated routing configuration. It serves requests
+// through sessions (see Session), which keep the per-conversation routing
+// state.
 type Router struct{ cfg Config }
 
-func New(cfg Config) (*Router, error) {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithPolicy sets Config.Policy.
+func WithPolicy(p Policy) Option { return func(c *Config) { c.Policy = p } }
+
+// WithSessionPolicy sets Config.SessionPolicy.
+func WithSessionPolicy(p SessionRouterPolicy) Option {
+	return func(c *Config) { c.SessionPolicy = p }
+}
+
+// New validates cfg and returns a router. An invalid configuration is an
+// error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (*Router, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if len(cfg.Profiles) == 0 {
-		return nil, errors.New("router requires at least one profile")
+		return nil, fmt.Errorf("%w: router requires at least one profile", types.ErrInvalidConfig)
 	}
 	names := map[types.ProfileID]bool{}
 	for _, p := range cfg.Profiles {
 		if p.ID == "" || p.Provider == nil || names[p.ID] {
-			return nil, fmt.Errorf("invalid or duplicate routing profile %q", p.ID)
+			return nil, fmt.Errorf("%w: invalid or duplicate routing profile %q", types.ErrInvalidConfig, p.ID)
 		}
 		names[p.ID] = true
 	}
@@ -226,15 +260,15 @@ func New(cfg Config) (*Router, error) {
 		// A group may share its name with a profile only when it is that
 		// one profile, as for a preset built from a single model.
 		if name == "" || (names[types.ProfileID(name)] && (len(members) != 1 || members[0] != types.ProfileID(name))) {
-			return nil, fmt.Errorf("routing group %q is empty or collides with a profile ID", name)
+			return nil, fmt.Errorf("%w: routing group %q is empty or collides with a profile ID", types.ErrInvalidConfig, name)
 		}
 		if len(members) == 0 {
-			return nil, fmt.Errorf("routing group %q has no members", name)
+			return nil, fmt.Errorf("%w: routing group %q has no members", types.ErrInvalidConfig, name)
 		}
 		seen := map[types.ProfileID]bool{}
 		for _, id := range members {
 			if !names[id] || seen[id] {
-				return nil, fmt.Errorf("routing group %q: unknown or duplicate profile %q", name, id)
+				return nil, fmt.Errorf("%w: routing group %q: unknown or duplicate profile %q", types.ErrInvalidConfig, name, id)
 			}
 			seen[id] = true
 		}
@@ -242,7 +276,7 @@ func New(cfg Config) (*Router, error) {
 	}
 	cfg.Groups = groups
 	if cfg.DefaultGroup != "" && cfg.Groups[cfg.DefaultGroup] == nil {
-		return nil, fmt.Errorf("default routing group %q is not defined", cfg.DefaultGroup)
+		return nil, fmt.Errorf("%w: default routing group %q is not defined", types.ErrInvalidConfig, cfg.DefaultGroup)
 	}
 	cfg.Profiles = append([]Profile(nil), cfg.Profiles...)
 	cfg.Required = append([]types.Capability(nil), cfg.Required...)
@@ -263,10 +297,10 @@ func New(cfg Config) (*Router, error) {
 
 // Close implements types.Closer by closing every profile's provider. Sessions
 // share these providers, so close the router only after its last session.
-func (r *Router) Close() error {
+func (r *Router) Close(ctx context.Context) error {
 	var errs []error
 	for _, p := range r.cfg.Profiles {
-		if err := types.CloseProvider(p.Provider); err != nil {
+		if err := types.CloseProvider(ctx, p.Provider); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -335,6 +369,7 @@ var (
 	_ wrapper.MultiWrapper           = (*Session)(nil)
 )
 
+// Session returns a new routing session, which keeps its own route state.
 func (r *Router) Session() *Session {
 	return &Session{router: r, shared: &sessionState{state: RouteState{Revision: r.cfg.Revision}}}
 }
@@ -348,6 +383,7 @@ func (s *Session) NewSession() types.Provider {
 	return child
 }
 
+// Name implements types.NamedProvider.
 func (s *Session) Name() string { return "router" }
 
 // Model is the profile ID, not a model name with settings copied across vendors.
@@ -671,24 +707,24 @@ func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[t
 		p.followServed = true
 	}
 	if err == nil && len(decision.Order) == 0 {
-		err = errors.New("no eligible routing profile")
+		err = ErrNoEligibleProfile
 		if len(rc.Candidates) == 0 && len(reasons) > 0 {
 			// Each member's own reason, so a raw option every member
 			// rejects reads as a configuration error, not an outage.
-			err = fmt.Errorf("no eligible routing profile: %w", errors.Join(reasons...))
+			err = fmt.Errorf("%w: %w", ErrNoEligibleProfile, errors.Join(reasons...))
 		}
 	}
 	seen := map[types.ProfileID]bool{}
 	for _, id := range decision.Order {
 		if p.providers[id] == nil || seen[id] {
-			err = fmt.Errorf("routing policy returned invalid profile %q", id)
+			err = fmt.Errorf("%w: routing policy returned invalid profile %q", ErrUnknownProfile, id)
 			break
 		}
 		seen[id] = true
 	}
 	for _, id := range []types.ProfileID{decision.Profile, decision.Probe} {
 		if err == nil && id != "" && !seen[id] {
-			err = fmt.Errorf("routing policy selected profile %q outside its order", id)
+			err = fmt.Errorf("%w: routing policy selected profile %q outside its order", ErrUnknownProfile, id)
 		}
 	}
 	if err != nil {

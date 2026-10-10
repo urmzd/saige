@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval/harness"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type nopProvider struct{}
@@ -18,11 +19,11 @@ func (nopProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delt
 }
 
 func TestApplyEvalBatch(t *testing.T) {
-	if err := applyEvalBatch(&harness.Client{}, &harness.Runner{}, 3, "", "s"); err == nil {
+	if err := applyEvalBatch(&harness.Client{}, must.Get(harness.New(harness.Config{Client: &harness.Client{}})), 3, "", "s"); err == nil {
 		t.Fatal("--batch accepted the OpenAI-compatible HTTP transport")
 	}
 	client := harness.NewProviderClient(nopProvider{})
-	runner := &harness.Runner{Concurrency: 1}
+	runner := must.Get(harness.New(harness.Config{Client: &harness.Client{}, Concurrency: 1}))
 	if err := applyEvalBatch(client, runner, 3, t.TempDir(), "suite"); err != nil {
 		t.Fatal(err)
 	}

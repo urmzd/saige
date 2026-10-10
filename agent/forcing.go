@@ -48,38 +48,38 @@ var (
 )
 
 // WithOnMaxIter sets what happens when a run reaches a step limit.
-func WithOnMaxIter(p MaxIterPolicy) AgentOption {
-	return func(c *AgentConfig) { c.OnMaxIter = p }
+func WithOnMaxIter(p MaxIterPolicy) Option {
+	return func(c *Config) { c.OnMaxIter = p }
 }
 
 // WithStopAtTools ends the run as soon as one of the named tools succeeds.
 // The tool's result becomes the run's output.
-func WithStopAtTools(names ...string) AgentOption {
-	return func(c *AgentConfig) { c.StopAtTools = append(c.StopAtTools, names...) }
+func WithStopAtTools(names ...string) Option {
+	return func(c *Config) { c.StopAtTools = append(c.StopAtTools, names...) }
 }
 
 // WithMaxConsecutiveErrors stops a run after n consecutive turns in which
 // every tool call failed. A negative n disables the check.
-func WithMaxConsecutiveErrors(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxConsecutiveErrors = n }
+func WithMaxConsecutiveErrors(n int) Option {
+	return func(c *Config) { c.MaxConsecutiveErrors = n }
 }
 
 // WithMaxRepeatIterations stops a run when the model requests the same tool
 // calls with the same arguments more than n turns in a row. 0 disables it.
-func WithMaxRepeatIterations(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxRepeatIterations = n }
+func WithMaxRepeatIterations(n int) Option {
+	return func(c *Config) { c.MaxRepeatIterations = n }
 }
 
 // WithToolChoice sets the tool choice for the agent's turns. A required or
 // named choice applies to the first turn of each run; auto and none apply to
 // every turn. A ConfigPart.ToolChoice in the conversation takes precedence.
-func WithToolChoice(choice types.ToolChoice) AgentOption {
-	return func(c *AgentConfig) { c.ToolChoice = &choice }
+func WithToolChoice(choice types.ToolChoice) Option {
+	return func(c *Config) { c.ToolChoice = &choice }
 }
 
 // WithTokenizer sets the tokenizer used for CompactConfig.MaxInputTokens.
-func WithTokenizer(t types.Tokenizer) AgentOption {
-	return func(c *AgentConfig) { c.Tokenizer = t }
+func WithTokenizer(t types.Tokenizer) Option {
+	return func(c *Config) { c.Tokenizer = t }
 }
 
 // ── Tool choice ──────────────────────────────────────────────────────

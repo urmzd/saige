@@ -13,6 +13,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func writeDefinition(t *testing.T, dir, name, extra string) {
@@ -89,7 +90,7 @@ func TestAgentToolBindsPerCall(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]agenttypes.Delta{agenttest.TextResponse("one"), agenttest.TextResponse("two")}}
 	at := agentTool{name: defaultAgentTool, description: "test", newBound: func(context.Context) (*agentsdk.Agent, func(), error) {
 		binds.Add(1)
-		return agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: p}), func() { releases.Add(1) }, nil
+		return must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: p})), func() { releases.Add(1) }, nil
 	}}
 	cs := agentSession(t, bridge{approval: approvalElicit}, at, nil)
 	for _, want := range []string{"one", "two"} {

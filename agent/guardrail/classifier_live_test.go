@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/guardrail"
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestClassifierLive asks a real model to classify an obviously off-policy
@@ -22,13 +23,13 @@ func TestClassifierLive(t *testing.T) {
 	if os.Getenv("SAIGE_LIVE") != "1" || key == "" {
 		t.Skip("set SAIGE_LIVE=1 and OPENAI_API_KEY to call the provider")
 	}
-	classifier := guardrail.Classifier("cooking-only", openai.NewAdapter(key, "gpt-6-luna"),
+	classifier := guardrail.Classifier("cooking-only", must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})),
 		"Only questions about cooking and recipes are allowed. Anything else must be blocked.")
 	main := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("unused")}}
 	budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.10), PerCallCost: types.USD(0.02), AllowUnpriced: true})
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "You are a cooking assistant.", Provider: main},
+	a := must.Get(agent.New(agent.Config{SystemPrompt: "You are a cooking assistant.", Provider: main},
 		agent.WithBudget(budget),
-		agent.WithInputGuardrails(agent.InputGuardrail{Guardrail: classifier}))
+		agent.WithInputGuardrails(agent.InputGuardrail{Guardrail: classifier})))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

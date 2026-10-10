@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/provider"
 	agenttypes "github.com/urmzd/saige/agent/types"
 	topeval "github.com/urmzd/saige/eval"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/extractor"
 	"github.com/urmzd/saige/rag/memstore"
@@ -30,7 +31,7 @@ func TestLiveRAGQuestionWithCitations(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	pipe, err := rag.NewPipeline(rag.WithStore(memstore.New()), rag.WithContentExtractor(extractor.NewAuto()), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(extractor.NewAuto()), rag.WithBM25(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,12 +48,12 @@ func TestLiveRAGQuestionWithCitations(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := agenttypes.NewBudget(agenttypes.BudgetPolicy{Limit: agenttypes.USD(0.05), PerCallCost: agenttypes.USD(0.01), MaxRequests: 6})
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Provider:     p,
 		Budget:       budget,
 		Tools:        agenttypes.NewToolRegistry(tool.NewTools(pipe, tool.ReadOnly())...),
 		SystemPrompt: "Answer only from the knowledge base. Search it with rag_search, read hits with rag_lookup, and answer in one sentence.",
-	})
+	}))
 	stream := a.Invoke(ctx, []agenttypes.Message{agenttypes.UserMsg(agenttypes.Text("How long do Zorblat refunds take?"))})
 	run := agenteval.CollectAgentRun(stream.Deltas())
 	if err := stream.Wait(); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestMemoryInterruptRouterReply(t *testing.T) {
@@ -215,7 +216,7 @@ func TestInterruptExpiryPolicies(t *testing.T) {
 			defer cancel()
 			stream := newEventStream(ctx, cancel)
 			stream.path = tt.path
-			a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}}, WithInterruptExpiry(ttl, types.InterruptPolicy{OnExpire: tt.policy}))
+			a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}}, WithInterruptExpiry(ttl, types.InterruptPolicy{OnExpire: tt.policy})))
 			type outcome struct {
 				msg string
 				ok  bool
@@ -258,7 +259,7 @@ func TestMarkerCarriesInterruptAndReplyByID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	stream := newEventStream(ctx, cancel)
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}})
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}}))
 	done := make(chan bool, 1)
 	go func() {
 		_, _, ok := a.awaitApproval(ctx, stream, types.ToolCallPart{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
@@ -326,7 +327,7 @@ func TestClarificationTool(t *testing.T) {
 				agenttest.ToolCallResponse("ask", ClarificationToolName, map[string]any{"question": "Which color?"}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("paint it"))})
@@ -358,7 +359,7 @@ func TestClarificationWithoutConsumerFails(t *testing.T) {
 		agenttest.ToolCallResponse("ask", ClarificationToolName, map[string]any{"question": "Which?"}),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(ClarificationTool())}))
 	err := withinDeadline(t, 3*time.Second, func() error {
 		_, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("go"))}, "")
 		return err

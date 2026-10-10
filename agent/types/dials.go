@@ -51,6 +51,7 @@ type Dials struct {
 // Creativity is a sampling intent.
 type Creativity string
 
+// Creativity levels.
 const (
 	CreativityDeterministic Creativity = "deterministic"
 	CreativityFocused       Creativity = "focused"
@@ -64,6 +65,7 @@ var creativityOrder = []Creativity{CreativityDeterministic, CreativityFocused, C
 // ReasoningMode says whether the model reasons.
 type ReasoningMode string
 
+// Reasoning modes.
 const (
 	ReasoningOff      ReasoningMode = "off"
 	ReasoningAdaptive ReasoningMode = "adaptive" // the model decides how much
@@ -73,6 +75,7 @@ const (
 // Depth is how much the model reasons when reasoning is on.
 type Depth string
 
+// Reasoning depths.
 const (
 	DepthMinimal Depth = "minimal"
 	DepthLow     Depth = "low"
@@ -113,6 +116,7 @@ func (r ReasoningDial) String() string {
 // DialName names one dial.
 type DialName string
 
+// Dial names.
 const (
 	DialCreativity   DialName = "creativity"
 	DialReasoning    DialName = "reasoning"
@@ -137,11 +141,11 @@ func AllDialNames() []DialName {
 type DialClass string
 
 const (
-	// DialAdvisory: mapped to the nearest declared value, or dropped.
+	// DialAdvisory means mapped to the nearest declared value, or dropped.
 	DialAdvisory DialClass = "advisory"
-	// DialClamp: lowered to the model's limit, never raised.
+	// DialClamp means lowered to the model's limit, never raised.
 	DialClamp DialClass = "clamp"
-	// DialContractual: rejected with ErrInvalidModelConfig.
+	// DialContractual means rejected with ErrInvalidModelConfig.
 	DialContractual DialClass = "contractual"
 )
 
@@ -459,18 +463,19 @@ type DialSurfaceReporter interface {
 // DialAction is what happened to one dial.
 type DialAction string
 
+// What happened to a requested dial.
 const (
 	DialApplied DialAction = "applied"
-	// DialMapped: a different value than requested was sent, the nearest the
+	// DialMapped means a different value than requested was sent, the nearest the
 	// model declares, or the requested value lowered to a limit.
 	DialMapped DialAction = "mapped"
-	// DialDropped: nothing was sent for the dial.
+	// DialDropped means nothing was sent for the dial.
 	DialDropped DialAction = "dropped"
-	// DialRejected: the attempt failed with ErrInvalidModelConfig.
+	// DialRejected means the attempt failed with ErrInvalidModelConfig.
 	DialRejected DialAction = "rejected"
-	// DialRawOverride: a raw option set the same parameter and won.
+	// DialRawOverride means a raw option set the same parameter and won.
 	DialRawOverride DialAction = "raw_override"
-	// DialDeferred: the change waits for the next user turn.
+	// DialDeferred means the change waits for the next user turn.
 	DialDeferred DialAction = "deferred"
 )
 

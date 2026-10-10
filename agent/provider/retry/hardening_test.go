@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestDelay(t *testing.T) {
@@ -38,7 +39,7 @@ func TestDelay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := base
 			cfg.DisableJitter = !tc.jitter
-			if got := New(nil, cfg).delay(tc.attempt, tc.err, tc.u); got != tc.want {
+			if got := must.Get(New(&plainProvider{}, cfg)).delay(tc.attempt, tc.err, tc.u); got != tc.want {
 				t.Fatalf("delay = %v, want %v", got, tc.want)
 			}
 			if got := cfg.Delay(tc.attempt, tc.err, tc.u); got != tc.want {
@@ -49,7 +50,7 @@ func TestDelay(t *testing.T) {
 }
 
 func TestJitterSamplesSpread(t *testing.T) {
-	p := New(nil, Config{BaseDelay: 100 * time.Millisecond, MaxDelay: time.Second})
+	p := must.Get(New(&plainProvider{}, Config{BaseDelay: 100 * time.Millisecond, MaxDelay: time.Second}))
 	limit := 200 * time.Millisecond
 	seen := map[time.Duration]bool{}
 	for range 100 {
@@ -68,7 +69,7 @@ func TestBackoffHonorsRetryAfter(t *testing.T) {
 	var calls atomic.Int32
 	inner := &countingProvider{calls: &calls, failUntil: 1, response: "ok",
 		err: &types.ProviderError{Kind: types.ErrorKindRateLimit, RetryAfter: 80 * time.Millisecond, Err: errors.New("429")}}
-	p := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	p := must.Get(New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 	start := time.Now()
 	ch, err := p.Stream(context.Background(), types.Request{})
 	if err != nil {
@@ -92,7 +93,7 @@ func (p *plainProvider) Stream(_ context.Context, _ types.Request) (<-chan types
 
 func TestSchemaIsNeverDropped(t *testing.T) {
 	inner := &plainProvider{}
-	p := New(inner, DefaultConfig())
+	p := must.Get(New(inner, DefaultConfig()))
 	_, err := p.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) || types.IsTransient(err) || inner.calls.Load() != 0 {
 		t.Fatalf("err = %v calls = %d, want a local rejection", err, inner.calls.Load())
@@ -138,7 +139,7 @@ func TestConsumerCancelDoesNotLeak(t *testing.T) {
 	before := runtime.NumGoroutine()
 	inner := &endlessProvider{lead: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}}, n: 1000, finished: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, err := New(inner, DefaultConfig()).Stream(ctx, types.Request{})
+	ch, err := must.Get(New(inner, DefaultConfig())).Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func (p *chattyFailure) Stream(ctx context.Context, req types.Request) (<-chan t
 
 func TestRetriedAttemptIsDrained(t *testing.T) {
 	inner := &chattyFailure{finished: make(chan struct{})}
-	ch, err := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond}).Stream(context.Background(), types.Request{})
+	ch, err := must.Get(New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond})).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}

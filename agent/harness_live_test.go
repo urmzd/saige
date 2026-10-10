@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/anthropic"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/tools"
 )
 
@@ -40,15 +41,15 @@ func TestHarnessToolsLive(t *testing.T) {
 	if model == "" {
 		model = "claude-haiku-5-5"
 	}
-	a := agent.NewAgent(agent.AgentConfig{
+	a := must.Get(agent.New(agent.Config{
 		Name:         "harness-live",
 		SystemPrompt: "You are a careful analyst. Use your tools; never guess numbers.",
-		Provider:     anthropic.NewAdapter(key, model),
+		Provider:     must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)})),
 		MaxIter:      8,
 	},
 		agent.WithHarnessTools(tools.HarnessOptions{Root: root, Groups: []tools.Group{tools.GroupRead, tools.GroupExec}}),
 		agent.WithApprovalPolicy(agent.ApprovalPolicy{}),
-	)
+	))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

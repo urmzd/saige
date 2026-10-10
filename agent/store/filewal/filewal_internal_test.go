@@ -74,11 +74,11 @@ func TestWriteRecordRollsBackPartialWrite(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "wal.jsonl")
-			w, err := New(path)
+			w, err := New(Config{Path: path})
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			defer w.Close()
+			defer w.Close(context.Background())
 
 			tx1 := commitBranchTx(t, w, "n1")
 
@@ -100,12 +100,12 @@ func TestWriteRecordRollsBackPartialWrite(t *testing.T) {
 			// The very next commit must land on a clean record boundary.
 			tx3 := commitBranchTx(t, w, "n3")
 
-			w.Close()
-			reopened, err := New(path)
+			w.Close(context.Background())
+			reopened, err := New(Config{Path: path})
 			if err != nil {
 				t.Fatalf("reopen: %v", err)
 			}
-			defer reopened.Close()
+			defer reopened.Close(context.Background())
 
 			committed, err := reopened.Recover(ctx)
 			if err != nil {
@@ -131,11 +131,11 @@ func TestWriteRecordRollsBackPartialWrite(t *testing.T) {
 func TestWriteRecordFailedTruncateDisablesWAL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "wal.jsonl")
-	w, err := New(path)
+	w, err := New(Config{Path: path})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer w.Close()
+	defer w.Close(context.Background())
 
 	ff := &flakyFile{
 		File:          w.f.(*os.File),

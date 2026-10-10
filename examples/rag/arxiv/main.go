@@ -182,7 +182,7 @@ func main() {
 	//   postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{RAGEmbeddingDim: embedDim})
 	//   store := ragpgstore.NewStore(pool, nil)
 	store := memstore.New()
-	pipe, err := rag.NewPipeline(
+	pipe, err := rag.New(rag.Config{},
 		rag.WithStore(store),
 		rag.WithContentExtractor(&paragraphExtractor{}),
 		rag.WithEmbedders(&bowEmbedderRegistry{}),

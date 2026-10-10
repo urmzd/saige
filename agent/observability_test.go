@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // outcomeMetrics implements Metrics and both optional recorders.
@@ -91,7 +92,7 @@ func TestRunObservability(t *testing.T) {
 			metrics := &outcomeMetrics{}
 			tracer := &recordingTracer{}
 			provider := &ctxProvider{ScriptedProvider: &agenttest.ScriptedProvider{Responses: tt.responses, Errors: tt.errs}}
-			a := NewAgent(AgentConfig{Name: "planner", Provider: provider, SystemPrompt: "sys", Metrics: metrics, RunTracer: tracer})
+			a := must.Get(New(Config{Name: "planner", Provider: provider, SystemPrompt: "sys", Metrics: metrics, RunTracer: tracer}))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			runErr := stream.Wait()

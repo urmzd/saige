@@ -6,6 +6,7 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// Tree errors.
 var (
 	ErrNodeNotFound       = errors.New("node not found")
 	ErrNodeArchived       = errors.New("node is archived")

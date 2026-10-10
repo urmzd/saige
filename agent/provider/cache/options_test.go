@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // optionsProvider counts upstream calls and answers every request with text.
@@ -41,7 +42,7 @@ func TestRequestOptionsArePartOfTheKey(t *testing.T) {
 	none := types.ToolChoice{Mode: types.ToolChoiceNone}
 	auto := types.ToolChoice{Mode: types.ToolChoiceAuto}
 	inner := &optionsProvider{}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 	msgs := []types.Message{types.UserMsg(types.Text("q"))}
 	drainAll := func(ch <-chan types.Delta, err error) {
 		t.Helper()

@@ -181,7 +181,7 @@ func TestEvalOnlineSweepsStoredConversations(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	st, err := agentpg.NewScopedStore(pool, "acme", "conv-1", nil)
+	st, err := agentpg.New(agentpg.Config{Pool: pool, Scope: "acme", ConversationID: "conv-1"})
 	if err != nil {
 		t.Fatal(err)
 	}

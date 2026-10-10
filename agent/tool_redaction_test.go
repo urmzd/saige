@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/privacy"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/workspace"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // recordingTool records the arguments and call info each call received.
@@ -66,11 +67,11 @@ func TestToolRedactorAtToolBoundary(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "lookup", map[string]any{"email": "<<EMAIL_1>>", "nested": []any{"<<EMAIL_1>>"}}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{
+			a := must.Get(New(Config{
 				Name:     "support",
 				Provider: provider,
 				Tools:    types.NewToolRegistry(tool),
-			}, WithToolRedactor(privacy.NewToolRedactor(vault)), WithToolGate(gate))
+			}, WithToolRedactor(privacy.NewToolRedactor(vault)), WithToolGate(gate)))
 
 			deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("look up <<EMAIL_1>>"))}).Deltas())
 			agenttest.AssertNoErrors(t, deltas)
@@ -123,13 +124,13 @@ func TestWorkspaceAttachedAndNarrowedForChildren(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "lookup", map[string]any{}),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Name: "lead", Provider: provider, Tools: types.NewToolRegistry(tool)}, WithWorkspace(ws))
+	a := must.Get(New(Config{Name: "lead", Provider: provider, Tools: types.NewToolRegistry(tool)}, WithWorkspace(ws)))
 	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas()))
 	if len(tool.ws) != 1 || tool.ws[0] != workspace.Workspace(ws) {
 		t.Fatalf("tool saw workspace %v, want the configured one", tool.ws)
 	}
 
-	child := childConfig(t, AgentConfig{Name: "lead", Provider: provider, Workspace: ws}, SubAgentDef{Name: "worker", Description: "w"})
+	child := childConfig(t, Config{Name: "lead", Provider: provider, Workspace: ws}, SubAgentDef{Name: "worker", Description: "w"})
 	if child.Workspace == nil {
 		t.Fatal("child has no workspace")
 	}
@@ -140,7 +141,7 @@ func TestWorkspaceAttachedAndNarrowedForChildren(t *testing.T) {
 	if _, err := ws.Stat(context.Background(), workspace.Ref{Name: "x"}); !errors.Is(err, workspace.ErrNotFound) {
 		t.Fatalf("child write reached the parent: %v", err)
 	}
-	off := childConfig(t, AgentConfig{Name: "lead", Provider: provider, Workspace: ws}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}})
+	off := childConfig(t, Config{Name: "lead", Provider: provider, Workspace: ws}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}})
 	if _, err := off.Workspace.Put(context.Background(), "x", []byte("y"), nil); !errors.Is(err, workspace.ErrReadOnly) {
 		t.Fatalf("child write without scratch err = %v, want ErrReadOnly", err)
 	}
@@ -152,10 +153,10 @@ func TestWorkspaceAttachedAndNarrowedForChildren(t *testing.T) {
 	}
 
 	redactor := privacy.NewToolRedactor(privacy.NewVault(nil))
-	if c := childConfig(t, AgentConfig{Name: "lead", Provider: provider, ToolRedactor: redactor}, SubAgentDef{Name: "worker", Description: "w"}); c.ToolRedactor != types.ToolRedactor(redactor) {
+	if c := childConfig(t, Config{Name: "lead", Provider: provider, ToolRedactor: redactor}, SubAgentDef{Name: "worker", Description: "w"}); c.ToolRedactor != types.ToolRedactor(redactor) {
 		t.Fatal("child must share the parent's redactor")
 	}
-	if c := childConfig(t, AgentConfig{Name: "lead", Provider: provider}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}}); c.Workspace != nil {
+	if c := childConfig(t, Config{Name: "lead", Provider: provider}, SubAgentDef{Name: "worker", Description: "w", Scratch: SubAgentScratch{Off: true}}); c.Workspace != nil {
 		t.Fatal("child without scratch of an agent without a workspace has one")
 	}
 }
@@ -196,8 +197,8 @@ func TestToolRedactorCoversCustomInvokers(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "remote", map[string]any{"task": "find"}),
 				agenttest.TextResponse("done"),
 			}}
-			a := NewAgent(AgentConfig{Name: "lead", Provider: provider, Tools: types.NewToolRegistry(tc.invoker)},
-				WithToolRedactor(privacy.NewToolRedactor(privacy.NewVault(nil))))
+			a := must.Get(New(Config{Name: "lead", Provider: provider, Tools: types.NewToolRegistry(tc.invoker)},
+				WithToolRedactor(privacy.NewToolRedactor(privacy.NewVault(nil)))))
 			deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas())
 
 			var end types.ToolExecEndDelta
@@ -264,11 +265,11 @@ func TestToolRedactorTokenizesCitations(t *testing.T) {
 				agenttest.ToolCallResponse("c1", "cite", map[string]any{}),
 				agenttest.TextResponse("done"),
 			}}
-			var opts []AgentOption
+			var opts []Option
 			if tc.redactor {
 				opts = append(opts, WithToolRedactor(privacy.NewToolRedactor(privacy.NewVault(nil))))
 			}
-			a := NewAgent(AgentConfig{Name: "a", Provider: provider, Tools: types.NewToolRegistry(tool)}, opts...)
+			a := must.Get(New(Config{Name: "a", Provider: provider, Tools: types.NewToolRegistry(tool)}, opts...))
 			deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas())
 			agenttest.AssertNoErrors(t, deltas)
 

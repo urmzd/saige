@@ -59,7 +59,7 @@ func TestFailoverOnAuthIsOptIn(t *testing.T) {
 		} else if err != nil || got != tt.served {
 			t.Fatalf("%s: served %q, err %v", tt.name, got, err)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -98,7 +98,7 @@ func TestReprobeReturnsToPrimary(t *testing.T) {
 		if served[0] != "gemini-3.1-flash-lite" || back != tt.wantPrimary {
 			t.Fatalf("%s: served %v, want return to primary %v", tt.name, served, tt.wantPrimary)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -151,7 +151,7 @@ func TestOptionalOllamaDroppedWhenUnreachable(t *testing.T) {
 		if rp, _ := b.Resolved("p"); len(rp.Chain) != 1 || rp.Chain[0].ID != "local" {
 			t.Fatalf("%s: chain %+v", tt.name, rp.Chain)
 		}
-		_ = b.Close()
+		_ = b.Close(context.Background())
 	}
 }
 
@@ -188,7 +188,7 @@ func TestRouteNamesTheAdapterNotItsDecorators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	routes, _ := drain(t)(b.Session().Stream(context.Background(), types.Request{}))
 	// Every entry is wrapped in a retry decorator, which names itself
 	// "retry(openai)"; the route reports the vendor.

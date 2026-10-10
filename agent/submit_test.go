@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // stepCall scripts one provider call: before is streamed at once, then the
@@ -173,7 +174,7 @@ func TestSubmitQueueAndSteer(t *testing.T) {
 			}
 			provider := newStepProvider(first, stepCall{before: agenttest.TextResponse("second")})
 			reg := types.NewToolRegistry(&agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"})
-			a := NewAgent(AgentConfig{Provider: provider, Tools: reg})
+			a := must.Get(New(Config{Provider: provider, Tools: reg}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -257,7 +258,7 @@ func TestSubmitInterruptReplace(t *testing.T) {
 				stepCall{before: agenttest.TextResponse("replaced")},
 			)
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool)}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -347,7 +348,7 @@ func TestSubmitInterruptBetweenCallsWaitsForTools(t *testing.T) {
 		stepCall{before: agenttest.ToolCallResponse("c1", "block", map[string]any{})},
 		stepCall{before: agenttest.TextResponse("after")},
 	)
-	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)})
+	a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool)}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -389,7 +390,7 @@ func (b *blockingTool) Execute(ctx context.Context, _ map[string]any) (string, e
 
 func TestSubmitErrors(t *testing.T) {
 	provider := newStepProvider(stepCall{before: agenttest.TextResponse("hi")})
-	a := NewAgent(AgentConfig{Provider: provider})
+	a := must.Get(New(Config{Provider: provider}))
 	ctx := context.Background()
 	finished := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	for range finished.Deltas() {
@@ -426,7 +427,7 @@ func TestAgentSubmit(t *testing.T) {
 		stepCall{before: agenttest.TextResponse("second")},
 		stepCall{before: agenttest.TextResponse("third")},
 	)
-	a := NewAgent(AgentConfig{Provider: provider})
+	a := must.Get(New(Config{Provider: provider}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	main := a.Tree().Active()
@@ -485,7 +486,7 @@ func TestAgentSubmitSide(t *testing.T) {
 				first = stepCall{before: agenttest.ToolCallResponse("c1", "block", map[string]any{})}
 			}
 			provider := newStepProvider(first, stepCall{before: agenttest.TextResponse("side answer")}, stepCall{before: agenttest.TextResponse("main done")})
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(&blockingTool{started: started, release: release})})
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(&blockingTool{started: started, release: release})}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			main := a.Tree().Active()
@@ -554,7 +555,7 @@ func TestContinue(t *testing.T) {
 			if tt.prefill {
 				provider = prefillProvider{sp}
 			}
-			a := NewAgent(AgentConfig{Provider: provider})
+			a := must.Get(New(Config{Provider: provider}))
 			ctx := context.Background()
 			first := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("write"))})
 			for range first.Deltas() {
@@ -590,7 +591,7 @@ func TestContinue(t *testing.T) {
 
 func TestContinueRefusals(t *testing.T) {
 	ctx := context.Background()
-	a := NewAgent(AgentConfig{Provider: newStepProvider()})
+	a := must.Get(New(Config{Provider: newStepProvider()}))
 	if _, err := a.Continue(ctx, ""); !errors.Is(err, ErrNothingToContinue) {
 		t.Fatalf("empty branch: %v", err)
 	}
@@ -646,7 +647,7 @@ func TestAutoContinue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := newStepProvider(tt.calls...)
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"}
-			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)}, WithAutoContinue(tt.auto))
+			a := must.Get(New(Config{Provider: provider, Tools: types.NewToolRegistry(tool)}, WithAutoContinue(tt.auto)))
 			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("write"))})
 			for range stream.Deltas() {
 			}
@@ -671,7 +672,7 @@ func TestSubmitConcurrent(t *testing.T) {
 	const writers, perWriter = 8, 20
 	provider := newStepProvider()
 	// MaxIter 1 also checks that each appended turn gets fresh step limits.
-	a := NewAgent(AgentConfig{Provider: provider, MaxIter: 1})
+	a := must.Get(New(Config{Provider: provider, MaxIter: 1}))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -736,7 +737,7 @@ func TestAgentSubmitRacingRunEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for i := range 2000 {
-		a := NewAgent(AgentConfig{Provider: &mockProvider{response: "ok"}})
+		a := must.Get(New(Config{Provider: &mockProvider{response: "ok"}}))
 		branch := a.Tree().Active()
 		first := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("first"))}, branch)
 		done := make(chan struct{})

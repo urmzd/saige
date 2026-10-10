@@ -6,6 +6,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // imageRuleProvider serves a scripted reply and reports an offering whose
@@ -26,7 +27,7 @@ func (p *imageRuleProvider) Offering() types.Offering {
 // estimate behind input pressure prices an image by the token rule of the
 // offering the turn goes to.
 func TestPressureEstimatePricesMediaByTheOffering(t *testing.T) {
-	a := NewAgent(AgentConfig{Name: "a", Provider: &agenttest.ScriptedProvider{}})
+	a := must.Get(New(Config{Name: "a", Provider: &agenttest.ScriptedProvider{}}))
 	msgs := []types.Message{types.UserMsg(types.Image(types.URL("https://x/a.png")))}
 	st := &overflowState{}
 	flat := a.inputSize(context.Background(), st, msgs)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // heldProvider answers each call with text, but only after release closes.
@@ -42,7 +43,7 @@ func (p *heldProvider) Stream(ctx context.Context, _ types.Request) (<-chan type
 
 func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 	provider := newHeldProvider()
-	a := NewAgent(AgentConfig{Provider: provider})
+	a := must.Get(New(Config{Provider: provider}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -102,9 +103,9 @@ func TestConcurrentRunsOnOneBranchAreRefused(t *testing.T) {
 }
 
 func TestConcurrentInvokeRace(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.TextResponse("a"), agenttest.TextResponse("b"), agenttest.TextResponse("c"), agenttest.TextResponse("d"),
-	}}})
+	}}}))
 	var wg sync.WaitGroup
 	var ok, busy int
 	var mu sync.Mutex
@@ -144,7 +145,7 @@ func TestConcurrentInvokeRace(t *testing.T) {
 func TestLoadSessionLeavesTreeIntactOnBadInput(t *testing.T) {
 	newAgent := func(t *testing.T) (*Agent, []types.Message) {
 		t.Helper()
-		a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hello")}}})
+		a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hello")}}}))
 		s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 		for range s.Deltas() {
 		}
@@ -236,7 +237,7 @@ func TestLoadSessionLeavesTreeIntactOnBadInput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fresh := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{}})
+		fresh := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{}}))
 		if err := fresh.LoadSession(s); err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +259,7 @@ func TestInvokeAfterWaitReusesBranch(t *testing.T) {
 	for i := range responses {
 		responses[i] = agenttest.TextResponse("ok")
 	}
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: responses}})
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: responses}}))
 	for i := 0; i < runs; i++ {
 		s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("q"))})
 		for range s.Deltas() {
@@ -272,7 +273,7 @@ func TestInvokeAfterWaitReusesBranch(t *testing.T) {
 // TestLoadSessionBlocksNewRuns checks that a tree claimed for loading refuses
 // new runs, and that a busy branch refuses the tree claim.
 func TestLoadSessionBlocksNewRuns(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}})
+	a := must.Get(New(Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}}}))
 	tests := []struct {
 		name  string
 		setup func(t *testing.T) func()

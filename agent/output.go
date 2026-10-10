@@ -44,8 +44,8 @@ const FinalAnswerToolName = "final_answer"
 var ErrNoJSON = errors.New("no JSON value found")
 
 // WithOutputMode sets how WithResponseSchema's schema reaches the model.
-func WithOutputMode(mode OutputMode) AgentOption {
-	return func(c *AgentConfig) { c.OutputMode = mode }
+func WithOutputMode(mode OutputMode) Option {
+	return func(c *Config) { c.OutputMode = mode }
 }
 
 // runOutput is the response schema in force for one run.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -240,7 +241,7 @@ func keywordQueryUUIDs(t *testing.T, s *Store, scope string, q types.KeywordQuer
 }
 
 func TestKeywordQueryFeatures(t *testing.T) {
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	keywordCorpus(t, s, "kq",
 		[3]string{"run1", "Shoe catalog", "sleek running shoes for the track"},    // Overview
 		[3]string{"run2", "Misc", "shoes running backwards down the hill"},        // Grazing habits
@@ -302,7 +303,7 @@ func TestKeywordQueryFeatures(t *testing.T) {
 
 func TestKeywordQueryHighlight(t *testing.T) {
 	ctx := context.Background()
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	keywordCorpus(t, s, "hl",
 		[3]string{"h1", "Okapi notes", "Field notes: the shy okapi grazes at dusk, and the okapi hides by day."},
 		[3]string{"h2", "Okapi only in the title", "a striped forest animal"},
@@ -353,7 +354,7 @@ func TestKeywordQueryHighlight(t *testing.T) {
 func TestKeywordQueryHostileInput(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	s := NewStore(pool, nil)
+	s := must.Get(New(Config{Pool: pool}))
 	keywordCorpus(t, s, "inj", [3]string{"i1", "Title", "an okapi in the forest"})
 	for _, input := range hostileInputs {
 		q := keywordQueryWith(input + " okapi")
@@ -371,7 +372,7 @@ func TestKeywordQueryHostileInput(t *testing.T) {
 }
 
 func TestKeywordQueryInvalid(t *testing.T) {
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	q := types.KeywordQuery{Mode: types.KeywordPhrase, Fuzziness: 1}
 	_, err := s.SearchByKeyword(context.Background(), "a b", &types.SearchOptions{Keyword: &q})
 	if !errors.Is(err, types.ErrInvalidKeywordQuery) {
@@ -384,7 +385,7 @@ func TestKeywordQueryInvalid(t *testing.T) {
 // title.
 func TestKeywordFieldsFollowStandaloneInserts(t *testing.T) {
 	ctx := context.Background()
-	s := NewStore(testPool(t), nil)
+	s := must.Get(New(Config{Pool: testPool(t)}))
 	doc := singleSectionDoc("solo", "fp-solo", nil)
 	doc.Title = "Capybara handbook"
 	doc.Sections = nil

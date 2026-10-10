@@ -21,9 +21,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
-	a := agent.NewAgent(agent.AgentConfig{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{SystemPrompt: "Answer in one sentence."}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is RAG?"))}))
 	if err != nil {
 		log.Fatal(err)

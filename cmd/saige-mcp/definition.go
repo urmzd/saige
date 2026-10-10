@@ -62,7 +62,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 	if len(packs.Definitions()) > 0 {
 		env.Tools = packs
 	}
-	var opts []agentsdk.AgentOption
+	var opts []agentsdk.Option
 	if f.set["agent-max-iter"] {
 		opts = append(opts, agentsdk.WithMaxIter(f.maxIter))
 	}
@@ -79,7 +79,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 		return agentTool{}, false, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}
 	gated := boundGated(first)
-	_ = first.Close()
+	_ = first.Close(ctx)
 
 	at = agentTool{name: f.name, description: f.description, schema: schema, timeout: f.timeout, gated: gated,
 		// Each call binds the resolution pinned at start, so calls share no
@@ -89,7 +89,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 			if err != nil {
 				return agenthost.Agent{}, err
 			}
-			return agenthost.FromBound(b, opts...), nil
+			return agenthost.FromBound(b, opts...)
 		},
 	}
 	if !f.set["agent-tool"] {

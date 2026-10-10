@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 
@@ -255,8 +254,10 @@ type SessionRouterPolicy interface {
 	Select(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error)
 }
 
+// SessionPolicyFunc adapts a function to a SessionRouterPolicy.
 type SessionPolicyFunc func(context.Context, RouteContext, RouteState) (RouteDecision, error)
 
+// Select calls f.
 func (f SessionPolicyFunc) Select(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
 	return f(ctx, rc, st)
 }
@@ -298,7 +299,7 @@ type Affinity struct {
 func (a Affinity) Select(_ context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
 	c := rc.Candidates
 	if len(c) == 0 {
-		return RouteDecision{}, errors.New("no eligible routing profile")
+		return RouteDecision{}, ErrNoEligibleProfile
 	}
 	fits := func(i int) bool {
 		w := c[i].Capabilities.ContextWindow

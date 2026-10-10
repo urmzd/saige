@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type capableProvider struct {
@@ -24,7 +25,7 @@ func (c *capableProvider) Capabilities() types.ModelCapabilities {
 
 func TestRetryForwardsCapabilities(t *testing.T) {
 	inner := &capableProvider{}
-	p := New(inner, DefaultConfig())
+	p := must.Get(New(inner, DefaultConfig()))
 
 	caps, ok := types.ProviderCapabilities(p)
 	if !ok || !caps.Supports(types.CapReasoning) {
@@ -35,7 +36,7 @@ func TestRetryForwardsCapabilities(t *testing.T) {
 // An inner provider that reports nothing must not be laundered into a
 // confident "supports nothing": Known stays false so callers can fail closed.
 func TestRetryOverAnUnreportingProviderStaysUnknown(t *testing.T) {
-	p := New(&mockProvider{}, DefaultConfig())
+	p := must.Get(New(&mockProvider{}, DefaultConfig()))
 	caps, _ := types.ProviderCapabilities(p)
 	if caps.Known {
 		t.Error("Known must be false when the inner provider does not report")

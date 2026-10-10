@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestKeyHashesMediaByDigestNotLocator(t *testing.T) {
@@ -136,7 +137,7 @@ func report(action string) types.ConversionReport {
 
 func TestConvertedViewAndOriginalNeverShareAnEntry(t *testing.T) {
 	inner := &planner{}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 	msgs := []types.Message{types.UserMsg(types.Text("q"), types.Image(types.Bytes(types.MediaPNG, []byte("x"))))}
 	call := func() {
 		t.Helper()
@@ -178,7 +179,7 @@ func TestServedViewMustMatchThePlannedOne(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			inner := &planner{planned: tc.planned, served: tc.served}
-			p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+			p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 			for range 2 {
 				ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 				if err != nil {
@@ -196,7 +197,7 @@ func TestServedViewMustMatchThePlannedOne(t *testing.T) {
 func TestRejectedPlanPassesThrough(t *testing.T) {
 	boom := errors.New("rejected")
 	inner := &planner{reject: boom}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 	if _, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("q"))}}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the inner provider's rejection", err)
 	}
@@ -214,7 +215,7 @@ func TestV1EntriesMissOnce(t *testing.T) {
 	store := memcache.New[[]byte]()
 	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	inner := &planner{}
-	p := New(inner, Config{Cache: BytesCache(store), ScopeKey: "s", ConfigKey: "c"})
+	p := must.Get(New(inner, Config{Cache: BytesCache(store), ScopeKey: "s", ConfigKey: "c"}))
 	// Plant the old value under the key this request now derives: even a
 	// collision with a stale value is a miss, never a replay.
 	parts, _ := json.Marshal([]string{p.identity, ""})

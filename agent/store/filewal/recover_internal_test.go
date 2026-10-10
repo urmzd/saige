@@ -44,11 +44,11 @@ func TestRecoverWALReadsLogOnce(t *testing.T) {
 	for _, n := range []int{0, 1, walrecover.BatchSize + 1, 5000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			ctx := context.Background()
-			w, err := New(writeLog(t, n))
+			w, err := New(Config{Path: writeLog(t, n)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = w.Close() }()
+			defer func() { _ = w.Close(context.Background()) }()
 			store := memstore.New()
 
 			applied, err := walrecover.RecoverWAL(ctx, w, store)
@@ -77,11 +77,11 @@ func TestRecoverWALReadsLogOnce(t *testing.T) {
 
 func TestRecoverOpsSkipsApplied(t *testing.T) {
 	ctx := context.Background()
-	w, err := New(writeLog(t, 4))
+	w, err := New(Config{Path: writeLog(t, 4)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() { _ = w.Close(context.Background()) }()
 	if err := w.MarkAppliedBatch(ctx, []types.TxID{"tx-0", "tx-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func BenchmarkRecoverWAL(b *testing.B) {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			for range b.N {
 				b.StopTimer()
-				w, err := New(writeLog(b, n))
+				w, err := New(Config{Path: writeLog(b, n)})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -122,7 +122,7 @@ func BenchmarkRecoverWAL(b *testing.B) {
 					b.Fatal(err)
 				}
 				b.StopTimer()
-				_ = w.Close()
+				_ = w.Close(context.Background())
 				b.StartTimer()
 			}
 		})

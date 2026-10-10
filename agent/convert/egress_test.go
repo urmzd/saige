@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/privacy"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // egressFake is a priced converter that reports the offering it sends the
@@ -54,7 +55,7 @@ func TestEgressTokenizesConverterOutput(t *testing.T) {
 	cache := NewMemoryCache(0)
 	pol, l := describeImages(c)
 	pol.Cache = cache
-	p := New(inner, pol, l)
+	p := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}}))
 	v := privacy.NewVault(nil)
 	ctx := types.WithEgress(context.Background(), types.Egress{Vault: v})
 	msgs := []types.Message{types.UserMsg(types.Text("what is this?"), pngPart("badge"))}
@@ -92,7 +93,7 @@ func TestEgressTokenizesConverterOutput(t *testing.T) {
 
 func TestEgressTokenizesOmittedNotice(t *testing.T) {
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	p := New(inner, types.ConversionPolicy{}, layer(types.DialScopeAgent, per(types.ModalityImage, types.ActOmit)))
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}, Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActOmit))}}))
 	img := types.ImagePart{Source: types.Bytes(types.MediaPNG, []byte("png"))}
 	img.Source.Filename = "bob@example.com.png"
 	ctx := types.WithEgress(context.Background(), types.Egress{Vault: privacy.NewVault(nil)})
@@ -114,7 +115,7 @@ func TestEgressRequireTextRejectsMediaThatWouldLeave(t *testing.T) {
 
 	// A vision model would receive the image natively.
 	inner := &stubProvider{name: "chat", offering: visionChat()}
-	p := New(inner, types.ConversionPolicy{})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
 	if _, _, err := p.PlanConversions(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("plan err = %v, want a rejection a router removes the member for", err)
 	}
@@ -133,7 +134,7 @@ func TestEgressRequireTextRejectsMediaThatWouldLeave(t *testing.T) {
 	// A text model that describes the image serves it.
 	text := &stubProvider{name: "texty", offering: textOnly()}
 	pol, l := describeImages(&fake{action: types.ActDescribe, media: types.ModalityImage, text: "a cat"})
-	ch, err := New(text, pol, l).Stream(ctx, types.Request{Messages: msgs})
+	ch, err := must.Get(New(text, Config{Policy: pol, Layers: []types.DialLayer{l}})).Stream(ctx, types.Request{Messages: msgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestEgressRequireTextRefusesAnUnclearedConverter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &stubProvider{name: "texty", offering: textOnly()}
 			pol, l := describeImages(tc.conv)
-			ch, err := New(inner, pol, l).Stream(ctx, types.Request{Messages: msgs})
+			ch, err := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}})).Stream(ctx, types.Request{Messages: msgs})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,8 +184,7 @@ func TestEgressRequireTextRefusesAnUnclearedConverter(t *testing.T) {
 
 	// Without a fallback the refusal rejects the request.
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	p := New(inner, types.ConversionPolicy{Converters: []types.Converter{pricedFake{base}}},
-		layer(types.DialScopeAgent, per(types.ModalityImage, types.ActDescribe)))
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{pricedFake{base}}}, Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActDescribe))}}))
 	if _, err := p.Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want a rejection", err)
 	}
@@ -204,12 +204,12 @@ func TestEgressRequireTextChecksTheWholeView(t *testing.T) {
 	out := types.ImageOutPart{Source: types.Bytes(types.MediaPNG, []byte("generated"))}
 	msgs := []types.Message{types.UserMsg(types.Text("draw")), types.AssistantMsg(out), types.UserMsg(types.Text("again"))}
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	if _, err := New(inner, types.ConversionPolicy{}).Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
+	if _, err := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}})).Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want media in history refused", err)
 	}
 	// A provider with nothing to plan against is checked too.
 	bare := &fakeProviderNoCaps{}
-	if _, err := New(bare, types.ConversionPolicy{}).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}}); !errors.Is(err, types.ErrModalityUnsupported) {
+	if _, err := must.Get(New(bare, Config{Policy: types.ConversionPolicy{}})).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want media refused without an offering", err)
 	}
 }
@@ -227,7 +227,7 @@ func TestConverterRunsOutsideTheBoundary(t *testing.T) {
 	inner := &stubProvider{name: "texty", offering: textOnly()}
 	pol, l := describeImages(c)
 	ctx := types.WithEgress(context.Background(), types.Egress{Vault: privacy.NewVault(nil), RequireText: true})
-	ch, err := New(inner, pol, l).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}})
+	ch, err := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}})).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestURIConversionsAreMemoizedOnlyUnderAScope(t *testing.T) {
 		inner := &stubProvider{name: "texty", offering: textOnly()}
 		pol, l := describeImages(c)
 		pol.Scope = tc.scope
-		p := New(inner, pol, l)
+		p := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}}))
 		for range 2 {
 			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(part)}})
 			if err != nil {
@@ -271,7 +271,7 @@ func TestPrivacyOverConversion(t *testing.T) {
 	inner := &stubProvider{name: "texty", offering: textOnly(), reply: "it shows <<EMAIL_1>>"}
 	pol, l := describeImages(&fake{action: types.ActDescribe, media: types.ModalityImage, text: "a badge: ada@example.com"})
 	v := privacy.NewVault(nil)
-	p := privacy.NewProvider(New(inner, pol, l), v)
+	p := must.Get(privacy.New(must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}})), privacy.Config{Vault: v}))
 	p.Media = privacy.MediaRequireText
 	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("who?"), pngPart("x"))}})
 	if err != nil {
@@ -296,7 +296,7 @@ func TestPrivacyOverConversion(t *testing.T) {
 
 	// A vision model behind the same policy is refused, not sent the image.
 	vision := &stubProvider{name: "chat", offering: visionChat()}
-	pv := privacy.NewProvider(New(vision, types.ConversionPolicy{}), v)
+	pv := must.Get(privacy.New(must.Get(New(vision, Config{Policy: types.ConversionPolicy{}})), privacy.Config{Vault: v}))
 	pv.Media = privacy.MediaRequireText
 	if _, err := pv.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v", err)

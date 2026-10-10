@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgxvector "github.com/pgvector/pgvector-go/pgx"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/extractor"
 	"github.com/urmzd/saige/rag/internal/pipeline"
 	"github.com/urmzd/saige/rag/types"
@@ -51,7 +52,7 @@ func TestFilteredSearchUsesIterativeScan(t *testing.T) {
 	ctx := context.Background()
 	search := indexOnlyPool(t)
 
-	writer := NewStore(pool, nil)
+	writer := must.Get(New(Config{Pool: pool}))
 	variants := make([]types.ContentVariant, 0, 505)
 	for i := 0; i < 500; i++ {
 		variants = append(variants, types.ContentVariant{
@@ -88,7 +89,7 @@ func TestFilteredSearchUsesIterativeScan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := NewStore(search, nil, WithIterativeScan(tt.mode))
+			store := must.Get(New(Config{Pool: search}, WithIterativeScan(tt.mode)))
 			hits, err := store.SearchByEmbedding(ctx, vec(1, 0), opts)
 			if err != nil {
 				t.Fatalf("SearchByEmbedding: %v", err)
@@ -120,7 +121,7 @@ func TestFilteredSearchUsesIterativeScan(t *testing.T) {
 func TestCreateDocumentDuplicateFingerprint(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 
 	first := singleSectionDoc("doc-a", "fp-dup", nil)
 	if err := store.CreateDocument(ctx, first); err != nil {
@@ -139,7 +140,7 @@ func TestCreateDocumentDuplicateFingerprint(t *testing.T) {
 func TestConcurrentDuplicateIngest(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	pipe := pipeline.New(pipeline.Config{Store: store, ContentExtractor: &extractor.PlainText{}})
 	raw := &types.RawDocument{SourceURI: "test://race", MIMEType: "text/plain", Data: []byte("same content")}
 
@@ -179,7 +180,7 @@ func TestConcurrentDuplicateIngest(t *testing.T) {
 func TestIngestCleansNULAndInvalidUTF8(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	pipe := pipeline.New(pipeline.Config{Store: store, ContentExtractor: extractor.NewAuto()})
 
 	result, err := pipe.Ingest(ctx, &types.RawDocument{
@@ -216,7 +217,7 @@ func TestIngestCleansNULAndInvalidUTF8(t *testing.T) {
 func TestPipelineUpdateKeepsDocumentUUID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	store := NewStore(pool, nil)
+	store := must.Get(New(Config{Pool: pool}))
 	pipe := pipeline.New(pipeline.Config{Store: store, ContentExtractor: extractor.NewAuto(), StoreOriginals: true})
 
 	first, err := pipe.Ingest(ctx, &types.RawDocument{

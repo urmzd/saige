@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -91,9 +92,9 @@ func (chartTool) ExecuteRich(context.Context, map[string]any) (types.ToolResult,
 
 func partsLoop(t *testing.T, tmpl Template) *loop {
 	t.Helper()
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{
+	a := must.Get(agentsdk.New(agentsdk.Config{
 		Name: "demo", Provider: &gatedProvider{responses: partsTurn(), hold: -1}, Tools: types.NewToolRegistry(chartTool{}),
-	})
+	}))
 	m := newRunnerModel(a, context.Background(), tmpl)
 	m.header = AgentHeader{Name: "demo", Provider: "scripted", Tools: []string{"chart"}}
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
@@ -215,7 +216,7 @@ func stringsBuilder(s string) *strings.Builder {
 // scrollModel is an idle runner with a transcript longer than its view.
 func scrollModel(t *testing.T, entries int, motion bool) runnerModel {
 	t.Helper()
-	a := agentsdk.NewAgent(agentsdk.AgentConfig{Name: "t", Provider: &gatedProvider{hold: -1}})
+	a := must.Get(agentsdk.New(agentsdk.Config{Name: "t", Provider: &gatedProvider{hold: -1}}))
 	m := newRunnerModel(a, context.Background(), TemplateMinimal).withMotion(motion)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = model.(runnerModel)

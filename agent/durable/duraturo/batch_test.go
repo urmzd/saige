@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // gatedModel answers once release is closed, standing in for a vendor
@@ -59,7 +60,7 @@ func TestAwaitBatchParksAndResumes(t *testing.T) {
 	e := newEngine()
 	model := &gatedModel{release: make(chan struct{})}
 	vendor := &countingLocal{Local: batch.NewLocal(model, 2)}
-	jobs := batch.NewRunner(vendor, batch.NewMemoryStore(), batch.WithPollInterval(5*time.Millisecond, 5*time.Millisecond))
+	jobs := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: vendor, Store: batch.NewMemoryStore()}, batch.WithPollInterval(5*time.Millisecond, 5*time.Millisecond)))
 	reqs := []types.BatchRequest{
 		{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("one"))}},
 		{CustomID: "b", Messages: []types.Message{types.UserMsg(types.Text("two"))}},

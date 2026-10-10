@@ -29,7 +29,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 	_ types.OptionsReporter          = (*Adapter)(nil)
 )
@@ -144,6 +144,7 @@ func WithFrequencyPenalty(p float64) Option {
 	return func(c *config) { c.params.frequencyPenalty = &p }
 }
 
+// WithPresencePenalty sets the presence penalty.
 func WithPresencePenalty(p float64) Option {
 	return func(c *config) { c.params.presencePenalty = &p }
 }
@@ -171,17 +172,31 @@ type Adapter struct {
 	params genParams
 }
 
-// NewAdapter creates a new OpenAI provider adapter using the official SDK.
-func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
-	cfg := &config{}
+// Config names the account and model an adapter or embedder serves.
+type Config struct {
+	// APIKey authenticates every request.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates an OpenAI Chat Completions adapter using the official SDK. A
+// missing model is an error wrapping types.ErrInvalidConfig. Option
+// combinations are checked against the model by Validate and before every
+// request.
+func New(cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: openai: Config.Model is required", types.ErrInvalidConfig)
+	}
+	c := &config{}
 	for _, o := range opts {
-		o(cfg)
+		o(c)
 	}
 	return &Adapter{
-		client: openai.NewClient(cfg.clientOptions(apiKey, new(int))...),
-		model:  openai.ChatModel(model),
-		params: cfg.params,
-	}
+		client: openai.NewClient(c.clientOptions(cfg.APIKey, new(int))...),
+		model:  openai.ChatModel(cfg.Model),
+		params: c.params,
+	}, nil
 }
 
 // applyParams encodes options after Validate has checked their compatibility.
@@ -239,12 +254,16 @@ func (a *Adapter) Name() string { return providerName }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// targeting the given model, sharing the underlying client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter targeting that model, sharing the underlying client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	c := *a
-	c.model = openai.ChatModel(model)
-	return &c
+	c.model = openai.ChatModel(m)
+	return &c, nil
 }
 
 // Generate sends a single-turn user prompt with no tools and returns the

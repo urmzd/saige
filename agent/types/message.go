@@ -8,6 +8,7 @@ import (
 // Role represents the sender of a message.
 type Role string
 
+// Message roles.
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
@@ -27,6 +28,7 @@ type SystemMessage struct {
 	Parts []SystemPart
 }
 
+// Role implements Message.
 func (SystemMessage) Role() Role { return RoleSystem }
 func (SystemMessage) isMessage() {}
 
@@ -35,6 +37,7 @@ type UserMessage struct {
 	Parts []UserPart
 }
 
+// Role implements Message.
 func (UserMessage) Role() Role { return RoleUser }
 func (UserMessage) isMessage() {}
 
@@ -44,6 +47,7 @@ type AssistantMessage struct {
 	Parts []AssistantPart
 }
 
+// Role implements Message.
 func (AssistantMessage) Role() Role { return RoleAssistant }
 func (AssistantMessage) isMessage() {}
 

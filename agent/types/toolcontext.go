@@ -75,6 +75,7 @@ func (c ToolContext) String(key, def string) string {
 	return def
 }
 
+// Int returns the knob as an int, or def.
 func (c ToolContext) Int(key string, def int) int {
 	switch v := c.values[key].(type) {
 	case int:
@@ -87,6 +88,7 @@ func (c ToolContext) Int(key string, def int) int {
 	return def
 }
 
+// Float returns the knob as a float64, or def.
 func (c ToolContext) Float(key string, def float64) float64 {
 	switch v := c.values[key].(type) {
 	case float64:
@@ -97,6 +99,7 @@ func (c ToolContext) Float(key string, def float64) float64 {
 	return def
 }
 
+// Bool returns the knob as a bool, or def.
 func (c ToolContext) Bool(key string, def bool) bool {
 	if v, ok := c.values[key].(bool); ok {
 		return v
@@ -213,18 +216,44 @@ func (d Deps) Missing(required ...string) []string {
 	return out
 }
 
+// Key names a ToolContext knob or a Deps entry and the type its value has,
+// so a lookup returns that type without an assertion at every call site.
+// Keys with the same name address the same entry; declare each once, as a
+// package-level variable next to the tool that reads it.
+type Key[T any] struct{ name string }
+
+// NewKey returns the key name for values of type T.
+func NewKey[T any](name string) Key[T] { return Key[T]{name: name} }
+
+// Name returns the key's name, the string the untyped accessors and
+// Configurable.Requires use.
+func (k Key[T]) Name() string { return k.name }
+
+// Get returns the knob k names. It reports false when the knob is absent
+// or holds another type.
+func Get[T any](c ToolContext, k Key[T]) (T, bool) {
+	v, ok := c.values[k.name].(T)
+	return v, ok
+}
+
+// Put returns a copy of c with the knob k names set to v.
+func Put[T any](c ToolContext, k Key[T], v T) ToolContext { return c.With(k.name, v) }
+
+// WithDep returns a copy of d with the dependency k names set to v.
+func WithDep[T any](d Deps, k Key[T], v T) Deps { return d.With(k.name, v) }
+
 // Dep fetches a typed dependency. The type parameter is the whole point: a
 // dependency present under the right key but the wrong type is a wiring bug
 // that must surface at construction, not as a panic mid-run.
-func Dep[T any](d Deps, key string) (T, error) {
+func Dep[T any](d Deps, k Key[T]) (T, error) {
 	var zero T
-	v, ok := d.values[key]
+	v, ok := d.values[k.name]
 	if !ok {
-		return zero, fmt.Errorf("deps: missing dependency %q", key)
+		return zero, fmt.Errorf("deps: missing dependency %q", k.name)
 	}
 	t, ok := v.(T)
 	if !ok {
-		return zero, fmt.Errorf("deps: dependency %q is %T, want %T", key, v, zero)
+		return zero, fmt.Errorf("deps: dependency %q is %T, want %T", k.name, v, zero)
 	}
 	return t, nil
 }

@@ -36,7 +36,7 @@ type agentTool struct {
 	// matches it, returned as the tool's structured content.
 	schema *agenttypes.ParameterSchema
 	// newAgent builds the agent for one call.
-	newAgent func() *agentsdk.Agent
+	newAgent func() (*agentsdk.Agent, error)
 	// newBound, when set, replaces newAgent: it binds a definition for one
 	// call, and release frees what the binding opened.
 	newBound func(context.Context) (a *agentsdk.Agent, release func(), err error)
@@ -63,7 +63,11 @@ func (at agentTool) build(ctx context.Context) (agenthost.Agent, error) {
 		}
 		return agenthost.Agent{Agent: a, Release: release}, nil
 	}
-	return agenthost.Agent{Agent: at.newAgent()}, nil
+	a, err := at.newAgent()
+	if err != nil {
+		return agenthost.Agent{}, err
+	}
+	return agenthost.Agent{Agent: a}, nil
 }
 
 // newAgentTool builds the agent tool from the flags. The agent runs the
@@ -93,16 +97,16 @@ func newAgentTool(ctx context.Context, f agentFlags, tools *agenttypes.ToolRegis
 	at := agentTool{
 		name: f.name, description: f.description, schema: schema, timeout: f.timeout,
 		gated: anyGated(tools),
-		newAgent: func() *agentsdk.Agent {
-			cfg := agentsdk.AgentConfig{Name: f.name, SystemPrompt: f.system, MaxIter: f.maxIter}
+		newAgent: func() (*agentsdk.Agent, error) {
+			cfg := agentsdk.Config{Name: f.name, SystemPrompt: f.system, MaxIter: f.maxIter}
 			if len(tools.Definitions()) > 0 {
 				cfg.Tools = tools
 			}
-			opts := []agentsdk.AgentOption{agentsdk.WithPreset(bundle), agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
+			opts := []agentsdk.Option{agentsdk.WithPreset(bundle), agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
 			if schema != nil {
 				opts = append(opts, agentsdk.WithResponseSchema(schema))
 			}
-			return agentsdk.NewAgent(cfg, opts...)
+			return agentsdk.New(cfg, opts...)
 		},
 	}
 	if at.description == "" {
@@ -241,7 +245,13 @@ func (b bridge) runs() *agenthost.Manager[*agentRun] {
 
 // directRuns holds the runs of a bridge that cannot hold approvals: each
 // lasts one call.
-var directRuns = agenthost.NewManager[*agentRun](agenthost.Options{Max: 1 << 20, Prefix: "run_"})
+var directRuns = func() *agenthost.Manager[*agentRun] {
+	m, err := agenthost.New[*agentRun](agenthost.Config{Max: 1 << 20, Prefix: "run_"})
+	if err != nil {
+		panic(err) // a constant, valid configuration
+	}
+	return m
+}()
 
 // drive waits for the run's next event: its end, or a marker to decide.
 // Every marker the agent raises is decided as a direct call to the tool

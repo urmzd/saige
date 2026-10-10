@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // panicTracer panics when a run starts.
@@ -41,7 +42,7 @@ func TestRunPanicEndsRunWithError(t *testing.T) {
 				stepCall{before: agenttest.TextResponse("done")},
 			)
 			var calls atomic.Int32
-			opts := []AgentOption{WithToolPolicy(ToolPolicyFunc(func(_ context.Context, _ string, defs []types.ToolDef) ([]string, error) {
+			opts := []Option{WithToolPolicy(ToolPolicyFunc(func(_ context.Context, _ string, defs []types.ToolDef) ([]string, error) {
 				if calls.Add(1) == tt.panicAt {
 					panic("policy broke")
 				}
@@ -51,11 +52,11 @@ func TestRunPanicEndsRunWithError(t *testing.T) {
 				}
 				return names, nil
 			}))}
-			cfg := AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)}
+			cfg := Config{Provider: provider, Tools: types.NewToolRegistry(tool)}
 			if tt.tracer {
 				cfg.RunTracer = panicTracer{}
 			}
-			a := NewAgent(cfg, opts...)
+			a := must.Get(New(cfg, opts...))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -104,7 +105,7 @@ func TestAnswerOpenToolCalls(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAgent(AgentConfig{Provider: newStepProvider()})
+			a := must.Get(New(Config{Provider: newStepProvider()}))
 			ctx := context.Background()
 			branch := a.Tree().Active()
 			for _, m := range append([]types.Message{types.UserMsg(types.Text("go"))}, tt.tail...) {

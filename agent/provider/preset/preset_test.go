@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/split"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // call is one request a fake adapter received, with the options it would
@@ -162,7 +163,7 @@ func TestFallbackConsistencyRecording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	rp, _ := b.Resolved("p")
 	for _, e := range rp.Chain {
 		if got := rec.configs[string(e.Model)].Options; !reflect.DeepEqual(got, e.Options) {
@@ -263,7 +264,7 @@ func TestGroupPinViaConfigContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ag := agent.NewAgent(agent.AgentConfig{SystemPrompt: "sys"}, agent.WithPreset(b))
+	ag := must.Get(agent.New(agent.Config{SystemPrompt: "sys"}, agent.WithPreset(b)))
 	run := func(msg types.Message) []types.RouteDelta {
 		t.Helper()
 		stream := ag.Invoke(context.Background(), []types.Message{msg})
@@ -371,7 +372,7 @@ func TestDefaultsCarryCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	cc := b.Defaults().Compaction
 	if cc == nil || cc.Strategy != types.CompactKeepRecent || cc.KeepTurns != 6 {
 		t.Fatalf("compaction = %+v", cc)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // liveAdapter returns an adapter for the local runtime, or skips. It runs
@@ -36,7 +37,7 @@ func liveAdapter(t *testing.T, opts ...Option) *Adapter {
 	if model == "" {
 		model = "qwen3.5:4b"
 	}
-	return NewAdapter(NewClient(host, model, "", opts...))
+	return must.Get(New(Config{Client: must.Get(NewClient(Config{Host: host, Model: types.ModelID(model)}, opts...))}))
 }
 
 func liveStream(t *testing.T, a *Adapter, req types.Request) []types.AssistantPart {

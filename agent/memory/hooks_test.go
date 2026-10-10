@@ -9,6 +9,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestExtractionHookStoresMemories(t *testing.T) {
@@ -26,8 +27,8 @@ func TestExtractionHookStoresMemories(t *testing.T) {
 		return []Record{{Kind: KindSemantic, Content: "prefers metric units", Scope: other}}, nil
 	})
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("noted")}}
-	a := agent.NewAgent(agent.AgentConfig{Name: "helper", SystemPrompt: "s", Provider: p},
-		agent.WithHooks(ExtractionHook(store, policy, ex)))
+	a := must.Get(agent.New(agent.Config{Name: "helper", SystemPrompt: "s", Provider: p},
+		agent.WithHooks(ExtractionHook(store, policy, ex))))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := agent.Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("use metric"))}), nil); err != nil {

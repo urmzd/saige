@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -13,7 +14,7 @@ import (
 func TestStoreScopeTimeAndSources(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	s := NewStore(pool, nil)
+	s := must.Get(New(Config{Pool: pool}))
 
 	t0 := testTime().Add(-48 * time.Hour)
 	add := func(uuid, scope, uri string, updated, modified time.Time, v []float32) {

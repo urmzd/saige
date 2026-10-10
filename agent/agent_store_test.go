@@ -8,6 +8,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/store/memstore"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // messageText projects any message into a comparable text string, concatenating
@@ -68,11 +69,11 @@ func TestStoreMultiTurnRoundTrip(t *testing.T) {
 		},
 	}
 
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "store-agent",
 		SystemPrompt: "you are helpful",
 		Provider:     provider,
-	}, WithStore(store))
+	}, WithStore(store)))
 
 	rootID := ag.Tree().Root().ID
 
@@ -135,11 +136,11 @@ func TestStoreNilIsBackwardCompatible(t *testing.T) {
 	provider := &agenttest.ScriptedProvider{
 		Responses: [][]types.Delta{agenttest.TextResponse("ok")},
 	}
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "no-store",
 		SystemPrompt: "sys",
 		Provider:     provider,
-	})
+	}))
 	if ag.cfg.Store != nil {
 		t.Fatal("expected nil Store by default")
 	}
@@ -162,11 +163,11 @@ func TestStoreNilIsBackwardCompatible(t *testing.T) {
 func TestStorePersistsRootOnConstruction(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	ag := NewAgent(AgentConfig{
+	ag := must.Get(New(Config{
 		Name:         "root-persist",
 		SystemPrompt: "sys prompt",
 		Provider:     &agenttest.ScriptedProvider{},
-	}, WithStore(store))
+	}, WithStore(store)))
 
 	rootID := ag.Tree().Root().ID
 	got, err := store.LoadNode(ctx, rootID)
@@ -195,12 +196,12 @@ func TestStoreReloadLandsOnCompactedBranch(t *testing.T) {
 		agenttest.TextResponse("summary of the request"),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     script,
 		SystemPrompt: "sys",
 		Store:        store,
 		CompactCfg:   &types.CompactConfig{MaxInputTokens: 1},
-	})
+	}))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello there"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {

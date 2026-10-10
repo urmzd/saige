@@ -60,7 +60,7 @@ A local batch lives in its process. After a restart its handle is unknown, and t
 Vertex AI batch prediction reads its input from Cloud Storage and writes its output there. There is no inline option. The plain adapter on Vertex AI refuses a batch and points to `google.NewVertexBatch`:
 
 ```go
-a, _ := google.NewAdapter(ctx, "", "gemini-3.1-flash-lite", google.WithVertex(project, "us-central1"))
+a, _ := google.New(ctx, google.Config{Model: "gemini-3.1-flash-lite"}, google.WithVertex(project, "us-central1"))
 vb, err := google.NewVertexBatch(a, "gs://my-bucket/saige-batches")
 ```
 
@@ -72,7 +72,7 @@ A batch can outlive the process that submitted it. `batch.Runner` keeps a job re
 
 ```go
 store, _ := batch.NewFileStore("./batch-jobs")       // or batch.NewMemoryStore(), postgres.NewBatchStore(pool)
-jobs := batch.NewRunner(adapter, store, batch.WithBudget(budget))
+jobs, _ := batch.NewRunner(batch.RunnerConfig{Provider: adapter, Store: store}, batch.WithBudget(budget))
 
 results, err := jobs.Run(ctx, "nightly-extract-2026-10-09", requests)
 ```
@@ -142,7 +142,7 @@ A budget is process-local. A resumed job reserves again in the new process.
 
 ```go
 store, _ := batch.NewFileStore("./eval-batches")
-jobs := batch.NewRunner(adapter, store)
+jobs, _ := batch.NewRunner(batch.RunnerConfig{Provider: adapter, Store: store})
 model := batch.NewCoalescer(jobs, batch.WithJobPrefix("nightly"))
 
 judge := eval.NewJudgeScorer(model)

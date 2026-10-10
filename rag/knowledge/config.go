@@ -1,9 +1,10 @@
 package knowledge
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
+
+	agenttypes "github.com/urmzd/saige/agent/types"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/rag/knowledge/internal/engine"
@@ -84,21 +85,26 @@ func WithStore(s types.Store) Option {
 	}
 }
 
-// NewGraph creates a new Graph using the provided options.
-// This wires up the GraphEngine with the configured Store, Extractor, and Embedder.
-func NewGraph(ctx context.Context, opts ...Option) (types.Graph, error) {
-	cfg := &Config{}
+// New creates a Graph from cfg and opts, which apply on top of it. This
+// wires up the GraphEngine with the configured Store, Extractor, and
+// Embedder. A configuration with neither a store nor a pool is an error
+// wrapping agent/types.ErrInvalidConfig.
+func New(cfg Config, opts ...Option) (types.Graph, error) {
 	for _, o := range opts {
-		o(cfg)
+		o(&cfg)
 	}
 
 	var store types.Store
 	if cfg.Store != nil {
 		store = cfg.Store
 	} else if cfg.PostgresPool != nil {
-		store = pgstore.NewStore(cfg.PostgresPool, cfg.Logger)
+		pg, err := pgstore.New(pgstore.Config{Pool: cfg.PostgresPool, Logger: cfg.Logger})
+		if err != nil {
+			return nil, err
+		}
+		store = pg
 	} else {
-		return nil, fmt.Errorf("no backend configured: use WithPostgres or WithStore")
+		return nil, fmt.Errorf("%w: knowledge: no backend configured: use WithPostgres or WithStore", agenttypes.ErrInvalidConfig)
 	}
 
 	engineOpts := []engine.Option{

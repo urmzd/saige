@@ -423,7 +423,7 @@ func TestWatchScoresAnnouncedRuns(t *testing.T) {
 	tr, ids := supportConversation(t)
 	src := online.TreeSource{"conv-1": tr}
 	n := notify.NewMemory(0)
-	defer n.Close()
+	defer n.Close(context.Background())
 	ms := memstore.New()
 	s := &online.Sampler{Store: ms, Scorers: []eval.Scorer{eval.ContainsScorer("30 days")}}
 
@@ -482,7 +482,7 @@ func TestWatchScoresAnnouncedRuns(t *testing.T) {
 func TestWatchCatchesUpFromSince(t *testing.T) {
 	tr, _ := supportConversation(t)
 	n := notify.NewMemory(0)
-	defer n.Close()
+	defer n.Close(context.Background())
 	ms := memstore.New()
 	s := &online.Sampler{Store: ms, Scorers: []eval.Scorer{eval.ContainsScorer("30 days")}}
 	ctx, cancel := context.WithCancel(context.Background())

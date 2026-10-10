@@ -30,7 +30,11 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 				}
 				defer run.cleanup()
 				runner := &tui.Runner{Title: run.bound.Resolved.Name, Verbose: verbose, Template: tmpl, Output: out, NoAnimation: noAnimation}
-				return agentsdk.Run(ctx, run.bound.NewAgent(), runner)
+				a, err := run.bound.NewAgent()
+				if err != nil {
+					return reported(out, err)
+				}
+				return agentsdk.Run(ctx, a, runner)
 			}
 
 			bundle, err := resolveBundle(ctx, cf, verbose)
@@ -49,7 +53,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 				return reported(out, err)
 			}
 
-			agentCfg := agentsdk.AgentConfig{
+			agentCfg := agentsdk.Config{
 				Name:         cliName,
 				SystemPrompt: *cf.system,
 			}
@@ -57,7 +61,10 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			agent := agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness))
+			agent, err := agentsdk.New(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness))
+			if err != nil {
+				return reported(out, err)
+			}
 
 			runner := &tui.Runner{
 				Title:       cliName,

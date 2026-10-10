@@ -12,6 +12,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // scriptedModel answers a judge prompt with a verdict and anything else
@@ -73,7 +74,7 @@ func (c *countingBatches) Results(ctx context.Context, h types.BatchHandle) iter
 
 func newBatchedModel() (*batch.Coalescer, *countingBatches) {
 	cb := &countingBatches{Local: batch.NewLocal(scriptedModel{}, 8)}
-	r := batch.NewRunner(cb, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, 5*time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: cb, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, 5*time.Millisecond)))
 	return batch.NewCoalescer(r, batch.WithMaxWait(10*time.Second)), cb
 }
 
@@ -189,7 +190,7 @@ func TestWithBatchExpiredRequestsAreInconclusive(t *testing.T) {
 	// The subject batch loses case-1; the judge batch, which has no call
 	// for case-1, loses case-2.
 	eb := &expiringBatches{Local: batch.NewLocal(scriptedModel{}, 8), expire: map[int]int{0: 1, 1: 1}, jobs: map[string]int{}}
-	r := batch.NewRunner(eb, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, 5*time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: eb, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, 5*time.Millisecond)))
 	c := batch.NewCoalescer(r, batch.WithMaxWait(10*time.Second))
 	obs := batchDataset(4)
 	ctx := context.Background()

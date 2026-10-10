@@ -112,7 +112,7 @@ type sseEvent struct {
 	data  []byte
 }
 
-func newServer(ctx context.Context, opts serveOptions) *server {
+func newServer(ctx context.Context, opts serveOptions) (*server, error) {
 	if opts.approvalTimeout <= 0 {
 		opts.approvalTimeout = 10 * time.Minute
 	}
@@ -137,11 +137,15 @@ func newServer(ctx context.Context, opts serveOptions) *server {
 	if opts.logger == nil {
 		opts.logger = slog.Default()
 	}
-	s := &server{opts: opts, ctx: ctx, sessions: agenthost.NewManager[*turns](agenthost.Options{
+	sessions, err := agenthost.New[*turns](agenthost.Config{
 		Max: opts.maxSessions, IdleTTL: opts.idleTTL, Prefix: "s_", ArtifactBudget: opts.artifactBudget,
-	})}
+	})
+	if err != nil {
+		return nil, err
+	}
+	s := &server{opts: opts, ctx: ctx, sessions: sessions}
 	go s.sessions.Sweep(ctx)
-	return s
+	return s, nil
 }
 
 // evictIdle drops every session with no running turn that has been idle
@@ -409,7 +413,7 @@ func finishAGUI(w io.Writer, m *agui.Mapper, turnErr error) error {
 	if turnErr != nil && !m.Finished() {
 		events, _ = m.Map(types.ErrorDelta{Error: turnErr})
 	}
-	events = append(events, m.Close()...)
+	events = append(events, m.Flush()...)
 	for _, e := range events {
 		if err := agui.WriteSSE(w, e); err != nil {
 			return err

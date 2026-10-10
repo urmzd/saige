@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // textProvider streams a short text answer. When failEvery is set, every
@@ -60,9 +61,9 @@ func BenchmarkRetryOverhead(b *testing.B) {
 		benchStream(b, func() types.Provider { return &textProvider{} })
 	})
 	b.Run("retry", func(b *testing.B) {
-		benchStream(b, func() types.Provider { return New(&textProvider{}, cfg) })
+		benchStream(b, func() types.Provider { return must.Get(New(&textProvider{}, cfg)) })
 	})
 	b.Run("retry-transient", func(b *testing.B) {
-		benchStream(b, func() types.Provider { return New(&textProvider{failEvery: 2}, cfg) })
+		benchStream(b, func() types.Provider { return must.Get(New(&textProvider{failEvery: 2}, cfg)) })
 	})
 }

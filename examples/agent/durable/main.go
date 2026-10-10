@@ -41,11 +41,19 @@ import (
 // newAgent builds a fresh agent, tree and budget. Both engines call it again
 // for every replay, so concurrent and recovered runs never share state.
 func newAgent() *agentsdk.Agent {
-	return agentsdk.NewAgent(agentsdk.AgentConfig{
+	provider, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	a, err := agentsdk.New(agentsdk.Config{
 		Name:         "researcher",
 		SystemPrompt: "You research questions and summarize concisely.",
-		Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
+		Provider:     provider,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return a
 }
 
 func main() {

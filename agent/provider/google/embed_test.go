@@ -55,8 +55,7 @@ func TestEmbedderTaskTypeAndErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var seen []map[string]any
 			tr := embedTransport{status: tt.status, body: tt.body, mu: &sync.Mutex{}, seen: &seen}
-			e, err := NewEmbedder(context.Background(), "k", "text-embedding-004",
-				append(tt.opts, WithEmbedHTTPClient(&http.Client{Transport: tr}))...)
+			e, err := NewEmbedder(context.Background(), Config{APIKey: "k", Model: "text-embedding-004"}, append(tt.opts, WithEmbedHTTPClient(&http.Client{Transport: tr}))...)
 			if err != nil {
 				t.Fatal(err)
 			}

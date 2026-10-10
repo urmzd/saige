@@ -69,11 +69,11 @@ func TestScopedConversationID(t *testing.T) {
 func TestScopedStoresIsolateTenants(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	storeA, err := NewScopedStore(pool, "tenant-a", "conv", nil)
+	storeA, err := New(Config{Pool: pool, Scope: "tenant-a", ConversationID: "conv"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	storeB, err := NewScopedStore(pool, "tenant-b", "conv", nil)
+	storeB, err := New(Config{Pool: pool, Scope: "tenant-b", ConversationID: "conv"})
 	if err != nil {
 		t.Fatal(err)
 	}

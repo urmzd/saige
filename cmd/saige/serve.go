@@ -109,7 +109,7 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 					return err
 				}
 				slog.Info("saige serve agent", "agent", first.Pin().String())
-				_ = first.Close()
+				_ = first.Close(ctx)
 				if agentsReload > 0 {
 					stopWatch, err := h.reg.Watch(srvCtx, definition.WatchOptions{Interval: agentsReload, OnReload: func(changed bool, err error) {
 						switch {
@@ -131,7 +131,7 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 					if err != nil {
 						return agenthost.Agent{}, err
 					}
-					return agenthost.FromBound(b), nil
+					return agenthost.FromBound(b)
 				}
 				return listenAndServe(ctx, srvCtx, cmd, addr, opts, -1)
 			}
@@ -152,11 +152,11 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 			tools = append(tools, packTools...)
 
 			opts.newAgent = func() (*agentsdk.Agent, error) {
-				cfg := agentsdk.AgentConfig{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
+				cfg := agentsdk.Config{Name: cliName, SystemPrompt: *cf.system, Provider: provider}
 				if len(tools) > 0 {
 					cfg.Tools = types.NewToolRegistry(tools...)
 				}
-				return agentsdk.NewAgent(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter})), nil
+				return agentsdk.New(cfg, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{DenyAfter: denyAfter}))
 			}
 			return listenAndServe(ctx, srvCtx, cmd, addr, opts, len(tools))
 		},
@@ -180,7 +180,10 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 // listenAndServe runs the HTTP server until ctx ends. tools is logged; a
 // negative count is not.
 func listenAndServe(ctx, srvCtx context.Context, cmd *cobra.Command, addr string, opts serveOptions, tools int) error {
-	s := newServer(srvCtx, opts)
+	s, err := newServer(srvCtx, opts)
+	if err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

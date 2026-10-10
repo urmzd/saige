@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func redirectTo(t *testing.T, srv *httptest.Server) *http.Client {
@@ -76,11 +77,11 @@ func TestGeminiBatch(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	a, err := NewAdapter(context.Background(), "key", "gemini-3.1-flash-lite", WithHTTPClient(redirectTo(t, srv)))
+	a, err := New(context.Background(), Config{APIKey: "key", Model: "gemini-3.1-flash-lite"}, WithHTTPClient(redirectTo(t, srv)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: a, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-gemini", batchReqs())
 	if err != nil {
 		t.Fatal(err)
@@ -163,8 +164,7 @@ func TestVertexBatch(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	a, err := NewAdapter(context.Background(), "", "gemini-3.1-flash-lite", WithVertex("proj", "us-central1"),
-		WithHTTPClient(redirectTo(t, srv)), WithCredentials(testCredentials("tok")))
+	a, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"}, WithVertex("proj", "us-central1"), WithHTTPClient(redirectTo(t, srv)), WithCredentials(testCredentials("tok")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestVertexBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := batch.NewRunner(vb, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
+	r := must.Get(batch.NewRunner(batch.RunnerConfig{Provider: vb, Store: batch.NewMemoryStore()}, batch.WithPollInterval(time.Millisecond, time.Millisecond)))
 	got, err := r.Run(context.Background(), "job-vertex", batchReqs())
 	if err != nil {
 		t.Fatal(err)

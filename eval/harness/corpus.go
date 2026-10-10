@@ -188,13 +188,6 @@ func FilterScripts(scripts []Script, idPrefix string, count int) []Script {
 	return filtered
 }
 
-// FilterExperiments keeps scripts whose ID starts with idPrefix.
-//
-// Deprecated: Use [FilterScripts].
-func FilterExperiments(scripts []Script, idPrefix string, count int) []Script {
-	return FilterScripts(scripts, idPrefix, count)
-}
-
 // ValidateCorpus checks a corpus directory without running it and returns
 // every problem found, not only the first: unreadable or unknown config
 // keys (with their JSON pointer), missing system files, a missing turn-0,

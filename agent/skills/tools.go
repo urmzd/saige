@@ -90,12 +90,12 @@ func NewToolset(cat SkillCatalog, policy SkillPolicy, opts ...Option) *Toolset {
 // skill's allowed-tools. The policy wraps the ToolPolicy configured when
 // this option runs, so pass WithSkills after agent.WithToolPolicy.
 //
-// The listing is added to AgentConfig.SystemPrompt, which seeds a tree the
+// The listing is added to Config.SystemPrompt, which seeds a tree the
 // agent creates itself. An agent given an existing tree keeps that tree's
 // system message; add Toolset.Prompt to it yourself.
-func WithSkills(cat SkillCatalog, policy SkillPolicy, opts ...Option) agent.AgentOption {
+func WithSkills(cat SkillCatalog, policy SkillPolicy, opts ...Option) agent.Option {
 	ts := NewToolset(cat, policy, opts...)
-	return func(cfg *agent.AgentConfig) {
+	return func(cfg *agent.Config) {
 		var existing []types.Tool
 		if cfg.Tools != nil {
 			existing = cfg.Tools.All()

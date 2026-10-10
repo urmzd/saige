@@ -15,6 +15,8 @@ type HandoffContext struct {
 	Messages []types.Message
 }
 
+// HandoffContextPolicy selects the messages a handoff group member sees when
+// it takes the conversation.
 type HandoffContextPolicy interface {
 	Select(context.Context, HandoffContext) ([]types.Message, error)
 }
@@ -25,6 +27,7 @@ type HandoffContextPolicy interface {
 // Returning to an owner resumes its previous view with the new transfer brief.
 type OwnerContext struct{}
 
+// Select implements HandoffContextPolicy.
 func (OwnerContext) Select(_ context.Context, request HandoffContext) ([]types.Message, error) {
 	owner := request.Entry
 	var out []types.Message
@@ -77,12 +80,15 @@ func (OwnerContext) Select(_ context.Context, request HandoffContext) ([]types.M
 // FullHandoffContext explicitly preserves the previous shared-context behavior.
 type FullHandoffContext struct{}
 
+// Select implements HandoffContextPolicy.
 func (FullHandoffContext) Select(_ context.Context, request HandoffContext) ([]types.Message, error) {
 	return append([]types.Message(nil), request.Messages...), nil
 }
 
-func WithHandoffContextPolicy(policy HandoffContextPolicy) AgentOption {
-	return func(cfg *AgentConfig) { cfg.HandoffContextPolicy = policy }
+// WithHandoffContextPolicy sets the policy that picks what each handoff group
+// member sees.
+func WithHandoffContextPolicy(policy HandoffContextPolicy) Option {
+	return func(cfg *Config) { cfg.HandoffContextPolicy = policy }
 }
 
 func (a *Agent) selectHandoffContext(ctx context.Context, active activeContext, messages []types.Message) (activeContext, error) {

@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/workspace"
 	topeval "github.com/urmzd/saige/eval"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type weatherIn struct {
@@ -89,7 +90,7 @@ func TestFuncDecodeErrorReachesModel(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "weather", map[string]any{"city": "Oslo", "zip": "0150"}),
 		agenttest.TextResponse("sorry"),
 	}}
-	a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(weatherTool())}, WithDeps(&weatherDeps{}))
+	a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(weatherTool())}, WithDeps(&weatherDeps{})))
 	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}).Deltas())
 	end, ok := endDeltaFor(deltas, "c1")
 	if !ok || !strings.Contains(end.Error, types.ErrInvalidToolArguments.Error()) || !strings.Contains(end.Error, "zip") {
@@ -141,9 +142,9 @@ func TestFuncRunContext(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "probe", map[string]any{}),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Name: "host", Provider: p, Tools: types.NewToolRegistry(tool)},
+	a := must.Get(New(Config{Name: "host", Provider: p, Tools: types.NewToolRegistry(tool)},
 		WithDeps(&weatherDeps{base: 3}), WithWorkspace(ws),
-		WithToolContext(types.NewToolContext(map[string]any{types.ToolContextIdempotencyKey: "key-1"})))
+		WithToolContext(types.NewToolContext(map[string]any{types.ToolContextIdempotencyKey: "key-1"}))))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("probe"))})
 	for d := range stream.Deltas() {
 		if m, ok := d.(types.MarkerDelta); ok {
@@ -237,7 +238,7 @@ func TestFuncVersionRecorded(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "weather", map[string]any{"city": "Oslo"}),
 		agenttest.TextResponse("warm"),
 	}}
-	a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(tool)}, WithDeps(&weatherDeps{base: 30}))
+	a := must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(tool)}, WithDeps(&weatherDeps{base: 30})))
 	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}).Deltas())
 	want := types.ToolVersion(tool)
 	if end, _ := endDeltaFor(deltas, "c1"); end.Version != want {

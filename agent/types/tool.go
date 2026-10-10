@@ -137,15 +137,18 @@ type ToolFunc struct {
 	Fn  func(ctx context.Context, args map[string]any) (string, error)
 }
 
+// Definition calls f.
 func (t *ToolFunc) Definition() ToolDef {
 	return t.Def
 }
 
+// Execute calls f.
 func (t *ToolFunc) Execute(ctx context.Context, args map[string]any) (string, error) {
 	return t.Fn(ctx, args)
 }
 
-// ToolRegistry holds named tools. It is safe for concurrent use.
+// ToolRegistry holds named tools. It is safe for concurrent use, and its
+// zero value is an empty registry ready to use.
 type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
@@ -172,6 +175,9 @@ func (r *ToolRegistry) Get(name string) (Tool, bool) {
 func (r *ToolRegistry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.tools == nil {
+		r.tools = map[string]Tool{}
+	}
 	r.tools[t.Definition().Name] = t
 }
 
@@ -188,6 +194,9 @@ func (r *ToolRegistry) RegisterUnique(t Tool) error {
 	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; ok {
 		return fmt.Errorf("%w: %s", ErrToolExists, name)
+	}
+	if r.tools == nil {
+		r.tools = map[string]Tool{}
 	}
 	r.tools[name] = t
 	return nil

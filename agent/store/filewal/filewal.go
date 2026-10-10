@@ -227,10 +227,21 @@ type WAL struct {
 	reads int
 }
 
-// New opens (creating if necessary) the JSONL WAL at path. A torn final line
-// left by a crash mid-Commit is truncated away so later appends start on a
-// fresh line; the torn transaction was never acknowledged, so nothing is lost.
-func New(path string) (*WAL, error) {
+// Config names the WAL's file.
+type Config struct {
+	// Path is the JSONL log file, created when missing. Required.
+	Path string
+}
+
+// New opens (creating if necessary) the JSONL WAL at cfg.Path. A torn final
+// line left by a crash mid-Commit is truncated away so later appends start
+// on a fresh line; the torn transaction was never acknowledged, so nothing
+// is lost. An empty path is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config) (*WAL, error) {
+	path := cfg.Path
+	if path == "" {
+		return nil, fmt.Errorf("%w: filewal: Config.Path is required", types.ErrInvalidConfig)
+	}
 	if err := repairTail(path); err != nil {
 		return nil, fmt.Errorf("filewal: repair %s: %w", path, err)
 	}
@@ -271,12 +282,13 @@ func repairTail(path string) error {
 
 // Close closes the underlying file. In-flight (uncommitted) transactions are
 // discarded, matching crash semantics.
-func (w *WAL) Close() error {
+func (w *WAL) Close(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.f.Close()
 }
 
+// Begin implements types.WAL.
 func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -285,6 +297,7 @@ func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	return id, nil
 }
 
+// Append implements types.WAL.
 func (w *WAL) Append(_ context.Context, txID types.TxID, op types.TxOp) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -320,6 +333,7 @@ func (w *WAL) Commit(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Abort implements types.WAL.
 func (w *WAL) Abort(_ context.Context, txID types.TxID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -392,8 +406,8 @@ func (w *WAL) writeRecords(recs ...record) error {
 	}
 	if werr != nil {
 		if terr := w.f.Truncate(goodSize); terr != nil {
-			w.failed = fmt.Errorf("write: %v; rollback truncate to %d: %v", werr, goodSize, terr)
-			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %v; wal disabled)", werr, terr)
+			w.failed = fmt.Errorf("write: %w; rollback truncate to %d: %w", werr, goodSize, terr)
+			return fmt.Errorf("filewal: write: %w (rollback truncate failed: %w; wal disabled)", werr, terr)
 		}
 		// The handle is O_APPEND, so the next write lands at the restored end
 		// of file: no seek needed.
@@ -526,7 +540,7 @@ func (w *WAL) rewrite(recs []record) error {
 	_ = w.f.Close()
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path is the caller-chosen WAL location
 	if err != nil {
-		w.failed = fmt.Errorf("reopen after compact: %v", err)
+		w.failed = fmt.Errorf("reopen after compact: %w", err)
 		return fmt.Errorf("filewal: reopen after compact: %w (wal disabled)", err)
 	}
 	w.f = f

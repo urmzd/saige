@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // A router reports each attempt's dials on its route; the span carries the
@@ -22,7 +23,7 @@ func TestDialAttributesFromRoute(t *testing.T) {
 		types.PartDelta{Index: 0, Text: "ok"},
 	}}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestDialAttributesForSingleAdapter(t *testing.T) {
 	inner := &capsProvider{optionsProvider: optionsProvider{fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}},
 		caps: catalog.MustLookup("ollama", "qwen3")}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{Options: &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}, DialPolicy: &types.DialPolicy{}}})
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{Options: &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}, DialPolicy: &types.DialPolicy{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

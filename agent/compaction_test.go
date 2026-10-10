@@ -9,6 +9,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // cheapScripted is a priced ScriptedProvider with its own model name, so a
@@ -68,12 +69,12 @@ func nestedCompactionDeltas(deltas []types.Delta) []types.CompactionDelta {
 
 func TestCompactionRecordsWhatItKeptAndDropped(t *testing.T) {
 	script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     script,
 		SystemPrompt: "sys",
 		MaxIter:      1,
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactKeepRecent, KeepTurns: 1, MaxInputTokens: 1},
-	})
+	}))
 	stream := a.Invoke(context.Background(), twoToolTurns())
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
@@ -138,7 +139,7 @@ func TestTreeSummaryCompactionIsRecorded(t *testing.T) {
 		agenttest.TextResponse("summary of the first lookup"),
 		agenttest.TextResponse("done"),
 	}}
-	a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: &types.CompactConfig{MaxInputTokens: 1}})
+	a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: &types.CompactConfig{MaxInputTokens: 1}}))
 	stream := a.Invoke(context.Background(), twoToolTurns())
 	got := compactionDeltas(agenttest.CollectDeltas(stream.Deltas()))
 	if err := stream.Wait(); err != nil {
@@ -161,13 +162,13 @@ func TestSummaryIsChargedToTheBudget(t *testing.T) {
 		withUsage(agenttest.TextResponse("the first lookup happened"), usage(70, 30)),
 	}}
 	budget := types.NewBudget(types.BudgetPolicy{MaxRequests: 10})
-	a := NewAgent(AgentConfig{
+	a := must.Get(New(Config{
 		Provider:     pricedScripted{main},
 		SystemPrompt: "sys",
 		MaxIter:      1,
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummary, KeepTurns: 1, MaxInputTokens: 1},
 		Budget:       budget,
-	}, WithCompactProvider(cheapScripted{cheap}))
+	}, WithCompactProvider(cheapScripted{cheap})))
 	stream := a.Invoke(context.Background(), twoToolTurns())
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
@@ -203,7 +204,7 @@ func TestSummaryIsChargedToTheBudget(t *testing.T) {
 }
 
 func TestSummaryModelSwitchesTheActiveProvider(t *testing.T) {
-	a := NewAgent(AgentConfig{Provider: &namedProvider{id: "p"}})
+	a := must.Get(New(Config{Provider: &namedProvider{id: "p"}}))
 	sw := &modelSwitchingProvider{model: "big"}
 	got := a.compactionProvider(activeContext{provider: sw}, &types.CompactConfig{SummaryModel: "small"})
 	if types.ProviderModel(got) != "small" {
@@ -220,8 +221,9 @@ type modelSwitchingProvider struct {
 }
 
 func (s *modelSwitchingProvider) Model() string { return s.model }
-func (s *modelSwitchingProvider) WithModel(m string) types.Provider {
-	return &modelSwitchingProvider{namedProvider: s.namedProvider, model: m}
+func (s *modelSwitchingProvider) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
+	return &modelSwitchingProvider{namedProvider: s.namedProvider, model: m}, nil
 }
 
 func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {
@@ -236,7 +238,7 @@ func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {
 		agenttest.TextResponse("child done"),
 	}}
 	read := &agenttest.MockTool{Def: types.ToolDef{Name: "read", Description: "read"}, Result: strings.Repeat("x", 400)}
-	cfg := AgentConfig{
+	cfg := Config{
 		Name:         "orchestrator",
 		Provider:     parent,
 		SystemPrompt: "sys",
@@ -244,12 +246,12 @@ func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {
 			{
 				Name: "worker", Description: "looks things up", Provider: child,
 				Tools:   types.NewToolRegistry(read),
-				Options: []AgentOption{WithCompactConfig(&types.CompactConfig{Strategy: types.CompactKeepRecent, KeepTurns: 1, MaxInputTokens: 1})},
+				Options: []Option{WithCompactConfig(&types.CompactConfig{Strategy: types.CompactKeepRecent, KeepTurns: 1, MaxInputTokens: 1})},
 			},
 			{Name: "inheritor", Description: "inherits"},
 		},
 	}
-	a := NewAgent(cfg, WithoutCompaction())
+	a := must.Get(New(cfg, WithoutCompaction()))
 	// The orchestrator's own history is long enough that any strategy
 	// would compact it.
 	input := append(twoToolTurns(), types.UserMsg(types.Text("now delegate")))
@@ -284,13 +286,13 @@ func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {
 }
 
 func TestHandoffGroupAcceptsDisabledCompaction(t *testing.T) {
-	run := func(t *testing.T, opts ...AgentOption) error {
+	run := func(t *testing.T, opts ...Option) error {
 		t.Helper()
 		script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hi")}}
-		a := NewAgent(AgentConfig{
+		a := must.Get(New(Config{
 			Name: "entry", Provider: script, SystemPrompt: "sys",
 			Handoffs: []HandoffDef{{Name: "specialist", Description: "handles the hard part"}},
-		}, opts...)
+		}, opts...))
 		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hello"))})
 		agenttest.CollectDeltas(stream.Deltas())
 		return stream.Wait()
@@ -318,12 +320,12 @@ func TestHandoffGroupAcceptsDisabledCompaction(t *testing.T) {
 func TestWithPresetSetsCompaction(t *testing.T) {
 	p := fakePreset{d: types.PresetDefaults{Compaction: &types.CompactConfig{Strategy: types.CompactChain,
 		Chain: []types.CompactConfig{{Strategy: types.CompactClearToolResults}, {Strategy: types.CompactSummary}}}}}
-	a := NewAgent(AgentConfig{}, WithPreset(p))
+	a := must.Get(New(Config{}, WithPreset(p)))
 	if a.cfg.CompactCfg == nil || a.cfg.CompactCfg.Strategy != types.CompactChain || len(a.cfg.CompactCfg.Chain) != 2 {
 		t.Fatalf("CompactCfg = %+v", a.cfg.CompactCfg)
 	}
 	// The agent's own policy wins.
-	b := NewAgent(AgentConfig{}, WithoutCompaction(), WithPreset(p))
+	b := must.Get(New(Config{}, WithoutCompaction(), WithPreset(p)))
 	if b.cfg.CompactCfg.Enabled() {
 		t.Fatal("the preset replaced the agent's policy")
 	}
@@ -352,11 +354,11 @@ func TestBeforeCompactionHookSkipsStrategies(t *testing.T) {
 			if s != types.CompactChain {
 				cfg.Chain = nil
 			}
-			a := NewAgent(AgentConfig{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: cfg},
+			a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", MaxIter: 1, CompactCfg: cfg},
 				WithHooks(Hooks{
 					BeforeCompaction: func(_ context.Context, ev *CompactionEvent) error { before++; ev.Skip = true; return nil },
 					AfterCompaction:  func(context.Context, *CompactionEvent) error { after++; return nil },
-				}))
+				})))
 			stream := a.Invoke(context.Background(), twoToolTurns())
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {

@@ -20,17 +20,17 @@ import (
 func wireRoundTripCases() []Delta {
 	args := map[string]any{"q": "go", "n": json.Number("3"), "deep": map[string]any{"ok": true}}
 	return []Delta{
-		TextStartDelta{},
-		TextContentDelta{Content: "hello"},
-		TextEndDelta{},
-		ThinkingStartDelta{},
-		ThinkingContentDelta{Content: "hmm"},
-		ThinkingEndDelta{Signature: "sig"},
-		ToolCallStartDelta{ID: "c1", Name: "search"},
-		ToolCallArgumentDelta{ID: "c1", Content: `{"q":`},
-		ToolCallEndDelta{ID: "c1", Arguments: args},
+		v1TextStart{},
+		v1TextContent{Content: "hello"},
+		v1TextEnd{},
+		v1ThinkingStart{},
+		v1ThinkingContent{Content: "hmm"},
+		v1ThinkingEnd{Signature: "sig"},
+		v1ToolCallStart{ID: "c1", Name: "search"},
+		v1ToolCallArgument{ID: "c1", Content: `{"q":`},
+		v1ToolCallEnd{ID: "c1", Arguments: args},
 		ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
-		ToolExecDelta{ToolCallID: "c1", Inner: ToolExecDelta{ToolCallID: "c2", Inner: TextContentDelta{Content: "child"}}},
+		ToolExecDelta{ToolCallID: "c1", Inner: ToolExecDelta{ToolCallID: "c2", Inner: v1TextContent{Content: "child"}}},
 		ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "ok", Error: "", Parts: []ToolOutputPart{
 			Text("ok"),
 			Image(Bytes(MediaPNG, []byte{1, 2, 3}).With(Source{URI: "file:///a.png", Filename: "a.png"}), ImageMeta{Width: 2}),
@@ -58,9 +58,9 @@ func wireRoundTripCases() []Delta {
 		QueuedDelta{SubmissionID: "s1", Mode: "queue", Position: 2},
 		InjectedDelta{SubmissionID: "s1", Mode: "steer", NodeID: "n3"},
 		InterruptedDelta{Reason: "user", SubmissionID: "s2"},
-		ServerToolCallDelta{ID: "st1", Kind: ServerToolWebSearch, Name: "web_search", Input: map[string]any{"query": "go"}},
-		ServerToolResultDelta{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
-			IsError: true, Files: []FileContent{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},
+		v1ServerToolCall{ID: "st1", Kind: ServerToolWebSearch, Name: "web_search", Input: map[string]any{"query": "go"}},
+		v1ServerToolResult{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
+			IsError: true, Files: []wireFile{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},
 		PartialJSONDelta{JSON: json.RawMessage(`{"title":"dra"}`)},
 		PartStart{Index: 0, Kind: KindText},
 		PartStart{Index: 4, Kind: KindToolCall, ID: "c9", Name: "search"},
@@ -87,7 +87,7 @@ func wireRoundTripCases() []Delta {
 		}}},
 		GuardrailDelta{Guardrail: "pii", Phase: GuardrailPhaseOutput, Action: GuardrailActionRewrite, Reason: "email", Text: "[REDACTED:EMAIL]"},
 		GuardrailDelta{Guardrail: "policy", Phase: GuardrailPhaseInput, Action: GuardrailActionBlock, Reason: "off topic", Canceled: true},
-		CompactionDelta{Branch: "compact-1", NodeID: "n9", Record: CompactionContent{
+		CompactionDelta{Branch: "compact-1", NodeID: "n9", Record: CompactionPart{
 			Strategy: "chain(clear_tool_results,summary)", Steps: []string{"summary"}, Trigger: CompactionTriggerInputPressure,
 			TokensBefore: 900, TokensAfter: 300, FromBranch: "main", Kept: []NodeID{"a"}, Selected: []NodeID{"b"},
 			Cleared: []NodeID{"c"}, Summarized: []NodeID{"d"}, Dropped: []NodeID{"e"}, SummaryNode: "s",
@@ -155,7 +155,7 @@ func TestWireCoversEveryDelta(t *testing.T) {
 }
 
 func TestWireEnvelopeShape(t *testing.T) {
-	env, err := NewDeltaEnvelope(TextContentDelta{Content: "hi"})
+	env, err := NewDeltaEnvelope(v1TextContent{Content: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +402,8 @@ func TestWireRejects(t *testing.T) {
 }
 
 func TestFlattenDelta(t *testing.T) {
-	path, inner := FlattenDelta(TextEndDelta{})
-	if path != nil || inner != (TextEndDelta{}) {
+	path, inner := FlattenDelta(v1TextEnd{})
+	if path != nil || inner != (v1TextEnd{}) {
 		t.Errorf("flat delta: %v %v", path, inner)
 	}
 }

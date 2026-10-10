@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func docPart(mt types.MediaType, text string) types.DocumentPart {
@@ -164,7 +165,7 @@ func TestMediaPolicy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := &fakeProvider{script: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartEnd{Index: 0}}}
-			p := NewProvider(inner, tc.vault)
+			p := must.Get(New(inner, Config{Vault: tc.vault}))
 			p.Media = tc.policy
 			ch, err := p.Stream(context.Background(), types.Request{Messages: tc.msgs})
 			if tc.refused {
@@ -211,7 +212,7 @@ func TestProviderSetsTheBoundary(t *testing.T) {
 	}{{MediaPass, false}, {MediaRequireText, true}} {
 		inner := &planningProvider{}
 		v := NewVault(nil)
-		p := NewProvider(inner, v)
+		p := must.Get(New(inner, Config{Vault: v}))
 		p.Media = tc.policy
 		ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(pngImage())}})
 		if err != nil {
@@ -258,7 +259,7 @@ func TestRestoreByPartIndex(t *testing.T) {
 		types.PartStart{Index: 5, Kind: types.KindCitation},
 		types.PartEnd{Index: 5, Part: types.CitationPart{Citation: types.Citation{Quote: "<<EMAIL_2>> said"}}},
 	}}
-	ch, err := NewProvider(inner, v).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
+	ch, err := must.Get(New(inner, Config{Vault: v})).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +304,7 @@ func TestSensitiveVaultRefusesAudioOut(t *testing.T) {
 	}
 	v := NewVault(nil)
 	v.SetSensitive(true)
-	p := NewProvider(&fakeProvider{script: script}, v)
+	p := must.Get(New(&fakeProvider{script: script}, Config{Vault: v}))
 	p.Media = MediaPass
 	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("speak"))}})
 	if err != nil {

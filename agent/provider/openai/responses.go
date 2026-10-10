@@ -17,7 +17,7 @@ var (
 	_ types.StructuredOutputProvider = (*ResponsesAdapter)(nil)
 	_ types.NamedProvider            = (*ResponsesAdapter)(nil)
 	_ types.ModelProvider            = (*ResponsesAdapter)(nil)
-	_ types.ModelSwitcher            = (*ResponsesAdapter)(nil)
+	_ types.TargetSwitcher           = (*ResponsesAdapter)(nil)
 	_ types.CapabilityReporter       = (*ResponsesAdapter)(nil)
 	_ types.OptionsProvider          = (*ResponsesAdapter)(nil)
 	_ catalog.ModelLister            = (*ResponsesAdapter)(nil)
@@ -39,9 +39,14 @@ type ResponsesAdapter struct {
 	base Adapter
 }
 
-// NewResponsesAdapter creates an OpenAI provider adapter for the Responses API.
-func NewResponsesAdapter(apiKey, model string, opts ...Option) *ResponsesAdapter {
-	return &ResponsesAdapter{base: *NewAdapter(apiKey, model, opts...)}
+// NewResponses creates an OpenAI provider adapter for the Responses API. It
+// takes the same Config and options as New.
+func NewResponses(cfg Config, opts ...Option) (*ResponsesAdapter, error) {
+	a, err := New(cfg, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &ResponsesAdapter{base: *a}, nil
 }
 
 // Name implements types.NamedProvider.
@@ -50,12 +55,16 @@ func (r *ResponsesAdapter) Name() string { return r.base.Name() }
 // Model implements types.ModelProvider.
 func (r *ResponsesAdapter) Model() string { return r.base.Model() }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// targeting the given model, sharing the underlying client.
-func (r *ResponsesAdapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter targeting that model, sharing the underlying client.
+func (r *ResponsesAdapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, r.Name())
+	if err != nil {
+		return nil, err
+	}
 	c := *r
-	c.base.model = openai.ChatModel(model)
-	return &c
+	c.base.model = openai.ChatModel(m)
+	return &c, nil
 }
 
 // Capabilities implements types.CapabilityReporter.

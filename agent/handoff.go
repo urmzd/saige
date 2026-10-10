@@ -12,7 +12,7 @@ import (
 // Handoff errors.
 var (
 	// ErrHandoffLimitExceeded is raised when the number of control transfers in
-	// a single run exceeds AgentConfig.MaxHandoffs (ping-pong guard).
+	// a single run exceeds Config.MaxHandoffs (ping-pong guard).
 	ErrHandoffLimitExceeded = errors.New("handoff limit exceeded")
 	// ErrUnknownHandoffTarget is raised when a handoff names an agent that is
 	// not a member of the group.
@@ -50,13 +50,13 @@ type HandoffDef struct {
 
 // WithHandoffs registers a handoff group. The agent NewAgent is called on
 // becomes the entry agent. Additive: composes with WithSubAgents.
-func WithHandoffs(defs ...HandoffDef) AgentOption {
-	return func(c *AgentConfig) { c.Handoffs = append(c.Handoffs, defs...) }
+func WithHandoffs(defs ...HandoffDef) Option {
+	return func(c *Config) { c.Handoffs = append(c.Handoffs, defs...) }
 }
 
 // WithMaxHandoffs overrides the maximum number of control transfers per run.
-func WithMaxHandoffs(n int) AgentOption {
-	return func(c *AgentConfig) { c.MaxHandoffs = n }
+func WithMaxHandoffs(n int) Option {
+	return func(c *Config) { c.MaxHandoffs = n }
 }
 
 // HandoffSignaler is implemented by the handoff_to_<name> tool. The agent loop

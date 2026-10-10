@@ -29,13 +29,20 @@ type Batch struct {
 
 var _ types.BatchProvider = (*Batch)(nil)
 
-// NewBatch wraps inner with policy. The offering is the one inner reports
-// as a provider (an adapter is both); a batch provider that reports none
-// is not planned, and its requests pass through. layers are the modality
-// dial layers inner was built with.
-func NewBatch(inner types.BatchProvider, policy types.ConversionPolicy, layers ...types.DialLayer) types.BatchProvider {
+// NewBatch wraps inner with cfg.Policy. The offering is the one inner
+// reports as a provider (an adapter is both); a batch provider that reports
+// none is not planned, and its requests pass through. cfg.Layers are the
+// modality dial layers inner was built with. A nil inner is an error
+// wrapping types.ErrInvalidConfig.
+func NewBatch(inner types.BatchProvider, cfg Config, opts ...Option) (types.BatchProvider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: convert: no batch provider to wrap", types.ErrInvalidConfig)
+	}
 	p, _ := inner.(types.Provider)
-	return wrapBatch(inner, New(p, policy, layers...))
+	return wrapBatch(inner, newProvider(p, cfg)), nil
 }
 
 // Batch returns the batch decorator for inner with this decorator's policy,

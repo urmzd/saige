@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/urmzd/saige/internal/must"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func TestClientLogsOnlyWhenAsked(t *testing.T) {
 	log.SetOutput(&std)
 	defer log.SetOutput(os.Stderr)
 
-	c := NewClient(server.URL, "qwen3:4b", "")
+	c := must.Get(NewClient(Config{Host: server.URL, Model: "qwen3:4b"}))
 	if c.Logger != nil {
 		t.Fatal("a default client must not have a logger")
 	}
@@ -36,7 +37,7 @@ func TestClientLogsOnlyWhenAsked(t *testing.T) {
 	}
 
 	var traced bytes.Buffer
-	c = NewClient(server.URL, "qwen3:4b", "", WithLogger(log.New(&traced, "", 0)))
+	c = must.Get(NewClient(Config{Host: server.URL, Model: "qwen3:4b"}, WithLogger(log.New(&traced, "", 0))))
 	if _, err := c.Generate(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}

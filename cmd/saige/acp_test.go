@@ -20,6 +20,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/cmd/internal/agenthost"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // acpTestClient is an ACP client that records updates and answers
@@ -124,7 +125,7 @@ func newACPFixture(t *testing.T, opts acpOptions, newAgent func(acpBindRequest) 
 		return agenthost.Agent{Agent: a, Tools: reg, MaxGrant: types.GrantTool}, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	f.srv = newACPServer(ctx, opts)
+	f.srv = must.Get(newACPServer(ctx, opts))
 	agentIn, clientOut := io.Pipe()
 	clientIn, agentOut := io.Pipe()
 	asc := acp.NewAgentSideConnection(f.srv, agentOut, agentIn)
@@ -145,15 +146,15 @@ func newACPFixture(t *testing.T, opts acpOptions, newAgent func(acpBindRequest) 
 // scriptedACPAgent is an agent that replays responses with tools.
 func scriptedACPAgent(p *agenttest.ScriptedProvider, tools ...types.Tool) func(acpBindRequest) (*agentsdk.Agent, *types.ToolRegistry) {
 	return func(req acpBindRequest) (*agentsdk.Agent, *types.ToolRegistry) {
-		opts := []agentsdk.AgentOption{agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
+		opts := []agentsdk.Option{agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
 		if req.tree != nil {
 			opts = append(opts, agentsdk.WithTree(req.tree))
 		}
-		cfg := agentsdk.AgentConfig{Name: req.agent, Provider: p, MaxIter: 6}
+		cfg := agentsdk.Config{Name: req.agent, Provider: p, MaxIter: 6}
 		if len(tools) > 0 {
 			cfg.Tools = types.NewToolRegistry(tools...)
 		}
-		return agentsdk.NewAgent(cfg, opts...), cfg.Tools
+		return must.Get(agentsdk.New(cfg, opts...)), cfg.Tools
 	}
 }
 

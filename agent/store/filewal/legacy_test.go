@@ -27,11 +27,11 @@ func TestLegacyWALMigrate(t *testing.T) {
 	if err := os.WriteFile(path, golden, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	w, err := filewal.New(path)
+	w, err := filewal.New(filewal.Config{Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = w.Close() })
+	t.Cleanup(func() { _ = w.Close(ctx) })
 
 	before, err := w.RecoverOps(ctx)
 	if err != nil {

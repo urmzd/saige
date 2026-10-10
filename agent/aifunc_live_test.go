@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestAIFuncLive makes one real call. It runs only with SAIGE_LIVE=1 and an
@@ -26,7 +27,7 @@ func TestAIFuncLive(t *testing.T) {
 	}
 	f, err := agent.AIFunc[in, out]("spell", "Spell a word", agent.AIConfig{
 		Prompt:   "Count the letters of the word {{printf \"%q\" .Word}} and write it in upper case.",
-		Provider: openai.NewAdapter(key, "gpt-6-luna"),
+		Provider: must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})),
 		Repair:   1,
 	})
 	if err != nil {

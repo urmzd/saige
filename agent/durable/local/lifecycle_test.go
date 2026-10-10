@@ -10,6 +10,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestRunRecordsSetupFailure(t *testing.T) {
@@ -22,7 +23,7 @@ func TestRunRecordsSetupFailure(t *testing.T) {
 		{
 			name: "budget restore fails",
 			factory: func() *agent.Agent {
-				return agent.NewAgent(agent.AgentConfig{Provider: &agenttest.ScriptedProvider{}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 1})})
+				return must.Get(agent.New(agent.Config{Provider: &agenttest.ScriptedProvider{}, Budget: types.NewBudget(types.BudgetPolicy{MaxRequests: 1})}))
 			},
 			seed: []types.BudgetReceipt{{ID: "dup", Usage: types.TokenUsage{Requests: 1}}, {ID: "dup", Usage: types.TokenUsage{Requests: 1}}},
 		},
@@ -90,12 +91,12 @@ func TestListAndDelete(t *testing.T) {
 	input := []types.Message{types.UserMsg(types.Text("go"))}
 
 	plain := func() *agent.Agent {
-		return agent.NewAgent(agent.AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}})
+		return must.Get(agent.New(agent.Config{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}}))
 	}
 	approval := func() *agent.Agent {
 		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(context.Context, map[string]any) (string, error) { return "ok", nil }}
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { return "ok", nil }}
-		return agent.NewAgent(agent.AgentConfig{Provider: provider{&calls}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1})
+		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1}))
 	}
 	if _, err := e.Run(ctx, "completed", "v1", plain, input); err != nil {
 		t.Fatal(err)

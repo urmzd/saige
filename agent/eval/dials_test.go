@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/types"
 	topeval "github.com/urmzd/saige/eval"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // catalogModel is a scripted provider that declares a catalog model.
@@ -37,7 +38,7 @@ func dialSubject(t *testing.T, vendor, model string, prov *topeval.Provenance, m
 			t.Fatal(err)
 		}
 		focused := types.CreativityFocused
-		a := agent.NewAgent(agent.AgentConfig{Provider: r.Session(), SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
+		a := must.Get(agent.New(agent.Config{Provider: r.Session(), SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused})))
 		stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 		run := CollectAgentRun(stream.Deltas())
 		mu.Lock()
@@ -99,7 +100,7 @@ func TestSingleProviderSubjectRecordsDials(t *testing.T) {
 	p := catalogModel{ScriptedProvider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("ok")}},
 		caps: catalog.MustLookup("anthropic", "claude-haiku-5-5")}
 	focused := types.CreativityFocused
-	a := agent.NewAgent(agent.AgentConfig{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
+	a := must.Get(agent.New(agent.Config{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused})))
 	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	run := CollectAgentRun(stream.Deltas())
 	if err := stream.Wait(); err != nil {

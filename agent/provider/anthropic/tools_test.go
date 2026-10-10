@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // captureServer records each request body and answers with a minimal
@@ -78,7 +79,7 @@ func TestToolChoiceWire(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
-			a := NewAdapter("k", testModel, append(tc.opts, WithBaseURL(server.URL))...)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, append(tc.opts, WithBaseURL(server.URL))...))
 			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if err == nil || !errors.Is(err, types.ErrInvalidModelConfig) {
@@ -126,7 +127,7 @@ func TestSchemaToolChoice(t *testing.T) {
 			if tc.choice != nil {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
-			a := NewAdapter("k", testModel, opts...)
+			a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, opts...))
 			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: testTools, Schema: schema})
 			if !tc.ok {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
@@ -173,7 +174,7 @@ func TestToolChoiceValidation(t *testing.T) {
 			MCPServer: &types.RemoteMCPServer{Name: "n", URL: "https://example.com"}})}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := NewAdapter("k", tc.model, tc.opts...).Validate()
+			err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(tc.model)}, tc.opts...)).Validate()
 			if (err == nil) != tc.ok {
 				t.Fatalf("Validate = %v, want ok=%v", err, tc.ok)
 			}
@@ -186,8 +187,7 @@ func TestServerToolsWire(t *testing.T) {
 	ws := types.WebSearchTool(4)
 	ws.AllowedDomains = []string{"go.dev"}
 	ws.UserLocation = "Austin, Texas, US"
-	a := NewAdapter("k", testModel, WithBaseURL(server.URL),
-		WithServerTools(ws, types.ServerTool{Kind: types.ServerToolCodeExecution}))
+	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), WithServerTools(ws, types.ServerTool{Kind: types.ServerToolCodeExecution})))
 	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestServerToolStream(t *testing.T) {
 		{"message_delta", evMessageDelta("end_turn", 30)},
 		{"message_stop", evStop},
 	}
-	a := NewAdapter("k", testModel, WithBaseURL(sseServer(t, false, events...).URL))
+	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, events...).URL)))
 	r := run(t, a, nil)
 	if len(r.errs) > 0 {
 		t.Fatal(r.errs)
@@ -313,7 +313,7 @@ func TestListModels(t *testing.T) {
 		_, _ = io.WriteString(w, `{"data":[{"id":"claude-sonnet-4-5","type":"model","display_name":"Claude Sonnet 4.5","created_at":"2025-09-29T00:00:00Z","max_input_tokens":200000,"max_tokens":64000}],"has_more":false,"first_id":"claude-sonnet-4-5","last_id":"claude-sonnet-4-5"}`)
 	}))
 	t.Cleanup(server.Close)
-	models, err := NewAdapter("k", testModel, WithBaseURL(server.URL)).ListModels(context.Background())
+	models, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(server.URL))).ListModels(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestListModels(t *testing.T) {
 		http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`, http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	if _, err := NewAdapter("k", testModel, WithBaseURL(failing.URL)).ListModels(context.Background()); !types.IsAuth(err) {
+	if _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL))).ListModels(context.Background()); !types.IsAuth(err) {
 		t.Fatalf("err = %v, want an auth error", err)
 	}
 }
