@@ -116,6 +116,10 @@ type AgentConfig struct {
 	// precedence. nil attaches nothing.
 	Deps any
 
+	// optionErr records an option that could not be applied, such as
+	// WithHarnessTools with a missing root. Every run then fails with it.
+	optionErr error
+
 	// ToolRedactor keeps sensitive values on the tool side of the boundary.
 	// Arguments are restored just before a tool executes, after the gate and
 	// any approval saw the placeholders, and results are tokenized before
@@ -700,6 +704,9 @@ func (a *Agent) start(ctx context.Context, input []types.Message, branch types.B
 // stream reports sub with QueuedDelta and InjectedDelta once its input is
 // on the branch, as it does for messages that join an active run.
 func (a *Agent) startSubmission(ctx context.Context, input []types.Message, branch types.BranchID, sub *Submission) (*EventStream, error) {
+	if a.cfg.optionErr != nil {
+		return nil, a.cfg.optionErr
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	stream := newEventStream(ctx, cancel)
 	stream.started = sub
@@ -731,6 +738,9 @@ func (a *Agent) startSubmission(ctx context.Context, input []types.Message, bran
 // that includes approvals inside delegated sub-agents. Like Invoke, it returns
 // ErrRunActive when another run is active on the branch.
 func (a *Agent) RunDurable(ctx context.Context, runner types.StepRunner, input []types.Message, branch types.BranchID) (*types.AssistantMessage, error) {
+	if a.cfg.optionErr != nil {
+		return nil, a.cfg.optionErr
+	}
 	if runner == nil {
 		runner = types.NoopStepRunner{}
 	}

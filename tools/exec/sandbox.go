@@ -50,6 +50,10 @@ type Result struct {
 type Isolation struct {
 	// Network is true when commands cannot open network connections.
 	Network bool
+	// Filesystem is true when commands can change files only under the
+	// working directory they are given and in private temporary space, so
+	// nothing outside the workspace is touched.
+	Filesystem bool
 }
 
 // Sandbox runs commands. Run returns an error only when the command could

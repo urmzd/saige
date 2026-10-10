@@ -12,6 +12,7 @@ import (
 func newChatCmd(ctx context.Context) *cobra.Command {
 	var verbose bool
 	var tmplName string
+	var hf harnessFlags
 
 	cmd := &cobra.Command{
 		Use:   "chat",
@@ -33,6 +34,11 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 			}
 			defer cleanup()
 
+			harness, err := hf.build(ctx)
+			if err != nil {
+				return reported(out, err)
+			}
+
 			agentCfg := agentsdk.AgentConfig{
 				Name:         cliName,
 				SystemPrompt: *cf.system,
@@ -41,7 +47,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			agent := agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle))
+			agent := agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness))
 
 			runner := &tui.Runner{
 				Title:    cliName,
@@ -56,6 +62,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Use plain-text streaming instead of interactive TUI")
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
+	addHarnessFlags(cmd, &hf, toolsReadOnly)
 
 	return cmd
 }
