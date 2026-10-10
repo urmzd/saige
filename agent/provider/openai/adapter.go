@@ -165,7 +165,7 @@ func WithReasoningEffort(effort string) Option {
 }
 
 // Adapter wraps the official OpenAI SDK client and implements types.Provider,
-// types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
+// types.NamedProvider and types.StructuredOutputProvider.
 type Adapter struct {
 	client openai.Client
 	model  openai.ChatModel

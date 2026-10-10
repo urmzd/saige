@@ -30,7 +30,7 @@ var (
 // root node ID of the tree is a natural choice of conversation ID.
 //
 // For a multi-tenant host, build the conversation ID with
-// ScopedConversationID, or use NewScopedStore, so a conversation ID chosen by
+// ScopedConversationID, or set Config.Scope, so a conversation ID chosen by
 // one tenant can never name another tenant's rows.
 //
 // The pool should already be connected; schema migration is handled

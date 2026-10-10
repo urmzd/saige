@@ -74,7 +74,7 @@ A sink that must save cancelled results needs its own bounded cleanup context.
 | `ContextFork` | The parent's branch up to the delegating turn, then the task |
 | `ContextFiltered` | The messages `ContextFilter` selects from that same history, then the task |
 
-A forked child keeps its own system prompt. The delegating turn is left out because its tool calls have no results yet. Thinking blocks are left out because their signatures belong to the provider that wrote them.
+A forked child keeps its own system prompt. The delegating turn is left out because its tool calls have no results yet. Thinking parts are left out because their signatures belong to the provider that wrote them.
 `TextMessagesOnly` is a ready filter: it keeps user and assistant text and drops tool traffic, so no call can lose its result.
 A service that calls `InvokeSubAgent` has no delegating turn, so its child always starts with the task alone.
 
@@ -278,7 +278,7 @@ A `ShadowArm` mirrors a sample of requests to another provider. Shadow calls spe
 
 An `OutcomePolicy` decides whether a result should move the conversation to another model.
 It sees `schema_invalid` from `Structured` after its repairs run out, and `subagent_failed` after a failed delegation.
-A returned `Switch` is recorded as `ConfigPart{Model, Reason}` on the branch, so later turns use it.
+A returned `Switch` is recorded as `ConfigPart{Target, Reason}` on the branch, so later turns use it.
 The stream reports it as a `RouteDelta` whose `Reason` names the outcome.
 
 ```go
@@ -435,7 +435,7 @@ model, err = privacy.New(model, privacy.Config{Vault: vault})
 | `PHONE` | 10 to 15 digits |
 
 `ToolRedactor` restores placeholders just before a tool runs and tokenizes the result and any error inside the tool step. Gates, approvals, the tree, telemetry, and the provider see `<<EMAIL_1>>`, never the address. A result that cannot be redacted is withheld.
-`privacy.Provider` tokenizes outgoing text, tool results, and tool arguments, and restores the response as it streams. It leaves thinking blocks alone and does not inspect file bytes.
+`privacy.Provider` tokenizes outgoing text, tool results, and tool arguments, and restores the response as it streams. It leaves thinking parts alone and does not inspect file bytes.
 `privacy.Chain` merges a named-entity detector with the built-in one. `Vault.Snapshot` and `LoadVault` carry the mapping across a resumed run; the snapshot contains the original values.
 
 ### Memory

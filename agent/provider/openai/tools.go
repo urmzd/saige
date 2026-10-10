@@ -36,7 +36,7 @@ func (a *Adapter) checkToolChoice(tools []types.ToolDef) error {
 // effort "none" gets that effort when none is configured, so effortNone is
 // true; an explicit other effort fails locally, as the API would reject it.
 // A model whose tools need the Responses API fails locally; build it with
-// NewResponsesAdapter (provider.Build does so).
+// NewResponses (provider.Build does so).
 func (a *Adapter) checkChatTools(tools []types.ToolDef) (effortNone bool, err error) {
 	if len(tools) == 0 {
 		return false, nil

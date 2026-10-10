@@ -22,7 +22,7 @@ Full API reference: [pkg.go.dev/github.com/urmzd/saige/agent](https://pkg.go.dev
 - [Compaction](#compaction)
 - [Conversation Tree](#conversation-tree)
 - [Feedback (RLHF)](#feedback-rlhf)
-- [File Pipeline](#file-pipeline)
+- [Media and conversion](#media-and-conversion)
 - [TUI](#tui)
 - [Testing](#testing)
 
@@ -75,12 +75,14 @@ type Provider interface {
 
 **Built-in adapters:**
 
-| Adapter for | Serving API | Package | Structured Output | Content Negotiation | Embedder |
+| Adapter for | Serving API | Package | Structured Output | Native media input | Embedder |
 |-------------|-------------|---------|:-:|:-:|:-:|
-| Ollama (local runtime) | Ollama native API | `agent/provider/ollama` | yes | JPEG, PNG | yes |
-| OpenAI (vendor) | Chat Completions, Responses | `agent/provider/openai` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
-| Anthropic (vendor) | Messages | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF | no |
-| Google (vendor) | Gemini API, Vertex AI | `agent/provider/google` | yes | JPEG, PNG, GIF, WebP, PDF | yes |
+| Ollama (local runtime) | Ollama native API | `agent/provider/ollama` | yes | JPEG, PNG (inline) | yes |
+| OpenAI (vendor) | Chat Completions, Responses | `agent/provider/openai` | yes | Images, PDF, WAV and MP3 audio (Chat); images and documents (Responses) | yes |
+| Anthropic (vendor) | Messages | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF, plain text | no |
+| Google (vendor) | Gemini API, Vertex AI | `agent/provider/google` | yes | Images, audio, video, PDF, text | yes |
+
+What a given model takes, with its limits and locators, is declared per offering in the [catalog](../docs/catalog.md); media it cannot take is rejected or converted by the [conversion policy](../docs/modality-conversion.md). See [parts](../docs/parts.md) for how to send each modality.
 
 The OpenAI package has two adapters. `openai.New` uses Chat Completions, and `openai.NewResponses` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
 
@@ -112,8 +114,8 @@ provider, err := ollama.New(ollama.Config{Client: client})
 | `WithThink(bool)` | Turns a reasoning model's thinking phase on or off. Unset leaves the model's own default. |
 | `WithHTTPClient(*http.Client)` | Replaces the transport, for custom timeouts or proxies. |
 
-`ChatStreamWithFormat` disables thinking automatically unless `WithThink` says
-otherwise. The format grammar constrains every token the model emits, so a
+A request with a response schema (sent as Ollama's `format`) disables thinking
+automatically unless `WithThink` says otherwise. The format grammar constrains every token the model emits, so a
 reasoning model left to think produces grammar-shaped reasoning and returns no
 usable content.
 
@@ -123,13 +125,15 @@ opens.
 
 ## Messages
 
-Three roles. Tool results are content blocks, not a separate role.
+Three roles. Each message is an ordered list of typed parts, and the role seals which part kinds it may hold. Tool results are parts, not a separate role. See [parts](../docs/parts.md) for every kind, media sources, part deltas and the wire format.
 
-| Type | Role | Content Types |
-|------|------|---------------|
-| `SystemMessage` | system | `TextPart`, `ToolResultPart`, `ConfigPart` |
-| `UserMessage` | user | `TextPart`, `ToolResultPart`, `ConfigPart`, media parts (`ImagePart`, `DocumentPart`, ...) |
-| `AssistantMessage` | assistant | `TextPart`, `ToolCallPart`, `ThinkingPart` |
+| Type | Role | Parts |
+|------|------|-------|
+| `SystemMessage` | system | `TextPart`, `ToolResultPart`, metadata parts (`ConfigPart`, `RoutePart`, ...) |
+| `UserMessage` | user | `TextPart`, `ToolResultPart`, media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `FilePart`), `ConfigPart`, `SteerPart`, `FeedbackPart` |
+| `AssistantMessage` | assistant | `TextPart`, `ThinkingPart`, `ToolCallPart`, `ServerToolCallPart`, `ServerToolResultPart`, `CitationPart`, `RefusalPart`, generated media (`ImageOutPart`, `AudioOutPart`, `VideoOutPart`) |
+
+Build messages with `types.SystemMsg`, `types.UserMsg`, `types.AssistantMsg`, `types.ToolResults` and `types.UserToolResults`, for example `types.UserMsg(types.Text("Describe this"), types.Image(types.Bytes(types.MediaPNG, png)))`.
 
 `ToolResultPart` carries an `IsError` field that signals whether the text represents an error or a successful result. This distinction is preserved through to the LLM: Anthropic passes it natively, Google uses an `error` key in the function response, and OpenAI/Ollama prefix the text with `[TOOL ERROR]`.
 
@@ -249,7 +253,7 @@ apply per call; the parent's `ToolTimeout` does not cover a delegation.
 
 `SubAgentDef.Context` picks what the child starts with: `ContextTaskOnly`
 (default, the task alone), `ContextFork` (the parent's branch up to the
-delegating turn, without thinking blocks), or `ContextFiltered` (the messages
+delegating turn, without thinking parts), or `ContextFiltered` (the messages
 `ContextFilter` selects from that history).
 
 Register `agent.ClarificationTool()` to give the model an `ask_user` tool. Its

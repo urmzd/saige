@@ -60,7 +60,7 @@ The SDK cannot infer a tenant's authorization scope or the meaning of a deployme
 A cache wrapper therefore uses a private identity unless the host supplies scope and configuration keys.
 Explicit sharing remains possible, but the host owns that contract.
 A model name alone is insufficient because two configurations of one model can produce different results.
-Agent stores take tenant scope the same way: `pgstore.ScopedConversationID` and `NewScopedStore` place the scope as a namespace inside `conversation_id`, so two tenants never read each other's nodes.
+Agent stores take tenant scope the same way: `pgstore.ScopedConversationID` and `pgstore.Config.Scope` place the scope as a namespace inside `conversation_id`, so two tenants never read each other's nodes.
 
 ## D-08: Keep policies separate
 
@@ -219,7 +219,7 @@ The `none` strategy never makes a summary call, also after a context-length erro
 A turn that stops at the output token limit can end with a tool call whose arguments are cut off.
 Running it could act on partial input. The loop therefore never runs any tool call from a truncated turn.
 The completed text is committed and the stream sends `TruncatedDelta` with the node and the finish reason.
-The committed node carries a `TruncationContent` marker with the reason. The tree stores it, and the loop strips it before the next provider call.
+The committed node carries a `TruncationPart` marker with the reason. The tree stores it, and the loop strips it before the next provider call.
 A truncated text-only turn ends the run cleanly unless `WithAutoContinue` or a queued message resumes it (D-25). The delta shows the answer is partial.
 A truncated turn that requested tools ends the run with `ResponseTruncatedError`.
 
@@ -250,11 +250,11 @@ A run that moves to a compacted branch extends its claim to it, so a message add
 
 Some failures are signals about the model, not the request: structured output that never validates, or a sub-agent that fails.
 An `OutcomePolicy` observes these outcomes and may return a `Switch` to another model.
-The agent records an accepted switch as `ConfigContent{Model, Reason}` on the branch and sends a `RouteDelta` with the reason.
+The agent records an accepted switch as `ConfigPart{Target, Reason}` on the branch and sends a `RouteDelta` with the reason.
 Recording it in the tree makes the switch hold for later turns, survive a reload, and appear in the audit trail.
 A sub-agent failure is observed after the turn's tool results are recorded, so a switch never separates a call from its result.
 `Structured` observes `schema_invalid` after its repairs run out, then repairs again on the new model, at most three switches per call.
-A `Switch` can also carry dials, recorded as `ConfigContent{Dials}`, so a policy can raise reasoning depth on the same model before it moves to another one.
+A `Switch` can also carry dials, recorded as `ConfigPart{Dials}`, so a policy can raise reasoning depth on the same model before it moves to another one.
 A switch is ignored only when it changes neither the model nor the dials, so a ladder that has reached its top ends the escalation.
 Cancellation is not a failure and is never reported. A policy should be deterministic, because a durable run replays its outcomes.
 The policy is not inherited by sub-agents. The parent observes a child's failure and decides for itself.
@@ -424,6 +424,14 @@ The plan is pure: it reads the offering's modalities, limits and locators and as
 Conversions change only the copy sent to the provider. The conversation keeps the original parts, so a later turn on a model that reads the media gets it as it is, and the record never holds text a converter made as if the user had written it.
 Because history is sent every turn, conversions are memoized by scope, converter version and digest, run as durable steps so a replay never runs or bills them twice, and charged to the attempt's budget reservation (D-09). The executed report is streamed before the attempt's output and kept on failover, because its cost is real, and the serving attempt's report is saved with the turn.
 The same planner keeps reasoning a target cannot verify out of the view: a thinking part signed by another vendor, or unsigned, is not replayed to an API that checks signatures.
+
+## D-46: An offering is a model on an endpoint, and its parameters are data
+
+A model's facts (context window, output limit, the modalities its weights take and produce) hold wherever it is served. What may be sent does not: the same model accepts different parameters, media, locators, service tiers and prices on its vendor's API, on a cloud platform and behind a compatible proxy. The catalog therefore keeps three things apart. A model holds the facts, an endpoint says how a surface is reached (auth by secret reference, location, transport, batch mode, data handling, file store), and an offering joins one model to one endpoint with everything that holds there.
+An offering's parameter specification is data, not adapter code: each parameter's type, range or values, default and the constraints between parameters (such as sampling allowed only with reasoning effort `none`). Dials compile against it, the router checks eligibility against it and a preset entry is validated against it at load (D-37), so a request the endpoint would reject fails before it is sent, and a new model needs a catalog row, not a release.
+Modality limits, accepted source forms and per-modality prices live on the offering too, because they differ by endpoint: the conversion planner reads them (D-45), and a usage the rate card does not price leaves the call unpriced rather than billed as text (D-09).
+Batch is a service tier of the offering, not a separate model, and its transport needs the endpoint's batch mode. Model, profile, preset and vendor names are distinct types, and a target names exactly one of a model, a profile or a preset, so a string meant for one is never read as another.
+Version 1 catalog files still load: each row upgrades to a model and an offering on the vendor's primary endpoint, with a warning, and `saige catalog migrate` writes the version 2 form.
 
 ## D-47: Never take a vendor file ID from an untrusted client
 

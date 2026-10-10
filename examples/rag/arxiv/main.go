@@ -180,7 +180,7 @@ func main() {
 	// search) and pg_search (BM25, which WithBM25 then runs in Postgres):
 	//   pool, _ := postgres.NewPool(ctx, postgres.Config{URL: os.Getenv("DATABASE_URL")})
 	//   postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{RAGEmbeddingDim: embedDim})
-	//   store := ragpgstore.NewStore(pool, nil)
+	//   store, err := ragpgstore.New(ragpgstore.Config{Pool: pool})
 	store := memstore.New()
 	pipe, err := rag.New(rag.Config{},
 		rag.WithStore(store),

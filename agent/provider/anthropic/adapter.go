@@ -44,7 +44,7 @@ var (
 )
 
 // Adapter wraps the official Anthropic SDK client and implements types.Provider,
-// types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
+// types.NamedProvider and types.StructuredOutputProvider.
 type Adapter struct {
 	cachePolicy     PromptCachePolicy
 	client          anthropic.Client

@@ -201,7 +201,7 @@ func WithContextAssembler(a ragtypes.ContextAssembler) Option {
 // through ragtypes.StoreUnwrapper to find it (see ragtypes.AsStore). Otherwise, as
 // with memstore, the index lives in process memory and starts empty; over a
 // persistent store without keyword search, call RebuildIndex after
-// NewPipeline so documents ingested by an earlier process are found.
+// New so documents ingested by an earlier process are found.
 func WithBM25(cfg *bm25retriever.Config) Option {
 	return func(c *Config) {
 		if cfg == nil {

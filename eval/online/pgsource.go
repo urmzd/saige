@@ -22,7 +22,7 @@ const LabelScope = "scope"
 type PGSource struct {
 	Pool *pgxpool.Pool
 	// Scope limits the source to one tenant's conversations, those written
-	// through pgstore.NewScopedStore with this scope. Records then name
+	// through an agent pgstore.Store whose Config.Scope is this scope. Records then name
 	// conversations without the scope prefix and carry LabelScope. Empty
 	// reads every conversation.
 	Scope string

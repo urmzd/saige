@@ -28,7 +28,7 @@ A handoff tool is a signal, not a normal tool. Its `Execute` returns `Transferri
 
 Keep these rules in mind:
 
-- Name the entry agent. `NewAgent` panics on an invalid group: an empty or duplicate name, an unknown target, or no provider for a member when the entry agent has none.
+- Name the entry agent. `agent.New` returns an error wrapping `types.ErrInvalidConfig` for an invalid group: an empty or duplicate name, an unknown target, or no provider for a member when the entry agent has none.
 - Request one transfer per turn. A turn with two or more handoff calls fails every call in that turn with `ambiguous handoff: request one control transfer per turn`.
 - Expect return edges by default. `DirectReturnLinks` adds the reverse of each declared edge. Use `WithLinkPolicy(agent.DirectedLinks{})` to keep only the declared graph.
 - Give each member its own tools. A member sees its `HandoffDef.Tools` plus its `handoff_to_*` tools. The entry agent's `delegate_to_*` tools are not added to members.
@@ -96,7 +96,7 @@ The `Handover note` and `Context` lines appear only when the caller filled `mess
 | `ContextFork` | `fork` | The parent's branch up to the delegating turn, then the task |
 | `ContextFiltered` | `filtered` | What `ContextFilter` (a `MessageSelector`) selects from that same history, then the task |
 
-The copied history leaves out the root system message, metadata content, thinking blocks, and the delegating turn itself, whose tool calls have no results yet. A filter that breaks tool pairing fails the call before the child starts. `TextMessagesOnly` is a ready filter that keeps only user and assistant text. `InvokeSubAgent` always starts the child with the task alone, whatever the mode.
+The copied history leaves out the root system message, metadata parts, thinking parts, and the delegating turn itself, whose tool calls have no results yet. A filter that breaks tool pairing fails the call before the child starts. `TextMessagesOnly` is a ready filter that keeps only user and assistant text. `InvokeSubAgent` always starts the child with the task alone, whatever the mode.
 
 `ContextFork` copies the raw branch, not an owner view. When the entry agent of a handoff group forks a child, the child receives every owner's messages on that branch.
 

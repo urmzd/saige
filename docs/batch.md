@@ -42,7 +42,9 @@ type BatchProvider interface {
 }
 ```
 
-A `BatchRequest` carries what a normal call carries: messages, tools, a response schema and `RequestOptions`, including dials. Each adapter validates and encodes a request exactly as `ChatStreamWithOptions` (or `ChatStreamWithSchema`) would, so dials compile per model and a control the model rejects fails the same way.
+A `BatchRequest` carries what a normal `types.Request` carries: messages as typed parts, tools, a response schema and `RequestOptions`, including dials. Each adapter validates and encodes a request exactly as `Stream` would, so dials compile per model, media maps the same way, and a control the model rejects fails the same way.
+
+**Media is planned at submit.** `agent.BatchProviderFor` and `RunBatch` put a vendor batch provider behind the conversion decorator (`convert.Batch`). It plans every request against the offering that serves the batch, with the agent's [conversion policy](modality-conversion.md), runs the planned conversions on a copy of each request, and rejects the whole batch before upload when any request's media cannot be served. The caller's requests are not modified, so the job manifest names the original parts. `convert.NewBatch` and `(*convert.Provider).Batch` wrap a batch provider directly. A local batch makes ordinary calls, which convert themselves.
 
 **Options are rejected at submit (D-12).** Nothing is uploaded until every request passes. Batch-specific limits are checked too: Anthropic's `custom_id` alphabet, request counts, payload sizes, and `max_tokens` above zero. A request that cannot be expressed fails with an error matching `types.ErrInvalidModelConfig`.
 
@@ -117,7 +119,12 @@ The submit and the results are recorded steps, so a replay neither submits again
 
 ## Cost and budget
 
-Catalog pricing rows declare `batch_discount` (0.5 for every Anthropic, OpenAI and Google row) and, where the vendor stacks the batch discount with the cache-read discount, `batch_cached_input_per_mtok`:
+A catalog offering prices its batch API as the `batch` service tier, served through the endpoint's batch mode (`modes.batch`). The tier declares its `discount` (0.5 on every priced Anthropic, OpenAI and Google offering) and, where the vendor stacks the batch discount with the cache-read discount, its `cached_input_per_mtok`:
+
+```json
+"tiers": { "batch": { "transport": "batch", "discount": 0.5, "cached_input_per_mtok": 0.005 } }
+```
+
 
 | Vendor | Batch discount | Cache reads in a batch |
 | --- | --- | --- |
@@ -125,7 +132,7 @@ Catalog pricing rows declare `batch_discount` (0.5 for every Anthropic, OpenAI a
 | OpenAI | 50% | Half the cache-read rate |
 | Google | 50% | Cache-read rate unchanged: on Vertex AI the cache discount applies instead of the batch discount |
 
-`types.Pricing.Batch()` applies them. A row without a declared discount is charged at interactive rates, which over-counts rather than under-counts.
+`ModelCapabilities.Pricing` reports the tier as `BatchDiscount` and `BatchCachedInputPerMTok`, and `types.Pricing.Batch()` applies them; `Offering.TierPricing(types.ServiceBatch)` returns the tier's rate card. An offering without a batch tier is charged at interactive rates, which over-counts rather than under-counts. See [service tiers and pricing](catalog.md#service-tiers-and-pricing).
 
 With `batch.WithBudget`, the runner:
 
