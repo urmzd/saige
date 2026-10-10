@@ -30,7 +30,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
 | `agent/durable/duraturo/` | duraturo-backed durable engine: runs on any duraturo ledger and queue, such as Postgres tables |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
-| `agent/agenttest/` | ScriptedProvider, MockTool for testing |
+| `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
 | `rag/knowledge/` | Knowledge graph public API (NewGraph, query helpers) |
 | `rag/knowledge/types/` | Core knowledge types: Entity, Relation, Fact, Episode, Graph/Store interfaces |
 | `rag/knowledge/pgstore/` | PostgreSQL + pgvector Store implementation (HNSW, tsvector, pg_trgm) |

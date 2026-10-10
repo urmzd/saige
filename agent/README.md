@@ -404,6 +404,61 @@ provider := &agenttest.ScriptedProvider{
 }
 ```
 
+Pick the test model by what the reply depends on:
+
+| Model | Use it when |
+|-------|-------------|
+| `ScriptedProvider` | The turns are known in advance |
+| `FunctionModel` | The reply depends on the request: the messages, the offered tools, the options, the dial report or the response schema |
+| `NewToolCallEmulator` | You test tool plumbing (schemas, decoding, gates, markers, results) and any schema-valid arguments will do |
+
+### FunctionModel
+
+`FunctionModel` calls a Go function for every request. The function sees the messages, the tools, and an `agenttest.Request` with the call index, the options the caller sent, the effective options after the model's configured `Options` and the dials are applied, the `DialReport`, and the response schema. It returns an `agenttest.Response`: thinking, text (whole or in chunks), tool calls, usage, a finish reason, extra deltas, or a mid-stream error. An error returned by the function fails the call before anything streams.
+
+```go
+model := &agenttest.FunctionModel{
+    Fn: func(ctx context.Context, msgs []types.Message, tools []types.ToolDef, req agenttest.Request) (agenttest.Response, error) {
+        if req.Schema != nil {
+            return agenttest.Response{Text: `{"city": "Paris"}`}, nil
+        }
+        if len(tools) > 0 && req.Index == 0 {
+            return agenttest.Response{ToolCalls: []types.ToolUseContent{
+                {Name: "greet", Arguments: map[string]any{"name": "Ada"}},
+            }}, nil
+        }
+        return agenttest.Response{
+            TextChunks:   []string{"Hello, ", "Ada!"},
+            Usage:        &types.UsageDelta{PromptTokens: 12, CompletionTokens: 4},
+            FinishReason: "stop",
+        }, nil
+    },
+}
+```
+
+It implements `OptionsProvider`, `StructuredOutputProvider`, `CapabilityReporter`, `OptionsReporter`, `NamedProvider` and `ModelProvider`, so a tool choice, a response schema and dials reach it as they reach a real adapter. `Requests()` returns every call.
+
+Capabilities come from `Caps`, then from the catalog row `CatalogModel` names, then `agenttest.DefaultCapabilities()`: a model that streams, calls tools, accepts a tool choice and enforces a schema natively. With `Caps` or `CatalogModel` set, each request is checked against the declaration before the function runs, as an adapter does. A model declared without tools, for example, refuses a request that offers them with `types.ErrInvalidModelConfig`:
+
+```go
+model := &agenttest.FunctionModel{CatalogModel: "anthropic/claude-haiku-4-5", Fn: fn}
+```
+
+### Tool-call emulator
+
+`NewToolCallEmulator` returns a `FunctionModel` that calls tools without an LLM. On each tool-calling turn it calls the offered tools with arguments that `agenttest.FakeArguments` builds from each tool's `ParameterSchema`, then it answers with one `name: result` line per tool result. The output depends only on the request, so the run is deterministic.
+
+```go
+model := agenttest.NewToolCallEmulator(agenttest.EmulatorConfig{
+    Tools:  []string{"search"}, // empty calls every offered tool
+    Rounds: 2,                  // tool-calling turns before the answer
+})
+a := agent.NewAgent(agent.AgentConfig{Provider: model, Tools: registry})
+text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage("go")}))
+```
+
+A fake argument is the property's default, then its first enum value, then a fixed sample for its type. `RequiredOnly` leaves optional properties out. The emulator honors the tool choice (`none` answers at once, a named choice calls only that tool), and a call with a response schema gets `FakeValue` JSON for the schema. Set `Caps` or `CatalogModel` on the returned model to test capability checks.
+
 ## Related
 
 - [`agent/eval`](eval/): stream timing and tool-call scorers for the [eval framework](../eval/README.md)
