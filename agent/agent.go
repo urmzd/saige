@@ -65,10 +65,11 @@ type AgentConfig struct {
 	ToolTimeout time.Duration
 
 	// MaxParallelTools caps how many tool goroutines run concurrently when tools
-	// are fanned out (NoopStepRunner path). 0 means unlimited. 1 means tools run
-	// sequentially in the order the model requested them, with no goroutines at
-	// all. Under a durable StepRunner tools always run sequentially, so this has
-	// no effect there.
+	// are fanned out. 0 means unlimited. 1 means tools run sequentially in the
+	// order the model requested them, with no goroutines at all. A durable
+	// StepRunner runs tools sequentially unless it implements
+	// types.ConcurrentStepRunner and reports true (the local engine does), so
+	// this has no effect under the others.
 	MaxParallelTools int
 
 	// File pipeline configuration.
