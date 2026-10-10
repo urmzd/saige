@@ -380,6 +380,7 @@ func (e *RemoteError) Error() string { return e.Message }
 
 func (e *RemoteError) Unwrap() error { return e.Err }
 
+// Is matches every sentinel whose wire code the error carries.
 func (e *RemoteError) Is(target error) bool {
 	for _, c := range e.Codes {
 		if s := sentinelForCode(c); s != nil && s == target {

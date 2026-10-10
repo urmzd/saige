@@ -18,10 +18,12 @@ type FileSearchTool struct {
 	root string
 }
 
+// NewFileSearchTool returns a tool that searches files under root.
 func NewFileSearchTool(root string) *FileSearchTool {
 	return &FileSearchTool{root: root}
 }
 
+// Definition implements types.Tool.
 func (t *FileSearchTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "file_search",
@@ -52,6 +54,8 @@ var skipDirs = map[string]bool{
 	"__pycache__": true, ".venv": true, "dist": true, "build": true,
 }
 
+// Execute implements types.Tool.
+//
 //nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func (t *FileSearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	pattern, _ := args["pattern"].(string)

@@ -15,13 +15,13 @@ const ArtifactScheme = "saige-artifact://"
 type SourceKind string
 
 const (
-	// SourceInline: the bytes are in the request.
+	// SourceInline means the bytes are in the request.
 	SourceInline SourceKind = "inline"
-	// SourceURI: a location the provider can fetch, such as https or gs.
+	// SourceURI means a location the provider can fetch, such as https or gs.
 	SourceURI SourceKind = "uri"
-	// SourceFile: a file uploaded to the provider's own file store.
+	// SourceFile means a file uploaded to the provider's own file store.
 	SourceFile SourceKind = "file"
-	// SourceRef: a workspace artifact. It must be resolved before a provider
+	// SourceRef means a workspace artifact. It must be resolved before a provider
 	// can use it.
 	SourceRef SourceKind = "ref"
 )

@@ -94,6 +94,7 @@ var (
 // InterruptKind says what the run is waiting for.
 type InterruptKind string
 
+// Interrupt kinds.
 const (
 	InterruptApproval      InterruptKind = "approval"      // allow or deny a tool call
 	InterruptClarification InterruptKind = "clarification" // answer a question from the model

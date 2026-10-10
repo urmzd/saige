@@ -5,6 +5,7 @@ import "strings"
 // MediaType is a MIME type.
 type MediaType string
 
+// Media types the adapters map.
 const (
 	MediaJPEG MediaType = "image/jpeg"
 	MediaPNG  MediaType = "image/png"
@@ -26,6 +27,7 @@ const (
 // Modality is a class of content a model can take or produce.
 type Modality string
 
+// Modalities.
 const (
 	ModalityText     Modality = "text"
 	ModalityImage    Modality = "image"

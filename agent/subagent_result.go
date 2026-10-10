@@ -171,6 +171,7 @@ type SubAgentResultPolicy interface {
 // SubAgentResultFunc adapts a function to a result policy.
 type SubAgentResultFunc func(SubAgentResult) (string, error)
 
+// Select calls f.
 func (f SubAgentResultFunc) Select(r SubAgentResult) (string, error) { return f(r) }
 
 // FinalAssistantText is the default result policy. Intermediate assistant text
@@ -178,6 +179,7 @@ func (f SubAgentResultFunc) Select(r SubAgentResult) (string, error) { return f(
 // StopAtTools tool returns that tool's result text.
 type FinalAssistantText struct{}
 
+// Select implements SubAgentResultPolicy.
 func (FinalAssistantText) Select(r SubAgentResult) (string, error) {
 	if r.StopToolCallID != "" {
 		res, err := r.StopToolResult()
@@ -208,6 +210,7 @@ type SchemaResult struct {
 	Extract func(string) (string, error)
 }
 
+// Select implements SubAgentResultPolicy.
 func (p SchemaResult) Select(r SubAgentResult) (string, error) {
 	text, err := FinalAssistantText{}.Select(r)
 	if err != nil {

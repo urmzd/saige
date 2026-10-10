@@ -56,6 +56,7 @@ func (s *Store) CreateDocument(_ context.Context, doc *types.Document) error {
 	return nil
 }
 
+// GetDocument implements types.Store.
 func (s *Store) GetDocument(_ context.Context, uuid string) (*types.Document, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -66,6 +67,7 @@ func (s *Store) GetDocument(_ context.Context, uuid string) (*types.Document, er
 	return doc, nil
 }
 
+// FindByFingerprint implements types.Store.
 func (s *Store) FindByFingerprint(_ context.Context, fingerprint string) (*types.Document, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -100,6 +102,7 @@ func (s *Store) ReplaceDocument(_ context.Context, oldUUID string, doc *types.Do
 	return nil
 }
 
+// DeleteDocument implements types.Store.
 func (s *Store) DeleteDocument(_ context.Context, uuid string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -112,6 +115,7 @@ func (s *Store) DeleteDocument(_ context.Context, uuid string) error {
 	return nil
 }
 
+// StoreOriginal implements types.Store.
 func (s *Store) StoreOriginal(_ context.Context, documentUUID string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -119,6 +123,7 @@ func (s *Store) StoreOriginal(_ context.Context, documentUUID string, data []byt
 	return nil
 }
 
+// GetOriginal implements types.Store.
 func (s *Store) GetOriginal(_ context.Context, documentUUID string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -129,6 +134,7 @@ func (s *Store) GetOriginal(_ context.Context, documentUUID string) ([]byte, err
 	return data, nil
 }
 
+// CreateSection implements types.Store.
 func (s *Store) CreateSection(_ context.Context, section *types.Section) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -140,6 +146,7 @@ func (s *Store) CreateSection(_ context.Context, section *types.Section) error {
 	return nil
 }
 
+// GetSections implements types.Store.
 func (s *Store) GetSections(_ context.Context, documentUUID string) ([]types.Section, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -150,6 +157,7 @@ func (s *Store) GetSections(_ context.Context, documentUUID string) ([]types.Sec
 	return doc.Sections, nil
 }
 
+// CreateVariant implements types.Store.
 func (s *Store) CreateVariant(_ context.Context, variant *types.ContentVariant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +172,7 @@ func (s *Store) CreateVariant(_ context.Context, variant *types.ContentVariant) 
 	return types.ErrDocumentNotFound
 }
 
+// UpdateVariantEmbedding implements types.Store.
 func (s *Store) UpdateVariantEmbedding(_ context.Context, variantUUID string, embedding []float32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,6 +189,7 @@ func (s *Store) UpdateVariantEmbedding(_ context.Context, variantUUID string, em
 	return types.ErrDocumentNotFound
 }
 
+// GetVariant implements types.Store.
 func (s *Store) GetVariant(_ context.Context, variantUUID string) (*types.ContentVariant, *types.Provenance, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -425,6 +435,7 @@ func (s *Store) SearchByEmbedding(_ context.Context, embedding []float32, opts *
 	return results, nil
 }
 
+// Close implements types.Store.
 func (s *Store) Close(_ context.Context) error {
 	return nil
 }

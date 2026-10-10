@@ -30,7 +30,14 @@ type CacheUsageRecorder interface {
 // NoopMetrics is a no-op implementation of Metrics.
 type NoopMetrics struct{}
 
-func (NoopMetrics) RecordTokenUsage(context.Context, string, string, int, int)               {}
-func (NoopMetrics) RecordToolCall(context.Context, string, time.Duration, error)             {}
+// RecordTokenUsage implements Metrics.
+func (NoopMetrics) RecordTokenUsage(context.Context, string, string, int, int) {}
+
+// RecordToolCall implements Metrics.
+func (NoopMetrics) RecordToolCall(context.Context, string, time.Duration, error) {}
+
+// RecordProviderCall implements Metrics.
 func (NoopMetrics) RecordProviderCall(context.Context, string, string, time.Duration, error) {}
-func (NoopMetrics) RecordAgentInvocation(context.Context, string, time.Duration)             {}
+
+// RecordAgentInvocation implements Metrics.
+func (NoopMetrics) RecordAgentInvocation(context.Context, string, time.Duration) {}

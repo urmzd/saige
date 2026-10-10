@@ -3,6 +3,7 @@ package types
 // ResultKind distinguishes intermediate from terminal results.
 type ResultKind string
 
+// Result kinds.
 const (
 	ResultDelta ResultKind = "delta"
 	ResultFinal ResultKind = "final"

@@ -201,16 +201,16 @@ func (g Grant) Covers(tool string, args map[string]any, now time.Time) bool {
 type ApprovalEvent string
 
 const (
-	// ApprovalEventApproved: a person approved the call, for it alone.
+	// ApprovalEventApproved means a person approved the call, for it alone.
 	ApprovalEventApproved ApprovalEvent = "approved"
-	// ApprovalEventGranted: a person approved the call and granted a scope.
+	// ApprovalEventGranted means a person approved the call and granted a scope.
 	ApprovalEventGranted ApprovalEvent = "granted"
-	// ApprovalEventDenied: a person denied the call.
+	// ApprovalEventDenied means a person denied the call.
 	ApprovalEventDenied ApprovalEvent = "denied"
-	// ApprovalEventAutoApproved: a grant or the approval ramp approved the
+	// ApprovalEventAutoApproved means a grant or the approval ramp approved the
 	// call without asking.
 	ApprovalEventAutoApproved ApprovalEvent = "auto_approved"
-	// ApprovalEventAutoDenied: the call was refused without asking, because
+	// ApprovalEventAutoDenied means the call was refused without asking, because
 	// people denied the tool too often.
 	ApprovalEventAutoDenied ApprovalEvent = "auto_denied"
 	// ApprovalEventSnapshot carries the whole policy state forward onto a
@@ -243,6 +243,7 @@ type ApprovalPart struct {
 	Denials   map[string]int `json:"denials,omitempty"`
 }
 
+// Kind implements Part.
 func (ApprovalPart) Kind() PartKind { return KindApproval }
 func (ApprovalPart) isPart()        {}
 func (ApprovalPart) isSystemPart()  {}

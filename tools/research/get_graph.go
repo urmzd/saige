@@ -14,10 +14,12 @@ type GetGraphTool struct {
 	graph kgtypes.Graph
 }
 
+// NewGetGraphTool returns a tool that reads a node and its neighbors from g.
 func NewGetGraphTool(g kgtypes.Graph) *GetGraphTool {
 	return &GetGraphTool{graph: g}
 }
 
+// Definition implements types.Tool.
 func (t *GetGraphTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "get_knowledge_graph",
@@ -32,6 +34,7 @@ func (t *GetGraphTool) Definition() types.ToolDef {
 	}
 }
 
+// Execute implements types.Tool.
 func (t *GetGraphTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	limit := int64(100)
 	if l, ok := args["limit"].(float64); ok && l > 0 {

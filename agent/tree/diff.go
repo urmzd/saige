@@ -9,6 +9,7 @@ import (
 // DiffOp describes whether a node was added or removed between two tree states.
 type DiffOp int
 
+// Diff operations.
 const (
 	DiffAdded   DiffOp = iota // Node present in target but not in source
 	DiffRemoved               // Node present in source but not in target

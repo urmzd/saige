@@ -8,6 +8,7 @@ type TxID string
 // TxOpKind describes the type of operation in a transaction.
 type TxOpKind string
 
+// WAL operation kinds.
 const (
 	TxOpAddNode       TxOpKind = "add_node"
 	TxOpUpdateNode    TxOpKind = "update_node"

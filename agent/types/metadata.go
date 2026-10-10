@@ -47,6 +47,7 @@ func (c *ConfigPart) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Kind implements Part.
 func (ConfigPart) Kind() PartKind { return KindConfig }
 func (ConfigPart) isPart()        {}
 func (ConfigPart) isSystemPart()  {}
@@ -69,6 +70,7 @@ type HandoffPart struct {
 	Context string `json:"context,omitempty"`
 }
 
+// Kind implements Part.
 func (HandoffPart) Kind() PartKind { return KindHandoff }
 func (HandoffPart) isPart()        {}
 func (HandoffPart) isSystemPart()  {}
@@ -77,6 +79,7 @@ func (HandoffPart) isUserPart()    {} // allow human-forced handoffs too
 // Rating represents a binary feedback signal.
 type Rating int
 
+// Feedback ratings.
 const (
 	RatingPositive Rating = 1
 	RatingNegative Rating = -1
@@ -91,6 +94,7 @@ type FeedbackPart struct {
 	Comment      string `json:"comment,omitempty"`
 }
 
+// Kind implements Part.
 func (FeedbackPart) Kind() PartKind { return KindFeedback }
 func (FeedbackPart) isPart()        {}
 func (FeedbackPart) isUserPart()    {}
@@ -102,6 +106,7 @@ type SteerPart struct {
 	ID string `json:"id"` // submission ID
 }
 
+// Kind implements Part.
 func (SteerPart) Kind() PartKind { return KindSteer }
 func (SteerPart) isPart()        {}
 func (SteerPart) isUserPart()    {}
@@ -115,6 +120,7 @@ type TruncationPart struct {
 	Dropped []PartKind `json:"dropped,omitempty"`
 }
 
+// Kind implements Part.
 func (TruncationPart) Kind() PartKind   { return KindTruncation }
 func (TruncationPart) isPart()          {}
 func (TruncationPart) isAssistantPart() {}
@@ -140,6 +146,7 @@ type RoutePart struct {
 	Conversions *ConversionReport `json:"conversions,omitempty"`
 }
 
+// Kind implements Part.
 func (RoutePart) Kind() PartKind   { return KindRoute }
 func (RoutePart) isPart()          {}
 func (RoutePart) isSystemPart()    {}

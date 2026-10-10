@@ -17,14 +17,14 @@ import (
 type ServerToolKind string
 
 const (
-	// ServerToolWebSearch: the provider runs a web search and grounds its
+	// ServerToolWebSearch means the provider runs a web search and grounds its
 	// answer in the results (Anthropic web_search, Gemini google_search
 	// grounding, OpenAI web_search).
 	ServerToolWebSearch ServerToolKind = "web_search"
-	// ServerToolCodeExecution: the provider runs generated code in its own
+	// ServerToolCodeExecution means the provider runs generated code in its own
 	// sandbox and uses the output.
 	ServerToolCodeExecution ServerToolKind = "code_execution"
-	// ServerToolRemoteMCP: the provider connects to a remote MCP server itself
+	// ServerToolRemoteMCP means the provider connects to a remote MCP server itself
 	// and calls its tools. See RemoteMCPServer for why this is not the same as
 	// this SDK connecting to that server (agent/mcp).
 	ServerToolRemoteMCP ServerToolKind = "remote_mcp"

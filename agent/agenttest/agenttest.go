@@ -223,8 +223,10 @@ type MockTool struct {
 	mu     sync.Mutex
 }
 
+// Definition implements types.Tool.
 func (t *MockTool) Definition() types.ToolDef { return t.Def }
 
+// Execute implements types.Tool.
 func (t *MockTool) Execute(_ context.Context, args map[string]any) (string, error) {
 	t.mu.Lock()
 	t.Calls = append(t.Calls, args)

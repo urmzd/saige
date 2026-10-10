@@ -53,6 +53,7 @@ var ErrUnknownHandle = errors.New("unknown sub-agent handle")
 // HandleStatus is the state of a spawned or recorded sub-agent run.
 type HandleStatus string
 
+// Sub-agent handle states.
 const (
 	HandleRunning   HandleStatus = "running"
 	HandleCompleted HandleStatus = "completed"

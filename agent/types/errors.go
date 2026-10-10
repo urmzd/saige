@@ -56,6 +56,7 @@ var (
 // Use Transient to decide whether a retry can help.
 type ErrorKind int
 
+// Error kinds.
 const (
 	ErrorKindTransient      ErrorKind = iota // retry-worthy (408, other 5xx, connection reset, timeout)
 	ErrorKindPermanent                       // do not retry; no finer cause known
@@ -400,6 +401,7 @@ func (e *ProviderError) Unwrap() error { return e.Err }
 // ErrorKind implements KindReporter.
 func (e *ProviderError) ErrorKind() ErrorKind { return e.Kind }
 
+// Is matches ErrProviderFailed and the sentinel of the error's Kind.
 func (e *ProviderError) Is(target error) bool {
 	if target == ErrProviderFailed {
 		return true
@@ -427,6 +429,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return msg
 }
 
+// Is matches ErrResponseTruncated.
 func (e *ResponseTruncatedError) Is(target error) bool { return target == ErrResponseTruncated }
 
 // ErrorKind implements KindReporter.

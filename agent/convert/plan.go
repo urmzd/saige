@@ -86,6 +86,8 @@ func (e *RejectError) Error() string {
 	return b.String()
 }
 
+// Is matches ErrModalityUnsupported and ErrInvalidModelConfig, and
+// ErrMediaUnavailable when the media could not be reached.
 func (e *RejectError) Is(target error) bool {
 	return target == types.ErrModalityUnsupported || target == types.ErrInvalidModelConfig ||
 		(e.unavailable && target == types.ErrMediaUnavailable)

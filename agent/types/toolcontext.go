@@ -75,6 +75,7 @@ func (c ToolContext) String(key, def string) string {
 	return def
 }
 
+// Int returns the knob as an int, or def.
 func (c ToolContext) Int(key string, def int) int {
 	switch v := c.values[key].(type) {
 	case int:
@@ -87,6 +88,7 @@ func (c ToolContext) Int(key string, def int) int {
 	return def
 }
 
+// Float returns the knob as a float64, or def.
 func (c ToolContext) Float(key string, def float64) float64 {
 	switch v := c.values[key].(type) {
 	case float64:
@@ -97,6 +99,7 @@ func (c ToolContext) Float(key string, def float64) float64 {
 	return def
 }
 
+// Bool returns the knob as a bool, or def.
 func (c ToolContext) Bool(key string, def bool) bool {
 	if v, ok := c.values[key].(bool); ok {
 		return v

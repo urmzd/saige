@@ -288,6 +288,7 @@ func (w *WAL) Close(context.Context) error {
 	return w.f.Close()
 }
 
+// Begin implements types.WAL.
 func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -296,6 +297,7 @@ func (w *WAL) Begin(_ context.Context) (types.TxID, error) {
 	return id, nil
 }
 
+// Append implements types.WAL.
 func (w *WAL) Append(_ context.Context, txID types.TxID, op types.TxOp) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -331,6 +333,7 @@ func (w *WAL) Commit(_ context.Context, txID types.TxID) error {
 	return nil
 }
 
+// Abort implements types.WAL.
 func (w *WAL) Abort(_ context.Context, txID types.TxID) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

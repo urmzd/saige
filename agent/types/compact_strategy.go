@@ -308,8 +308,10 @@ type KeepRecent struct {
 // NewKeepRecent keeps the last n turns (default 4).
 func NewKeepRecent(n int) *KeepRecent { return &KeepRecent{Turns: n} }
 
+// Name implements CompactionStrategy.
 func (k *KeepRecent) Name() string { return string(CompactKeepRecent) }
 
+// CompactEntries implements CompactionStrategy.
 func (k *KeepRecent) CompactEntries(_ context.Context, req CompactRequest) (CompactResult, error) {
 	l := layoutOf(req.Entries)
 	n := keepTurns(k.Turns)
@@ -325,6 +327,7 @@ func (k *KeepRecent) CompactEntries(_ context.Context, req CompactRequest) (Comp
 	}, nil
 }
 
+// Compact implements Compactor.
 func (k *KeepRecent) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, k, messages, provider)
 }
@@ -342,8 +345,10 @@ type Summary struct {
 	Threshold int
 }
 
+// Name implements CompactionStrategy.
 func (s *Summary) Name() string { return string(CompactSummary) }
 
+// CompactEntries implements CompactionStrategy.
 func (s *Summary) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	if !triggered(req, s.Threshold) {
 		return CompactResult{Entries: req.Entries}, nil
@@ -357,6 +362,7 @@ func (s *Summary) CompactEntries(ctx context.Context, req CompactRequest) (Compa
 	return summarizeSpan(ctx, req, s.Name(), l, nil, slices.Concat(l.summaries, flatten(old)), flatten(recent))
 }
 
+// Compact implements Compactor.
 func (s *Summary) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, s, messages, provider)
 }
@@ -455,8 +461,10 @@ type RelevantPlusSummary struct {
 	Threshold int // as Summary.Threshold
 }
 
+// Name implements CompactionStrategy.
 func (r *RelevantPlusSummary) Name() string { return string(CompactRelevantPlusSummary) }
 
+// CompactEntries implements CompactionStrategy.
 func (r *RelevantPlusSummary) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	if !triggered(req, r.Threshold) {
 		return CompactResult{Entries: req.Entries}, nil
@@ -503,6 +511,7 @@ func (r *RelevantPlusSummary) CompactEntries(ctx context.Context, req CompactReq
 	return summarizeSpan(ctx, req, r.Name(), l, selected, rest, flatten(recent))
 }
 
+// Compact implements Compactor.
 func (r *RelevantPlusSummary) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, r, messages, provider)
 }
@@ -514,6 +523,7 @@ func (r *RelevantPlusSummary) Compact(ctx context.Context, messages []Message, p
 // still over the target. Without one it applies every step.
 type Chain []CompactionStrategy
 
+// Name implements CompactionStrategy.
 func (c Chain) Name() string {
 	names := make([]string, len(c))
 	for i, s := range c {
@@ -522,6 +532,7 @@ func (c Chain) Name() string {
 	return string(CompactChain) + "(" + strings.Join(names, ",") + ")"
 }
 
+// CompactEntries implements CompactionStrategy.
 func (c Chain) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	tok := req.Tokenizer
 	if tok == nil {
@@ -561,14 +572,17 @@ func (c Chain) CompactEntries(ctx context.Context, req CompactRequest) (CompactR
 	return res, nil
 }
 
+// Compact implements Compactor.
 func (c Chain) Compact(ctx context.Context, messages []Message, provider Provider) ([]Message, error) {
 	return compactMessages(ctx, c, messages, provider)
 }
 
 // ── ClearToolResults as a strategy ───────────────────────────────────
 
+// Name implements CompactionStrategy.
 func (c *ClearToolResultsCompactor) Name() string { return string(CompactClearToolResults) }
 
+// CompactEntries implements CompactionStrategy.
 func (c *ClearToolResultsCompactor) CompactEntries(ctx context.Context, req CompactRequest) (CompactResult, error) {
 	in := EntryMessages(req.Entries)
 	out, err := c.Compact(ctx, in, req.Provider)

@@ -366,6 +366,8 @@ func drain(ch <-chan types.Delta) {
 	}
 }
 
+// NewSession implements types.SessionProvider: every member gets a session of
+// its own.
 func (f *Provider) NewSession() types.Provider {
 	children := make([]types.Provider, len(f.Providers))
 	for i, p := range f.Providers {

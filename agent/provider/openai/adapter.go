@@ -144,6 +144,7 @@ func WithFrequencyPenalty(p float64) Option {
 	return func(c *config) { c.params.frequencyPenalty = &p }
 }
 
+// WithPresencePenalty sets the presence penalty.
 func WithPresencePenalty(p float64) Option {
 	return func(c *config) { c.params.presencePenalty = &p }
 }

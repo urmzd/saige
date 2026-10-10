@@ -53,6 +53,7 @@ type GuardrailPart struct {
 	Canceled bool `json:"canceled,omitempty"`
 }
 
+// Kind implements Part.
 func (GuardrailPart) Kind() PartKind   { return KindGuardrail }
 func (GuardrailPart) isPart()          {}
 func (GuardrailPart) isSystemPart()    {}

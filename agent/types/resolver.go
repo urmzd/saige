@@ -16,6 +16,7 @@ type Resolver interface {
 // ResolverFunc adapts a plain function to the Resolver interface.
 type ResolverFunc func(ctx context.Context, uri string) (ResolvedFile, error)
 
+// Resolve calls f.
 func (f ResolverFunc) Resolve(ctx context.Context, uri string) (ResolvedFile, error) {
 	return f(ctx, uri)
 }

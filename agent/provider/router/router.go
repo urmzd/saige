@@ -143,8 +143,10 @@ type Policy interface {
 	Order(context.Context, Request) ([]types.ProfileID, error)
 }
 
+// PolicyFunc adapts a function to a Policy.
 type PolicyFunc func(context.Context, Request) ([]types.ProfileID, error)
 
+// Order calls f.
 func (f PolicyFunc) Order(ctx context.Context, r Request) ([]types.ProfileID, error) {
 	return f(ctx, r)
 }
@@ -154,6 +156,7 @@ func (f PolicyFunc) Order(ctx context.Context, r Request) ([]types.ProfileID, er
 // Use Affinity for a failure threshold and recovery probes.
 type Sticky struct{}
 
+// Order implements Policy.
 func (Sticky) Order(_ context.Context, r Request) ([]types.ProfileID, error) {
 	start := 0
 	for i, candidate := range r.Candidates {
@@ -366,6 +369,7 @@ var (
 	_ wrapper.MultiWrapper           = (*Session)(nil)
 )
 
+// Session returns a new routing session, which keeps its own route state.
 func (r *Router) Session() *Session {
 	return &Session{router: r, shared: &sessionState{state: RouteState{Revision: r.cfg.Revision}}}
 }
@@ -379,6 +383,7 @@ func (s *Session) NewSession() types.Provider {
 	return child
 }
 
+// Name implements types.NamedProvider.
 func (s *Session) Name() string { return "router" }
 
 // Model is the profile ID, not a model name with settings copied across vendors.

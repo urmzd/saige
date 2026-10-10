@@ -9,16 +9,16 @@ import (
 type OutcomeKind string
 
 const (
-	// OutcomeSchemaInvalid: structured output still failed its schema or
+	// OutcomeSchemaInvalid means structured output still failed its schema or
 	// validator after every repair attempt.
 	OutcomeSchemaInvalid OutcomeKind = "schema_invalid"
-	// OutcomeSubagentFailed: a delegated sub-agent returned an error.
+	// OutcomeSubagentFailed means a delegated sub-agent returned an error.
 	OutcomeSubagentFailed OutcomeKind = "subagent_failed"
-	// OutcomeEvalScore: an evaluator scored the answer below the host's bar.
+	// OutcomeEvalScore means an evaluator scored the answer below the host's bar.
 	OutcomeEvalScore OutcomeKind = "eval_score"
-	// OutcomeRefusal: the model declined to answer.
+	// OutcomeRefusal means the model declined to answer.
 	OutcomeRefusal OutcomeKind = "refusal"
-	// OutcomeContextLength: the request did not fit the model's window.
+	// OutcomeContextLength means the request did not fit the model's window.
 	OutcomeContextLength OutcomeKind = "context_length"
 )
 

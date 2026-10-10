@@ -4,15 +4,15 @@ package types
 type CompactionTrigger string
 
 const (
-	// CompactionTriggerRule: the strategy's own rule, such as a message
+	// CompactionTriggerRule means the strategy's own rule, such as a message
 	// count or a window size, fired before a turn.
 	CompactionTriggerRule CompactionTrigger = "rule"
-	// CompactionTriggerInputPressure: the next turn's input exceeded
+	// CompactionTriggerInputPressure means the next turn's input exceeded
 	// CompactConfig.MaxInputTokens.
 	CompactionTriggerInputPressure CompactionTrigger = "input_pressure"
-	// CompactionTriggerRequested: a ConfigPart asked for CompactNow.
+	// CompactionTriggerRequested means a ConfigPart asked for CompactNow.
 	CompactionTriggerRequested CompactionTrigger = "requested"
-	// CompactionTriggerContextLength: the provider rejected the turn as
+	// CompactionTriggerContextLength means the provider rejected the turn as
 	// longer than its context window.
 	CompactionTriggerContextLength CompactionTrigger = "context_length"
 )
@@ -47,6 +47,7 @@ type CompactionPart struct {
 	SummaryNode NodeID `json:"summary_node,omitempty"`
 }
 
+// Kind implements Part.
 func (CompactionPart) Kind() PartKind { return KindCompaction }
 func (CompactionPart) isPart()        {}
 func (CompactionPart) isSystemPart()  {}

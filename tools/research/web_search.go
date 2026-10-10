@@ -27,10 +27,13 @@ type WebSearchTool struct {
 	autoIngest bool
 }
 
+// NewWebSearchTool returns a tool that searches the web with s and records
+// results in graph.
 func NewWebSearchTool(s *searxng.Client, graph kgtypes.Graph) *WebSearchTool {
 	return &WebSearchTool{searcher: s, graph: graph}
 }
 
+// WithGroupID records results in one graph group.
 func (t *WebSearchTool) WithGroupID(id string) *WebSearchTool {
 	return &WebSearchTool{searcher: t.searcher, graph: t.graph, groupID: id, autoIngest: t.autoIngest}
 }
@@ -40,6 +43,7 @@ func (t *WebSearchTool) WithAutoIngest() *WebSearchTool {
 	return &WebSearchTool{searcher: t.searcher, graph: t.graph, groupID: t.groupID, autoIngest: true}
 }
 
+// Definition implements types.Tool.
 func (t *WebSearchTool) Definition() types.ToolDef {
 	// Auto-ingest writes every result into the knowledge graph, so the tool is
 	// only read-only without it.
@@ -61,6 +65,7 @@ func (t *WebSearchTool) Definition() types.ToolDef {
 	}
 }
 
+// Execute implements types.Tool.
 func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	query, _ := args[argQuery].(string)
 	if query == "" {

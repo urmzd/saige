@@ -137,10 +137,12 @@ type ToolFunc struct {
 	Fn  func(ctx context.Context, args map[string]any) (string, error)
 }
 
+// Definition calls f.
 func (t *ToolFunc) Definition() ToolDef {
 	return t.Def
 }
 
+// Execute calls f.
 func (t *ToolFunc) Execute(ctx context.Context, args map[string]any) (string, error) {
 	return t.Fn(ctx, args)
 }

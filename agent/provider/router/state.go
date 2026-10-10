@@ -254,8 +254,10 @@ type SessionRouterPolicy interface {
 	Select(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error)
 }
 
+// SessionPolicyFunc adapts a function to a SessionRouterPolicy.
 type SessionPolicyFunc func(context.Context, RouteContext, RouteState) (RouteDecision, error)
 
+// Select calls f.
 func (f SessionPolicyFunc) Select(ctx context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
 	return f(ctx, rc, st)
 }

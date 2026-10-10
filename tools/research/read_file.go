@@ -24,10 +24,12 @@ type ReadFileTool struct {
 	root string
 }
 
+// NewReadFileTool returns a tool that reads files under root.
 func NewReadFileTool(root string) *ReadFileTool {
 	return &ReadFileTool{root: root}
 }
 
+// Definition implements types.Tool.
 func (t *ReadFileTool) Definition() types.ToolDef {
 	return types.ToolDef{
 		Name:        "read_file",
@@ -45,6 +47,7 @@ func (t *ReadFileTool) Definition() types.ToolDef {
 	}
 }
 
+// Execute implements types.Tool.
 func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	rawPath, _ := args[argPath].(string)
 	if rawPath == "" {

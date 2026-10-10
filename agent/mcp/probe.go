@@ -17,17 +17,18 @@ import (
 // ProbeKind classifies a probe outcome.
 type ProbeKind string
 
+// Probe outcomes.
 const (
 	ProbeOK ProbeKind = "ok"
-	// ProbeUnreachable: nothing answered (DNS, refused, missing executable).
+	// ProbeUnreachable means nothing answered (DNS, refused, missing executable).
 	ProbeUnreachable ProbeKind = "unreachable"
-	// ProbeAuthRejected: the server answered 401 or 403.
+	// ProbeAuthRejected means the server answered 401 or 403.
 	ProbeAuthRejected ProbeKind = "auth_rejected"
-	// ProbeBlocked: SafeHTTPClient refused the destination address.
+	// ProbeBlocked means SafeHTTPClient refused the destination address.
 	ProbeBlocked ProbeKind = "blocked"
-	// ProbeTimeout: the handshake or listing ran out of time.
+	// ProbeTimeout means the handshake or listing ran out of time.
 	ProbeTimeout ProbeKind = "timeout"
-	// ProbeProtocol: something answered but did not complete MCP.
+	// ProbeProtocol means something answered but did not complete MCP.
 	ProbeProtocol ProbeKind = "protocol"
 )
 

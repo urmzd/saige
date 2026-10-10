@@ -12,6 +12,7 @@ type Extractor interface {
 // ExtractorFunc adapts a plain function to the Extractor interface.
 type ExtractorFunc func(ctx context.Context, data []byte, mediaType MediaType) ([]UserPart, error)
 
+// Extract calls f.
 func (f ExtractorFunc) Extract(ctx context.Context, data []byte, mediaType MediaType) ([]UserPart, error) {
 	return f(ctx, data, mediaType)
 }

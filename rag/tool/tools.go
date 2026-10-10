@@ -73,6 +73,7 @@ var (
 	_ agenttypes.RichTool = (*LookupTool)(nil)
 )
 
+// Definition implements agenttypes.Tool.
 func (t *SearchTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_search",
@@ -82,6 +83,7 @@ func (t *SearchTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *SearchTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	r, err := t.ExecuteRich(ctx, args)
 	if err != nil {
@@ -285,6 +287,7 @@ type LookupTool struct {
 	media    mediaLimits
 }
 
+// Definition implements agenttypes.Tool.
 func (t *LookupTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_lookup",
@@ -294,6 +297,7 @@ func (t *LookupTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *LookupTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	r, err := t.ExecuteRich(ctx, args)
 	if err != nil {
@@ -526,6 +530,7 @@ type UpdateTool struct {
 	pipeline ragtypes.Pipeline
 }
 
+// Definition implements agenttypes.Tool.
 func (t *UpdateTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_update",
@@ -535,6 +540,7 @@ func (t *UpdateTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *UpdateTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {
@@ -567,6 +573,7 @@ type DeleteTool struct {
 	pipeline ragtypes.Pipeline
 }
 
+// Definition implements agenttypes.Tool.
 func (t *DeleteTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_delete",
@@ -576,6 +583,7 @@ func (t *DeleteTool) Definition() agenttypes.ToolDef {
 	}
 }
 
+// Execute implements agenttypes.Tool.
 func (t *DeleteTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {
@@ -596,6 +604,7 @@ type ReconstructTool struct {
 	limits   outputLimits
 }
 
+// Definition implements agenttypes.Tool.
 func (t *ReconstructTool) Definition() agenttypes.ToolDef {
 	return agenttypes.ToolDef{
 		Name:        "rag_reconstruct",
@@ -625,6 +634,7 @@ type documentOutput struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
+// Execute implements agenttypes.Tool.
 func (t *ReconstructTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	docUUID, _ := args["document_uuid"].(string)
 	if docUUID == "" {

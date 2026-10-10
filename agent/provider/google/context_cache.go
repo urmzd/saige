@@ -71,6 +71,7 @@ func (a *Adapter) RefreshContextCache(ctx context.Context, cache ContextCache, t
 	return cache, nil
 }
 
+// DeleteContextCache deletes a context cache the adapter created.
 func (a *Adapter) DeleteContextCache(ctx context.Context, cache ContextCache) error {
 	if cache.Model != a.model || cache.Name == "" {
 		return fmt.Errorf("google: invalid cache deletion")

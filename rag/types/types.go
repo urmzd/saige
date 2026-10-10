@@ -13,6 +13,7 @@ import (
 
 // --- Errors ---
 
+// RAG errors.
 var (
 	ErrDocumentNotFound = errors.New("document not found")
 	ErrVariantNotFound  = errors.New("variant not found")
@@ -68,6 +69,7 @@ var (
 // ContentType represents the modality of a content variant.
 type ContentType string
 
+// Content types.
 const (
 	ContentText     ContentType = "text"
 	ContentImage    ContentType = "image"
@@ -197,6 +199,7 @@ type SearchHit struct {
 // FilterOp defines metadata filter comparison operations.
 type FilterOp string
 
+// Filter operators.
 const (
 	FilterEq       FilterOp = "eq"
 	FilterNeq      FilterOp = "neq"
@@ -817,6 +820,7 @@ type ContextAssembler interface {
 // DedupBehavior controls what happens when a duplicate document is detected.
 type DedupBehavior int
 
+// Dedup behaviors.
 const (
 	DedupSkip DedupBehavior = iota
 	DedupReplace
