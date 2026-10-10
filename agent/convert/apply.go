@@ -37,7 +37,8 @@ const StepPrefix = "convert:"
 func (p Plan) Apply(ctx context.Context, msgs []types.Message, rt Runtime, cache types.ConversionCache) ([]types.Message, types.ConversionReport, error) {
 	rep := types.ConversionReport{Offering: p.Offering}
 	subst := map[types.PartPath][]types.Part{}
-	ex := executor{plan: p, rt: rt, cache: cache}
+	eg, _ := types.EgressFrom(ctx)
+	ex := executor{plan: p, rt: rt, cache: cache, egress: eg}
 	for _, d := range p.Decisions {
 		dec := d.ConversionDecision
 		switch dec.Action {
@@ -61,7 +62,37 @@ func (p Plan) Apply(ctx context.Context, msgs []types.Message, rt Runtime, cache
 		rep.Decisions = append(rep.Decisions, dec)
 	}
 	rep.Hash = rep.ComputeHash()
+	if err := tokenizeSubst(ctx, eg.Vault, subst); err != nil {
+		return nil, rep, err
+	}
 	return substitute(msgs, subst), rep, nil
+}
+
+// tokenizeSubst tokenizes the text of every replacement with the privacy
+// boundary's vault, so a transcript, a description, an extracted text or a
+// notice naming a file never reaches the provider with the values the
+// boundary keeps from it. Converted parts are cached and journaled as the
+// converter made them; they are tokenized here, after the cache, so a cache
+// shared between sessions never holds one session's placeholders.
+func tokenizeSubst(ctx context.Context, v types.PlaceholderVault, subst map[types.PartPath][]types.Part) error {
+	if v == nil {
+		return nil
+	}
+	for path, parts := range subst {
+		for i, part := range parts {
+			t, ok := part.(types.TextPart)
+			if !ok {
+				continue
+			}
+			text, err := v.Tokenize(ctx, t.Text)
+			if err != nil {
+				// Fail closed: a view that could not be tokenized is not sent.
+				return fmt.Errorf("conversion: tokenize output of part %s: %w", path, err)
+			}
+			parts[i] = types.TextPart{Text: text}
+		}
+	}
+	return nil
 }
 
 // omitted is what stands in for an omitted part: a notice for media, so the
@@ -89,9 +120,38 @@ func describePart(p types.Part) string {
 }
 
 type executor struct {
-	plan  Plan
-	rt    Runtime
-	cache types.ConversionCache
+	plan   Plan
+	rt     Runtime
+	cache  types.ConversionCache
+	egress types.Egress
+}
+
+// EgressReporter is implemented by a converter that sends the part to a
+// model: it reports the offering the part goes to, so a privacy boundary
+// that requires text can refuse an endpoint not cleared for personal data.
+type EgressReporter interface {
+	EgressOffering() (types.Offering, bool)
+}
+
+// egressAllowed reports why c may not receive a part under the boundary,
+// or "" when it may. Only a boundary that requires text restricts
+// converters: under any other policy the media reaches a vendor anyway.
+func (ex executor) egressAllowed(c types.Converter) string {
+	if !ex.egress.RequireText {
+		return ""
+	}
+	if _, priced := c.(Priced); !priced {
+		return ""
+	}
+	r, ok := c.(EgressReporter)
+	if !ok {
+		return "converter sends media to a model whose endpoint is unknown"
+	}
+	off, ok := r.EgressOffering()
+	if !ok || !off.Endpoint.Data.PIIOK {
+		return "converter endpoint is not cleared for personal data (data.pii_ok)"
+	}
+	return ""
 }
 
 // run converts one part, falling back to the actions permitted after the
@@ -162,15 +222,19 @@ func joinFailures(fs []string) string {
 
 // convert runs c on the part of d, from the cache when it can.
 func (ex executor) convert(ctx context.Context, c types.Converter, d Decision) ([]types.Part, types.ConversionUsage, error) {
+	if reason := ex.egressAllowed(c); reason != "" {
+		return nil, types.ConversionUsage{}, errors.New(reason)
+	}
 	id := identity(d.part)
 	key := ex.plan.policy.Scope + "\x00" + via(c) + "\x00" + id
-	if id != "" && ex.cache != nil {
+	memo := ex.cache != nil && memoizable(d.part, ex.plan.policy.Scope)
+	if memo {
 		if e, ok := ex.cache.Get(ctx, key); ok {
 			return e.Parts, types.ConversionUsage{Cached: true}, nil
 		}
 	}
 	est, _ := c.Estimate(d.part, ex.plan.target)
-	env := types.ConvertEnv{Target: ex.plan.target, Path: d.Path, Scope: ex.plan.policy.Scope}
+	env := types.ConvertEnv{Target: ex.plan.target, Path: d.Path, Scope: ex.plan.policy.Scope, Vault: ex.egress.Vault}
 	steps := ex.rt.Steps
 	if steps == nil {
 		steps = types.NoopStepRunner{}
@@ -252,7 +316,7 @@ func (ex executor) convert(ctx context.Context, c types.Converter, d Decision) (
 	if res.Conversion == nil {
 		return nil, usage, fmt.Errorf("conversion %s recorded no result", via(c))
 	}
-	if id != "" && ex.cache != nil {
+	if memo {
 		ex.cache.Put(ctx, key, *res.Conversion)
 	}
 	return types.CloneParts(res.Conversion.Parts), usage, nil
@@ -269,6 +333,16 @@ func identity(p types.Part) string {
 		return "uri:" + src.URI
 	}
 	return ""
+}
+
+// memoizable reports whether a conversion of p may be memoized. A digest
+// is a content address: whoever holds the same bytes gets the same output,
+// so it is memoized with or without a scope. A URI is a name another tenant
+// may resolve to other content, or to content only the first could read,
+// so it is memoized only under a named scope (ConversionPolicy.Scope).
+func memoizable(p types.Part, scope string) bool {
+	src, _ := types.SourceOf(p)
+	return src.Digest != "" || (src.URI != "" && scope != "")
 }
 
 // produced references the derivative parts: a media part by its digest or

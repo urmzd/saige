@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
 	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -150,7 +151,45 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 		}
 		return p.inner.Stream(ctx, req)
 	}
-	return p.stream(ctx, req.Messages, req.Tools, req.Schema, req.Options, call)
+	view, ok := p.plannedView(ctx, req)
+	if !ok {
+		// The plan rejects the request: the inner provider reports why,
+		// and nothing is cached.
+		return call()
+	}
+	return p.stream(ctx, req.Messages, req.Tools, req.Schema, req.Options, view, call)
+}
+
+// view is the conversion plan a key covers: the planned report's hash and
+// whether the plan converts anything, so the recorder can check that the
+// attempt that served sent the view the key names.
+type view struct {
+	hash     string
+	converts bool
+}
+
+// plannedView plans req through the conversion decorator below the cache,
+// if there is one. A request with no media plans nothing and keys on its
+// parts alone. ok is false when the plan rejects the request.
+func (p *Provider) plannedView(ctx context.Context, req types.Request) (view, bool) {
+	planner, found := wrapper.As[types.ConversionPlanner](p.inner)
+	if !found {
+		return view{}, true
+	}
+	rep, _, err := planner.PlanConversions(ctx, req)
+	if err != nil {
+		return view{}, false
+	}
+	if len(rep.Decisions) == 0 {
+		return view{}, true
+	}
+	v := view{hash: rep.Hash}
+	for _, d := range rep.Decisions {
+		if d.Action != types.DecisionNative && d.Action != types.DecisionLowered {
+			v.converts = true
+		}
+	}
+	return v, true
 }
 
 // SupportsSchema implements types.StructuredOutputProvider.
@@ -168,7 +207,7 @@ func (p *Provider) Close() error { return types.CloseProvider(p.inner) }
 func (p *Provider) stream(
 	ctx context.Context,
 	msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema,
-	opts *types.RequestOptions, call func() (<-chan types.Delta, error),
+	opts *types.RequestOptions, planned view, call func() (<-chan types.Delta, error),
 ) (<-chan types.Delta, error) {
 	if p.cfg.Cache == nil {
 		return call() // no backing store: behave as a transparent passthrough
@@ -185,16 +224,16 @@ func (p *Provider) stream(
 		parts = append(parts, string(raw))
 	}
 	identity, _ := json.Marshal(parts)
-	key := p.cfg.KeyNamespace + ":" + Key(string(identity), msgs, tools, schema)
+	key := p.cfg.KeyNamespace + ":" + KeyWithConversions(string(identity), msgs, tools, schema, planned.hash)
 
 	// HIT: replay recorded deltas, no upstream call.
 	if cr, found := p.lookup(ctx, key); found {
 		return replay(cr), nil
 	}
 	if !p.cfg.SingleFlight || p.flights == nil {
-		return p.miss(ctx, key, call, nil)
+		return p.miss(ctx, key, planned, call, nil)
 	}
-	return p.singleFlight(ctx, key, call)
+	return p.singleFlight(ctx, key, planned, call)
 }
 
 // lookup reads key from the store. A read error is logged, recorded as a
@@ -215,7 +254,7 @@ func (p *Provider) lookup(ctx context.Context, key string) (CachedResponse, bool
 
 // miss calls upstream and tees the stream into a recorder. done, when
 // non-nil, receives the outcome once the stream ends or the call fails.
-func (p *Provider) miss(ctx context.Context, key string, call func() (<-chan types.Delta, error), done func(stored, canceled bool)) (<-chan types.Delta, error) {
+func (p *Provider) miss(ctx context.Context, key string, planned view, call func() (<-chan types.Delta, error), done func(stored, canceled bool)) (<-chan types.Delta, error) {
 	in, err := call()
 	if err != nil {
 		if done != nil {
@@ -227,11 +266,11 @@ func (p *Provider) miss(ctx context.Context, key string, call func() (<-chan typ
 	if done != nil {
 		recorded = func(stored bool) { done(stored, ctx.Err() != nil) }
 	}
-	return p.recordAndTee(ctx, key, in, recorded), nil
+	return p.recordAndTee(ctx, key, planned, in, recorded), nil
 }
 
 // singleFlight leads the call for key or waits for the current leader.
-func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-chan types.Delta, error)) (<-chan types.Delta, error) {
+func (p *Provider) singleFlight(ctx context.Context, key string, planned view, call func() (<-chan types.Delta, error)) (<-chan types.Delta, error) {
 	f := p.flights
 	for {
 		f.mu.Lock()
@@ -256,7 +295,7 @@ func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-
 				return nil, err
 			}
 			// The leader's response was not shareable; call upstream alone.
-			return p.miss(ctx, key, call, nil)
+			return p.miss(ctx, key, planned, call, nil)
 		}
 		mine := &flight{done: make(chan struct{})}
 		f.inflight[key] = mine
@@ -268,7 +307,7 @@ func (p *Provider) singleFlight(ctx context.Context, key string, call func() (<-
 			p.finish(key, mine, true, false)
 			return replay(cr), nil
 		}
-		return p.miss(ctx, key, call, func(stored, canceled bool) {
+		return p.miss(ctx, key, planned, call, func(stored, canceled bool) {
 			p.finish(key, mine, stored, canceled)
 		})
 	}

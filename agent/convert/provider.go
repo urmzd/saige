@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/urmzd/saige/agent/provider/wrapper"
@@ -191,7 +192,82 @@ func (p *Provider) plan(ctx context.Context, req types.Request) (Plan, Runtime, 
 	}
 	rt, _ := RuntimeFrom(ctx)
 	pl, err := PlanConversions(target, req.Messages, p.policyFor(rt), p.layersFor(rt, req)...)
+	if eg, ok := types.EgressFrom(ctx); ok && eg.RequireText {
+		err = requireText(&pl, eg, err)
+	}
 	return pl, rt, true, err
+}
+
+// requireText rejects every part a plan would send as opaque media, natively,
+// lowered or converted to other media, under a privacy boundary that lets
+// media leave only as text. A router then removes the member, and a member
+// that would transcribe, describe, extract or omit the part stays.
+func requireText(pl *Plan, eg types.Egress, err error) error {
+	var rej *RejectError
+	if !errors.As(err, &rej) {
+		rej = &RejectError{Offering: pl.Offering}
+	}
+	added := false
+	for i := range pl.Decisions {
+		d := &pl.Decisions[i]
+		switch d.Action {
+		case types.DecisionNative, types.DecisionLowered, types.DecisionConverted:
+		default:
+			continue
+		}
+		if !eg.IsOpaque(d.part) {
+			continue
+		}
+		d.Reason = joinReason("the privacy policy sends media only as text", d.Reason)
+		d.Action, d.Via = types.DecisionRejected, ""
+		rej.Rejected = append(rej.Rejected, d.ConversionDecision)
+		added = true
+	}
+	if !added {
+		return err
+	}
+	return rej
+}
+
+func joinReason(a, b string) string {
+	if b == "" {
+		return a
+	}
+	return a + "; " + b
+}
+
+// checkView refuses a view that still carries opaque media under a
+// boundary that requires text: media in an assistant turn, which is never
+// planned, or a part a failed conversion fell back to media for.
+func checkView(ctx context.Context, msgs []types.Message, offering string) error {
+	eg, ok := types.EgressFrom(ctx)
+	if !ok || !eg.RequireText {
+		return nil
+	}
+	rej := &RejectError{Offering: offering}
+	for mi, m := range msgs {
+		for pi, part := range types.PartsOf(m) {
+			check := func(p types.Part, nested int) {
+				if !eg.IsOpaque(p) {
+					return
+				}
+				src, _ := types.SourceOf(p)
+				rej.Rejected = append(rej.Rejected, types.ConversionDecision{
+					Path: types.PartPath{Message: mi, Part: pi, Nested: nested}, Kind: p.Kind(), MediaType: src.MediaType,
+					Digest: src.Digest, Action: types.DecisionRejected, Reason: "the privacy policy sends media only as text"})
+			}
+			check(part, -1)
+			if tr, ok := part.(types.ToolResultPart); ok {
+				for ni, np := range tr.Parts {
+					check(np, ni)
+				}
+			}
+		}
+	}
+	if len(rej.Rejected) > 0 {
+		return rej
+	}
+	return nil
 }
 
 // PlanConversions implements types.ConversionPlanner.
@@ -227,10 +303,16 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 		return nil, err
 	}
 	if !ok || !pl.Converts() {
+		if err := checkView(ctx, out.Messages, pl.Offering); err != nil {
+			return nil, err
+		}
 		return p.inner.Stream(ctx, out)
 	}
 	msgs, rep, err := pl.Apply(ctx, req.Messages, rt, p.policyFor(rt).Cache)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkView(ctx, msgs, pl.Offering); err != nil {
 		return nil, err
 	}
 	out.Messages = msgs

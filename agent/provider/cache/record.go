@@ -23,7 +23,13 @@ type CachedResponse struct {
 // cacheable (a tool call is a pure function of the input): TextStart/Content/End,
 // Thinking*, and ToolCall* deltas are recorded. UsageDelta is captured
 // separately. DoneDelta / MarkerDelta / ToolExec* / ErrorDelta are not recorded.
-func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types.Delta, done func(stored bool)) <-chan types.Delta {
+//
+// The recording is also dropped when the attempt that served did not send
+// the view the key was planned for: a conversion that fell back to another
+// action, or a failover to a member that planned differently, changes the
+// executed report (the last types.ConversionDelta), and the response then
+// belongs to another key.
+func (p *Provider) recordAndTee(ctx context.Context, key string, planned view, in <-chan types.Delta, done func(stored bool)) <-chan types.Delta {
 	out := make(chan types.Delta, 64)
 	go func() {
 		defer close(out)
@@ -35,6 +41,7 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 		var rec CachedResponse
 		failed := false
 		openBlocks := 0
+		served := view{}
 
 		for d := range in {
 			switch v := d.(type) {
@@ -50,6 +57,10 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 				failed = true
 			}
 			switch v := d.(type) {
+			case types.RouteDelta:
+				served = view{} // a new attempt: its own report follows
+			case types.ConversionDelta:
+				served = view{hash: v.Report.Hash, converts: true}
 			case types.ErrorDelta:
 				failed = true // poison the recording; do not cache
 			case types.UsageDelta:
@@ -81,6 +92,9 @@ func (p *Provider) recordAndTee(ctx context.Context, key string, in <-chan types
 			}
 		}
 
+		if served.converts != planned.converts || (planned.converts && served.hash != planned.hash) {
+			failed = true // the served view is not the one the key names
+		}
 		if failed || openBlocks != 0 || ctx.Err() != nil || len(rec.Deltas) == 0 {
 			return // correctness: never cache error/partial/empty streams
 		}
