@@ -827,12 +827,12 @@ func TestSubAgentBlockingExecute(t *testing.T) {
 
 	sat := &subAgentTool{
 		def: types.ToolDef{Name: "test_sub", Description: "test"},
-		factory: func(runner types.StepRunner) *Agent {
+		factory: func(_ context.Context, runner types.StepRunner, _ string) (*Agent, error) {
 			return NewAgent(AgentConfig{
 				Provider:     childProvider,
 				SystemPrompt: "child",
 				StepRunner:   runner,
-			})
+			}), nil
 		},
 	}
 

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
@@ -30,7 +29,21 @@ type SubAgentDef struct {
 	Provider  types.Provider
 	Tools     *types.ToolRegistry
 	SubAgents []SubAgentDef // sub-agents can have their own sub-agents
-	MaxIter   int           // 0 inherits the parent's MaxIter
+	// MaxIter is the child's iteration budget. 0 inherits the parent's cap,
+	// or DefaultSubAgentMaxIter when the parent has none, so a child is
+	// bounded even under an unbounded orchestrator. NoIterLimit removes it.
+	// At the cap the child gives a forced final answer with its tools
+	// removed (MaxIterForceFinal) instead of failing the delegation; set
+	// WithOnMaxIter(MaxIterError) in Options to fail it instead.
+	MaxIter int
+	// WrapUpAt is the iteration after which the child is told how many
+	// iterations remain and that it must return its result now, or call
+	// final_answer when the child answers through it. 0 places it
+	// DefaultWrapUpMargin iterations before MaxIter; a negative value sends
+	// no note.
+	WrapUpAt int
+	// WrapUpPrompt replaces DefaultWrapUpPrompt in the wrap-up note.
+	WrapUpPrompt string
 
 	// Timeout bounds the whole delegated run. Time the child spends waiting
 	// for a human approval does not count against it. 0 means no limit beyond
@@ -76,6 +89,17 @@ type SubAgentDef struct {
 	// child must not delegate back to. Delegation to an ancestor is refused
 	// either way.
 	OmitCallerBlock bool
+
+	// Scratch configures the child's private scratch workspace. By default
+	// every invocation gets a fresh in-memory one with scratch_write,
+	// scratch_read, and scratch_search. See SubAgentScratch.
+	Scratch SubAgentScratch
+
+	// References sets when the delegation passes data by reference instead
+	// of inline: a large task or attached message goes into the child's
+	// scratch as an artifact, and a large result comes back to the parent
+	// as an artifact URI with a preview. See SubAgentReferences.
+	References SubAgentReferences
 }
 
 // inheritConfig builds a sub-agent's AgentConfig from its definition and its
@@ -88,7 +112,9 @@ type SubAgentDef struct {
 //     child that did not inherit them would quietly run with different
 //     guarantees than the parent that delegated to it.
 //   - From the definition (identity): Name, SystemPrompt, Tools, SubAgents,
-//     MaxIter, ResponseSchema, and Provider when set.
+//     MaxIter and WrapUpAt (see childIterBudget), ResponseSchema, and
+//     Provider when set. OnMaxIter is MaxIterForceFinal, so a child at its
+//     limit answers instead of failing.
 //   - Deliberately NOT inherited:
 //     Tree, because sub-agents are stateless across delegations and each
 //     invocation builds a fresh one;
@@ -104,7 +130,8 @@ type SubAgentDef struct {
 //     a child targeting a different model may not support them.
 //
 // Budget is shared rather than inherited: see the comment at the assignment.
-// Workspace is narrowed: the child receives a read-only view of the parent's.
+// Workspace is narrowed: the child receives a read-only view of the parent's,
+// under its private scratch when the factory adds one.
 //
 // StepRunner is passed separately: the parent's effective runner is only known
 // at invocation time, since RunDurable injects one after registration.
@@ -116,10 +143,7 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 	if sessions, ok := provider.(types.SessionProvider); ok {
 		provider = sessions.NewSession()
 	}
-	maxIter := sa.MaxIter
-	if maxIter <= 0 {
-		maxIter = parent.MaxIter
-	}
+	maxIter, wrapUpAt := childIterBudget(parent.MaxIter, sa)
 	return AgentConfig{
 		Name:         sa.Name,
 		SystemPrompt: sa.SystemPrompt,
@@ -127,6 +151,8 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		Tools:        sa.Tools,
 		SubAgents:    sa.SubAgents,
 		MaxIter:      maxIter,
+		WrapUpAt:     wrapUpAt,
+		WrapUpPrompt: sa.WrapUpPrompt,
 		StepRunner:   runner,
 
 		// OutputMode stays OutputAuto here. resolveChildOutputMode picks it
@@ -153,10 +179,10 @@ func inheritConfig(parent AgentConfig, sa SubAgentDef, runner types.StepRunner) 
 		// but cannot write to it.
 		ToolRedactor: parent.ToolRedactor,
 		Workspace:    readOnlyView(parent.Workspace),
-		// Step-limit behavior is operational, so the child follows the
-		// parent's. StopAtTools and ToolChoice name the parent's tools and
-		// are not inherited.
-		OnMaxIter:            parent.OnMaxIter,
+		// A bounded child answers at its limit rather than failing the
+		// delegation, whatever the parent does at its own. StopAtTools and
+		// ToolChoice name the parent's tools and are not inherited.
+		OnMaxIter:            MaxIterForceFinal,
 		ForceFinalPrompt:     parent.ForceFinalPrompt,
 		MaxConsecutiveErrors: parent.MaxConsecutiveErrors,
 		MaxRepeatIterations:  parent.MaxRepeatIterations,
@@ -187,8 +213,10 @@ type SubAgentInvoker interface {
 // parent's effective runner is only known at invocation time: RunDurable
 // injects a runner into a shallow clone after the tool was registered.
 type subAgentTool struct {
-	def     types.ToolDef
-	factory func(runner types.StepRunner) *Agent
+	def types.ToolDef
+	// factory builds the child for one invocation, id, with its private
+	// scratch.
+	factory func(ctx context.Context, runner types.StepRunner, id string) (*Agent, error)
 	name    string
 	policy  SubAgentResultPolicy
 	sink    SubAgentResultSink
@@ -197,6 +225,11 @@ type subAgentTool struct {
 	context    SubAgentContext
 	filter     MessageSelector
 	omitCaller bool
+
+	refs SubAgentReferences // with defaults applied
+	// parentWS is the parent's workspace, where a large result is stored
+	// when it accepts writes.
+	parentWS workspace.Workspace
 }
 
 func (t *subAgentTool) Definition() types.ToolDef { return t.def }
@@ -219,7 +252,7 @@ func (t *subAgentTool) Execute(ctx context.Context, args map[string]any) (string
 	for range stream.Deltas() {
 	}
 	result, err := stream.SubAgentResult()
-	return result.Output, err
+	return result.ParentText(), err
 }
 
 // InvokeAgent creates a fresh child agent and invokes it, returning its stream.
@@ -254,7 +287,17 @@ type childRun struct {
 // background child's budget admission happens here, so a spawn that the
 // budget cannot admit fails before anything runs.
 func (t *subAgentTool) start(ctx context.Context, req childRun) (*EventStream, error) {
-	child := t.factory(req.runner)
+	child, err := t.factory(ctx, req.runner, req.id)
+	if err != nil {
+		return nil, err
+	}
+	task, history, referenced, err := t.passByReference(ctx, child, req.task, req.history)
+	if err != nil {
+		return nil, err
+	}
+	if referenced {
+		registerArtifactTools(child.tools)
+	}
 	if req.background && child.cfg.Budget != nil {
 		admission, err := admitChild(child, req.id)
 		if err != nil {
@@ -274,10 +317,11 @@ func (t *subAgentTool) start(ctx context.Context, req childRun) (*EventStream, e
 		stream.inbox = &inbox{}
 	}
 	stream.capture = &subAgentCapture{
-		result: SubAgentResult{ID: req.id, Name: t.name, Task: req.task, StartedAt: time.Now().UTC()},
+		result: SubAgentResult{ID: req.id, Name: t.name, Task: req.task, StartedAt: time.Now().UTC(), MaxIter: child.cfg.MaxIter},
 		policy: t.policy, sink: t.sink,
+		refs: t.refs, parentWS: t.parentWS, scratch: child.scratch,
 	}
-	input := append(slices.Clone(req.history), seedMessage(req.frame, t.name, req.task, t.omitCaller))
+	input := append(history, seedMessage(req.frame, t.name, task, t.omitCaller))
 	go func() {
 		defer child.admission.release(child.cfg.Budget)
 		child.runLoop(ctx, stream, input, child.cfg.Tree.Active(), nil)

@@ -107,7 +107,7 @@ func TestSpawnResultInjectedAtFinish(t *testing.T) {
 		t.Fatalf("parent calls = %d, want 3", parent.CallCount())
 	}
 	msg := lastUserText(parent, 2)
-	for _, want := range []string{`<subagent_result handle="s1" name="worker" status="completed">`, "worker found it"} {
+	for _, want := range []string{`<subagent_result handle="s1" name="worker" status="completed" iterations="1">`, "worker found it"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("injected message %q lacks %q", msg, want)
 		}
