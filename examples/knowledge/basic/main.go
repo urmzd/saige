@@ -43,7 +43,7 @@ func main() {
 	}
 
 	// 2. Create Ollama client for LLM extraction and embedding.
-	ollamaClient := ollama.NewClient("http://localhost:11434", "gemma3", "nomic-embed-text")
+	ollamaClient := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "gemma3", EmbeddingModel: "nomic-embed-text"})
 
 	// 3. Create the knowledge graph.
 	graph, err := knowledge.NewGraph(ctx,

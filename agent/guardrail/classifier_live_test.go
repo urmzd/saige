@@ -23,7 +23,7 @@ func TestClassifierLive(t *testing.T) {
 	if os.Getenv("SAIGE_LIVE") != "1" || key == "" {
 		t.Skip("set SAIGE_LIVE=1 and OPENAI_API_KEY to call the provider")
 	}
-	classifier := guardrail.Classifier("cooking-only", openai.NewAdapter(key, "gpt-6-luna"),
+	classifier := guardrail.Classifier("cooking-only", must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})),
 		"Only questions about cooking and recipes are allowed. Anything else must be blocked.")
 	main := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("unused")}}
 	budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.10), PerCallCost: types.USD(0.02), AllowUnpriced: true})

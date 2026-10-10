@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestEmptySystemPromptIsOmitted checks that blank system text never becomes
@@ -23,7 +24,7 @@ func TestEmptySystemPromptIsOmitted(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
-			a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+			a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 			ch, err := a.Stream(context.Background(), types.Request{Messages: tc.msgs})
 			if err != nil {
 				t.Fatal(err)

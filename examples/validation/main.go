@@ -54,7 +54,7 @@ func main() {
 	}
 	// The SDK client makes one attempt per call; retry.Provider adds backoff.
 	newProvider := func() types.Provider {
-		return retry.New(openai.NewAdapter(apiKey, model()), retry.DefaultConfig())
+		return retry.New(openai.New(openai.Config{APIKey: apiKey, Model: types.ModelID(model())}), retry.DefaultConfig())
 	}
 
 	checks := []struct {

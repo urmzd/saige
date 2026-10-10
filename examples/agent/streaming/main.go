@@ -26,8 +26,8 @@ const (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	adapter := ollama.New(ollama.Config{Client: client})
 
 	addTool := &types.ToolFunc{
 		Def: types.ToolDef{

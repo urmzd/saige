@@ -103,7 +103,7 @@ func TestStreamIntegrity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := lineServer(t, tc.gap, tc.hangUp, tc.lines...)
-			client := NewClient(server.URL, "test-model", "")
+			client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))
 			if tc.idle > 0 {
 				client.StreamIdleTimeout = tc.idle
 			}
@@ -111,7 +111,7 @@ func TestStreamIntegrity(t *testing.T) {
 			if tc.schema {
 				schema = &types.ParameterSchema{Type: "object"}
 			}
-			text, errs := runAdapter(t, NewAdapter(client), schema)
+			text, errs := runAdapter(t, must.Get(New(Config{Client: client})), schema)
 			if text != tc.wantText {
 				t.Fatalf("text length %d, want %d", len(text), len(tc.wantText))
 			}
@@ -133,7 +133,7 @@ func TestStreamIntegrity(t *testing.T) {
 
 func TestTruncatedStreamNotCached(t *testing.T) {
 	server := lineServer(t, 0, true, content("partial"))
-	p := must.Get(cache.New(NewAdapter(NewClient(server.URL, "test-model", "")), cache.Config{Cache: memcache.New[cache.CachedResponse]()}))
+	p := must.Get(cache.New(must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))})), cache.Config{Cache: memcache.New[cache.CachedResponse]()}))
 	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	for i := range 2 {
 		ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
@@ -177,7 +177,7 @@ func TestRequestErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			_, err := NewAdapter(NewClient(server.URL, "test-model", "")).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
+			_, err := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))})).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 			var pe *types.ProviderError
 			if !errors.As(err, &pe) || pe.Kind != tc.wantKind || pe.RetryAfter != tc.wantAfter || pe.Code != tc.status {
 				t.Fatalf("err = %#v", err)
@@ -192,7 +192,7 @@ func TestRequestErrorClassification(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	_ = ln.Close()
-	_, err = NewAdapter(NewClient("http://"+addr, "test-model", "")).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
+	_, err = must.Get(New(Config{Client: must.Get(NewClient(Config{Host: "http://" + addr, Model: "test-model"}))})).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if !types.IsTransient(err) {
 		t.Fatalf("refused connection: err = %v, want transient", err)
 	}
@@ -204,7 +204,7 @@ func TestErrorBodyIsBounded(t *testing.T) {
 		_, _ = w.Write([]byte(strings.Repeat("e", 1<<20)))
 	}))
 	defer server.Close()
-	_, err := NewClient(server.URL, "m", "").ChatStream(context.Background(), nil, nil)
+	_, err := must.Get(NewClient(Config{Host: server.URL, Model: "m"})).ChatStream(context.Background(), nil, nil)
 	var se *StatusError
 	if !errors.As(err, &se) || len(se.Body) > maxErrorBodyBytes {
 		t.Fatalf("err = %T, body length unbounded", err)
@@ -212,7 +212,7 @@ func TestErrorBodyIsBounded(t *testing.T) {
 }
 
 func TestDefaultClientHasNoBodyTimeout(t *testing.T) {
-	c := NewClient("http://localhost", "m", "")
+	c := must.Get(NewClient(Config{Host: "http://localhost", Model: "m"}))
 	if c.HTTP.Timeout != 0 {
 		t.Fatalf("http.Client.Timeout = %v; it would cut off long streams", c.HTTP.Timeout)
 	}

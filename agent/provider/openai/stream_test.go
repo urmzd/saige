@@ -149,7 +149,7 @@ func TestToolArgumentIntegrity(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, tc.body...).URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, tc.body...).URL))), nil)
 			var argsErrs []string
 			var ends []types.ToolCallPart
 			for _, end := range r.ends {
@@ -228,7 +228,7 @@ func TestToolArgumentIntegrity(t *testing.T) {
 
 func TestTruncatedStructuredOutput(t *testing.T) {
 	body := []string{chunk(`"delta":{"content":"{\"answer\":\"par"}`), finish("length"), usageChunk}
-	r := run(t, NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, body...).URL)), &types.ParameterSchema{Type: "object"})
+	r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, body...).URL))), &types.ParameterSchema{Type: "object"})
 	if len(r.errs) != 1 || !types.IsTruncated(r.errs[0]) {
 		t.Fatalf("errors = %v, want one truncation", r.errs)
 	}
@@ -247,7 +247,7 @@ func TestStreamFailureClassification(t *testing.T) {
 		{"server error event", false, []string{`data: {"error":{"message":"try again","type":"server_error"}}` + "\n\n"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(sseServer(t, tc.hangUp, tc.body...).URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, tc.hangUp, tc.body...).URL))), nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v, want 1", r.errs)
 			}
@@ -285,7 +285,7 @@ func TestHTTPErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(server.URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL))), nil)
 			if len(r.errs) != 1 {
 				t.Fatalf("errors = %v", r.errs)
 			}
@@ -326,7 +326,7 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":{"message":"down","type":"server_error"}}`))
 			}))
 			defer server.Close()
-			var p types.Provider = NewAdapter("test", testModel, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
+			var p types.Provider = must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...))
 			if tc.outer > 0 {
 				p = must.Get(retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 			}
@@ -375,7 +375,7 @@ func TestEmbedderKeepsSDKRetries(t *testing.T) {
 			}))
 			defer server.Close()
 			opts := append([]Option{WithBaseURL(server.URL)}, tc.opts...)
-			vecs, err := NewEmbedder("test", "text-embedding-3-small", opts...).Embed(context.Background(), []string{"x"})
+			vecs, err := must.Get(NewEmbedder(Config{APIKey: "test", Model: "text-embedding-3-small"}, opts...)).Embed(context.Background(), []string{"x"})
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -401,7 +401,7 @@ func TestContentFilterFinishIsAnError(t *testing.T) {
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			body := []string{chunk(`"delta":{"content":"partial"}`), finish(tc.reason), usageChunk}
-			r := run(t, NewAdapter("test", testModel, WithBaseURL(sseServer(t, false, body...).URL)), nil)
+			r := run(t, must.Get(New(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(sseServer(t, false, body...).URL))), nil)
 			if !tc.wantErr {
 				if len(r.errs) != 0 {
 					t.Fatalf("errors = %v, want none", r.errs)

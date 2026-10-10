@@ -40,7 +40,7 @@ func liveAdapter(t *testing.T, model string, opts ...Option) *Adapter {
 	if model == "" {
 		model = "gemini-3.1-flash-lite"
 	}
-	a, err := NewAdapter(context.Background(), "", model, append([]Option{WithVertex(project, location)}, opts...)...)
+	a, err := New(context.Background(), Config{Model: types.ModelID(model)}, append([]Option{WithVertex(project, location)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

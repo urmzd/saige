@@ -12,6 +12,7 @@ import (
 	"github.com/urmzd/saige/eval/online"
 	"github.com/urmzd/saige/eval/store"
 	"github.com/urmzd/saige/eval/store/memstore"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestLiveJudgeOnRecordedConversation scores the recorded support
@@ -24,7 +25,7 @@ func TestLiveJudgeOnRecordedConversation(t *testing.T) {
 	}
 	tr, _ := supportConversation(t)
 	budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01), MaxRequests: 4})
-	judge := eval.NewJudgeScorer(&online.BudgetedGenerator{Provider: openai.NewAdapter(key, "gpt-6-luna"), Budget: budget},
+	judge := eval.NewJudgeScorer(&online.BudgetedGenerator{Provider: must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})), Budget: budget},
 		eval.WithJudgeName("helpful"),
 		eval.WithJudgeRubric("Score 1 when the response answers the user's request or honestly explains why it could not, 0 when it does neither."))
 	ms := memstore.New()

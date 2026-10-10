@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchServer stubs the Message Batches API. The batch reports in_progress
@@ -94,7 +95,7 @@ func TestBatchSubmitPollResults(t *testing.T) {
 	stub := &batchServer{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL), WithMaxTokens(256))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL), WithMaxTokens(256)))
 
 	schema := &types.ParameterSchema{Type: "object", Required: []string{"label"},
 		Properties: map[string]types.PropertyDef{"label": {Type: "string"}}}
@@ -153,7 +154,7 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	seed := int64(7)
 	bad := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{Seed: &seed}}}
 	if _, err := a.Submit(context.Background(), bad, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
@@ -169,7 +170,7 @@ func TestBatchStatusCancelFind(t *testing.T) {
 	stub := &batchServer{ids: []string{"sbx-0"}}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL)))
 	ctx := context.Background()
 	h := types.BatchHandle{ID: "msgbatch_1"}
 	if err := a.Cancel(ctx, h); err != nil || stub.cancels != 1 {
@@ -201,7 +202,7 @@ func TestBatchNativeSchema(t *testing.T) {
 	stub := &batchServer{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "claude-sonnet-5-5", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-sonnet-5-5"}, WithBaseURL(server.URL)))
 	schema := &types.ParameterSchema{Type: "object", Required: []string{"label"},
 		Properties: map[string]types.PropertyDef{"label": {Type: "string"}}}
 	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Schema: schema}}

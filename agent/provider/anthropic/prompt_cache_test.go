@@ -5,6 +5,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // cacheRequest builds a request with two system blocks, two tools, and a
@@ -68,7 +69,7 @@ func TestPromptCachePolicyBreakpoints(t *testing.T) {
 		{"disabled places nothing", PromptCachePolicy{}, toolResult, nil, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("unused", "claude-sonnet-4-5", WithPromptCachePolicy(tc.policy))
+			a := must.Get(New(Config{APIKey: "unused", Model: "claude-sonnet-4-5"}, WithPromptCachePolicy(tc.policy)))
 			params := cacheRequest(tc.last)
 			if err := a.applyPromptCache(&params); err != nil {
 				t.Fatal(err)
@@ -92,14 +93,14 @@ func TestPromptCachePolicyValidation(t *testing.T) {
 		{"system cache without system text", "claude-sonnet-4-5", PromptCachePolicy{TTL: "5m", System: true}, anthropic.MessageNewParams{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter("unused", tc.model, WithPromptCachePolicy(tc.policy))
+			a := must.Get(New(Config{APIKey: "unused", Model: types.ModelID(tc.model)}, WithPromptCachePolicy(tc.policy)))
 			if err := a.applyPromptCache(&tc.params); err == nil {
 				t.Fatal("invalid cache policy accepted")
 			}
 		})
 	}
 	// The legacy option is the system-only policy.
-	a := NewAdapter("unused", "claude-sonnet-4-5", WithSystemPromptCache("1h"))
+	a := must.Get(New(Config{APIKey: "unused", Model: "claude-sonnet-4-5"}, WithSystemPromptCache("1h")))
 	if a.cachePolicy != (PromptCachePolicy{TTL: "1h", System: true}) {
 		t.Fatalf("WithSystemPromptCache = %+v", a.cachePolicy)
 	}

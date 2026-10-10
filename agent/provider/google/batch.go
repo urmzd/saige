@@ -344,12 +344,12 @@ func WithStorageClient(c *http.Client) VertexBatchOption {
 // under location, such as "gs://my-bucket/saige-batches".
 func NewVertexBatch(a *Adapter, location string, opts ...VertexBatchOption) (*VertexBatch, error) {
 	if a == nil || a.backend.kind != genai.BackendVertexAI {
-		return nil, errors.New("google: NewVertexBatch needs an adapter built WithVertex")
+		return nil, fmt.Errorf("%w: google: NewVertexBatch needs an adapter built WithVertex", types.ErrInvalidConfig)
 	}
 	rest, ok := strings.CutPrefix(location, "gs://")
 	bucket, prefix, _ := strings.Cut(rest, "/")
 	if !ok || bucket == "" {
-		return nil, fmt.Errorf("google: batch location %q must be gs://BUCKET[/PREFIX]", location)
+		return nil, fmt.Errorf("%w: google: batch location %q must be gs://BUCKET[/PREFIX]", types.ErrInvalidConfig, location)
 	}
 	v := &VertexBatch{a: a, bucket: bucket, prefix: strings.Trim(prefix, "/"),
 		storage: "https://storage.googleapis.com", now: time.Now}

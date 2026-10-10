@@ -43,7 +43,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 	if embedModel == "" {
 		embedModel = "nomic-embed-text"
 	}
-	store, err := New(pool, Config{Embedder: ollama.NewEmbedder(ollama.NewClient(host, "", embedModel))})
+	store, err := New(pool, Config{Embedder: ollama.NewEmbedder(must.Get(ollama.NewClient(ollama.Config{Host: host, EmbeddingModel: types.ModelID(embedModel)})))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestLiveCrossSessionRecall(t *testing.T) {
 		AutoApprove: true,
 		Scope:       func(context.Context, string) (memory.Scope, error) { return scope, nil },
 	}
-	provider := anthropic.NewAdapter(key, model)
+	provider := must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)}))
 
 	run := func(name, conversation string, tools []types.Tool, input ...types.Message) string {
 		t.Helper()

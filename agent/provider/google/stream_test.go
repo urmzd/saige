@@ -65,8 +65,7 @@ func TestStreamEndStates(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a, err := NewAdapter(context.Background(), "test-key", "gemini-2.5-flash",
-				WithHTTPClient(&http.Client{Transport: sseTransport{events: tc.events}}))
+			a, err := New(context.Background(), Config{APIKey: "test-key", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: sseTransport{events: tc.events}}))
 			if err != nil {
 				t.Fatal(err)
 			}

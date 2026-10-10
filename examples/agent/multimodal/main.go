@@ -21,8 +21,8 @@ import (
 )
 
 func main() {
-	client := ollama.NewClient("http://localhost:11434", "llava", "")
-	adapter := ollama.NewAdapter(client)
+	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llava"})
+	adapter := ollama.New(ollama.Config{Client: client})
 
 	// Show what the model takes natively, as its catalog offering declares.
 	if offering, ok := convert.Target(adapter); ok {

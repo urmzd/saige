@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/provider/openai"
+	"github.com/urmzd/saige/internal/must"
 	"github.com/urmzd/saige/rag"
 	"github.com/urmzd/saige/rag/bm25retriever"
 	"github.com/urmzd/saige/rag/eval"
@@ -263,7 +264,7 @@ func regenerateHybridEmbeddings(t *testing.T) {
 	for _, q := range corpus.Queries {
 		texts = append(texts, q.Query)
 	}
-	vecs, err := openai.NewEmbedder(key, hybridEmbeddingModel).Embed(context.Background(), texts)
+	vecs, err := must.Get(openai.NewEmbedder(openai.Config{APIKey: key, Model: hybridEmbeddingModel})).Embed(context.Background(), texts)
 	if err != nil {
 		t.Fatal(err)
 	}

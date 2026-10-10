@@ -19,8 +19,8 @@ import (
 
 func main() {
 	// Primary provider: llama3.2 with retry.
-	primaryClient := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	primaryAdapter := ollama.NewAdapter(primaryClient)
+	primaryClient := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	primaryAdapter := ollama.New(ollama.Config{Client: primaryClient})
 
 	retryProvider := retry.New(primaryAdapter, retry.Config{
 		MaxAttempts: 3,
@@ -30,8 +30,8 @@ func main() {
 	})
 
 	// Secondary provider: different model as fallback.
-	secondaryClient := ollama.NewClient("http://localhost:11434", "mistral", "")
-	secondaryAdapter := ollama.NewAdapter(secondaryClient)
+	secondaryClient := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "mistral"})
+	secondaryAdapter := ollama.New(ollama.Config{Client: secondaryClient})
 
 	// Compose: retry the primary, then fall back to the secondary.
 	composed := fallback.New(retryProvider, secondaryAdapter)

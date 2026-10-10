@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"fmt"
+	"github.com/urmzd/saige/internal/must"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,7 @@ func TestGenerateSingleTurnText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	adapter := NewAdapter("test-key", "gpt-test", WithBaseURL(server.URL))
+	adapter := must.Get(New(Config{APIKey: "test-key", Model: "gpt-test"}, WithBaseURL(server.URL)))
 	got, err := adapter.Generate(context.Background(), "say hello")
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func TestGenerateSurfacesAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	adapter := NewAdapter("bad-key", "gpt-test", WithBaseURL(server.URL))
+	adapter := must.Get(New(Config{APIKey: "bad-key", Model: "gpt-test"}, WithBaseURL(server.URL)))
 	if _, err := adapter.Generate(context.Background(), "hi"); err == nil {
 		t.Fatal("expected an error from a 401 response")
 	}

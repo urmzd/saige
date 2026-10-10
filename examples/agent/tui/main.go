@@ -31,11 +31,11 @@ func main() {
 	verbose := flag.Bool("verbose", false, "use verbose mode with Runner")
 	flag.Parse()
 
-	client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "")
+	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
 	if *interactive || (*runner && !*verbose) {
 		client.Logger = log.New(io.Discard, "", 0)
 	}
-	adapter := ollama.NewAdapter(client)
+	adapter := ollama.New(ollama.Config{Client: client})
 
 	searchTool := &types.ToolFunc{
 		Def: types.ToolDef{

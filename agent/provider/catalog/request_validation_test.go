@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 type requestTransport func(*http.Request) (*http.Response, error)
@@ -42,17 +43,17 @@ func TestEveryAdapterRejectsUnsupportedRequestBeforeHTTP(t *testing.T) {
 				var p types.Provider
 				switch provider {
 				case "openai":
-					p = openai.NewAdapter("local-test", model, openai.WithBaseURL(server.URL))
+					p = must.Get(openai.New(openai.Config{APIKey: "local-test", Model: types.ModelID(model)}, openai.WithBaseURL(server.URL)))
 				case "anthropic":
-					p = anthropic.NewAdapter("local-test", model, anthropic.WithBaseURL(server.URL))
+					p = must.Get(anthropic.New(anthropic.Config{APIKey: "local-test", Model: types.ModelID(model)}, anthropic.WithBaseURL(server.URL)))
 				case "google":
-					a, err := google.NewAdapter(context.Background(), "local-test", model, google.WithHTTPClient(client))
+					a, err := google.New(context.Background(), google.Config{APIKey: "local-test", Model: types.ModelID(model)}, google.WithHTTPClient(client))
 					if err != nil {
 						t.Fatal(err)
 					}
 					p = a
 				case "ollama":
-					p = ollama.NewAdapter(ollama.NewClient(server.URL, model, ""))
+					p = must.Get(ollama.New(ollama.Config{Client: must.Get(ollama.NewClient(ollama.Config{Host: server.URL, Model: types.ModelID(model)}))}))
 				}
 				var tools []types.ToolDef
 				if missing == types.CapTools {

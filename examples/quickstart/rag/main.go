@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	emb := ollama.NewEmbedder(ollama.NewClient("http://localhost:11434", "", "nomic-embed-text"))
+	emb := ollama.NewEmbedder(ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"}))
 	pipe, err := rag.NewPipeline(
 		rag.WithStore(pgstore.NewStore(pool, nil)),
 		rag.WithContentExtractor(extractor.NewAuto()),

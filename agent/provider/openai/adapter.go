@@ -171,17 +171,31 @@ type Adapter struct {
 	params genParams
 }
 
-// NewAdapter creates a new OpenAI provider adapter using the official SDK.
-func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
-	cfg := &config{}
+// Config names the account and model an adapter or embedder serves.
+type Config struct {
+	// APIKey authenticates every request.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates an OpenAI Chat Completions adapter using the official SDK. A
+// missing model is an error wrapping types.ErrInvalidConfig. Option
+// combinations are checked against the model by Validate and before every
+// request.
+func New(cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: openai: Config.Model is required", types.ErrInvalidConfig)
+	}
+	c := &config{}
 	for _, o := range opts {
-		o(cfg)
+		o(c)
 	}
 	return &Adapter{
-		client: openai.NewClient(cfg.clientOptions(apiKey, new(int))...),
-		model:  openai.ChatModel(model),
-		params: cfg.params,
-	}
+		client: openai.NewClient(c.clientOptions(cfg.APIKey, new(int))...),
+		model:  openai.ChatModel(cfg.Model),
+		params: c.params,
+	}, nil
 }
 
 // applyParams encodes options after Validate has checked their compatibility.

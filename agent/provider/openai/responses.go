@@ -39,9 +39,14 @@ type ResponsesAdapter struct {
 	base Adapter
 }
 
-// NewResponsesAdapter creates an OpenAI provider adapter for the Responses API.
-func NewResponsesAdapter(apiKey, model string, opts ...Option) *ResponsesAdapter {
-	return &ResponsesAdapter{base: *NewAdapter(apiKey, model, opts...)}
+// NewResponses creates an OpenAI provider adapter for the Responses API. It
+// takes the same Config and options as New.
+func NewResponses(cfg Config, opts ...Option) (*ResponsesAdapter, error) {
+	a, err := New(cfg, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &ResponsesAdapter{base: *a}, nil
 }
 
 // Name implements types.NamedProvider.

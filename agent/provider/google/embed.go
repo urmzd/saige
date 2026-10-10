@@ -1,9 +1,11 @@
 package google
 
 import (
-	"cloud.google.com/go/auth"
 	"context"
+	"fmt"
 	"net/http"
+
+	"cloud.google.com/go/auth"
 
 	"github.com/urmzd/saige/agent/types"
 	"golang.org/x/sync/errgroup"
@@ -50,13 +52,20 @@ func WithEmbedCredentials(c *auth.Credentials) EmbedderOption {
 }
 
 // NewEmbedder creates a new Google embedder. It targets the Gemini Developer
-// API unless WithEmbedVertex selects Vertex AI.
-func NewEmbedder(ctx context.Context, apiKey, model string, opts ...EmbedderOption) (*Embedder, error) {
-	e := &Embedder{model: model, backend: backend{kind: genai.BackendGeminiAPI}}
+// API unless WithEmbedVertex selects Vertex AI. A missing model is an error
+// wrapping types.ErrInvalidConfig.
+func NewEmbedder(ctx context.Context, cfg Config, opts ...EmbedderOption) (*Embedder, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: google: embedder Config.Model is required", types.ErrInvalidConfig)
+	}
+	e := &Embedder{model: string(cfg.Model), backend: backend{kind: genai.BackendGeminiAPI}}
 	for _, o := range opts {
 		o(e)
 	}
-	client, err := e.backend.newClient(ctx, apiKey)
+	if e.backend.kind == genai.BackendVertexAI && (e.backend.project == "" || e.backend.location == "") {
+		return nil, errVertexTarget
+	}
+	client, err := e.backend.newClient(ctx, cfg.APIKey)
 	if err != nil {
 		return nil, err
 	}

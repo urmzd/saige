@@ -16,8 +16,8 @@ import (
 
 func main() {
 	// Shared provider for both parent and child.
-	client := ollama.NewClient("http://localhost:11434", "llama3.2", "")
-	adapter := ollama.NewAdapter(client)
+	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	adapter := ollama.New(ollama.Config{Client: client})
 
 	// Mock search tool for the researcher sub-agent.
 	searchTool := &types.ToolFunc{

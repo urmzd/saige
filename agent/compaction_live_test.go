@@ -50,7 +50,7 @@ func TestCompactionLive(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
 			a := must.Get(agent.New(agent.Config{
-				Provider:     anthropic.NewAdapter(key, "claude-haiku-5-5"),
+				Provider:     must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: "claude-haiku-5-5"})),
 				SystemPrompt: "You are a concise assistant.",
 				MaxIter:      1,
 				CompactCfg:   &cfg,

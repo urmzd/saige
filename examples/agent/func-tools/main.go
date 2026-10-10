@@ -50,7 +50,7 @@ func main() {
 	if key == "" {
 		log.Fatal("set OPENAI_API_KEY")
 	}
-	llm := openai.NewAdapter(key, "gpt-6-luna")
+	llm := openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"})
 
 	stock := agentsdk.Func("stock", "Units in stock for a SKU",
 		func(rc agentsdk.RunContext[*Inventory], in StockIn) (StockOut, error) {

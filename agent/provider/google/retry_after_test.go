@@ -28,7 +28,7 @@ func TestRateLimitHonorsRetryAfterHeader(t *testing.T) {
 					Header: http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"12"}},
 					Body:   io.NopCloser(strings.NewReader(tc.body))}, nil
 			})
-			a, err := NewAdapter(context.Background(), "k", "gemini-2.5-flash", WithHTTPClient(&http.Client{Transport: transport}))
+			a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: transport}))
 			if err != nil {
 				t.Fatal(err)
 			}

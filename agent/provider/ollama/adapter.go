@@ -48,13 +48,26 @@ type Adapter struct {
 	dialPolicy *types.DialPolicy
 }
 
-// NewAdapter creates a new Ollama Provider adapter.
-func NewAdapter(client *Client, opts ...AdapterOption) *Adapter {
+// New creates an Ollama provider adapter over cfg.Client, or over a client
+// built from cfg's host and models when cfg.Client is nil. A missing model
+// or an invalid host is an error wrapping types.ErrInvalidConfig.
+func New(cfg Config, opts ...AdapterOption) (*Adapter, error) {
+	client := cfg.Client
+	if client == nil {
+		c, err := NewClient(cfg)
+		if err != nil {
+			return nil, err
+		}
+		client = c
+	}
+	if client.Model == "" {
+		return nil, fmt.Errorf("%w: ollama: no model", types.ErrInvalidConfig)
+	}
 	a := &Adapter{Client: client}
 	for _, o := range opts {
 		o(a)
 	}
-	return a
+	return a, nil
 }
 
 // Validate checks explicitly configured controls. The low-level Client remains

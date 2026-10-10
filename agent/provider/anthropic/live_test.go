@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // redactedThinkingTrigger is the test prompt Anthropic documents for
@@ -48,7 +49,7 @@ func TestLiveRedactedThinkingRoundTrips(t *testing.T) {
 	if os.Getenv("SAIGE_LIVE") != "1" || key == "" {
 		t.Skip("set SAIGE_LIVE=1 and ANTHROPIC_API_KEY to call the provider")
 	}
-	a := NewAdapter(key, "claude-haiku-4-5", WithThinking(1024), WithMaxTokens(2048))
+	a := must.Get(New(Config{APIKey: key, Model: "claude-haiku-4-5"}, WithThinking(1024), WithMaxTokens(2048)))
 	first := types.UserMsg(types.Text(redactedThinkingTrigger))
 	reply := liveStream(t, a, types.Request{Messages: []types.Message{first}})
 	var redacted *types.ThinkingPart

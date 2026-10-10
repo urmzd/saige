@@ -180,11 +180,25 @@ type Adapter struct {
 	speech      *genai.SpeechConfig
 }
 
-// NewAdapter creates a new Google provider adapter using the official SDK. It
-// targets the Gemini Developer API by default; pass WithVertex to target Vertex
-// AI, in which case apiKey may be empty and Application Default Credentials are
-// used.
-func NewAdapter(ctx context.Context, apiKey, model string, opts ...Option) (*Adapter, error) {
+// Config names the account and model an adapter or embedder serves.
+type Config struct {
+	// APIKey authenticates Gemini Developer API requests. With WithVertex it
+	// may be empty, and Application Default Credentials are used.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates a Google provider adapter using the official SDK. It targets
+// the Gemini Developer API by default; pass WithVertex to target Vertex AI.
+// ctx bounds the credential lookup. A missing model, an incomplete Vertex
+// target, or controls the model does not take are errors; the first two
+// wrap types.ErrInvalidConfig.
+func New(ctx context.Context, cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: google: Config.Model is required", types.ErrInvalidConfig)
+	}
+	model, apiKey := string(cfg.Model), cfg.APIKey
 	a := &Adapter{model: model, backend: backend{kind: genai.BackendGeminiAPI}}
 	for _, o := range opts {
 		o(a)

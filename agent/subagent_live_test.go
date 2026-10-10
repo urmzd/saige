@@ -41,9 +41,9 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	var inner types.Provider
 	switch {
 	case os.Getenv("OPENAI_API_KEY") != "":
-		inner = openai.NewAdapter(os.Getenv("OPENAI_API_KEY"), "gpt-6-luna")
+		inner = must.Get(openai.New(openai.Config{APIKey: os.Getenv("OPENAI_API_KEY"), Model: "gpt-6-luna"}))
 	case os.Getenv("ANTHROPIC_API_KEY") != "":
-		inner = anthropic.NewAdapter(os.Getenv("ANTHROPIC_API_KEY"), "claude-haiku-5-5")
+		inner = must.Get(anthropic.New(anthropic.Config{APIKey: os.Getenv("ANTHROPIC_API_KEY"), Model: "claude-haiku-5-5"}))
 	default:
 		t.Skip("no OPENAI_API_KEY or ANTHROPIC_API_KEY")
 	}

@@ -24,8 +24,8 @@ import (
 func main() {
 	verbose := len(os.Args) > 1 && os.Args[1] == "-verbose"
 
-	client := ollama.NewClient("http://localhost:11434", "qwen3.5:4b", "")
-	adapter := ollama.NewAdapter(client)
+	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+	adapter := ollama.New(ollama.Config{Client: client})
 
 	addTool := &types.ToolFunc{
 		Def: types.ToolDef{

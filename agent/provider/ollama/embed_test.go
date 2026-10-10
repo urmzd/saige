@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestOllamaEmbedder_Embed(t *testing.T) {
@@ -32,7 +33,7 @@ func TestOllamaEmbedder_Embed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "test-model", "test-embed")
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model", EmbeddingModel: "test-embed"}))
 	embedder := NewEmbedder(client)
 
 	results, err := embedder.Embed(context.Background(), []string{"hello", "world!"})
@@ -67,7 +68,7 @@ func TestOllamaEmbedErrorsAreClassified(t *testing.T) {
 				http.Error(w, `{"error":"busy"}`, tc.status)
 			}))
 			defer server.Close()
-			_, err := NewClient(server.URL, "m", "e").Embed(context.Background(), "x")
+			_, err := must.Get(NewClient(Config{Host: server.URL, Model: "m", EmbeddingModel: "e"})).Embed(context.Background(), "x")
 			if err == nil || types.IsTransient(err) != tc.wantTransient {
 				t.Fatalf("err = %v, transient want %v", err, tc.wantTransient)
 			}

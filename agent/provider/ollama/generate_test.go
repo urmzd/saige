@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestGenerateReportsTruncation(t *testing.T) {
@@ -26,7 +27,7 @@ func TestGenerateReportsTruncation(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(tc.resp)
 			}))
 			defer server.Close()
-			c := NewClient(server.URL, "qwen3:4b", "")
+			c := must.Get(NewClient(Config{Host: server.URL, Model: "qwen3:4b"}))
 			text, err := c.Generate(context.Background(), "extract")
 			if errors.Is(err, types.ErrResponseTruncated) != tc.wantTruncated || text != tc.wantText {
 				t.Fatalf("Generate = %q, %v", text, err)

@@ -57,9 +57,7 @@ func testCredentials(token string) *auth.Credentials {
 // instead of the hardcoded Gemini API.
 func TestEmbedderVertex(t *testing.T) {
 	rt := &vertexTransport{}
-	e, err := NewEmbedder(context.Background(), "", "gemini-embedding-001",
-		WithEmbedVertex("proj-1", "global"), WithEmbedHTTPClient(&http.Client{Transport: rt}),
-		WithEmbedCredentials(testCredentials("tok-1")))
+	e, err := NewEmbedder(context.Background(), Config{Model: "gemini-embedding-001"}, WithEmbedVertex("proj-1", "global"), WithEmbedHTTPClient(&http.Client{Transport: rt}), WithEmbedCredentials(testCredentials("tok-1")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +75,7 @@ func TestEmbedderVertex(t *testing.T) {
 // credentials it was given to its requests.
 func TestAdapterVertexCredentials(t *testing.T) {
 	rt := &vertexTransport{}
-	a, err := NewAdapter(context.Background(), "", "gemini-3.1-flash-lite", WithVertex("proj-1", "us-central1"),
-		WithHTTPClient(&http.Client{Transport: rt}), WithCredentials(testCredentials("tok-2")))
+	a, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"}, WithVertex("proj-1", "us-central1"), WithHTTPClient(&http.Client{Transport: rt}), WithCredentials(testCredentials("tok-2")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +101,7 @@ func TestVertexDetectsDefaultCredentials(t *testing.T) {
 
 	calls := 0
 	detectCredentials = func() (*auth.Credentials, error) { calls++; return testCredentials("adc"), nil }
-	if _, err := NewEmbedder(context.Background(), "", "gemini-embedding-001", WithEmbedVertex("p", "global")); err != nil {
+	if _, err := NewEmbedder(context.Background(), Config{Model: "gemini-embedding-001"}, WithEmbedVertex("p", "global")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
@@ -112,11 +109,11 @@ func TestVertexDetectsDefaultCredentials(t *testing.T) {
 	}
 
 	detectCredentials = func() (*auth.Credentials, error) { return nil, errors.New("no adc") }
-	if _, err := NewAdapter(context.Background(), "", "gemini-3.1-flash-lite", WithVertex("p", "global")); err == nil ||
+	if _, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"}, WithVertex("p", "global")); err == nil ||
 		!strings.Contains(err.Error(), "Application Default Credentials") {
 		t.Fatalf("err = %v, want a missing-credentials error", err)
 	}
-	if _, err := NewEmbedder(context.Background(), "", "m", WithEmbedVertex("", "global")); !errors.Is(err, errVertexTarget) {
+	if _, err := NewEmbedder(context.Background(), Config{Model: "m"}, WithEmbedVertex("", "global")); !errors.Is(err, errVertexTarget) {
 		t.Fatalf("err = %v, want the missing-project error", err)
 	}
 }
@@ -147,8 +144,7 @@ func TestVertexListModelsSendsQuotaProject(t *testing.T) {
 	})
 	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: staticToken("tok-3"),
 		QuotaProjectIDProvider: auth.CredentialsPropertyFunc(func(context.Context) (string, error) { return "quota-proj", nil })})
-	a, err := NewAdapter(context.Background(), "", "gemini-3.1-flash-lite", WithVertex("proj-1", "global"),
-		WithHTTPClient(&http.Client{Transport: redirect}), WithCredentials(creds))
+	a, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"}, WithVertex("proj-1", "global"), WithHTTPClient(&http.Client{Transport: redirect}), WithCredentials(creds))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +180,7 @@ func TestSDKDoesNotRetry(t *testing.T) {
 		if vertex {
 			opts = append(opts, WithVertex("proj-1", "us-central1"), WithCredentials(testCredentials("tok")))
 		}
-		a, err := NewAdapter(context.Background(), "key", "gemini-3.1-flash-lite", opts...)
+		a, err := New(context.Background(), Config{APIKey: "key", Model: "gemini-3.1-flash-lite"}, opts...)
 		if err != nil {
 			t.Fatal(err)
 		}

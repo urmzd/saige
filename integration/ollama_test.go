@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // TestOllamaChatStream exercises the raw Provider contract: a streamed chat
@@ -15,7 +16,7 @@ import (
 func TestOllamaChatStream(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 5*time.Minute)
-	adapter := ollama.NewAdapter(client)
+	adapter := must.Get(ollama.New(ollama.Config{Client: client}))
 
 	rx, err := adapter.Stream(ctx, types.Request{Messages: []types.Message{
 		types.UserMsg(types.Text("Reply with exactly one word: hello")),
@@ -55,7 +56,7 @@ func TestOllamaChatStream(t *testing.T) {
 func TestOllamaStructuredOutput(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 5*time.Minute)
-	adapter := ollama.NewAdapter(client)
+	adapter := must.Get(ollama.New(ollama.Config{Client: client}))
 
 	schema := &types.ParameterSchema{
 		Type:     "object",

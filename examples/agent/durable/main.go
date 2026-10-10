@@ -44,7 +44,7 @@ func newAgent() *agentsdk.Agent {
 	return agentsdk.New(agentsdk.Config{
 		Name:         "researcher",
 		SystemPrompt: "You research questions and summarize concisely.",
-		Provider:     ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", "")),
+		Provider:     ollama.New(ollama.Config{Client: ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})}),
 	})
 }
 

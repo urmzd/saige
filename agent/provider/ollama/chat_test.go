@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // captureChat starts a server that records the decoded chat request and
@@ -44,10 +45,7 @@ func drain(rx <-chan ChatChunk) {
 func TestChatStreamSendsOptionsAndThink(t *testing.T) {
 	server, got := captureChat(t, ChatChunk{Done: true})
 
-	client := NewClient(server.URL, "test-model", "",
-		WithChatOptions(Options{NumCtx: 16384, Temperature: 0.4}),
-		WithThink(false),
-	)
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}, WithChatOptions(Options{NumCtx: 16384, Temperature: 0.4}), WithThink(false)))
 	rx, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
@@ -72,7 +70,7 @@ func TestChatStreamSendsOptionsAndThink(t *testing.T) {
 func TestChatStreamOmitsOptionsWhenUnset(t *testing.T) {
 	server, got := captureChat(t, ChatChunk{Done: true})
 
-	client := NewClient(server.URL, "test-model", "")
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))
 	rx, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
@@ -91,7 +89,7 @@ func TestChatStreamOmitsOptionsWhenUnset(t *testing.T) {
 func TestChatStreamWithFormatDisablesThinkingByDefault(t *testing.T) {
 	server, got := captureChat(t, ChatChunk{Done: true})
 
-	client := NewClient(server.URL, "test-model", "")
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))
 	rx, err := client.ChatStreamWithFormat(context.Background(),
 		[]ChatMessage{{Role: "user", Content: "hi"}}, nil,
 		map[string]any{"type": "object"})
@@ -113,7 +111,7 @@ func TestChatStreamWithFormatDisablesThinkingByDefault(t *testing.T) {
 func TestChatStreamWithFormatRespectsExplicitThink(t *testing.T) {
 	server, got := captureChat(t, ChatChunk{Done: true})
 
-	client := NewClient(server.URL, "test-model", "", WithThink(true))
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}, WithThink(true)))
 	rx, err := client.ChatStreamWithFormat(context.Background(),
 		[]ChatMessage{{Role: "user", Content: "hi"}}, nil,
 		map[string]any{"type": "object"})
@@ -134,7 +132,7 @@ func TestChatStreamErrorIncludesResponseBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "ghost", "")
+	client := must.Get(NewClient(Config{Host: server.URL, Model: "ghost"}))
 	_, err := client.ChatStream(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, nil)
 	if err == nil {
 		t.Fatal("expected an error")
@@ -153,7 +151,7 @@ func TestAdapterTranslatesThinkingDeltas(t *testing.T) {
 		ChatChunk{Done: true, DoneReason: "stop"},
 	)
 
-	adapter := NewAdapter(NewClient(server.URL, "test-model", ""))
+	adapter := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: server.URL, Model: "test-model"}))}))
 	rx, err := adapter.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)

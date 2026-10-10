@@ -44,7 +44,7 @@ func TestHarnessToolsLive(t *testing.T) {
 	a := must.Get(agent.New(agent.Config{
 		Name:         "harness-live",
 		SystemPrompt: "You are a careful analyst. Use your tools; never guess numbers.",
-		Provider:     anthropic.NewAdapter(key, model),
+		Provider:     must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)})),
 		MaxIter:      8,
 	},
 		agent.WithHarnessTools(tools.HarnessOptions{Root: root, Groups: []tools.Group{tools.GroupRead, tools.GroupExec}}),

@@ -22,7 +22,7 @@ func TestAgentToolCalling(t *testing.T) {
 	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "calculator",
 		SystemPrompt: "You are a calculator. You must use the add tool for any addition; never compute it yourself.",
-		Provider:     ollama.NewAdapter(client),
+		Provider:     must.Get(ollama.New(ollama.Config{Client: client})),
 		Tools:        types.NewToolRegistry(tool),
 	}))
 
@@ -48,7 +48,7 @@ func TestAgentToolCalling(t *testing.T) {
 func TestAgentHandoff(t *testing.T) {
 	client := requireOllama(t)
 	ctx := testContext(t, 10*time.Minute)
-	adapter := ollama.NewAdapter(client)
+	adapter := must.Get(ollama.New(ollama.Config{Client: client}))
 
 	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name: "triage",
@@ -94,7 +94,7 @@ func TestAgentStructuredResponse(t *testing.T) {
 	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "extractor",
 		SystemPrompt: "Extract the requested fields and respond in JSON.",
-		Provider:     ollama.NewAdapter(client),
+		Provider:     must.Get(ollama.New(ollama.Config{Client: client})),
 	}, agentsdk.WithResponseSchema(&types.ParameterSchema{
 		Type:     "object",
 		Required: []string{"city", "population_millions"},

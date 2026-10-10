@@ -13,6 +13,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/openai"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // burstStats aggregates what one model's burst saw at the adapter.
@@ -109,10 +110,10 @@ func TestLiveBurst(t *testing.T) {
 		build     func(key string) types.Provider
 	}{
 		{"gpt-6-luna", "OPENAI_API_KEY", func(key string) types.Provider {
-			return openai.NewAdapter(key, "gpt-6-luna", openai.WithMaxTokens(32), openai.WithReasoningEffort("none"))
+			return must.Get(openai.New(openai.Config{APIKey: key, Model: "gpt-6-luna"}, openai.WithMaxTokens(32), openai.WithReasoningEffort("none")))
 		}},
 		{"claude-haiku-5-5", "ANTHROPIC_API_KEY", func(key string) types.Provider {
-			return anthropic.NewAdapter(key, "claude-haiku-5-5", anthropic.WithMaxTokens(32))
+			return must.Get(anthropic.New(anthropic.Config{APIKey: key, Model: "claude-haiku-5-5"}, anthropic.WithMaxTokens(32)))
 		}},
 	}
 	cfg := retry.Config{MaxAttempts: 4, BaseDelay: 500 * time.Millisecond, MaxDelay: 8 * time.Second, MaxRetryAfter: 30 * time.Second}

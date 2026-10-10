@@ -60,7 +60,7 @@ func TestAgentToolChoiceThroughOllama(t *testing.T) {
 
 			choice := tt.choice
 			a := must.Get(agent.New(agent.Config{
-				Provider:   ollama.NewAdapter(ollama.NewClient(server.URL, tt.model, "")),
+				Provider:   must.Get(ollama.New(ollama.Config{Client: must.Get(ollama.NewClient(ollama.Config{Host: server.URL, Model: types.ModelID(tt.model)}))})),
 				ToolChoice: &choice,
 				Tools: types.NewToolRegistry(
 					&agenttest.MockTool{Def: types.ToolDef{Name: "lookup"}, Result: "r"},

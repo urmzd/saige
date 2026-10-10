@@ -35,7 +35,7 @@ func testAdapter(t *testing.T, vertex bool, model string, bodies *[]map[string]a
 	if vertex {
 		opts = append(opts, WithVertex("test-project", "us-central1"))
 	}
-	a, err := NewAdapter(context.Background(), "k", model, opts...)
+	a, err := New(context.Background(), Config{APIKey: "k", Model: types.ModelID(model)}, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

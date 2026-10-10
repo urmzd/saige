@@ -414,7 +414,7 @@ func buildAnthropic(cfg Config, model, key string, caps types.ModelCapabilities)
 	if cfg.DialPolicy != nil {
 		opts = append(opts, anthropic.WithDialPolicy(*cfg.DialPolicy))
 	}
-	return anthropic.NewAdapter(key, model, opts...), nil
+	return anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)}, opts...)
 }
 
 func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities) (types.Provider, error) {
@@ -469,18 +469,18 @@ func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities) (t
 	case types.ChatToolsResponsesOnly:
 		// The model calls tools only through the Responses API, so it is
 		// served there for every request, not only those with tools.
-		return openai.NewResponsesAdapter(key, model, opts...), nil
+		return openai.NewResponses(openai.Config{APIKey: key, Model: types.ModelID(model)}, opts...)
 	case types.ChatToolsNoReasoning:
 		// Chat Completions would turn a reasoning dial off whenever tools
 		// are offered; the Responses API keeps it. A configuration the
 		// Responses API cannot send stays on Chat Completions.
 		if r := mergedDials(cfg.DialLayers).Reasoning; r != nil && r.Mode != types.ReasoningOff {
-			if ra := openai.NewResponsesAdapter(key, model, opts...); ra.Validate() == nil {
+			if ra, err := openai.NewResponses(openai.Config{APIKey: key, Model: types.ModelID(model)}, opts...); err == nil && ra.Validate() == nil {
 				return ra, nil
 			}
 		}
 	}
-	return openai.NewAdapter(key, model, opts...), nil
+	return openai.New(openai.Config{APIKey: key, Model: types.ModelID(model)}, opts...)
 }
 
 func buildGoogle(ctx context.Context, cfg Config, model, key string, vertex *Vertex, caps types.ModelCapabilities) (types.Provider, error) {
@@ -549,7 +549,7 @@ func buildGoogle(ctx context.Context, cfg Config, model, key string, vertex *Ver
 	if err := caps.ValidateOptions(o); err != nil {
 		return nil, err
 	}
-	return google.NewAdapter(ctx, key, model, opts...)
+	return google.New(ctx, google.Config{APIKey: key, Model: types.ModelID(model)}, opts...)
 }
 
 func buildOllama(cfg Config, model string, getenv func(string) string, caps types.ModelCapabilities) (types.Provider, error) {
@@ -607,7 +607,11 @@ func buildOllama(cfg Config, model string, getenv func(string) string, caps type
 	if cfg.DialPolicy != nil {
 		adapterOpts = append(adapterOpts, ollama.WithDialPolicy(*cfg.DialPolicy))
 	}
-	return ollama.NewAdapter(ollama.NewClient(host, model, "", clientOpts...), adapterOpts...), nil
+	client, err := ollama.NewClient(ollama.Config{Host: host, Model: types.ModelID(model)}, clientOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return ollama.New(ollama.Config{Client: client}, adapterOpts...)
 }
 
 // integer converts a whole-number control carried as float64.

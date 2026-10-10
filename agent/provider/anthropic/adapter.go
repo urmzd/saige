@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -143,23 +144,40 @@ func WithRequestOptions(opts ...option.RequestOption) Option {
 	return func(a *Adapter) { a.requestOpts = append(a.requestOpts, opts...) }
 }
 
-// NewAdapter creates a new Anthropic provider adapter using the official SDK.
-func NewAdapter(apiKey, model string, opts ...Option) *Adapter {
+// Config names the account and model an adapter serves.
+type Config struct {
+	// APIKey authenticates every request.
+	APIKey string
+	// Model is the model requests go to. Required.
+	Model types.ModelID
+}
+
+// New creates an Anthropic provider adapter using the official SDK. A
+// missing model is an error wrapping types.ErrInvalidConfig. Option
+// combinations are checked against the model by Validate and before every
+// request.
+func New(cfg Config, opts ...Option) (*Adapter, error) {
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("%w: anthropic: Config.Model is required", types.ErrInvalidConfig)
+	}
 	a := &Adapter{
-		model:     anthropic.Model(model),
+		model:     anthropic.Model(cfg.Model),
 		maxTokens: 4096,
 	}
 	for _, o := range opts {
 		o(a)
 	}
-	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if a.maxTokens <= 0 {
+		return nil, fmt.Errorf("%w: anthropic: max tokens must be positive", types.ErrInvalidConfig)
+	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if a.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(a.baseURL))
 	}
 	clientOpts = append(clientOpts, option.WithMaxRetries(a.maxRetries))
 	clientOpts = append(clientOpts, a.requestOpts...)
 	a.client = anthropic.NewClient(clientOpts...)
-	return a
+	return a, nil
 }
 
 // applyParams encodes controls already checked by Validate.

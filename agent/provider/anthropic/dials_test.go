@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // Scenario (a) and (c) on Claude: creativity is dropped on an adaptive
@@ -13,8 +14,7 @@ import (
 func TestDialsCompileOnAdaptiveModel(t *testing.T) {
 	server, bodies := captureServer(t)
 	focused := types.CreativityFocused
-	a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL),
-		WithDials(types.DialLayer{Scope: types.DialScopeEntry, Dials: types.Dials{Creativity: &focused}}))
+	a := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL), WithDials(types.DialLayer{Scope: types.DialScopeEntry, Dials: types.Dials{Creativity: &focused}})))
 	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Dials: types.Dials{Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestDialsCompileOnAdaptiveModel(t *testing.T) {
 func TestDialSeedRejectedOnClaude(t *testing.T) {
 	server, bodies := captureServer(t)
 	seed := int64(1)
-	_, err := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL)).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Dials: types.Dials{Seed: &seed}}})
+	_, err := must.Get(New(Config{APIKey: "k", Model: "claude-haiku-5-5"}, WithBaseURL(server.URL))).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Options: &types.RequestOptions{Dials: types.Dials{Seed: &seed}}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) || len(*bodies) != 0 {
 		t.Fatalf("err = %v, requests = %d", err, len(*bodies))
 	}

@@ -34,7 +34,7 @@ func TestAgentPersistencePostgres(t *testing.T) {
 	agent := must.Get(agentsdk.New(agentsdk.Config{
 		Name:         "persistent",
 		SystemPrompt: "You are a concise assistant.",
-		Provider:     ollama.NewAdapter(client),
+		Provider:     must.Get(ollama.New(ollama.Config{Client: client})),
 	}, agentsdk.WithStore(store)))
 
 	const question = "Reply with exactly one word: pong"

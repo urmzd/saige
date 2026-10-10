@@ -3,11 +3,13 @@ package google
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"cloud.google.com/go/auth"
 	"cloud.google.com/go/auth/credentials"
 	"cloud.google.com/go/auth/httptransport"
+	"github.com/urmzd/saige/agent/types"
 	"google.golang.org/genai"
 )
 
@@ -26,7 +28,7 @@ type backend struct {
 const quotaProjectHeader = "X-Goog-User-Project"
 
 // errVertexTarget reports a Vertex backend without a project or location.
-var errVertexTarget = errors.New("google: vertex backend requires both project and location")
+var errVertexTarget = fmt.Errorf("%w: google: vertex backend requires both project and location", types.ErrInvalidConfig)
 
 // detectCredentials finds Application Default Credentials. Tests replace it.
 var detectCredentials = func() (*auth.Credentials, error) {

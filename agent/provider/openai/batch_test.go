@@ -15,6 +15,7 @@ import (
 
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchStub stubs the Files and Batch APIs. Output and error lines come
@@ -150,7 +151,7 @@ func TestBatchChatCompletions(t *testing.T) {
 	stub := &batchStub{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL), WithMaxTokens(64))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL), WithMaxTokens(64)))
 	r := batch.NewRunner(a, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
 	got, err := r.Run(context.Background(), "job-openai", batchRequests())
 	if err != nil {
@@ -178,7 +179,7 @@ func TestBatchResponses(t *testing.T) {
 	stub := &batchStub{}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	ra := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
+	ra := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
 	r := batch.NewRunner(ra, batch.NewMemoryStore(), batch.WithPollInterval(time.Millisecond, time.Millisecond))
 	got, err := r.Run(context.Background(), "job-responses", batchRequests())
 	if err != nil {
@@ -202,11 +203,11 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 	defer server.Close()
 	topK := 5.0
 	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{TopK: &topK}}}
-	if _, err := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL))).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("chat err = %v", err)
 	}
 	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
-	if _, err := NewResponsesAdapter("k", "gpt-6-luna", WithBaseURL(server.URL)).Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if _, err := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL))).Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("responses err = %v", err)
 	}
 }
@@ -215,7 +216,7 @@ func TestBatchFindAndCancel(t *testing.T) {
 	stub := &batchStub{endpoint: "/v1/responses"}
 	server := httptest.NewServer(stub.handler(t))
 	defer server.Close()
-	a := NewAdapter("k", "gpt-6-luna", WithBaseURL(server.URL))
+	a := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
 	ctx := context.Background()
 	since := time.Unix(1791547200, 0).Add(-time.Minute)
 	h, ok, err := a.FindBatch(ctx, types.BatchQuery{Tag: "tag-1", Since: since})

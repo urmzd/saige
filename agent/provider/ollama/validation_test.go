@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestAdapterValidatesExplicitReasoningAndWireOptions(t *testing.T) {
@@ -27,7 +28,7 @@ func TestAdapterValidatesExplicitReasoningAndWireOptions(t *testing.T) {
 		{"top k fraction", "qwen3", []Option{WithChatOptions(map[string]any{"top_k": 1.5})}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAdapter(NewClient("http://unused.invalid", tc.model, "", tc.opts...))
+			a := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: "http://unused.invalid", Model: types.ModelID(tc.model)}, tc.opts...))}))
 			err := a.Validate()
 			if (err == nil) != tc.valid {
 				t.Fatalf("Validate=%v valid=%v", err, tc.valid)

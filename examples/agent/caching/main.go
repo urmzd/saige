@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	base := ollama.NewAdapter(ollama.NewClient("http://localhost:11434", "llama3.2", ""))
+	base := ollama.New(ollama.Config{Client: ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})})
 
 	cached := cache.New(base, cache.Config{
 		Cache:        memcache.New[cache.CachedResponse](),
