@@ -266,3 +266,29 @@ func TestLiveFailoverReplansForATextOnlyMember(t *testing.T) {
 	t.Logf("answer %q via %s after %s (%s)", answer, routes[1].Profile, routes[0].Profile, routes[1].Reason)
 	spend(t, "failover", b)
 }
+
+// A batch request carrying a PDF to gpt-6-luna on Chat Completions: the
+// request is planned when the batch is submitted, and the built-in
+// extractor turns the PDF into text before the batch is uploaded. Vendor
+// batches can take a while to finish; the test waits up to 30 minutes.
+func TestLiveBatchPDFViaExtract(t *testing.T) {
+	live(t, "OPENAI_API_KEY")
+	b := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.05), PerCallCost: types.USD(0.01)})
+	p := build(t, provider.Config{Provider: provider.OpenAI, Model: "gpt-6-luna"})
+	a := agent.NewAgent(agent.AgentConfig{Provider: p, Budget: b}, agent.WithConversion(types.ConversionPolicy{
+		Dial: perAction(types.ModalityDocument, types.ActExtract), Converters: []types.Converter{convert.Documents()}}))
+	doc := types.DocumentPart{Source: types.Bytes(types.MediaPDF, onePagePDF("Invoice 5120: total due 37 dollars"))}
+	doc.Source.Filename = "invoice.pdf"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	res, err := a.RunBatch(ctx, []agent.BatchInput{{ID: "invoice", Messages: []types.Message{
+		types.UserMsg(types.Text("What is the total due on the invoice? Reply with the number only."), doc)}}}, agent.BatchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Err != nil || !strings.Contains(res[0].Text(), "37") {
+		t.Fatalf("results = %+v", res)
+	}
+	t.Logf("answer %q, usage %+v", res[0].Text(), res[0].Usage)
+	spend(t, "batch pdf", b)
+}

@@ -47,6 +47,9 @@ func wireRoundTripCases() []Delta {
 		UsageDelta{AccountingID: "acc", Cumulative: true, PromptTokens: 10, CachedPromptTokens: 2, CacheWriteTokens: 1,
 			CompletionTokens: 5, TotalTokens: 15, Latency: 1234567891 * time.Nanosecond, ResponseModel: "m",
 			ResponseID: "r", FinishReasons: []string{"stop"}, CacheHit: true},
+		UsageDelta{PromptTokens: 30, CompletionTokens: 9, TotalTokens: 39, Requests: 2,
+			PromptByModality:     map[Modality]int{ModalityText: 10, ModalityAudio: 20},
+			CompletionByModality: map[Modality]int{ModalityAudio: 9}},
 		RouteDelta{Profile: "fast", Provider: "openai", Model: "gpt", Experiment: "exp", Variant: "b", Reason: "fallback",
 			Conversions: &ConversionReport{Offering: "openai/gpt@chat", Hash: "h", Decisions: []ConversionDecision{
 				{Path: PartPath{Message: 1, Part: 0, Nested: -1}, Kind: KindAudio, MediaType: MediaWAV, Action: DecisionTranscribed, Via: "t@1"},

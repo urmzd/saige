@@ -21,8 +21,9 @@ const blockServerToolUse = "server_tool_use"
 // stopPauseTurn is the stop reason of a server tool turn the API paused.
 const stopPauseTurn = "pause_turn"
 
-// errPausedTurn reports a server tool turn the API paused before its answer.
-var errPausedTurn = errors.New("response paused during server tool use before a final answer; the turn cannot be resumed")
+// errPausedTurn reports a server tool turn the API paused before its answer
+// and the adapter could not continue.
+var errPausedTurn = errors.New("response paused during server tool use before a final answer; the turn could not be continued")
 
 // stopContextWindowExceeded is the stop reason of a response cut off because
 // the conversation reached the model's context window.
@@ -296,7 +297,7 @@ func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.D
 	if err != nil {
 		return nil, err
 	}
-	return c.consumeStream(c.client.Messages.NewStreaming(ctx, params), structured), nil
+	return c.consumeStream(ctx, params, structured), nil
 }
 
 // SupportsSchema implements types.StructuredOutputProvider.

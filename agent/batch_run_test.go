@@ -152,3 +152,65 @@ func batchUserText(msgs []types.Message) string {
 	}
 	return ""
 }
+
+// offeringBatch is a batch-capable provider that serves a text-only
+// offering, so media in a batch request must be converted or rejected.
+type offeringBatch struct {
+	recordingBatch
+	sent []types.BatchRequest
+}
+
+func (o *offeringBatch) Offering() types.Offering {
+	return types.Offering{ID: "test/texty@test", Model: types.ModelInfo{Vendor: "test", Prefix: "texty", Known: true},
+		Endpoint: types.EndpointInfo{Name: "test"}}
+}
+
+func (o *offeringBatch) Capabilities() types.ModelCapabilities { return o.Offering().Capabilities() }
+
+func (o *offeringBatch) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
+	o.sent = append(o.sent, reqs...)
+	return o.recordingBatch.Submit(ctx, reqs, opts)
+}
+
+// TestRunBatchConvertsAtSubmit checks that a batch request is planned
+// against the serving offering when the batch is submitted: a PDF the model
+// cannot read is rejected before anything is uploaded, and extracted to
+// text when the agent's extractors permit it.
+func TestRunBatchConvertsAtSubmit(t *testing.T) {
+	doc := types.Document(types.Bytes(types.MediaPDF, []byte("%PDF-1.4 notes")))
+	inputs := []BatchInput{{ID: "doc", Messages: []types.Message{types.UserMsg(types.Text("summarize"), doc)}}}
+
+	rejecting := &offeringBatch{recordingBatch: recordingBatch{Local: batch.NewLocal(&batchModel{}, 1)}}
+	a := NewAgent(AgentConfig{Name: "bulk", Provider: rejecting})
+	if _, err := a.RunBatch(context.Background(), inputs, BatchConfig{}); !errors.Is(err, types.ErrModalityUnsupported) {
+		t.Fatalf("err = %v, want the PDF rejected", err)
+	}
+	if rejecting.submits != 0 {
+		t.Fatal("a rejected batch was submitted")
+	}
+
+	extracting := &offeringBatch{recordingBatch: recordingBatch{Local: batch.NewLocal(&batchModel{}, 1)}}
+	extract := types.ExtractorFunc(func(context.Context, []byte, types.MediaType) ([]types.UserPart, error) {
+		return []types.UserPart{types.Text("extracted notes")}, nil
+	})
+	a = NewAgent(AgentConfig{Name: "bulk", Provider: extracting,
+		Extractors: map[types.MediaType]types.Extractor{types.MediaPDF: extract}})
+	res, err := a.RunBatch(context.Background(), inputs, BatchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(extracting.sent) != 1 || !strings.Contains(types.TextOf(extracting.sent[0].Messages[0]), "extracted notes") {
+		t.Fatalf("sent %+v, want the extracted text", extracting.sent)
+	}
+	for _, p := range types.PartsOf(extracting.sent[0].Messages[0]) {
+		if types.IsMedia(p) {
+			t.Fatalf("the PDF itself was submitted: %#v", p)
+		}
+	}
+	if _, ok := inputs[0].Messages[0].(types.UserMessage).Parts[1].(types.DocumentPart); !ok {
+		t.Error("the input was modified")
+	}
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("results = %+v", res)
+	}
+}

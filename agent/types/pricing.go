@@ -157,7 +157,7 @@ func UsageFromDelta(d UsageDelta) TokenUsage {
 		CachedInputTokens: cached,
 		CacheWriteTokens:  written,
 		OutputTokens:      d.CompletionTokens,
-		Requests:          1,
+		Requests:          max(1, d.Requests),
 	}
 }
 

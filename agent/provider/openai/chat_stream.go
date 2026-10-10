@@ -338,6 +338,7 @@ func (a *Adapter) consumeStream(stream chatChunkStream, structured bool) <-chan 
 					ResponseID:         responseID,
 					ResponseModel:      responseModel,
 				}
+				ud.PromptByModality, ud.CompletionByModality = chatModalityCounts(chunk.Usage)
 				if s.finishReason != "" {
 					ud.FinishReasons = []string{s.finishReason}
 				}
@@ -372,4 +373,27 @@ func (a *Adapter) consumeStream(stream chatChunkStream, structured bool) <-chan 
 		}
 	}()
 	return out
+}
+
+// chatModalityCounts reads the per-modality token details Chat Completions
+// reports. Counts the response leaves at zero are left out; nil when none
+// is set.
+func chatModalityCounts(u openai.CompletionUsage) (prompt, completion map[types.Modality]int) {
+	add := func(m map[types.Modality]int, mo types.Modality, n int64) map[types.Modality]int {
+		if n <= 0 {
+			return m
+		}
+		if m == nil {
+			m = map[types.Modality]int{}
+		}
+		m[mo] = int(n)
+		return m
+	}
+	pd, cd := u.PromptTokensDetails, u.CompletionTokensDetails
+	prompt = add(prompt, types.ModalityText, pd.TextTokens)
+	prompt = add(prompt, types.ModalityImage, pd.ImageTokens)
+	prompt = add(prompt, types.ModalityAudio, pd.AudioTokens)
+	completion = add(completion, types.ModalityText, cd.TextTokens)
+	completion = add(completion, types.ModalityAudio, cd.AudioTokens)
+	return prompt, completion
 }

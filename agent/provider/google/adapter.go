@@ -468,13 +468,46 @@ func usageOf(resp *genai.GenerateContentResponse) types.UsageDelta {
 		return types.UsageDelta{}
 	}
 	return types.UsageDelta{Cumulative: true,
-		PromptTokens:       int(u.PromptTokenCount),
-		CachedPromptTokens: int(u.CachedContentTokenCount),
-		CompletionTokens:   int(u.CandidatesTokenCount + u.ThoughtsTokenCount),
-		TotalTokens:        int(u.TotalTokenCount),
-		ResponseModel:      resp.ModelVersion,
-		ResponseID:         resp.ResponseID,
+		PromptTokens:         int(u.PromptTokenCount),
+		CachedPromptTokens:   int(u.CachedContentTokenCount),
+		CompletionTokens:     int(u.CandidatesTokenCount + u.ThoughtsTokenCount),
+		TotalTokens:          int(u.TotalTokenCount),
+		ResponseModel:        resp.ModelVersion,
+		ResponseID:           resp.ResponseID,
+		PromptByModality:     modalityCounts(u.PromptTokensDetails),
+		CompletionByModality: modalityCounts(u.CandidatesTokensDetails),
 	}
+}
+
+// modalityCounts maps Gemini's per-modality token details. Unspecified
+// modalities are left out; nil when nothing was reported.
+func modalityCounts(details []*genai.ModalityTokenCount) map[types.Modality]int {
+	var out map[types.Modality]int
+	for _, d := range details {
+		if d == nil || d.TokenCount == 0 {
+			continue
+		}
+		var m types.Modality
+		switch d.Modality {
+		case genai.MediaModalityText:
+			m = types.ModalityText
+		case genai.MediaModalityImage:
+			m = types.ModalityImage
+		case genai.MediaModalityAudio:
+			m = types.ModalityAudio
+		case genai.MediaModalityVideo:
+			m = types.ModalityVideo
+		case genai.MediaModalityDocument:
+			m = types.ModalityDocument
+		default:
+			continue
+		}
+		if out == nil {
+			out = map[types.Modality]int{}
+		}
+		out[m] += int(d.TokenCount)
+	}
+	return out
 }
 
 // promptBlockedError reports a prompt Gemini's safety system refused. It is a

@@ -212,6 +212,18 @@ type UsageDelta struct {
 	TotalTokens        int
 	Latency            time.Duration
 
+	// PromptByModality and CompletionByModality break the token counts
+	// down by modality where the vendor reports it (Gemini's token
+	// details, OpenAI's audio tokens). They are subsets of PromptTokens
+	// and CompletionTokens, not additions, and nil where nothing was
+	// reported.
+	PromptByModality     map[Modality]int
+	CompletionByModality map[Modality]int
+	// Requests is the number of vendor requests the usage covers when it is
+	// more than one, as for a server tool turn the vendor paused and the
+	// adapter continued. Zero means one.
+	Requests int
+
 	// Response metadata for OpenTelemetry GenAI semantic conventions.
 	ResponseModel string   // gen_ai.response.model
 	ResponseID    string   // gen_ai.response.id
@@ -242,6 +254,11 @@ func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
 		u.CacheWriteTokens += o.CacheWriteTokens
 		u.CompletionTokens += o.CompletionTokens
 	}
+	// Increments of one request do not add requests; the producer reports
+	// the count it served.
+	u.Requests = max(u.Requests, o.Requests)
+	u.PromptByModality = mergeModalities(u.PromptByModality, o.PromptByModality, o.Cumulative)
+	u.CompletionByModality = mergeModalities(u.CompletionByModality, o.CompletionByModality, o.Cumulative)
 	if o.AccountingID != "" {
 		u.AccountingID = o.AccountingID
 	}
@@ -262,6 +279,27 @@ func (u UsageDelta) Merge(o UsageDelta) UsageDelta {
 		u.CacheHit = true
 	}
 	return u
+}
+
+// mergeModalities combines per-modality counts as Merge combines the
+// totals: the larger of each for a cumulative snapshot, the sum otherwise.
+// The result is a new map, so merging never writes through a delta's map.
+func mergeModalities(a, b map[Modality]int, cumulative bool) map[Modality]int {
+	if len(b) == 0 {
+		return a
+	}
+	out := make(map[Modality]int, len(a)+len(b))
+	for m, n := range a {
+		out[m] = n
+	}
+	for m, n := range b {
+		if cumulative {
+			out[m] = max(out[m], n)
+		} else {
+			out[m] += n
+		}
+	}
+	return out
 }
 
 // RouteDelta identifies the complete configuration used for a provider attempt.

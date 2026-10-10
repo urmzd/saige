@@ -2,8 +2,11 @@ package types
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Compactor reduces message history to fit context windows.
@@ -295,64 +298,152 @@ func isSummaryPair(a, b Message) bool {
 	return ok
 }
 
-// MessagesToText converts messages to a plain-text representation.
+// MessagesToText converts messages to a plain-text representation, the
+// form a summarizer reads. Media never contributes its bytes: each media
+// part, in a message or a tool result, is a reference line (see
+// MediaReference), so a summary can name what the conversation held and
+// where to find it again. Thinking, citations and run metadata are left
+// out.
 func MessagesToText(msgs []Message) string {
 	var b strings.Builder
+	line := func(label, text string) {
+		b.WriteString(label)
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
 	for _, m := range msgs {
-		switch v := m.(type) {
+		label := "User: "
+		switch m.(type) {
 		case SystemMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case TextPart:
-					b.WriteString("System: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolResultPart:
-					b.WriteString("Tool Result [")
-					b.WriteString(bc.CallID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Text())
-					b.WriteByte('\n')
-				}
-			}
-		case UserMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case TextPart:
-					b.WriteString("User: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolResultPart:
-					b.WriteString("Tool Result [")
-					b.WriteString(bc.CallID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Text())
-					b.WriteByte('\n')
-				case ImagePart, AudioPart, VideoPart, DocumentPart, FilePart:
-					src, _ := SourceOf(bc)
-					b.WriteString("User: [file: ")
-					b.WriteString(src.Filename)
-					b.WriteString(" (")
-					b.WriteString(string(src.MediaType))
-					b.WriteString(")]\n")
-				}
-			}
+			label = "System: "
 		case AssistantMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case TextPart:
-					b.WriteString("Assistant: ")
-					b.WriteString(bc.Text)
-					b.WriteByte('\n')
-				case ToolCallPart:
-					b.WriteString("Tool Call [")
-					b.WriteString(bc.ID)
-					b.WriteString("]: ")
-					b.WriteString(bc.Name)
-					b.WriteByte('\n')
+			label = "Assistant: "
+		}
+		for _, p := range PartsOf(m) {
+			switch v := p.(type) {
+			case TextPart:
+				line(label, v.Text)
+			case ToolResultPart:
+				text := v.Text()
+				for _, o := range v.Parts {
+					if IsMedia(o) {
+						if text != "" {
+							text += " "
+						}
+						text += MediaReference(o)
+					}
+				}
+				line("Tool Result ["+v.CallID+"]: ", text)
+			case ToolCallPart:
+				line("Tool Call ["+v.ID+"]: ", v.Name)
+			case ServerToolCallPart:
+				name := v.Name
+				if name == "" {
+					name = string(v.ToolKind)
+				}
+				line("Server Tool Call ["+v.ID+"]: ", name)
+			case ServerToolResultPart:
+				text := v.Text
+				for _, o := range v.Outputs {
+					if IsMedia(o) {
+						if text != "" {
+							text += " "
+						}
+						text += MediaReference(o)
+					}
+				}
+				line("Server Tool Result ["+v.CallID+"]: ", text)
+			case RefusalPart:
+				line(label, "[refused] "+v.Text)
+			case AudioOutPart:
+				ref := MediaReference(v)
+				if v.Transcript != "" {
+					ref += " " + v.Transcript
+				}
+				line(label, ref)
+			default:
+				if IsMedia(p) {
+					line(label, MediaReference(p))
 				}
 			}
 		}
 	}
 	return b.String()
+}
+
+// mediaDigestChars is how much of a digest a reference line shows: enough
+// to tell media apart, short enough to keep the line readable.
+const mediaDigestChars = 12
+
+// MediaReference renders a media part as one bracketed line with no bytes:
+// its kind and subtype, its size (dimensions, pages or duration), its file
+// name, a short digest and its workspace reference or URI, for example
+//
+//	[image png 1024x768 sha256:9f1c2b7a4e01… saige-artifact://9f1c…]
+//
+// Inline bytes and vendor file IDs are never included. It returns "" for a
+// part that is not media.
+func MediaReference(p Part) string {
+	src, ok := SourceOf(p)
+	if !ok {
+		return ""
+	}
+	fields := []string{string(p.Kind())}
+	if mt := string(src.MediaType); mt != "" {
+		base, _, _ := strings.Cut(mt, ";")
+		if _, sub, found := strings.Cut(base, "/"); found && sub != "" {
+			fields = append(fields, strings.TrimSpace(sub))
+		} else {
+			fields = append(fields, strings.TrimSpace(base))
+		}
+	}
+	dims := func(w, h int) {
+		if w > 0 && h > 0 {
+			fields = append(fields, fmt.Sprintf("%dx%d", w, h))
+		}
+	}
+	dur := func(d time.Duration) {
+		if d > 0 {
+			fields = append(fields, d.Round(time.Second/10).String())
+		}
+	}
+	switch v := p.(type) {
+	case ImagePart:
+		dims(v.Width, v.Height)
+	case ImageOutPart:
+		dims(v.Width, v.Height)
+	case DocumentPart:
+		if v.Pages > 0 {
+			fields = append(fields, fmt.Sprintf("%d pages", v.Pages))
+		}
+		if v.Title != "" {
+			fields = append(fields, strconv.Quote(v.Title))
+		}
+	case AudioPart:
+		dur(v.Duration)
+	case AudioOutPart:
+		dur(v.Duration)
+	case VideoPart:
+		dims(v.Width, v.Height)
+		dur(v.Duration)
+	case VideoOutPart:
+		dims(v.Width, v.Height)
+		dur(v.Duration)
+	}
+	if src.Filename != "" {
+		fields = append(fields, strconv.Quote(src.Filename))
+	}
+	if d := src.Digest; d != "" {
+		if len(d) > mediaDigestChars {
+			d = d[:mediaDigestChars] + "…"
+		}
+		fields = append(fields, "sha256:"+d)
+	}
+	switch {
+	case src.Ref != "":
+		fields = append(fields, src.Ref)
+	case src.URI != "" && !strings.HasPrefix(src.URI, "data:"):
+		fields = append(fields, src.URI)
+	}
+	return "[" + strings.Join(fields, " ") + "]"
 }

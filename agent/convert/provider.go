@@ -183,7 +183,7 @@ func (p *Provider) layersFor(rt Runtime, req types.Request) []types.DialLayer {
 // plan plans req for the inner provider's offering. ok is false when there
 // is nothing to plan against.
 func (p *Provider) plan(ctx context.Context, req types.Request) (Plan, Runtime, bool, error) {
-	if nested(ctx) {
+	if nested(ctx) || p.inner == nil {
 		return Plan{}, Runtime{}, false, nil
 	}
 	target, ok := Target(p.inner)
