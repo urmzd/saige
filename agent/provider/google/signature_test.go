@@ -59,3 +59,16 @@ func TestFunctionCallSignatureRoundTrip(t *testing.T) {
 		t.Fatalf("second call part = %+v, want no signature", parts[1])
 	}
 }
+
+func TestEmptySystemTextSendsNoInstruction(t *testing.T) {
+	inst, _, err := (&mapper{names: map[string]string{}}).contents([]types.Message{
+		types.SystemMsg(types.Text("")),
+		types.UserMsg(types.Text("hi")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst != nil {
+		t.Fatalf("system instruction = %+v, want none for an empty system prompt", inst)
+	}
+}

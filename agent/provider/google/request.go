@@ -135,7 +135,11 @@ func (m *mapper) contents(msgs []types.Message) (*genai.Content, []*genai.Conten
 				at.Part = j
 				switch pt := p.(type) {
 				case types.TextPart:
-					system = append(system, &genai.Part{Text: pt.Text})
+					// An empty part has no data, which Vertex reads as a
+					// non-text system part and rejects.
+					if pt.Text != "" {
+						system = append(system, &genai.Part{Text: pt.Text})
+					}
 				case types.ToolResultPart:
 					r, err := m.toolResult(at, pt)
 					if err != nil {
