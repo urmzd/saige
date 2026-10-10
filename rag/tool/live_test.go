@@ -80,6 +80,9 @@ func TestLiveRAGQuestionWithCitations(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("cites:handbook = %.0f (%s)", sc.Value, sc.Reason)
+	if sc.Value == 0 {
+		t.Fatalf("the answer does not cite the handbook by marker: %s", sc.Reason)
+	}
 	for _, r := range budget.Breakdown() {
 		t.Logf("spend: %s %d in / %d out tokens, %s", r.Model, r.Usage.InputTokens, r.Usage.OutputTokens, r.Cost)
 	}

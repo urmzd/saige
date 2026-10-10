@@ -1030,6 +1030,7 @@ func (a *Agent) callProvider(ctx context.Context, provider types.Provider, out r
 		opts = nil
 	}
 	call := a.converting(provider)
+	messages = citeToolSources(messages)
 	if opts != nil && types.AcceptsOptions(provider) {
 		return call.Stream(ctx, types.Request{Messages: messages, Tools: tools, Options: opts})
 	}
