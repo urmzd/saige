@@ -12,8 +12,9 @@
 // exists.
 //
 // Implementations: eval/store/memstore (in memory, for tests and short
-// lived tools) and eval/store/filestore (a directory of JSON and JSONL
-// files). eval/store/storetest holds the shared conformance suite.
+// lived tools), eval/store/filestore (a directory of JSON and JSONL files),
+// and eval/pgstore (PostgreSQL, tenant scoped). eval/store/storetest holds
+// the shared conformance suite.
 package store
 
 import (

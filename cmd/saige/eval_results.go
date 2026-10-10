@@ -13,12 +13,11 @@ import (
 	_ "github.com/urmzd/saige/agent/eval" // registers the agent scorer kinds
 	"github.com/urmzd/saige/eval"
 	"github.com/urmzd/saige/eval/store"
-	"github.com/urmzd/saige/eval/store/filestore"
 )
 
 // newEvalRunsCmd lists stored runs in a results directory.
 func newEvalRunsCmd() *cobra.Command {
-	var dir, suite string
+	var dir, suite, tenant string
 	var limit int
 	cmd := &cobra.Command{
 		Use:          "runs",
@@ -26,10 +25,11 @@ func newEvalRunsCmd() *cobra.Command {
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openResultsStore(dir)
+			s, closeStore, err := openEvalStore(cmd.Context(), dir, tenant, false)
 			if err != nil {
 				return err
 			}
+			defer closeStore()
 			runs, err := s.ListRuns(cmd.Context(), store.RunFilter{Suite: suite, Limit: limit})
 			if err != nil {
 				return err
@@ -47,8 +47,9 @@ func newEvalRunsCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
-	cmd.Flags().StringVar(&dir, "store", "", "Results store directory (required)")
+	cmd.Flags().StringVar(&dir, "store", "", storeFlagUsage+" (required)")
 	_ = cmd.MarkFlagRequired("store")
+	cmd.Flags().StringVar(&tenant, "tenant", "", tenantFlagUsage)
 	cmd.Flags().StringVar(&suite, "suite", "", "Only runs of this suite")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum runs to list, 0 for all")
 	return cmd
@@ -57,17 +58,18 @@ func newEvalRunsCmd() *cobra.Command {
 // newEvalShowCmd prints one stored run: its summary, provenance, aggregate
 // metrics, and gate violations.
 func newEvalShowCmd() *cobra.Command {
-	var dir string
+	var dir, tenant string
 	cmd := &cobra.Command{
 		Use:          "show <run-id>",
 		Short:        "Show one evaluation run from a results store",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openResultsStore(dir)
+			s, closeStore, err := openEvalStore(cmd.Context(), dir, tenant, false)
 			if err != nil {
 				return err
 			}
+			defer closeStore()
 			run, err := s.GetRun(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -85,8 +87,9 @@ func newEvalShowCmd() *cobra.Command {
 			return printRun(run)
 		},
 	}
-	cmd.Flags().StringVar(&dir, "store", "", "Results store directory (required)")
+	cmd.Flags().StringVar(&dir, "store", "", storeFlagUsage+" (required)")
 	_ = cmd.MarkFlagRequired("store")
+	cmd.Flags().StringVar(&tenant, "tenant", "", tenantFlagUsage)
 	return cmd
 }
 
@@ -110,16 +113,6 @@ func newEvalScorersCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
-}
-
-func openResultsStore(dir string) (store.Store, error) {
-	if dir == "" {
-		return nil, fmt.Errorf("--store is required")
-	}
-	if _, err := os.Stat(dir); err != nil {
-		return nil, fmt.Errorf("results store %s: %w", dir, err)
-	}
-	return filestore.Open(dir)
 }
 
 func printRun(r eval.RunRecord) error {

@@ -32,3 +32,10 @@ var notifySQL string
 var memoryRaw string
 
 var memoryTmpl = template.Must(template.New("memory").Parse(memoryRaw))
+
+// evalSQL creates the tables behind the Postgres eval results store
+// (eval/pgstore) and the index online evals use to find finished agent runs.
+// It is a plain script, run after the notifier script.
+//
+//go:embed sql/eval.sql
+var evalSQL string
