@@ -26,6 +26,7 @@ Combines three packages: agent (streaming AI agent loop with typed deltas, tool 
 - [docs/hooks.md](docs/hooks.md): Run hooks: lifecycle events, change and abort rules, ordering, timeouts, durable replay, inheritance, memory extraction after a run
 - [docs/guardrails.md](docs/guardrails.md): Input and output guardrails: pass, block, rewrite, parallel mode, tripwires, built-ins, budget, replay, relation to gates and redaction
 - [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
+- [docs/batch.md](docs/batch.md): Batch processing: vendor batch APIs behind types.BatchProvider, local fallback, durable job store, batch pricing and budget, eval.WithBatch, agent.RunBatch
 - [docs/durable-execution.md](docs/durable-execution.md): Durable runs: local engine and duraturo engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
 - [docs/observability.md](docs/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
 - [docs/deployment.md](docs/deployment.md): Single PostgreSQL 18 deployment with pgvector and pg_search, migrations, hybrid search

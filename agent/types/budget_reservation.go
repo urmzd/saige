@@ -12,6 +12,13 @@ var ErrBudgetAdmission = errors.New("provider admission rejected")
 // ErrBudgetBusy means in-flight reservations currently occupy the allowance.
 var ErrBudgetBusy = errors.New("budget allowance reserved by another call")
 
+// ErrReservationActive and ErrUnknownReservation report a Reserve with an ID
+// that is already held, and a Settle with an ID that was never reserved.
+var (
+	ErrReservationActive  = errors.New("budget reservation ID already active")
+	ErrUnknownReservation = errors.New("unknown budget reservation")
+)
+
 // BudgetReceipt records the exact settlement, including conservative unknown costs.
 type BudgetReceipt struct {
 	ID        string
@@ -44,7 +51,7 @@ func (b *Budget) Reserve(id string, pricing Pricing) (BudgetReservation, error) 
 		b.reservations = map[string]BudgetReservation{}
 	}
 	if _, ok := b.reservations[id]; ok {
-		return BudgetReservation{}, errors.New("budget reservation ID already active")
+		return BudgetReservation{}, ErrReservationActive
 	}
 	if _, ok := b.settled[id]; ok {
 		return BudgetReservation{}, errors.New("budget reservation ID already settled")
@@ -98,7 +105,7 @@ func (b *Budget) Settle(id, model string, pricing Pricing, usage TokenUsage, unk
 	}
 	r, ok := b.reservations[id]
 	if !ok {
-		return errors.New("unknown budget reservation")
+		return ErrUnknownReservation
 	}
 	delete(b.reservations, id)
 	if unknown {

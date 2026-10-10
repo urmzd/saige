@@ -770,6 +770,12 @@
         "as_of": {
           "type": "string"
         },
+        "batch_cached_input_per_mtok": {
+          "type": "number"
+        },
+        "batch_discount": {
+          "type": "number"
+        },
         "cache_write_per_mtok": {
           "type": "number"
         },

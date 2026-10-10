@@ -454,8 +454,11 @@ func worsePricing(a, b Pricing) Pricing {
 		CachedInputPerMTok: maxFloat(a.CachedInputPerMTok, b.CachedInputPerMTok),
 		CacheWritePerMTok:  maxFloat(a.CacheWritePerMTok, b.CacheWritePerMTok),
 		PerRequest:         maxFloat(a.PerRequest, b.PerRequest),
-		AsOf:               worseAsOf(a, b),
-		Source:             joinSource(a, b),
+		// The smaller discount is the costlier bound.
+		BatchDiscount:           min(a.BatchDiscount, b.BatchDiscount),
+		BatchCachedInputPerMTok: declaredMax(a.BatchCachedInputPerMTok, b.BatchCachedInputPerMTok),
+		AsOf:                    worseAsOf(a, b),
+		Source:                  joinSource(a, b),
 	}
 }
 
@@ -486,6 +489,15 @@ func joinSource(a, b Pricing) string {
 	default:
 		return a.Source + " + " + b.Source
 	}
+}
+
+// declaredMax is maxFloat for an optional rate whose zero means "fall back
+// to another rate": an undeclared side keeps the merged rate undeclared.
+func declaredMax(a, b float64) float64 {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	return maxFloat(a, b)
 }
 
 func maxFloat(a, b float64) float64 {

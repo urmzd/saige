@@ -30,6 +30,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/agui/` | Maps the Delta stream to AG-UI protocol events and writes them as SSE |
 | `agent/cache/memcache/` | In-memory LRU `types.Cache[V]` with TTL |
 | `agent/notify/` | In-memory `types.Notifier`, subscriber fan-out, `Listen` triggers, and `Cache`, a local level kept coherent through a notifier |
+| `agent/batch/` | Batch jobs over `types.BatchProvider`: durable runner and job stores, local fallback, coalescer for evals |
 | `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
 | `agent/durable/duraturo/` | duraturo-backed durable engine: runs on any duraturo ledger and queue, such as Postgres tables |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
@@ -90,6 +91,7 @@ saige eval run --manifest evals/saige.eval.json --dry-run
 saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=5000'
 saige eval run --manifest evals/saige.eval.json --store eval-results --resume RUN_ID
 saige eval runs --store eval-results           # list recorded runs; show <run-id> for one
+saige eval run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
 
 # MCP server (separate binary)
 saige-mcp --tools research --searxng-url URL  # research tools over MCP/stdio

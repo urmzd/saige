@@ -192,11 +192,16 @@ func Compare(ctx context.Context, inputs []Observation, base, exp Subject, score
 
 	// Subject failures are recorded per observation and reported through
 	// the subject error counts, so they do not stop the comparison.
-	_ = PopulateAll(ctx, baseObs, base, opts...)
-	_ = PopulateAll(ctx, expObs, exp, opts...)
-
-	baseSuite, baseErr := Run(ctx, cfg.Name+"/base", baseObs, scorers, opts...)
-	expSuite, expErr := Run(ctx, cfg.Name+"/exp", expObs, scorers, opts...)
+	var baseSuite, expSuite *SuiteResult
+	var baseErr, expErr error
+	if cfg.batch != nil {
+		baseSuite, expSuite, baseErr, expErr = compareBatched(ctx, cfg, baseObs, expObs, base, exp, scorers)
+	} else {
+		_ = PopulateAll(ctx, baseObs, base, opts...)
+		_ = PopulateAll(ctx, expObs, exp, opts...)
+		baseSuite, baseErr = Run(ctx, cfg.Name+"/base", baseObs, scorers, opts...)
+		expSuite, expErr = Run(ctx, cfg.Name+"/exp", expObs, scorers, opts...)
+	}
 
 	result := compareSuites(cfg, baseSuite, expSuite)
 

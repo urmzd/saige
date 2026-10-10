@@ -47,9 +47,9 @@ func newEvalCmd(ctx context.Context) *cobra.Command {
 // evalRunFlags holds the flags of saige eval run.
 type evalRunFlags struct {
 	manifest, experimentsDir, idFilter, flowSpec, model, apiBase, apiKey string
-	storeDir, tenant, suite, resume                                      string
+	storeDir, tenant, suite, resume, batchStore                          string
 	count, concurrency                                                   int
-	force, continueOnError, dryRun, allowUnknownModel                    bool
+	force, continueOnError, dryRun, allowUnknownModel, batch             bool
 	asserts                                                              []string
 }
 
@@ -126,6 +126,10 @@ manifest or corpus is invalid.`,
 		`Gate on a metric, such as "turn_succeeded>=1" (every turn) or "aggregate:latency_ms<=2000"; repeatable`)
 	fl.BoolVar(&f.dryRun, "dry-run", false, "Validate, run the preflight checks, and print the plan without calling a model")
 	fl.BoolVar(&f.allowUnknownModel, "allow-unknown-model", false, "Run a model the catalog does not list")
+	fl.BoolVar(&f.batch, "batch", false,
+		"Send the model calls through the provider's batch API at the batch price (needs a saige provider); results can take hours")
+	fl.StringVar(&f.batchStore, "batch-store", "",
+		"Directory for batch job records with --batch, so a re-run resumes submitted batches instead of submitting them again")
 
 	return cmd
 }
@@ -167,6 +171,11 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 		Resume:          f.resume,
 		Assert:          plan.assert,
 		ReuseMetrics:    true,
+	}
+	if f.batch && !f.dryRun {
+		if err := applyEvalBatch(runner.Client, runner, len(scripts), f.batchStore, plan.suite); err != nil {
+			return err
+		}
 	}
 	if runner.Client == nil {
 		// A dry run builds no client; the plan only needs the model name.

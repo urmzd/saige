@@ -3,6 +3,7 @@ package eval
 import (
 	"log/slog"
 
+	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -14,6 +15,8 @@ type Config struct {
 	provenance *[2]Provenance
 	// dialPolicy, when set by WithDialPolicy, governs the subjects' dials.
 	dialPolicy *types.DialPolicy
+	// batch, when set by WithBatch, gathers the model calls into batches.
+	batch *batch.Coalescer
 
 	Concurrency int
 	Logger      *slog.Logger
