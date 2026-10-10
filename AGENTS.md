@@ -11,9 +11,9 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
 | `agent/types/` | Sealed types: Message, Delta, Content, Tool/RichTool, Provider, Cache, StepRunner, FeedbackContent, HandoffContent |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
-| `agent/provider/` | Ollama, OpenAI, Anthropic, Google adapters; `provider.Build` factory |
+| `agent/provider/` | Adapters implementing `types.Provider`: Anthropic (Messages), OpenAI (Chat Completions, Responses), Google (Gemini API, Vertex AI) and the local Ollama runtime; `provider.Build` factory |
 | `agent/provider/cache/` | Response-cache decorator: memoizes ChatStream by deterministic request hash |
-| `agent/provider/retry/`, `agent/provider/fallback/` | Retry with backoff and Retry-After; ordered fallback across providers |
+| `agent/provider/retry/`, `agent/provider/fallback/` | Retry with backoff and Retry-After; ordered fallback across adapters |
 | `agent/provider/router/` | Routing sessions over complete model configurations: sticky and affinity policies, route locks, classified failover |
 | `agent/provider/catalog/` | Model catalog: embedded `data/default.json`, strict loading, layered sources, merge rules, preset resolution and validation |
 | `agent/provider/preset/` | Builds a catalog preset into per-entry adapters behind one router, with groups per preset |
@@ -97,7 +97,7 @@ saige-mcp --tools kg --db DSN --approval elicit   # elicit (default), host, or d
 Marked tools ask for approval through the MCP client by default (`--approval elicit`); `host` relies on the client's own permission prompt.
 Eval credentials are chosen by the host the request goes to, never by the first variable that happens to be set.
 
-Provider auto-detection: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GOOGLE_API_KEY` → Ollama.
+Default model selection: the first entry of the catalog's `default_preset` with credentials: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → Google (Vertex AI env or `GOOGLE_API_KEY`) → a local Ollama server. `--provider` names an adapter; `ollama` is a local runtime, not a vendor (see docs/concepts.md).
 
 ## Commands
 
@@ -106,6 +106,7 @@ go test ./...       # run all tests
 go vet ./...        # static analysis
 go build ./...      # compile all packages
 gofmt -w .          # format
+fsrc run README.md  # re-embed examples/quickstart into the README (CI fails on drift)
 ```
 
 ## Commit Convention

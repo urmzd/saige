@@ -8,11 +8,23 @@ go run ./examples/knowledge/basic/
 go run ./examples/rag/arxiv/
 ```
 
+## Quick start
+
+The programs embedded in the root README's Quick Start. Each builds the `default` catalog preset, so it runs with whichever of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or Vertex AI credentials is set, or a local Ollama.
+
+| Example | Description |
+|---------|-------------|
+| [`quickstart/agent`](quickstart/agent/) | The smallest agent, built from a catalog preset |
+| [`quickstart/tool`](quickstart/tool/) | A typed tool with `agent.Func` |
+| [`quickstart/structured`](quickstart/structured/) | Structured output with `agent.Structured[T]` |
+| [`quickstart/dials`](quickstart/dials/) | Creativity and reasoning depth dials |
+| [`quickstart/rag`](quickstart/rag/) | Ingest and hybrid search on Postgres, with Ollama embeddings |
+
 ## Agent
 
 | Example | Description |
 |---------|-------------|
-| [`agent/basic`](agent/basic/) | Single tool with Ollama |
+| [`agent/basic`](agent/basic/) | Single tool with a model served by Ollama |
 | [`agent/streaming`](agent/streaming/) | All delta types with ANSI output |
 | [`agent/subagents`](agent/subagents/) | Parent delegating to researcher |
 | [`agent/concurrent-subagents`](agent/concurrent-subagents/) | Parallel sub-agent execution |
