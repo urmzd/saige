@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -131,7 +132,7 @@ func TestAgentRunUsageModelsAndCost(t *testing.T) {
 		types.DoneDelta{},
 	))
 	want := types.TokenUsage{InputTokens: 1100, CachedInputTokens: 400, OutputTokens: 150, Requests: 2}
-	if run.Usage != want {
+	if !reflect.DeepEqual(run.Usage, want) {
 		t.Fatalf("Usage = %+v, want %+v", run.Usage, want)
 	}
 	if fmt.Sprint(run.Models) != "[model-a]" {

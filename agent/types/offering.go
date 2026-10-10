@@ -402,6 +402,7 @@ func (o Offering) optionError(option, reason string) error {
 func (o Offering) TierPricing(t ServiceTier) (Pricing, bool) {
 	p := o.Pricing
 	p.BatchDiscount, p.BatchCachedInputPerMTok = 0, 0
+	p.Modal = o.modal()
 	if t == "" || t == ServiceStandard {
 		return p, true
 	}
@@ -424,7 +425,17 @@ func (o Offering) TierPricing(t ServiceTier) (Pricing, bool) {
 	p.OutputPerMTok *= keep
 	p.CacheWritePerMTok *= keep
 	p.CachedInputPerMTok = cached
+	p.Modal = scaleModal(p.Modal, keep)
 	return p, true
+}
+
+// modal returns the offering's modality rates for its standard rate card:
+// a copy of ModalityPricing, or nil when the card is unpriced or free.
+func (o Offering) modal() map[Modality]ModalityRate {
+	if o.Pricing.IsZero() || o.Pricing.Free || len(o.ModalityPricing) == 0 {
+		return nil
+	}
+	return maps.Clone(o.ModalityPricing)
 }
 
 // Capabilities projects the offering onto ModelCapabilities, so the
@@ -495,6 +506,7 @@ func (o Offering) Capabilities() ModelCapabilities {
 	}
 	mc.DialMap = o.DialMap.Clone()
 	mc.Pricing = o.Pricing
+	mc.Pricing.Modal = o.modal()
 	if b, ok := o.Tiers[ServiceBatch]; ok && !o.Pricing.IsZero() {
 		mc.Pricing.BatchDiscount, mc.Pricing.BatchCachedInputPerMTok = b.Discount, b.CachedInputPerMTok
 	}
@@ -630,6 +642,7 @@ func OfferingFromCapabilities(mc ModelCapabilities) Offering {
 	}
 	o.Pricing = mc.Pricing
 	o.Pricing.BatchDiscount, o.Pricing.BatchCachedInputPerMTok = 0, 0
+	o.Pricing.Modal, o.ModalityPricing = nil, maps.Clone(mc.Pricing.Modal)
 	if !mc.Pricing.IsZero() && (mc.Pricing.BatchDiscount != 0 || mc.Pricing.BatchCachedInputPerMTok != 0) {
 		o.Tiers = map[ServiceTier]TierSpec{ServiceBatch: {Transport: TransportBatch,
 			Discount: mc.Pricing.BatchDiscount, CachedInputPerMTok: mc.Pricing.BatchCachedInputPerMTok}}
@@ -849,6 +862,7 @@ func (o Offering) Intersect(other Offering) Offering {
 		Pricing:          worsePricing(o.Pricing, other.Pricing),
 		Notes:            append(slices.Clone(o.Notes), other.Notes...),
 	}
+	out.ModalityPricing = worsePricing(Pricing{InputPerMTok: 1, Modal: o.modal()}, Pricing{InputPerMTok: 1, Modal: other.modal()}).Modal
 	out.Model.Known = o.Model.Known && other.Model.Known
 	out.Model.ContextWindow = minNonZero(o.Model.ContextWindow, other.Model.ContextWindow)
 	out.Model.MaxOutputTokens = minNonZero(o.Model.MaxOutputTokens, other.Model.MaxOutputTokens)

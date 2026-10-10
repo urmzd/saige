@@ -138,20 +138,21 @@ func (b *Budget) Policy() BudgetPolicy { return b.policy }
 
 // Record adds usage for a model and returns the status after adding it.
 //
-// An unpriced model returns ErrUnpriced unless the policy allows it. Usage is
+// An unpriced model, or usage of a modality its card has no rate for,
+// returns ErrUnpriced unless the policy allows it. Usage is
 // still recorded in that case, so a report shows what was spent even where it
 // could not be costed.
 func (b *Budget) Record(model string, pricing Pricing, u TokenUsage) (BudgetStatus, error) {
 	cost := pricing.Cost(u)
-	unpriced := pricing.IsZero() && u.Total() > 0
 
 	b.mu.Lock()
 	b.recordLocked(model, pricing, u, cost)
 	status := b.statusLocked()
+	unpriced := b.unpricedLocked(pricing, u)
 	b.mu.Unlock()
 
-	if unpriced && !b.policy.AllowUnpriced && b.policy.Limit > 0 {
-		return status, fmt.Errorf("%w: %s", ErrUnpriced, model)
+	if unpriced {
+		return status, fmt.Errorf("%w: %s", ErrUnpriced, unpricedWhat(model, pricing, u))
 	}
 	return status, nil
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // ErrBudgetAdmission marks a rejection before the provider was called.
@@ -185,15 +187,23 @@ func (b *Budget) Settle(id, model string, pricing Pricing, usage TokenUsage, unk
 		usage.InputTokens += max(0, r.Tokens-usage.Total())
 	}
 	cost := pricing.Cost(usage)
+	// A modality the card has no rate for is billed at the text rates, a
+	// lower bound, so the settled cost is uncertain.
+	uncertain := unknown || (!pricing.IsZero() && pricing.Unpriced(usage))
 	if unknown {
 		cost = max(cost, r.Cost)
+	}
+	if uncertain {
 		b.uncertain++
 	}
 	b.recordLocked(model, pricing, usage, cost)
 	if b.settled == nil {
 		b.settled = map[string]BudgetReceipt{}
 	}
-	b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: cost, Uncertain: unknown, Granted: b.granted}
+	b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: cost, Uncertain: uncertain, Granted: b.granted}
+	if b.unpricedLocked(pricing, usage) {
+		return fmt.Errorf("%w: %s", ErrUnpriced, unpricedWhat(model, pricing, usage))
+	}
 	if !unknown && ((r.Cost > 0 && cost > r.Cost) || (r.Tokens > 0 && usage.Total() > r.Tokens)) {
 		return fmt.Errorf("%w: provider usage exceeded the per-call reservation", ErrBudgetExceeded)
 	}
@@ -211,10 +221,38 @@ func (b *Budget) RecordOnce(id, model string, pricing Pricing, usage TokenUsage)
 		b.recordLocked(model, pricing, usage, pricing.Cost(usage))
 		b.settled[id] = BudgetReceipt{ID: id, Model: model, Pricing: pricing, Usage: usage, Cost: pricing.Cost(usage)}
 	}
-	if pricing.IsZero() && usage.Total() > 0 && b.policy.Limit > 0 && !b.policy.AllowUnpriced {
-		return b.statusLocked(), ErrUnpriced
+	if b.unpricedLocked(pricing, usage) {
+		return b.statusLocked(), fmt.Errorf("%w: %s", ErrUnpriced, unpricedWhat(model, pricing, usage))
 	}
 	return b.statusLocked(), nil
+}
+
+// unpricedLocked reports whether usage cannot be costed at pricing under a
+// policy that enforces a cost limit (D-09: an unpriced call fails closed
+// unless AllowUnpriced).
+func (b *Budget) unpricedLocked(pricing Pricing, usage TokenUsage) bool {
+	return b.policy.Limit > 0 && !b.policy.AllowUnpriced && pricing.Unpriced(usage)
+}
+
+// unpricedWhat names what could not be costed: the model, and the
+// modalities its card has no rate for.
+func unpricedWhat(model string, pricing Pricing, usage TokenUsage) string {
+	if pricing.IsZero() {
+		return model
+	}
+	var ms []string
+	for m, n := range usage.InputByModality {
+		if n > 0 && m != ModalityText && pricing.Modal[m].InputPerMTok <= 0 {
+			ms = append(ms, string(m)+" input")
+		}
+	}
+	for m, n := range usage.OutputByModality {
+		if n > 0 && m != ModalityText && pricing.Modal[m].OutputPerMTok <= 0 {
+			ms = append(ms, string(m)+" output")
+		}
+	}
+	sort.Strings(ms)
+	return model + " has no rate for " + strings.Join(ms, ", ")
 }
 
 // Uncertain returns the count of attempts settled without authoritative usage.

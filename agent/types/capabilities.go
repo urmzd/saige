@@ -475,7 +475,36 @@ func worsePricing(a, b Pricing) Pricing {
 		BatchCachedInputPerMTok: declaredMax(a.BatchCachedInputPerMTok, b.BatchCachedInputPerMTok),
 		AsOf:                    worseAsOf(a, b),
 		Source:                  joinSource(a, b),
+		Modal:                   worseModal(a.Modal, b.Modal),
 	}
+}
+
+// worseModal keeps the modalities both cards price, at the costlier rate
+// of each direction. A modality only one prices is left out, so its usage
+// reads as unpriced: the member that does not price it may serve the call.
+func worseModal(a, b map[Modality]ModalityRate) map[Modality]ModalityRate {
+	var out map[Modality]ModalityRate
+	for m, ra := range a {
+		rb, ok := b[m]
+		if !ok {
+			continue
+		}
+		r := ModalityRate{}
+		if ra.InputPerMTok > 0 && rb.InputPerMTok > 0 {
+			r.InputPerMTok = max(ra.InputPerMTok, rb.InputPerMTok)
+		}
+		if ra.OutputPerMTok > 0 && rb.OutputPerMTok > 0 {
+			r.OutputPerMTok = max(ra.OutputPerMTok, rb.OutputPerMTok)
+		}
+		if r == (ModalityRate{}) {
+			continue
+		}
+		if out == nil {
+			out = map[Modality]ModalityRate{}
+		}
+		out[m] = r
+	}
+	return out
 }
 
 // worseAsOf returns the less trustworthy of two recording dates: an unknown

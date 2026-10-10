@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
@@ -323,8 +324,8 @@ func (p PricingSpec) pricing() types.Pricing {
 }
 
 func pricingSpec(p types.Pricing) *PricingSpec {
-	p.BatchDiscount, p.BatchCachedInputPerMTok = 0, 0
-	if p == (types.Pricing{}) {
+	p.BatchDiscount, p.BatchCachedInputPerMTok, p.Modal = 0, 0, nil // modal rates are the offering's ModalityPricing
+	if reflect.DeepEqual(p, types.Pricing{}) {
 		return nil
 	}
 	return &PricingSpec{Currency: p.Currency, InputPerMTok: p.InputPerMTok, OutputPerMTok: p.OutputPerMTok,

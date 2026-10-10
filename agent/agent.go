@@ -2213,6 +2213,13 @@ func (a *Agent) modelStep(
 					// the usage is charged after the step.
 					a.cfg.Logger.Warn("provider call exceeded its budget reservation",
 						"agent", a.cfg.Name, "step", stepName, "cost", receipt.Cost.String())
+				case errors.Is(settleErr, types.ErrUnpriced):
+					// A modality the rate card does not price: the usage is
+					// recorded at the text rates as a lower bound, the turn
+					// is kept, and charging it after the step ends the run
+					// under an enforcing policy.
+					a.cfg.Logger.Warn("provider call used a modality its rate card does not price",
+						"agent", a.cfg.Name, "step", stepName, "error", settleErr)
 				case stepError == nil:
 					stepError = settleErr
 				}
