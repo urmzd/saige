@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/agent/workspace"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func pngOffering() types.Offering {
@@ -40,7 +41,7 @@ func TestReloadedRefsAreSentAsBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &offeringProvider{name: "acme", offering: pngOffering()}
-	a := NewAgent(AgentConfig{Provider: p}, WithWorkspace(ws))
+	a := must.Get(New(Config{Provider: p}, WithWorkspace(ws)))
 	history := []types.Message{
 		types.UserMsg(types.Text("look"), storedImage(data)),
 		types.AssistantMsg(types.ToolCallPart{ID: "c1", Name: "chart", Arguments: map[string]any{}}),
@@ -73,14 +74,14 @@ func TestReloadedRefsAreSentAsBytes(t *testing.T) {
 func TestUnresolvableRefIsRejectedNotDropped(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		opts []AgentOption
+		opts []Option
 	}{
 		{name: "no workspace"},
-		{name: "workspace without it", opts: []AgentOption{WithWorkspace(workspace.NewMemory())}},
+		{name: "workspace without it", opts: []Option{WithWorkspace(workspace.NewMemory())}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &offeringProvider{name: "acme", offering: pngOffering()}
-			a := NewAgent(AgentConfig{Provider: p}, tc.opts...)
+			a := must.Get(New(Config{Provider: p}, tc.opts...))
 			_, err := runConverting(t, a, types.UserMsg(types.Text("look"), storedImage([]byte("gone"))))
 			if !errors.Is(err, types.ErrMediaUnavailable) {
 				t.Fatalf("err = %v, want ErrMediaUnavailable", err)
@@ -104,8 +105,8 @@ func TestResolveRefsFallsBackToTheResolver(t *testing.T) {
 		}
 		return types.ResolvedFile{Data: []byte("other")}, nil
 	})
-	a := NewAgent(AgentConfig{Provider: &capturingProvider{response: "ok"},
-		Resolvers: map[string]types.Resolver{workspace.URIScheme: resolver}}, WithWorkspace(workspace.NewMemory()))
+	a := must.Get(New(Config{Provider: &capturingProvider{response: "ok"},
+		Resolvers: map[string]types.Resolver{workspace.URIScheme: resolver}}, WithWorkspace(workspace.NewMemory())))
 
 	mismatched := storedImage([]byte("expected"))
 	withURL := storedImage([]byte("missing"))
@@ -129,7 +130,7 @@ func TestResolveRefsFallsBackToTheResolver(t *testing.T) {
 func TestExternalizeStoresForeignRefs(t *testing.T) {
 	ctx := context.Background()
 	ws := workspace.NewMemory()
-	a := NewAgent(AgentConfig{Provider: &capturingProvider{response: "ok"}}, WithWorkspace(ws))
+	a := must.Get(New(Config{Provider: &capturingProvider{response: "ok"}}, WithWorkspace(ws)))
 	data := []byte("upload")
 	src := types.Bytes(types.MediaPNG, data)
 	src.Ref = types.ArtifactScheme + src.Digest
@@ -154,7 +155,7 @@ func TestStoreReloadSendsStoredMediaBytes(t *testing.T) {
 	ws := workspace.NewMemory()
 	data := []byte("png bytes")
 	first := &offeringProvider{name: "acme", offering: pngOffering()}
-	a := NewAgent(AgentConfig{Provider: first, SystemPrompt: "s"}, WithStore(store), WithWorkspace(ws))
+	a := must.Get(New(Config{Provider: first, SystemPrompt: "s"}, WithStore(store), WithWorkspace(ws)))
 	if _, err := runConverting(t, a, types.UserMsg(types.Text("look"), types.Image(types.Bytes(types.MediaPNG, data)))); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestStoreReloadSendsStoredMediaBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := &offeringProvider{name: "acme", offering: pngOffering()}
-	b := NewAgent(AgentConfig{Provider: second, SystemPrompt: "s"}, WithTree(restored), WithWorkspace(ws))
+	b := must.Get(New(Config{Provider: second, SystemPrompt: "s"}, WithTree(restored), WithWorkspace(ws)))
 	if _, err := runConverting(t, b, types.UserMsg(types.Text("and now?"))); err != nil {
 		t.Fatal(err)
 	}

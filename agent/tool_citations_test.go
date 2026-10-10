@@ -91,7 +91,7 @@ func TestToolCitationsShowTheModelTheirMarkers(t *testing.T) {
 		agenttest.ToolCallResponse("c1", "cite", map[string]any{}),
 		agenttest.TextResponse("done [1]"),
 	}}
-	a := NewAgent(AgentConfig{Name: "a", Provider: provider, Tools: types.NewToolRegistry(&citingTool{cites: cites})})
+	a := must.Get(New(Config{Name: "a", Provider: provider, Tools: types.NewToolRegistry(&citingTool{cites: cites})}))
 	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas()))
 
 	sent := citedResult(provider.Calls[1].Messages, "c1")

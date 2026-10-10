@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // modalStepProvider is a stepProvider whose rate card prices audio input
@@ -41,7 +42,7 @@ func TestSettlementPricesModalities(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := modalStepProvider{newStepProvider(stepCall{before: append([]types.Delta{tc.usage}, agenttest.TextResponse("answer")...)})}
 			budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(5), AllowUnpriced: tc.allow})
-			a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
+			a := must.Get(New(Config{Provider: provider}, WithBudget(budget)))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
