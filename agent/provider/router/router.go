@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
@@ -78,6 +79,10 @@ type Candidate struct {
 	Options    types.RequestOptions
 	ConfigHash string
 	Preset     types.PresetName
+	// EstimatedTokens approximates the prompt size on this profile's
+	// offering: media is priced by the offering's token rules
+	// (types.EstimateTokensFor). Set on RouteContext.Candidates only.
+	EstimatedTokens int
 }
 
 // Headroom is the budget left when the request is routed. Known is false when
@@ -99,7 +104,10 @@ type RouteContext struct {
 	Messages   []types.Message
 	Tools      []types.ToolDef
 	Schema     bool
-	// EstimatedTokens approximates the prompt size with types.EstimateTokens.
+	// EstimatedTokens approximates the prompt size: the largest of the
+	// candidates' offering-aware estimates (Candidate.EstimatedTokens), so
+	// a policy that reads one number does not underestimate, or the flat
+	// types.EstimateTokens when there is no candidate.
 	EstimatedTokens int
 	Headroom        Headroom
 	// Pinned is the profile ID or group name a ConfigPart target selected,
@@ -638,11 +646,13 @@ func (s *Session) plan(ctx context.Context, q request, st RouteState, sent map[t
 	p := plan{candidates: map[types.ProfileID]Candidate{}, providers: map[types.ProfileID]types.Provider{}, compiled: map[types.ProfileID]compiled{}, messages: len(q.messages)}
 	rc := RouteContext{
 		Messages: q.messages, Tools: q.tools, Schema: q.schema != nil,
-		EstimatedTokens: types.EstimateTokens(q.messages),
-		Pinned:          st.Pin,
+		Pinned: st.Pin,
 	}
 	members, group := s.router.members(st.Pin)
 	skippedFirst, reasons := s.collectCandidates(ctx, q, want, st, members, sent, &p, &rc)
+	if len(rc.Candidates) == 0 {
+		rc.EstimatedTokens = types.EstimateTokens(q.messages)
+	}
 	if cfg.Budget != nil {
 		rc.Headroom = Headroom{Known: true, Remaining: cfg.Budget.Remaining(), Status: cfg.Budget.Status()}
 	}
@@ -759,12 +769,23 @@ func (s *Session) collectCandidates(ctx context.Context, q request, want []types
 			}
 			continue
 		}
+		candidate.EstimatedTokens = estimateFor(q.messages, provider)
+		rc.EstimatedTokens = max(rc.EstimatedTokens, candidate.EstimatedTokens)
 		rc.Candidates = append(rc.Candidates, candidate)
 		p.candidates[candidate.ID] = candidate
 		p.providers[candidate.ID] = provider
 		p.compiled[candidate.ID] = c
 	}
 	return skippedFirst, reasons
+}
+
+// estimateFor approximates the prompt tokens of messages on the offering
+// provider serves, or flat when it reports none.
+func estimateFor(messages []types.Message, provider types.Provider) int {
+	if o, ok := convert.Target(provider); ok {
+		return types.EstimateTokensFor(messages, &o)
+	}
+	return types.EstimateTokens(messages)
 }
 
 // members returns the profile IDs a request may use: the pinned group, or

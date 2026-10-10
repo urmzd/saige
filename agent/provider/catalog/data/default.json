@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 2,
-  "revision": "2026-10-09.5",
+  "revision": "2026-10-10.2",
   "model_templates": {
     "anthropic.base": {
       "limits": {
@@ -2078,6 +2078,20 @@
         "as_of": "2026-07-24",
         "source": "vendor list price"
       },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 1.0
+        },
+        "document": {
+          "input_per_mtok": 0.3
+        },
+        "image": {
+          "input_per_mtok": 0.3
+        },
+        "video": {
+          "input_per_mtok": 0.3
+        }
+      },
       "tiers": {
         "batch": {
           "transport": "batch",
@@ -2116,6 +2130,20 @@
         "cached_input_per_mtok": 0.31,
         "as_of": "2026-07-24",
         "source": "vendor list price"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 1.25
+        },
+        "document": {
+          "input_per_mtok": 1.25
+        },
+        "image": {
+          "input_per_mtok": 1.25
+        },
+        "video": {
+          "input_per_mtok": 1.25
+        }
       },
       "tiers": {
         "batch": {
@@ -2177,6 +2205,20 @@
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 0.5
+        },
+        "document": {
+          "input_per_mtok": 0.25
+        },
+        "image": {
+          "input_per_mtok": 0.25
+        },
+        "video": {
+          "input_per_mtok": 0.25
+        }
+      },
       "tiers": {
         "batch": {
           "transport": "batch",
@@ -2224,6 +2266,20 @@
         "as_of": "2026-10-09",
         "source": "vendor list price"
       },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 2
+        },
+        "document": {
+          "input_per_mtok": 2
+        },
+        "image": {
+          "input_per_mtok": 2
+        },
+        "video": {
+          "input_per_mtok": 2
+        }
+      },
       "tiers": {
         "batch": {
           "transport": "batch",
@@ -2257,6 +2313,20 @@
         "output_per_mtok": 2.5,
         "as_of": "2026-10-09",
         "source": "vendor list price"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 0.3
+        },
+        "document": {
+          "input_per_mtok": 0.3
+        },
+        "image": {
+          "input_per_mtok": 0.3
+        },
+        "video": {
+          "input_per_mtok": 0.3
+        }
       },
       "tiers": {
         "batch": {
@@ -2313,6 +2383,20 @@
         "cached_input_per_mtok": 0.075,
         "as_of": "2026-10-09",
         "source": "vendor list price"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 0.75
+        },
+        "document": {
+          "input_per_mtok": 0.75
+        },
+        "image": {
+          "input_per_mtok": 0.75
+        },
+        "video": {
+          "input_per_mtok": 0.75
+        }
       },
       "tiers": {
         "batch": {
@@ -2379,6 +2463,20 @@
         "output_per_mtok": 3.75,
         "as_of": "2026-10-09",
         "source": "vendor list price"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 0.75
+        },
+        "document": {
+          "input_per_mtok": 0.75
+        },
+        "image": {
+          "input_per_mtok": 0.75
+        },
+        "video": {
+          "input_per_mtok": 0.75
+        }
       },
       "tiers": {
         "batch": {
@@ -2896,6 +2994,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3007,7 +3113,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3015,6 +3122,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3126,7 +3241,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3134,6 +3250,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3246,7 +3370,8 @@
       "notes": [
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3284,6 +3409,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": true
         },
@@ -3356,7 +3489,8 @@
         "tool calling requires the Responses API: provider.Build serves this model through it",
         "the vendor page states no default effort; medium is assumed",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {
@@ -3512,6 +3646,14 @@
       "endpoint": "openai-chat",
       "extends": "openai.reasoning",
       "params": {
+        "prompt_cache.retention": {
+          "type": "enum",
+          "values": [
+            "24h"
+          ],
+          "allowed": true,
+          "wire": "prompt_cache_retention"
+        },
         "reasoning.budget": {
           "required": false
         },
@@ -3643,7 +3785,8 @@
         "temperature and top_p require reasoning effort none (the default effort is medium)",
         "Chat Completions accepts tools only with reasoning effort none: the chat adapter sends none when tools are offered and no effort is set, and rejects another effort",
         "input is text and images; PDF input is not listed",
-        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here"
+        "list price is tiered by prompt length: prompts above 272K input tokens bill 2x input and cache rates and 1.5x output; the shorter tier is declared here",
+        "prompt cache retention is 24h only: in_memory is rejected by the API"
       ]
     },
     {

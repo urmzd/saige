@@ -91,6 +91,37 @@ type Pricing struct {
 	// indistinguishable from an unpriced remote one, and a budget cannot tell
 	// "this is free" from "I do not know what this costs".
 	Free bool
+	// Modal prices the modalities the vendor bills apart from text, per
+	// million tokens of that modality. Text is always billed at the rates
+	// above. A non-text modality with usage but no rate here for that
+	// direction is unpriced (see Unpriced), even when the text rates are
+	// set: billing it at text rates would under-count, as audio usually
+	// costs more.
+	Modal map[Modality]ModalityRate `json:",omitempty"`
+}
+
+// Unpriced reports whether u cannot be costed at these rates: usage on an
+// all-zero card, or usage of a non-text modality the card has no rate for
+// in that direction. A Budget treats an unpriced call as it treats an
+// unpriced model (ErrUnpriced unless the policy allows it).
+func (p Pricing) Unpriced(u TokenUsage) bool {
+	if p.Free {
+		return false
+	}
+	if p.IsZero() {
+		return u.Total() > 0
+	}
+	for m, n := range u.InputByModality {
+		if n > 0 && m != ModalityText && p.Modal[m].InputPerMTok <= 0 {
+			return true
+		}
+	}
+	for m, n := range u.OutputByModality {
+		if n > 0 && m != ModalityText && p.Modal[m].OutputPerMTok <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // IsZero reports whether any rate is set. An all-zero Pricing means the model
@@ -128,6 +159,12 @@ type TokenUsage struct {
 	OutputTokens int
 	// Requests is the number of billable calls, for per-request charges.
 	Requests int
+	// InputByModality and OutputByModality break the prompt and output
+	// tokens down by modality where the vendor reports it. They are
+	// subsets of the counts above, not additions, and nil where nothing
+	// was reported.
+	InputByModality  map[Modality]int `json:",omitempty"`
+	OutputByModality map[Modality]int `json:",omitempty"`
 }
 
 // Add accumulates another usage into this one.
@@ -137,6 +174,22 @@ func (u *TokenUsage) Add(other TokenUsage) {
 	u.CacheWriteTokens += other.CacheWriteTokens
 	u.OutputTokens += other.OutputTokens
 	u.Requests += other.Requests
+	u.InputByModality = addModalities(u.InputByModality, other.InputByModality)
+	u.OutputByModality = addModalities(u.OutputByModality, other.OutputByModality)
+}
+
+func addModalities(a, b map[Modality]int) map[Modality]int {
+	if len(b) == 0 {
+		return a
+	}
+	out := make(map[Modality]int, len(a)+len(b))
+	for m, n := range a {
+		out[m] = n
+	}
+	for m, n := range b {
+		out[m] += n
+	}
+	return out
 }
 
 // Total returns every token counted, cached and uncached.
@@ -158,15 +211,36 @@ func UsageFromDelta(d UsageDelta) TokenUsage {
 		CacheWriteTokens:  written,
 		OutputTokens:      d.CompletionTokens,
 		Requests:          max(1, d.Requests),
+		InputByModality:   addModalities(nil, d.PromptByModality),
+		OutputByModality:  addModalities(nil, d.CompletionByModality),
 	}
 }
 
 // Cost computes what the usage costs at these rates. Rates left zero fall back
 // to the input rate for the cache tiers, since "unset" there means "not
-// discounted", never "free".
+// discounted", never "free". Tokens of a modality with a Modal rate are
+// billed at that rate instead of the text rate: input ones out of the
+// uncached input, as vendors report the modality of fresh input. Tokens of
+// a modality with no rate stay at the text rates, a lower bound, and make
+// the usage Unpriced.
 func (p Pricing) Cost(u TokenUsage) Cost {
 	if p.Free {
 		return 0
+	}
+	var modal float64
+	for m, n := range u.InputByModality {
+		if r := p.Modal[m].InputPerMTok; m != ModalityText && n > 0 && r > 0 {
+			n = min(n, u.InputTokens)
+			u.InputTokens -= n
+			modal += perMTok(n, r)
+		}
+	}
+	for m, n := range u.OutputByModality {
+		if r := p.Modal[m].OutputPerMTok; m != ModalityText && n > 0 && r > 0 {
+			n = min(n, u.OutputTokens)
+			u.OutputTokens -= n
+			modal += perMTok(n, r)
+		}
 	}
 	cachedRate := p.CachedInputPerMTok
 	if cachedRate == 0 {
@@ -180,7 +254,7 @@ func (p Pricing) Cost(u TokenUsage) Cost {
 		perMTok(u.CachedInputTokens, cachedRate) +
 		perMTok(u.CacheWriteTokens, writeRate) +
 		perMTok(u.OutputTokens, p.OutputPerMTok) +
-		float64(u.Requests)*p.PerRequest
+		float64(u.Requests)*p.PerRequest + modal
 	return USD(total)
 }
 
@@ -216,6 +290,7 @@ func (p Pricing) Batch() Pricing {
 	p.OutputPerMTok *= f
 	p.CacheWritePerMTok *= f
 	p.CachedInputPerMTok = cached
+	p.Modal = scaleModal(p.Modal, f)
 	if p.Source != "" {
 		p.Source += " (batch)"
 	}
@@ -247,4 +322,17 @@ func (p Pricing) Describe() string {
 		s += " (as of " + p.AsOf + ")"
 	}
 	return s
+}
+
+// scaleModal returns modal rates multiplied by f, as a discounted tier
+// bills every token rate.
+func scaleModal(rates map[Modality]ModalityRate, f float64) map[Modality]ModalityRate {
+	if rates == nil {
+		return nil
+	}
+	out := make(map[Modality]ModalityRate, len(rates))
+	for m, r := range rates {
+		out[m] = ModalityRate{InputPerMTok: r.InputPerMTok * f, OutputPerMTok: r.OutputPerMTok * f}
+	}
+	return out
 }

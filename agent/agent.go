@@ -1030,6 +1030,7 @@ func (a *Agent) callProvider(ctx context.Context, provider types.Provider, out r
 		opts = nil
 	}
 	call := a.converting(provider)
+	messages = citeToolSources(messages)
 	if opts != nil && types.AcceptsOptions(provider) {
 		return call.Stream(ctx, types.Request{Messages: messages, Tools: tools, Options: opts})
 	}
@@ -1087,8 +1088,11 @@ func satisfiesResponseSchema(schema *types.ParameterSchema, msg *types.Assistant
 // marked unavailable with the reason, and the attempt's conversion plan
 // then rejects it (or omits it, when the modality dial permits). A URI with
 // no resolver, such as https or gs, is left for the provider to fetch: the
-// plan decides per attempt whether the serving endpoint reads it.
+// plan decides per attempt whether the serving endpoint reads it. A part
+// whose bytes were stored as a saige-artifact reference gets them back
+// first (resolveRefs).
 func (a *Agent) resolveSources(ctx context.Context, messages []types.Message) []types.Message {
+	messages = a.resolveRefs(ctx, messages)
 	out := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
 		um, ok := msg.(types.UserMessage)
@@ -2209,6 +2213,13 @@ func (a *Agent) modelStep(
 					// the usage is charged after the step.
 					a.cfg.Logger.Warn("provider call exceeded its budget reservation",
 						"agent", a.cfg.Name, "step", stepName, "cost", receipt.Cost.String())
+				case errors.Is(settleErr, types.ErrUnpriced):
+					// A modality the rate card does not price: the usage is
+					// recorded at the text rates as a lower bound, the turn
+					// is kept, and charging it after the step ends the run
+					// under an enforcing policy.
+					a.cfg.Logger.Warn("provider call used a modality its rate card does not price",
+						"agent", a.cfg.Name, "step", stepName, "error", settleErr)
 				case stepError == nil:
 					stepError = settleErr
 				}

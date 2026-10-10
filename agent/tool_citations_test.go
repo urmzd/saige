@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/urmzd/saige/agent/agenttest"
@@ -74,4 +75,55 @@ func citedResult(msgs []types.Message, callID string) *types.ToolResultPart {
 		}
 	}
 	return nil
+}
+
+// TestToolCitationsShowTheModelTheirMarkers checks that the model is sent a
+// cited tool result led by its sources and their markers, so it can cite
+// them, while the tree keeps the result as the tool returned it.
+func TestToolCitationsShowTheModelTheirMarkers(t *testing.T) {
+	cites := []types.Citation{
+		types.NewCitation(types.CitationWeb, "https://example.com/a", "A"),
+		types.NewCitation(types.CitationRetrieval, "", "Notes"),
+		types.NewCitation(types.CitationWeb, "https://example.com/a", "A"), // same source, one line
+	}
+	provider := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.ToolCallResponse("c1", "cite", map[string]any{}),
+		agenttest.TextResponse("done [1]"),
+	}}
+	a := NewAgent(AgentConfig{Name: "a", Provider: provider, Tools: types.NewToolRegistry(&citingTool{cites: cites})})
+	agenttest.AssertNoErrors(t, agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}).Deltas()))
+
+	sent := citedResult(provider.Calls[1].Messages, "c1")
+	if sent == nil || len(sent.Parts) != 2 {
+		t.Fatalf("result sent = %+v, want the source list and the output", sent)
+	}
+	want := "Sources (cite with the marker):\n[1] A <https://example.com/a>\n[2] Notes"
+	if got := sent.Text(); !strings.HasPrefix(got, want) {
+		t.Fatalf("text sent = %q, want it led by %q", got, want)
+	}
+	if lead, ok := sent.Parts[0].(types.TextPart); !ok || lead.Text != want {
+		t.Fatalf("first part = %+v, want %q", sent.Parts[0], want)
+	}
+	msgs, _ := a.Tree().FlattenBranch("main")
+	stored := citedResult(msgs, "c1")
+	if stored == nil || stored.Text() != "see the linked resource" {
+		t.Fatalf("stored result = %+v, want the tool's own output", stored)
+	}
+}
+
+// TestCiteToolSourcesLeavesUncitedMessages checks that a request without
+// numbered tool citations is passed through unchanged.
+func TestCiteToolSourcesLeavesUncitedMessages(t *testing.T) {
+	msgs := []types.Message{
+		types.UserMsg(types.Text("hi")),
+		types.ToolResults(types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("ok")},
+			Citations: []types.Citation{types.NewCitation(types.CitationWeb, "https://x", "X")}}), // unnumbered
+	}
+	got := citeToolSources(msgs)
+	if &got[0] != &msgs[0] {
+		t.Fatal("uncited messages were copied")
+	}
+	if r := citedResult(got, "c1"); r.Text() != "ok" {
+		t.Fatalf("text = %q", r.Text())
+	}
 }

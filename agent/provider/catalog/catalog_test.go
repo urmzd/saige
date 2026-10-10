@@ -280,3 +280,33 @@ func TestProvidersAndFamiliesAreListed(t *testing.T) {
 		t.Error("Families(anthropic) must not be empty")
 	}
 }
+
+// TestModalityPricingFromVendorPages checks the modality rates the default
+// catalog declares, which are only those the vendor's pricing page states:
+// Gemini lists audio input apart from text, image and video, and bills
+// documents at the image rate. A model the page does not list, and every
+// OpenAI chat row (whose page gives no per-modality input rate), declares
+// none, so its non-text usage is unpriced.
+func TestModalityPricingFromVendorPages(t *testing.T) {
+	for _, tc := range []struct {
+		provider types.ProviderName
+		model    types.ModelID
+		want     map[types.Modality]float64
+	}{
+		{"google", "gemini-2.5-flash", map[types.Modality]float64{types.ModalityAudio: 1, types.ModalityImage: 0.3, types.ModalityVideo: 0.3, types.ModalityDocument: 0.3}},
+		{"google", "gemini-3.1-flash-lite", map[types.Modality]float64{types.ModalityAudio: 0.5, types.ModalityImage: 0.25, types.ModalityDocument: 0.25}},
+		{"google", "gemini-3.8-flash", map[types.Modality]float64{types.ModalityAudio: 0.75, types.ModalityDocument: 0.75}},
+		{"google", "gemini-3.7-flash", nil},
+		{"openai", "gpt-6-luna", nil},
+	} {
+		modal := MustLookup(tc.provider, tc.model).Pricing.Modal
+		if tc.want == nil && len(modal) != 0 {
+			t.Errorf("%s: modal = %+v, want none", tc.model, modal)
+		}
+		for m, rate := range tc.want {
+			if got := modal[m].InputPerMTok; got != rate {
+				t.Errorf("%s %s input = %v, want %v", tc.model, m, got, rate)
+			}
+		}
+	}
+}

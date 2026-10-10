@@ -75,15 +75,20 @@ var vendorFileHosts = []string{
 
 // CheckClientSource reports whether s may come from an untrusted client,
 // such as the body of a request to a server. Such a client may send inline
-// bytes, a workspace reference (which resolves in its own session's
-// workspace) and an http or https URL to public content. It may not send a
-// vendor file, a URI with another scheme (gs, s3, file), a bare name such as
-// "files/abc" or "file_abc", or a URL on a vendor's file store: each of
-// those is resolved with the host's credentials and could reach another
-// tenant's data. The error matches ErrUntrustedLocator.
+// bytes, a saige-artifact reference to content it uploaded (the host
+// resolves it only in the client's own session store, never elsewhere),
+// and an https URL to public content. It may not send a vendor file, a URI
+// with another scheme (http, gs, s3, file), a bare name such as "files/abc"
+// or "file_abc", a URL on a vendor's file store, or a reference that is not
+// a saige-artifact digest: each of those is resolved with the host's
+// credentials, could reach another tenant's data, or (http) can be read or
+// rewritten in transit. The error matches ErrUntrustedLocator.
 func CheckClientSource(s Source) error {
 	if len(s.Files) > 0 {
 		return fmt.Errorf("%w: vendor file %q", ErrUntrustedLocator, s.Files[0].ID)
+	}
+	if s.Ref != "" && !isArtifactRef(s.Ref) {
+		return fmt.Errorf("%w: reference %q is not a %sdigest", ErrUntrustedLocator, s.Ref, ArtifactScheme)
 	}
 	if s.URI == "" {
 		return nil
@@ -92,10 +97,8 @@ func CheckClientSource(s Source) error {
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("%w: URI %q", ErrUntrustedLocator, s.URI)
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-	default:
-		return fmt.Errorf("%w: URI scheme %q", ErrUntrustedLocator, u.Scheme)
+	if !strings.EqualFold(u.Scheme, "https") {
+		return fmt.Errorf("%w: URI scheme %q (only https)", ErrUntrustedLocator, u.Scheme)
 	}
 	host := strings.ToLower(u.Hostname())
 	for _, h := range vendorFileHosts {
@@ -104,6 +107,21 @@ func CheckClientSource(s Source) error {
 		}
 	}
 	return nil
+}
+
+// isArtifactRef reports whether ref is a saige-artifact reference to a
+// content digest: the scheme and 64 lowercase hex characters.
+func isArtifactRef(ref string) bool {
+	d, ok := strings.CutPrefix(ref, ArtifactScheme)
+	if !ok || len(d) != 64 {
+		return false
+	}
+	for _, c := range d {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckClientParts applies CheckClientSource to every media part of parts,

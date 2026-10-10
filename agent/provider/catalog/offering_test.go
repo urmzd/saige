@@ -196,7 +196,8 @@ func TestChainEntryForms(t *testing.T) {
 }
 
 // TestPromptCacheRetention checks the offering's retention rule reaches a
-// preset entry: gpt-6-luna keeps prompt caches for 24 hours only.
+// preset entry: the GPT-5.6 and later rows keep prompt caches for 24 hours
+// only (the API rejects in_memory), and earlier rows take both.
 func TestPromptCacheRetention(t *testing.T) {
 	for _, tc := range []struct {
 		model, retention string
@@ -204,6 +205,10 @@ func TestPromptCacheRetention(t *testing.T) {
 	}{
 		{"gpt-6-luna", "in_memory", false}, {"gpt-6-luna", "24h", true},
 		{"gpt-6.1-sol", "in_memory", false}, {"gpt-4.1", "in_memory", true},
+		{"gpt-6-sol", "in_memory", false}, {"gpt-6-sol", "24h", true},
+		{"gpt-6-astra", "in_memory", false}, {"gpt-6-astra", "24h", true},
+		{"gpt-5.6-luna", "in_memory", false}, {"gpt-5.6-sol", "in_memory", false}, {"gpt-5.6-terra", "in_memory", false},
+		{"gpt-5.2", "in_memory", true}, {"gpt-5.2", "24h", true},
 	} {
 		_, err := overlay(t, fmt.Sprintf(`{"version":2,"presets":{"p":{"chain":[{"provider":"openai","model":%q,
 			"options":{"prompt_cache":{"mode":"automatic","retention":%q}}}]}}}`, tc.model, tc.retention))

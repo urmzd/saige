@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -12,9 +13,14 @@ func TestCheckClientSource(t *testing.T) {
 		ok  bool
 	}{
 		{Bytes(MediaPNG, []byte("x")), true},
-		{Artifact(ArtifactScheme+"abc", MediaPNG), true},
+		{Artifact(ArtifactScheme+strings.Repeat("ab", 32), MediaPNG), true},
+		{Artifact(ArtifactScheme+"abc", MediaPNG), false},
+		{Artifact(ArtifactScheme+strings.Repeat("AB", 32), MediaPNG), false},
+		{Source{Ref: "s3://bucket/x", MediaType: MediaPNG}, false},
+		{Source{Ref: "files/abc", MediaType: MediaPNG}, false},
 		{URL("https://example.com/a.png"), true},
-		{URL("http://example.com/a.png"), true},
+		{URL("HTTPS://example.com/a.png"), true},
+		{URL("http://example.com/a.png"), false},
 		{VendorFileID("anthropic", "", "file_abc", MediaPDF), false},
 		{URL("files/abc"), false},
 		{URL("file_011abc"), false},

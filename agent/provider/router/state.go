@@ -302,7 +302,11 @@ func (a Affinity) Select(_ context.Context, rc RouteContext, st RouteState) (Rou
 	}
 	fits := func(i int) bool {
 		w := c[i].Capabilities.ContextWindow
-		return w == 0 || rc.EstimatedTokens <= w
+		n := c[i].EstimatedTokens
+		if n == 0 {
+			n = rc.EstimatedTokens // a candidate list a caller built
+		}
+		return w == 0 || n <= w
 	}
 	// firstFit returns the first fitting index from start, cycling and
 	// skipping skip, or fallback when none fits.

@@ -21,8 +21,9 @@ import (
 
 // TestLiveRAGQuestionWithCitations asks gpt-6-luna a question it can only
 // answer from the knowledge base. The run must call rag_search, record a
-// retrieval citation anchored to the handbook chunk, and answer from it. It
-// runs only with SAIGE_LIVE=1 and an OPENAI_API_KEY.
+// retrieval citation anchored to the handbook chunk, and answer from it,
+// citing it by marker. It runs only with SAIGE_LIVE=1 and an
+// OPENAI_API_KEY.
 func TestLiveRAGQuestionWithCitations(t *testing.T) {
 	if os.Getenv("SAIGE_LIVE") != "1" || os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("set SAIGE_LIVE=1 and OPENAI_API_KEY to call the provider")
@@ -80,6 +81,9 @@ func TestLiveRAGQuestionWithCitations(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("cites:handbook = %.0f (%s)", sc.Value, sc.Reason)
+	if sc.Value == 0 {
+		t.Fatalf("the answer does not cite the handbook by marker: %s", sc.Reason)
+	}
 	for _, r := range budget.Breakdown() {
 		t.Logf("spend: %s %d in / %d out tokens, %s", r.Model, r.Usage.InputTokens, r.Usage.OutputTokens, r.Cost)
 	}
