@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.33.0 (2026-10-10)
+
+### Features
+
+- **definition**: portable, versioned agent definitions (#91) ([ee8f90f](https://github.com/urmzd/saige/commit/ee8f90f69ac31e714dfdd1487b7aa75923909673))
+
+### Bug Fixes
+
+- **google**: name the structured-output MIME type once (#94) ([7770d81](https://github.com/urmzd/saige/commit/7770d81797119e2d06f01e652dde4395cc9e38f3))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.32.0...v0.33.0)
+
+
 ## 0.32.0 (2026-10-10)
 
 ### Features
