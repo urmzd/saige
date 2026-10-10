@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.25.0 (2026-10-10)
+
+### Features
+
+- **memory**: add Postgres memory store with hybrid recall and conversation recall (#72) ([19e50f6](https://github.com/urmzd/saige/commit/19e50f6984cac5e973b77fdd3c5dad27a3e9fcd1))
+
+### Misc
+
+- copy-paste quick start, concepts, tool calling and delegation guides (#70) ([717ec6b](https://github.com/urmzd/saige/commit/717ec6bbfa017ab5e77480d653ddb2a15adabd1a))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.24.0...v0.25.0)
+
+
 ## 0.24.0 (2026-10-09)
 
 ### Features
