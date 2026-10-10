@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -87,6 +88,28 @@ func (p Policy) network() NetworkPolicy {
 		return NetworkDeny
 	}
 	return p.Network
+}
+
+// callTimeout picks a call's limit: the requested seconds capped by
+// MaxTimeout, or Timeout when the call asks for none.
+func (p Policy) callTimeout(v any) time.Duration {
+	d := p.Timeout
+	var secs float64
+	switch n := v.(type) {
+	case float64:
+		secs = n
+	case int:
+		secs = float64(n)
+	case json.Number:
+		secs, _ = n.Float64()
+	}
+	if secs > 0 {
+		d = time.Duration(secs * float64(time.Second))
+	}
+	if p.MaxTimeout > 0 && (d <= 0 || d > p.MaxTimeout) {
+		d = p.MaxTimeout
+	}
+	return d
 }
 
 // environment returns the KEY=VALUE list a command runs with.

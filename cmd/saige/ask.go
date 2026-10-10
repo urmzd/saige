@@ -27,6 +27,7 @@ const deniedByFlag = "denied by --approve=deny: this session cannot approve tool
 
 func newAskCmd(ctx context.Context) *cobra.Command {
 	var tmplName, approve string
+	var hf harnessFlags
 
 	cmd := &cobra.Command{
 		Use:   "ask [question]",
@@ -59,6 +60,11 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 			}
 			defer cleanup()
 
+			harness, err := hf.build(ctx)
+			if err != nil {
+				return reported(out, err)
+			}
+
 			agentCfg := agentsdk.AgentConfig{
 				Name:         cliName,
 				SystemPrompt: *cf.system,
@@ -67,7 +73,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 				agentCfg.Tools = types.NewToolRegistry(tools...)
 			}
 
-			if err := runAsk(ctx, agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle)), question, out, approve == approveAllow); err != nil {
+			if err := runAsk(ctx, agentsdk.NewAgent(agentCfg, agentsdk.WithPreset(bundle), agentsdk.WithToolset(harness)), question, out, approve == approveAllow); err != nil {
 				return reported(out, err)
 			}
 			if !cf.isJSON() {
@@ -80,6 +86,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 	cmd.Flags().StringVar(&approve, "approve", approveDeny, "Decision for tool calls that need approval, since ask cannot prompt (deny|allow)")
+	addHarnessFlags(cmd, &hf, toolsNone)
 
 	return cmd
 }
