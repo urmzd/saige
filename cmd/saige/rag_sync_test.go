@@ -76,7 +76,7 @@ func TestRAGSyncSkipsSecretsAndKeepsSkippedDocuments(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pipe, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
+	pipe, err := rag.New(rag.Config{}, ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 	if err != nil {
 		t.Fatal(err)
 	}

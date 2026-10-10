@@ -141,7 +141,7 @@ func newRAGPipeline(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags, wi
 	if err != nil {
 		return nil, fmt.Errorf("rag store: %w", err)
 	}
-	pipeline, err := rag.NewPipeline(append(ragPipelineOptions(store, variantEmb), extra...)...)
+	pipeline, err := rag.New(rag.Config{}, append(ragPipelineOptions(store, variantEmb), extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("rag pipeline: %w", err)
 	}
@@ -173,7 +173,7 @@ func newKnowledgeGraph(ctx context.Context, pool *pgxpool.Pool, cf *commonFlags,
 	if err != nil {
 		return nil, err
 	}
-	graph, err := knowledge.NewGraph(ctx, append(opts, knowledge.WithPostgres(pool))...)
+	graph, err := knowledge.New(knowledge.Config{}, append(opts, knowledge.WithPostgres(pool))...)
 	if err != nil {
 		return nil, fmt.Errorf("kg graph: %w", err)
 	}

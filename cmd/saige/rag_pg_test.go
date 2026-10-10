@@ -85,7 +85,7 @@ func TestRAGKeywordSearchSurvivesProcessBoundary(t *testing.T) {
 	ctx := context.Background()
 
 	newPipeline := func() ragtypes.Pipeline {
-		p, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
+		p, err := rag.New(rag.Config{}, ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 		if err != nil {
 			t.Fatalf("pipeline: %v", err)
 		}
@@ -134,7 +134,7 @@ func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	ctx := context.Background()
 
 	newPipeline := func() ragtypes.Pipeline {
-		p, err := rag.NewPipeline(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
+		p, err := rag.New(rag.Config{}, ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder())...)
 		if err != nil {
 			t.Fatalf("pipeline: %v", err)
 		}
@@ -182,7 +182,7 @@ func TestRAGImageIngestReturnsTheImage(t *testing.T) {
 	auto.RegisterImages(agenttypes.ExtractorFunc(func(context.Context, []byte, agenttypes.MediaType) ([]agenttypes.UserPart, error) {
 		return []agenttypes.UserPart{agenttypes.Text("A bar chart of okapi sightings per year.")}, nil
 	}))
-	p, err := rag.NewPipeline(append(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder()), rag.WithContentExtractor(auto))...)
+	p, err := rag.New(rag.Config{}, append(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder()), rag.WithContentExtractor(auto))...)
 	if err != nil {
 		t.Fatal(err)
 	}

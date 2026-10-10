@@ -182,14 +182,7 @@ func main() {
 	//   postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{RAGEmbeddingDim: embedDim})
 	//   store := ragpgstore.NewStore(pool, nil)
 	store := memstore.New()
-	pipe, err := rag.NewPipeline(
-		rag.WithStore(store),
-		rag.WithContentExtractor(&paragraphExtractor{}),
-		rag.WithEmbedders(&bowEmbedderRegistry{}),
-		rag.WithRecursiveChunker(256, 25),
-		rag.WithBM25(nil),
-		rag.WithMMR(0.7),
-	)
+	pipe, err := rag.New(rag.Config{}, rag.WithStore(store), rag.WithContentExtractor(&paragraphExtractor{}), rag.WithEmbedders(&bowEmbedderRegistry{}), rag.WithRecursiveChunker(256, 25), rag.WithBM25(nil), rag.WithMMR(0.7))
 	if err != nil {
 		log.Fatalf("create pipeline: %v", err)
 	}

@@ -170,7 +170,7 @@ func runHybridEval(t *testing.T) map[string]map[string]hybridScores {
 
 	out := map[string]map[string]hybridScores{}
 	for _, arm := range hybridArms {
-		pipe, err := rag.NewPipeline(append([]rag.Option{
+		pipe, err := rag.New(rag.Config{}, append([]rag.Option{
 			rag.WithStore(store), rag.WithContentExtractor(noExtractor{}),
 		}, arm.opts(bm25, vector)...)...)
 		if err != nil {

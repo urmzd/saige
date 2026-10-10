@@ -31,7 +31,7 @@ func TestLiveRAGQuestionWithCitations(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	pipe, err := rag.NewPipeline(rag.WithStore(memstore.New()), rag.WithContentExtractor(extractor.NewAuto()), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(extractor.NewAuto()), rag.WithBM25(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
