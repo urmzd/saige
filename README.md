@@ -55,6 +55,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 
 - **Conversation tree** with branching, checkpoints, rewind, compaction, and RLHF feedback
 - **Multi-retriever RAG** fusing vector, BM25, and graph retrieval via Reciprocal Rank Fusion, with reranking and citations
+- **Long-term memory** scoped by the host, with approval-gated writes and hybrid recall on Postgres, including recall of past conversations. See [memory](docs/memory.md)
 - **Knowledge graph backend** for RAG: LLM-powered entity extraction, fuzzy dedup, and temporal tracking. It differs from the document stores in ingestion and retrieval logic, not in role
 
 ### Evals
