@@ -22,6 +22,8 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/privacy/` | Swaps personal data for placeholders at the provider and tool boundary |
 | `agent/workspace/` | Content-addressed scratch artifacts for a run, with tools to write, read and list them |
 | `agent/memory/` | Durable, host-scoped memory across conversations; writes need approval |
+| `agent/memory/pgstore/` | Postgres memory store: hybrid pgvector and BM25 recall, retention, and opt-in conversation recall |
+| `agent/memory/memorytest/` | Conformance suite every memory store runs |
 | `agent/mcp/` | MCP client pool: imports remote tools behind capability gates |
 | `agent/otel/` | OpenTelemetry spans and metrics for providers, tools and runs |
 | `agent/agui/` | Maps the Delta stream to AG-UI protocol events and writes them as SSE |

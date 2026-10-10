@@ -24,3 +24,11 @@ func renderTemplate(tmpl *template.Template, data any) string {
 //
 //go:embed sql/notify.sql
 var notifySQL string
+
+// memoryRaw creates the memory_record table behind agent/memory/pgstore. It
+// is a template for the embedding dimension, run after notifySQL.
+//
+//go:embed sql/memory.sql.tmpl
+var memoryRaw string
+
+var memoryTmpl = template.Must(template.New("memory").Parse(memoryRaw))

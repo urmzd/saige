@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/privacy"
+	"github.com/urmzd/saige/agent/selector/rank"
 	"github.com/urmzd/saige/agent/types"
 	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
@@ -18,15 +19,6 @@ var (
 	tenant = Scope{Tenant: "acme", Subject: "user-1"}
 	other  = Scope{Tenant: "globex", Subject: "user-1"}
 )
-
-func stores(t *testing.T) map[string]Store {
-	t.Helper()
-	fs, err := NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return map[string]Store{"mem": NewMemStore(), "file": fs}
-}
 
 func TestScope(t *testing.T) {
 	for _, tc := range []struct {
@@ -52,103 +44,6 @@ func TestScope(t *testing.T) {
 	}
 	if !tenant.contains(n) || n.contains(tenant) || tenant.contains(other) {
 		t.Fatal("contains")
-	}
-}
-
-func TestStoreContract(t *testing.T) {
-	ctx := context.Background()
-	for name, store := range stores(t) {
-		t.Run(name, func(t *testing.T) {
-			a, err := store.Remember(ctx, Record{Scope: tenant, Content: "prefers dark mode in the editor", Tags: []string{"ui"}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.Remember(ctx, Record{Scope: tenant.Narrow("proj"), Kind: KindProcedural, Content: "deploy with make release"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.Remember(ctx, Record{Scope: other, Content: "prefers light mode"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.Remember(ctx, Record{Scope: tenant, Content: "expired note about mode", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
-				t.Fatal(err)
-			}
-
-			for _, tc := range []struct {
-				name  string
-				scope Scope
-				query string
-				want  []string
-			}{
-				{"match by content", tenant, "dark mode", []string{"prefers dark mode in the editor"}},
-				{"match by tag", tenant, "ui", []string{"prefers dark mode in the editor"}},
-				{"sub-namespace visible from parent", tenant, "deploy", []string{"deploy with make release"}},
-				{"parent not visible from child", tenant.Narrow("proj"), "dark", nil},
-				{"tenants isolated", other, "dark", nil},
-				{"expired skipped", tenant, "expired", nil},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					recs, err := store.Recall(ctx, tc.scope, tc.query, 0)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var got []string
-					for _, r := range recs {
-						got = append(got, strings.TrimSpace(r.Content))
-					}
-					if strings.Join(got, "|") != strings.Join(tc.want, "|") {
-						t.Fatalf("Recall = %q, want %q", got, tc.want)
-					}
-				})
-			}
-
-			// Idempotency: the same key writes once.
-			k := Record{Scope: tenant, Content: "first", IdempotencyKey: "step-1"}
-			id1, _ := store.Remember(ctx, k)
-			k.Content = "second"
-			id2, _ := store.Remember(ctx, k)
-			if id1 != id2 {
-				t.Fatalf("ids differ: %s %s", id1, id2)
-			}
-			if recs, _ := store.Recall(ctx, tenant, "second", 0); len(recs) != 0 {
-				t.Fatal("a repeated idempotent write replaced the record")
-			}
-
-			// Budget: a tiny budget returns nothing larger than it.
-			if recs, _ := store.Recall(ctx, tenant, "mode", 1); len(recs) != 0 {
-				t.Fatalf("budget ignored: %v", recs)
-			}
-
-			if _, err := store.Remember(ctx, Record{Scope: tenant.AsReadOnly(), Content: "x"}); !errors.Is(err, ErrReadOnly) {
-				t.Fatalf("read-only remember err = %v", err)
-			}
-			if err := store.Forget(ctx, tenant.AsReadOnly(), a); !errors.Is(err, ErrReadOnly) {
-				t.Fatalf("read-only forget err = %v", err)
-			}
-			if err := store.Forget(ctx, other, a); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("cross-tenant forget err = %v", err)
-			}
-			if err := store.Forget(ctx, tenant, a); err != nil {
-				t.Fatal(err)
-			}
-			if recs, _ := store.Recall(ctx, tenant, "dark", 0); len(recs) != 0 {
-				t.Fatal("forgotten record recalled")
-			}
-
-			// A record recalled from a parent scope can be forgotten from it.
-			recs, err := store.Recall(ctx, tenant, "deploy", 0)
-			if err != nil || len(recs) != 1 {
-				t.Fatalf("Recall = %v, %v", recs, err)
-			}
-			if err := store.Forget(ctx, tenant.Narrow("other"), recs[0].ID); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("sibling forget err = %v", err)
-			}
-			if err := store.Forget(ctx, tenant, recs[0].ID); err != nil {
-				t.Fatalf("parent forget err = %v", err)
-			}
-			if recs, _ := store.Recall(ctx, tenant.Narrow("proj"), "deploy", 0); len(recs) != 0 {
-				t.Fatal("record forgotten from parent still recalled")
-			}
-		})
 	}
 }
 
@@ -515,5 +410,93 @@ func TestKGStore(t *testing.T) {
 	}
 	if _, err := k.Remember(ctx, Record{Scope: tenant.AsReadOnly(), Content: "x"}); !errors.Is(err, ErrReadOnly) {
 		t.Fatalf("read-only err = %v", err)
+	}
+}
+
+func TestStartMessageModes(t *testing.T) {
+	ctx := context.Background()
+	ms := NewMemStore()
+	for _, c := range []string{"prefers tabs over spaces", "uses vim keybindings", "the build uses make"} {
+		if _, err := ms.Remember(ctx, Record{Scope: tenant, Content: c}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope := func(context.Context, string) (Scope, error) { return tenant, nil }
+	for _, tc := range []struct {
+		name   string
+		policy Policy
+		query  string
+		ok     bool
+		want   string
+		absent string
+	}{
+		{"by tool injects nothing", Policy{Scope: scope}, "vim", false, "", ""},
+		{"disabled injects nothing", Policy{Scope: scope, Recall: RecallDisabled}, "vim", false, "", ""},
+		{"injection", Policy{Scope: scope, Recall: RecallByInjection}, "vim", true, "vim keybindings", "make"},
+		{"selector default BM25", Policy{Scope: scope, Recall: RecallBySelector}, "which build tool", true, "the build uses make", "vim"},
+		{"custom selector", Policy{Scope: scope, Recall: RecallBySelector, Selector: rank.SelectorFunc[Record](
+			func(_ context.Context, _ string, items []Record, _ int) ([]Record, error) {
+				for _, r := range items {
+					if strings.Contains(r.Content, "tabs") {
+						return []Record{r}, nil
+					}
+				}
+				return nil, nil
+			})}, "anything", true, "tabs over spaces", "vim"},
+		{"budget too small", Policy{Scope: scope, Recall: RecallByInjection, InjectBudget: 1}, "vim", false, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg, ok, err := tc.policy.StartMessage(ctx, ms, "lead", tc.query)
+			if err != nil || ok != tc.ok {
+				t.Fatalf("StartMessage = %v, %v; want ok %v", ok, err, tc.ok)
+			}
+			if !ok {
+				return
+			}
+			text := msg.Content[0].(types.TextContent).Text
+			if !IsInjected(text) || !strings.Contains(text, tc.want) || strings.Contains(text, tc.absent) {
+				t.Fatalf("injected = %q", text)
+			}
+		})
+	}
+	if _, _, err := (Policy{Recall: RecallByInjection}).StartMessage(ctx, ms, "lead", "vim"); !errors.Is(err, ErrNoScope) {
+		t.Fatalf("no scope err = %v", err)
+	}
+}
+
+func TestExtractAfterRun(t *testing.T) {
+	ctx := context.Background()
+	ms := NewMemStore()
+	policy := Policy{Scope: func(context.Context, string) (Scope, error) { return tenant, nil }}
+	ex := ExtractorFunc(func(context.Context, []types.Message) ([]Record, error) {
+		return []Record{
+			{Scope: other, Content: "the team ships on Thursdays"}, // the policy's scope wins
+			{Content: "the user prefers short answers", Kind: KindSemantic},
+		}, nil
+	})
+	msgs := []types.Message{types.NewUserMessage("hi")}
+	ids, err := policy.ExtractAfterRun(ctx, ms, ex, "lead", "run-1", msgs)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("ExtractAfterRun = %v, %v", ids, err)
+	}
+	again, err := policy.ExtractAfterRun(ctx, ms, ex, "lead", "run-1", msgs)
+	if err != nil || strings.Join(again, ",") != strings.Join(ids, ",") {
+		t.Fatalf("replayed extraction = %v, %v; want %v", again, err, ids)
+	}
+	recs, _ := ms.Recall(ctx, tenant, "", 0)
+	if len(recs) != 2 || recs[0].Source.Source != ExtractionSource || recs[0].Source.Agent != "lead" {
+		t.Fatalf("stored %+v", recs)
+	}
+	if recs, _ := ms.Recall(ctx, other, "", 0); len(recs) != 0 {
+		t.Fatal("extractor chose the scope")
+	}
+	sensitive := ExtractorFunc(func(context.Context, []types.Message) ([]Record, error) {
+		return []Record{{Content: "ssn 123-45-6789"}}, nil
+	})
+	if _, err := policy.ExtractAfterRun(ctx, ms, sensitive, "lead", "run-2", msgs); !errors.Is(err, ErrSensitive) {
+		t.Fatalf("sensitive extraction err = %v", err)
+	}
+	if _, err := policy.ExtractAfterRun(ctx, ms, ex, "lead", "", msgs); err == nil {
+		t.Fatal("extraction without a run ID succeeded")
 	}
 }
