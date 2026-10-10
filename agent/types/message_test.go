@@ -61,4 +61,3 @@ func TestNewToolResultMessage(t *testing.T) {
 		t.Fatalf("Content len = %d, want 2", len(msg.Parts))
 	}
 }
-
