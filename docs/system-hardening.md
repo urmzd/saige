@@ -114,6 +114,7 @@ Status values: **implemented** (done and covered by tests), **partial** (done wi
 | Parent-context expansion | partial | `rag/parentretriever/retriever.go`, `rag/chunker/chunker.go` | `retriever_test.go`, `chunker_property_test.go` |
 | Embedding purpose, batching, retry, validation | implemented | `rag/embedderregistry/` | `purpose_test.go`, `retry_internal_test.go`, `validation_test.go` |
 | Source size limits and modified times | implemented | `rag/source/limits.go`, `rag/source/http.go` | `limits_test.go`, `modified_test.go` |
+| Filesystem source skips tool dirs, dot paths, secret names, and ignored paths; skipped URIs are never pruned | implemented | `rag/source/filesystem.go`, `rag/source/ignore.go`, `rag/internal/pipeline/sync.go` | `filter_test.go`, `sync_test.go` |
 | Extractor fuzzing | implemented | `rag/extractor/` | `fuzz_test.go` |
 | Observability for the pipeline and graph | implemented | `rag/otel/`, `rag/knowledge/observe.go`, `rag/internal/pipeline/observe.go` | `otel_test.go`, `observe_test.go` |
 | Knowledge graph episode provenance and document deletion | implemented | `rag/knowledge/pgstore/`, `rag/knowledge/internal/engine/` | `graph_test.go`, `ingest_test.go` |

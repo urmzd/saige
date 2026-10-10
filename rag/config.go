@@ -368,8 +368,8 @@ func NewPipeline(opts ...Option) (ragtypes.Pipeline, error) {
 // SyncSource reconciles src with pipe's store by source URI: new URIs are
 // ingested, changed content replaces the URI's document in place, unchanged
 // content is skipped, and with opts.Prune, URIs the source no longer returns
-// are deleted. Pass the returned Cursor as opts.Since on the next call to
-// skip documents the source reports as not modified since then.
+// are deleted, except URIs a ragtypes.FilteringSource reported as skipped.
+// Pass the returned Cursor as opts.Since on the next call.
 //
 // It returns ragtypes.ErrSyncUnsupported when pipe does not implement
 // ragtypes.SourceSyncer or its store does not implement

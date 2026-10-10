@@ -128,10 +128,13 @@ Ingest and search use the same embedding provider (`--embed-provider`, defaultin
 
 ```bash
 saige rag ingest --db "$SAIGE_RAG_DB" --file paper.pdf --mime application/pdf
+saige rag sync --db "$SAIGE_RAG_DB" --dir docs --include '**/*.md' --exclude 'drafts/**' --prune
 saige rag search --db "$SAIGE_RAG_DB" --query "attention mechanism"
 saige rag lookup --db "$SAIGE_RAG_DB" --uuid <variant-uuid>
 saige rag delete --db "$SAIGE_RAG_DB" --uuid <doc-uuid>
 ```
+
+`rag sync` walks `--dir` and ingests new files, replaces changed ones in place, and with `--prune` deletes documents of files that no longer exist. It skips `.git`, `.hg`, `.svn`, `node_modules`, dot paths, secret file names (`.env*`, `*.pem`, `*.key`, `id_rsa*` and similar), and paths in `.gitignore` or `.saigeignore`. `--include-hidden`, `--include-tool-dirs`, `--allow-secret-names` and `--no-ignore-files` turn those off; `--include` and `--exclude` add doublestar globs relative to `--dir`. The output lists skipped paths with a count per reason, and skipped paths are never pruned.
 
 ## Standalone KG Operations
 

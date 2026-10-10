@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -38,15 +39,47 @@ type SyncOptions struct {
 	// pipeline's scope, or the default scope.
 	Scope string
 	// Since is the cursor returned by the previous sync (SyncResult.Cursor).
-	// A fetched document whose SourceModifiedAt is known and not after Since
-	// is counted as unchanged without hashing or re-ingesting it, provided a
-	// document for its URI already exists. Zero compares every document.
+	// A fetched document that carries its bytes is always compared by
+	// fingerprint, because a modification time can move backwards (cp -p,
+	// rsync -a, tar x). Only a document without bytes (nil Data) whose
+	// SourceModifiedAt is known and not after Since is counted as unchanged
+	// on its time alone, provided a document for its URI already exists.
 	Since time.Time
 	// Prune deletes documents of the scope whose source URI starts with
 	// PrunePrefix but was not returned by the source, and older duplicates
-	// of a URI that the source did return. Without it, nothing is deleted.
+	// of a URI that the source did return. A URI the source reported as
+	// skipped (see FilteringSource) is not pruned. Without it, nothing is
+	// deleted.
 	Prune       bool
 	PrunePrefix string
+}
+
+// SkippedSource is a URI that a source deliberately left out of a fetch,
+// for example because an exclude rule matched it. With Prefix, it stands for
+// every URI that starts with SourceURI, such as the files of a skipped
+// directory, which the source did not list.
+type SkippedSource struct {
+	SourceURI string `json:"source_uri"`
+	Prefix    bool   `json:"prefix,omitempty"`
+	// Reason names the rule that skipped it.
+	Reason string `json:"reason"`
+}
+
+// Covers reports whether uri is the skipped URI or, with Prefix, under it.
+func (s SkippedSource) Covers(uri string) bool {
+	if s.Prefix {
+		return strings.HasPrefix(uri, s.SourceURI)
+	}
+	return uri == s.SourceURI
+}
+
+// FilteringSource is an optional Source interface for sources that leave
+// items out by rule. SyncSource calls FetchWithSkips instead of Fetch, so
+// that skipped items are reported in SyncResult.Skipped and never pruned as
+// absent: a changed rule is not evidence that the item is gone.
+type FilteringSource interface {
+	Source
+	FetchWithSkips(ctx context.Context) ([]RawDocument, []SkippedSource, error)
 }
 
 // SyncError is the failure of one source URI during a sync.
@@ -64,6 +97,9 @@ type SyncResult struct {
 	Updated   []string
 	Unchanged []string
 	Pruned    []string
+	// Skipped lists what a FilteringSource left out by rule. Stored
+	// documents under these URIs are kept, even with Prune.
+	Skipped []SkippedSource
 	// Failed lists the URIs whose ingest, update, or prune failed. A URI
 	// that was written but failed a later stage (ErrPartialIngest) appears
 	// both here and in Created or Updated.

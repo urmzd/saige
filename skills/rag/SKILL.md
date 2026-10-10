@@ -142,6 +142,7 @@ tools := tool.NewTools(pipeline)
 
 ```bash
 saige rag ingest --db "$SAIGE_RAG_DB" --file paper.pdf --mime application/pdf
+saige rag sync --db "$SAIGE_RAG_DB" --dir docs --include '**/*.md' --exclude 'drafts/**' --prune
 saige rag search --db "$SAIGE_RAG_DB" --query "attention mechanism"
 saige rag lookup --db "$SAIGE_RAG_DB" --uuid <variant-uuid>
 saige rag delete --db "$SAIGE_RAG_DB" --uuid <doc-uuid>
