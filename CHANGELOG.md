@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.34.0 (2026-10-10)
+
+### Breaking
+
+- unified constructors, wrapper.Base, wire-safe errors, deprecated names removed (#106) ([9f23589](https://github.com/urmzd/saige/commit/9f23589503438301f2099586e7df99af243bbe76))
+- release follow-ups (citation markers, artifact refs, client locators, modality pricing) (#104) ([efc8c70](https://github.com/urmzd/saige/commit/efc8c70e527f3642bf5c21b198447b8131dfb452))
+- **serve,tui**: typed parts in serve, AG-UI, ACP and the TUI (#100) ([de9fb36](https://github.com/urmzd/saige/commit/de9fb3611d5731e90c34cf90ab5b2168e044fd74))
+- **persistence**: store node messages and durable records as typed parts (#102) ([00b6639](https://github.com/urmzd/saige/commit/00b6639bae64b0352ec50a25d72dc55e3f4618a4))
+- **eval,rag**: typed parts in evals and RAG (#99) ([ebd663b](https://github.com/urmzd/saige/commit/ebd663b8a6006bad5e7cabd8b85e9fb9b592dc77))
+- **agent**: modality token estimates, media-safe compaction, tool citations, paused turns, batch conversion (#101) ([3a7b6b8](https://github.com/urmzd/saige/commit/3a7b6b8925c3e346ba16bff88f38ce405b204a9f))
+- **privacy,cache**: tokenize parts and media, key the response cache on parts (#98) ([92516f5](https://github.com/urmzd/saige/commit/92516f506deea988db142d27a22f893ea4e2a640))
+- **convert**: modality conversion policy, reject by default (#97) ([8a1726a](https://github.com/urmzd/saige/commit/8a1726a4964a27602311f8a4865e38c40a9536c9))
+- **catalog**: catalog v2 offerings, endpoints and typed IDs (#92) ([286c725](https://github.com/urmzd/saige/commit/286c725ac58ea3894c892b6c2541f3970efa66ea))
+- **google**: map typed parts and stream part deltas natively (#90) ([1276a36](https://github.com/urmzd/saige/commit/1276a36c7f503f12d29d4afcb5b608a2994dfc32))
+- **openai**: map typed parts natively on Chat Completions and Responses (#89) ([185926b](https://github.com/urmzd/saige/commit/185926b1025a37783740dd8d3a1e6b89f08d62df))
+- **anthropic**: map typed parts natively and stream part deltas (#88) ([9271df2](https://github.com/urmzd/saige/commit/9271df262d06b933c52652a444c7073f0a931f56))
+- **ollama**: map typed parts and stream part deltas natively (#87) ([1e9b348](https://github.com/urmzd/saige/commit/1e9b3481de3d15693931216481b0bc9aa0b34011))
+- messages are ordered typed parts streamed as part deltas (#86) ([1a7e6dd](https://github.com/urmzd/saige/commit/1a7e6dd053031faf6c6ad8eb4f461187d8f8f075))
+
+### Features
+
+- **cli**: run saige agents in other harnesses (ACP, export, launch, held approvals) (#96) ([65a288a](https://github.com/urmzd/saige/commit/65a288a07134b4e93516467ae108198708c577bc))
+
+### Bug Fixes
+
+- **convert**: move lowered tool result media to a follow-up user message (#108) ([741e2c2](https://github.com/urmzd/saige/commit/741e2c27ee1a0076a42a9035ed2a94f5810e8dbd))
+- **google**: send no system instruction for an empty system prompt (#105) ([f25be76](https://github.com/urmzd/saige/commit/f25be760ec1f248a23e6c92de7d986715a836b32))
+
+### Refactoring
+
+- **definition**: build user messages from parts ([6c441cb](https://github.com/urmzd/saige/commit/6c441cb59f263038fd1294d588eddfd7974d80bb))
+
+### Misc
+
+- upgrade guide, message parts guide and current API in every snippet (#107) ([57cc6d8](https://github.com/urmzd/saige/commit/57cc6d83ffbb1eec0040ed2ee12facb1428576e7))
+- **mcp**: give the 10 MiB result cases the default call timeout (#95) ([60730f4](https://github.com/urmzd/saige/commit/60730f40e427b9a9e4cbe7bfce952f6453816d8e))
+- run CI for pull requests into release branches ([dcf190e](https://github.com/urmzd/saige/commit/dcf190ed8794a56627adaa1117f402a1a8ae0d25))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.33.0...v0.34.0)
+
+
 ## 0.32.0 (2026-10-10)
 
 ### Features
