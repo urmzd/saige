@@ -22,9 +22,7 @@
 package duraturo
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +36,7 @@ import (
 	"github.com/urmzd/duraturo/pkg/worker"
 
 	"github.com/urmzd/saige/agent"
-	_ "github.com/urmzd/saige/agent/internal/durablecodec"
+	"github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -109,14 +107,14 @@ type Workflow struct {
 // Name returns the registered workflow name.
 func (w *Workflow) Name() string { return w.fn.Name() }
 
-// runInput is the serialized workflow input. Messages is gob, which keeps the
-// sealed message and content types that JSON cannot represent.
+// runInput is the serialized workflow input. Messages is a durablecodec
+// record of the input messages.
 type runInput struct {
 	Messages []byte `json:"messages"`
 }
 
-// runOutput is the serialized workflow output: a gob AssistantMessage, or
-// empty when the run produced none.
+// runOutput is the serialized workflow output: a durablecodec record of the
+// final AssistantMessage, or empty when the run produced none.
 type runOutput struct {
 	Final []byte `json:"final,omitempty"`
 }
@@ -294,8 +292,8 @@ func (e *Engine) ttl() time.Duration {
 	return e.ApprovalTTL
 }
 
-// normalize round-trips messages through gob, so values compare the way the
-// run input stores them.
+// normalize round-trips messages through their record, so values compare the
+// way the run input stores them.
 func normalize(msgs []types.Message) ([]byte, []types.Message, error) {
 	raw, err := encode(msgs)
 	if err != nil {
@@ -308,10 +306,8 @@ func normalize(msgs []types.Message) ([]byte, []types.Message, error) {
 	return raw, out, nil
 }
 
-func encode(v any) ([]byte, error) {
-	var b bytes.Buffer
-	err := gob.NewEncoder(&b).Encode(v)
-	return b.Bytes(), err
-}
+// encode and decode go through durablecodec, which records messages and
+// parts in a versioned form and reads the records earlier releases wrote.
+func encode(v any) ([]byte, error) { return durablecodec.Encode(v) }
 
-func decode(raw []byte, v any) error { return gob.NewDecoder(bytes.NewReader(raw)).Decode(v) }
+func decode(raw []byte, v any) error { return durablecodec.Decode(raw, v) }

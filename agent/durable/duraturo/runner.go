@@ -150,7 +150,7 @@ type resolution struct {
 }
 
 // reconcilePayload is the event record Reconcile writes. Result and Receipt
-// are gob. An empty Result permits a retry.
+// are durablecodec records. An empty Result permits a retry.
 type reconcilePayload struct {
 	Result  []byte `json:"result,omitempty"`
 	Receipt []byte `json:"receipt,omitempty"`

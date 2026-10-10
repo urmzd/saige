@@ -53,7 +53,8 @@ func (s PGSource) Records(ctx context.Context, w Window) ([]Record, error) {
 		SELECT conversation_id, uuid FROM agent_node
 		WHERE role = 'assistant' AND state = $1
 		  AND created_at >= $2 AND ($3::timestamptz IS NULL OR created_at < $3)
-		  AND NOT (message->'content' @> '[{"type": "tool_use"}]'::jsonb)
+		  AND NOT COALESCE(message->'parts' @> '[{"type": "tool_call"}]'::jsonb, false)
+		  AND NOT COALESCE(message->'content' @> '[{"type": "tool_use"}]'::jsonb, false)
 		  AND ($4 = '' OR starts_with(conversation_id, $4))
 		ORDER BY created_at, uuid
 		LIMIT $5`, int(types.NodeActive), w.From, to, prefix, limit)

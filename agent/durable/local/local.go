@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent"
-	_ "github.com/urmzd/saige/agent/internal/durablecodec"
+	"github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -61,7 +60,7 @@ type Step struct {
 	Status      string    `json:"status"`
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
-	Result      []byte    `json:"result,omitempty"` // gob preserves sealed content and raw bytes
+	Result      []byte    `json:"result,omitempty"` // durablecodec record; parts keep their media bytes
 	Error       string    `json:"error,omitempty"`
 	// Idempotent records that the step ran an idempotent tool
 	// (types.IdempotentStep), so an attempt without a known outcome is
@@ -83,7 +82,7 @@ type Interrupt struct {
 	Answer json.RawMessage `json:"answer,omitempty"`
 }
 
-// State is a detached inspection snapshot. Input and step Result are gob bytes.
+// State is a detached inspection snapshot. Input and step Result are durablecodec records.
 // Do not put credentials in input, tool arguments, or approval messages.
 type Event struct {
 	Sequence int       `json:"sequence"`
@@ -99,7 +98,7 @@ type State struct {
 	RunID              string                `json:"run_id"`
 	Revision           string                `json:"revision"`
 	Status             string                `json:"status"`
-	Input              []byte                `json:"input"`            // first input segment, gob
+	Input              []byte                `json:"input"`            // first input segment, a durablecodec record
 	Inputs             []InputSegment        `json:"inputs,omitempty"` // later segments, in append order
 	Steps              map[string]Step       `json:"steps"`
 	Interrupts         map[string]Interrupt  `json:"interrupts"`
@@ -675,12 +674,12 @@ func atomicWrite(path string, raw []byte) error {
 	defer func() { _ = dir.Close() }()
 	return dir.Sync()
 }
-func encode(v any) ([]byte, error) {
-	var b bytes.Buffer
-	err := gob.NewEncoder(&b).Encode(v)
-	return b.Bytes(), err
-}
-func decode(raw []byte, v any) error { return gob.NewDecoder(bytes.NewReader(raw)).Decode(v) }
+
+// encode and decode go through durablecodec, which records messages and
+// parts in a versioned form and reads the records earlier releases wrote.
+func encode(v any) ([]byte, error) { return durablecodec.Encode(v) }
+
+func decode(raw []byte, v any) error { return durablecodec.Decode(raw, v) }
 
 func (r *runner) note(kind, id string) {
 	r.state.History = append(r.state.History, Event{Sequence: len(r.state.History) + 1, At: time.Now().UTC(), Kind: kind, ID: id})

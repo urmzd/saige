@@ -433,6 +433,56 @@ func (w *WAL) Compact(_ context.Context) error {
 		}
 	}
 
+	var keep []record
+	for _, r := range recs {
+		if r.Kind == recordCommit && !applied[r.Tx] {
+			keep = append(keep, r)
+		}
+	}
+	return w.rewrite(keep)
+}
+
+// MigrateMessages rewrites the node messages in the log that an older
+// release stored, in the current format (tree.MessageFormatVersion), and
+// returns how many it rewrote, or with dryRun would rewrite. Reads convert
+// older messages on the fly, so this is optional. Every record is kept;
+// only messages change. The rewrite is atomic, like Compact's. There is no
+// way back to the older format, so copy the file first.
+func (w *WAL) MigrateMessages(_ context.Context, dryRun bool) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failed != nil {
+		return 0, fmt.Errorf("filewal: wal disabled by unrecoverable write failure: %w", w.failed)
+	}
+	recs, err := w.readRecords()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range recs {
+		for _, op := range r.Ops {
+			if op.Node == nil {
+				continue
+			}
+			msg, changed, err := tree.MigrateMessage(types.Role(op.Node.Role), op.Node.Message)
+			if err != nil {
+				return 0, fmt.Errorf("filewal: node %s: %w", op.Node.ID, err)
+			}
+			if changed {
+				op.Node.Message = msg
+				n++
+			}
+		}
+	}
+	if dryRun || n == 0 {
+		return n, nil
+	}
+	return n, w.rewrite(recs)
+}
+
+// rewrite atomically replaces the log with recs and reopens the append
+// handle on it. Caller must hold the lock.
+func (w *WAL) rewrite(recs []record) error {
 	dir := filepath.Dir(w.path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(w.path)+".compact-*")
 	if err != nil {
@@ -445,9 +495,6 @@ func (w *WAL) Compact(_ context.Context) error {
 		return fmt.Errorf("filewal: %s: %w", step, err)
 	}
 	for _, r := range recs {
-		if r.Kind != recordCommit || applied[r.Tx] {
-			continue
-		}
 		line, err := json.Marshal(r)
 		if err != nil {
 			return fail("marshal record", err)
