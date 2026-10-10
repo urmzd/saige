@@ -726,3 +726,35 @@ func TestSubmitConcurrent(t *testing.T) {
 		t.Fatalf("late Submit = %v", err)
 	}
 }
+
+// Agent.Submit racing the end of a run must join it or start the next one.
+// A run that releases the branch between Submit's failed claim and its
+// lookup of the active stream once made Submit return ErrRunActive for a
+// free branch.
+func TestAgentSubmitRacingRunEnd(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for i := range 2000 {
+		a := NewAgent(AgentConfig{Provider: &mockProvider{response: "ok"}})
+		branch := a.Tree().Active()
+		first := a.Invoke(ctx, []types.Message{types.NewUserMessage("first")}, branch)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for range first.Deltas() {
+			}
+		}()
+		s, _, err := a.Submit(ctx, branch, types.NewUserMessage("second"), SubmitQueue)
+		if err != nil {
+			t.Fatalf("iteration %d: Submit = %v", i, err)
+		}
+		if s != first {
+			for range s.Deltas() {
+			}
+		}
+		<-done
+		if err := s.Wait(); err != nil {
+			t.Fatalf("iteration %d: run: %v", i, err)
+		}
+	}
+}

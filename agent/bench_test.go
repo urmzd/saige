@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
@@ -59,4 +60,54 @@ func BenchmarkRunDurableNoop(b *testing.B) {
 		a := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "s"})
 		_, _ = a.RunDurable(context.Background(), types.NoopStepRunner{}, input, "")
 	}
+}
+
+// parallelToolProvider asks for parallelToolCalls echo calls on a
+// conversation's first turn and answers once their results are in. It keeps
+// no state, so one instance serves any number of concurrent runs.
+type parallelToolProvider struct{}
+
+const parallelToolCalls = 8
+
+func (parallelToolProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+	ch := make(chan types.Delta, 2*parallelToolCalls+3)
+	if hasToolResult(messages) {
+		ch <- types.TextStartDelta{}
+		ch <- types.TextContentDelta{Content: "done"}
+		ch <- types.TextEndDelta{}
+	} else {
+		for i := range parallelToolCalls {
+			id := "c" + strconv.Itoa(i)
+			ch <- types.ToolCallStartDelta{ID: id, Name: "echo"}
+			ch <- types.ToolCallEndDelta{ID: id, Arguments: map[string]any{}}
+		}
+	}
+	close(ch)
+	return ch, nil
+}
+
+// BenchmarkAgentParallelTools measures a turn with parallel tool calls
+// followed by a text turn, with runs on every P. Compare -cpu 1,4,8 to see
+// how the loop scales across cores.
+func BenchmarkAgentParallelTools(b *testing.B) {
+	tool := &types.ToolFunc{
+		Def: types.ToolDef{Name: "echo", Description: "echo"},
+		Fn:  func(context.Context, map[string]any) (string, error) { return "ok", nil },
+	}
+	tools := types.NewToolRegistry(tool)
+	input := []types.Message{types.NewUserMessage("use the tools")}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			a := NewAgent(AgentConfig{Provider: parallelToolProvider{}, Tools: tools, SystemPrompt: "s"})
+			stream := a.Invoke(context.Background(), input)
+			for range stream.Deltas() {
+			}
+			if err := stream.Wait(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

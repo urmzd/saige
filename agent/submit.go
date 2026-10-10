@@ -562,7 +562,12 @@ func (a *Agent) Submit(ctx context.Context, branch types.BranchID, msg types.Use
 		if !errors.Is(err, ErrRunActive) {
 			return nil, "", err
 		}
-		active := activeRuns.stream(tr, branch)
+		active, held := activeRuns.holder(tr, branch)
+		if !held {
+			// The run released the branch after the claim failed; claim it
+			// again.
+			continue
+		}
 		if active == nil {
 			return nil, "", err
 		}

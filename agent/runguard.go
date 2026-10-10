@@ -133,12 +133,19 @@ func (c *runClaim) release() {
 	})
 }
 
-// stream returns the stream of the run holding branch of t, or nil when the
-// branch is free or held by a run that does not take submitted messages.
-func (g *runGuard) stream(t *tree.Tree, branch types.BranchID) *EventStream {
+// holder reports whether branch of t is held, by a branch claim or a claim
+// of the whole tree, and returns the stream of the holding run when it takes
+// submitted messages.
+func (g *runGuard) holder(t *tree.Tree, branch types.BranchID) (s *EventStream, held bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.streams[t][branch]
+	if _, ok := g.trees[t]; ok {
+		return nil, true
+	}
+	if _, ok := g.branches[t][branch]; !ok {
+		return nil, false
+	}
+	return g.streams[t][branch], true
 }
 
 // claimTree reserves all of t, for work that replaces the tree's contents.

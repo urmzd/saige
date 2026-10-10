@@ -57,9 +57,10 @@ type Cache[V any] struct {
 	degraded atomic.Bool
 	// generation counts received invalidations. A fill from Shared is
 	// skipped when one arrived during the read, since the value read may be
-	// the one it invalidated.
+	// the one it invalidated, and Set skips its local write when one arrived
+	// during its shared write, since a later write may have replaced it.
 	generation atomic.Uint64
-	// fill orders a local fill against an invalidation, so a fill that
+	// fill orders a local fill or write against an invalidation, so one that
 	// passed the generation check finishes before the delete runs.
 	fill sync.Mutex
 }
@@ -136,7 +137,12 @@ func (c *Cache[V]) Get(ctx context.Context, key string) (V, bool, error) {
 
 // Set implements types.Cache. The value is written to Shared and Local, and
 // other processes drop their local copy of key.
+//
+// When an invalidation arrives while Shared is being written, another
+// process may have written key after this one, so Local drops key instead
+// of keeping a value Shared may no longer hold.
 func (c *Cache[V]) Set(ctx context.Context, key string, value V, ttl time.Duration) error {
+	gen := c.generation.Load()
 	if c.cfg.Shared != nil {
 		if err := c.cfg.Shared.Set(ctx, key, value, ttl); err != nil {
 			return err
@@ -146,7 +152,15 @@ func (c *Cache[V]) Set(ctx context.Context, key string, value V, ttl time.Durati
 	if c.cfg.LocalTTL > 0 && (localTTL <= 0 || c.cfg.LocalTTL < localTTL) {
 		localTTL = c.cfg.LocalTTL
 	}
-	if err := c.cfg.Local.Set(ctx, key, value, localTTL); err != nil {
+	c.fill.Lock()
+	var err error
+	if c.cfg.Shared != nil && c.generation.Load() != gen {
+		err = c.cfg.Local.Delete(ctx, key)
+	} else {
+		err = c.cfg.Local.Set(ctx, key, value, localTTL)
+	}
+	c.fill.Unlock()
+	if err != nil {
 		return err
 	}
 	return c.publish(ctx, key)
