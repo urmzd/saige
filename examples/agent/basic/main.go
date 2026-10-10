@@ -15,8 +15,14 @@ import (
 
 func main() {
 	// Create Ollama client and adapter.
-	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
-	adapter := ollama.New(ollama.Config{Client: client})
+	client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	adapter, err := ollama.New(ollama.Config{Client: client})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Define an "add" tool that sums two numbers.
 	addTool := &types.ToolFunc{
@@ -40,12 +46,15 @@ func main() {
 	}
 
 	// Build the agent.
-	agent := agentsdk.New(agentsdk.Config{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "calculator",
 		SystemPrompt: "You are a helpful calculator. Use the add tool to perform addition.",
 		Provider:     adapter,
 		Tools:        types.NewToolRegistry(addTool),
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Invoke with a user message.
 	stream := agent.Invoke(context.Background(), []types.Message{

@@ -212,7 +212,12 @@ func (e *freshExtractor) Extract(_ context.Context, raw *types.RawDocument) (*ty
 
 func TestEvaluateSourceLabelsSurviveReingest(t *testing.T) {
 	ctx := context.Background()
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(&freshExtractor{}), rag.WithBM25(nil), rag.WithDedupBehavior(types.DedupReplace))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(memstore.New()),
+		rag.WithContentExtractor(&freshExtractor{}),
+		rag.WithBM25(nil),
+		rag.WithDedupBehavior(types.DedupReplace),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

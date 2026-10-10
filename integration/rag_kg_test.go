@@ -102,14 +102,22 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 	// Knowledge side: public constructor with an injected fake extractor and
 	// no embedder: SearchFacts degrades to fulltext-only, no LLM required.
 	kgStore := must.Get(kgpgstore.New(kgpgstore.Config{Pool: pool}))
-	graph, err := knowledge.New(knowledge.Config{}, knowledge.WithStore(kgStore), knowledge.WithExtractor(&kgFakeExtractor{}))
+	graph, err := knowledge.New(knowledge.Config{},
+		knowledge.WithStore(kgStore),
+		knowledge.WithExtractor(&kgFakeExtractor{}),
+	)
 	if err != nil {
 		t.Fatalf("new graph: %v", err)
 	}
 
 	// RAG side: real pg store, real plaintext content extractor, fake embedder.
 	ragStore := must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(ragStore), rag.WithContentExtractor(extractor.NewAuto()), rag.WithEmbedders(embedderregistry.NewTextOnly(&hashVariantEmbedder{})), rag.WithGraph(graph))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(ragStore),
+		rag.WithContentExtractor(extractor.NewAuto()),
+		rag.WithEmbedders(embedderregistry.NewTextOnly(&hashVariantEmbedder{})),
+		rag.WithGraph(graph),
+	)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
 	}
@@ -171,7 +179,11 @@ func TestRAGKnowledgeGraphRoundTrip(t *testing.T) {
 	// Isolate the graph retriever: a pipeline whose ONLY retriever is the one
 	// WithGraph registers. Hits here can only have come through the KG, and
 	// provenance must resolve back to the ingested document via episode GroupID.
-	graphOnly, err := rag.New(rag.Config{}, rag.WithStore(ragStore), rag.WithContentExtractor(extractor.NewAuto()), rag.WithGraph(graph))
+	graphOnly, err := rag.New(rag.Config{},
+		rag.WithStore(ragStore),
+		rag.WithContentExtractor(extractor.NewAuto()),
+		rag.WithGraph(graph),
+	)
 	if err != nil {
 		t.Fatalf("new graph-only pipeline: %v", err)
 	}

@@ -68,7 +68,11 @@ func TestWithGraphRegistersGraphRetriever(t *testing.T) {
 		facts: []knowledgetypes.Fact{{UUID: "f1", FactText: "saige is a Go SDK"}},
 	}
 
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(&stubExtractor{}), rag.WithGraph(graph))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(memstore.New()),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithGraph(graph),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +95,11 @@ func TestWithGraphDeleteRemovesEpisodes(t *testing.T) {
 	ctx := context.Background()
 	graph := &factGraph{}
 
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(&stubExtractor{}), rag.WithGraph(graph))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(memstore.New()),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithGraph(graph),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +230,11 @@ func (s *keywordStore) SearchByKeyword(_ context.Context, query string, opts *ra
 func TestBM25UsesStoreKeywordSearch(t *testing.T) {
 	ctx := context.Background()
 	store := &keywordStore{Store: memstore.New()}
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(store), rag.WithContentExtractor(&stubExtractor{}), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(store),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +268,11 @@ func (w wrappedStore) Unwrap() ragtypes.Store { return w.Store }
 func TestBM25UnwrapsStoreForKeywordSearch(t *testing.T) {
 	ctx := context.Background()
 	inner := &keywordStore{Store: memstore.New()}
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(wrappedStore{wrappedStore{inner}}), rag.WithContentExtractor(&stubExtractor{}), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(wrappedStore{wrappedStore{inner}}),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +293,11 @@ func TestBM25UnwrapsStoreForKeywordSearch(t *testing.T) {
 func TestKeywordQueryReachesStore(t *testing.T) {
 	ctx := context.Background()
 	store := &keywordStore{Store: memstore.New()}
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(store), rag.WithContentExtractor(&stubExtractor{}), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(store),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithBM25(nil),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +334,13 @@ func (r rankedRetriever) Retrieve(_ context.Context, _ string, _ *ragtypes.Searc
 // decide the order and that a search's own weights override them.
 func TestFusionWeightsPerPipelineAndQuery(t *testing.T) {
 	ctx := context.Background()
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(memstore.New()), rag.WithContentExtractor(&stubExtractor{}), rag.WithRetrievers(rankedRetriever{"vector", []string{"v"}}, rankedRetriever{"bm25", []string{"k"}}), rag.WithFusionWeights(map[string]float64{"bm25": 3}), rag.WithFusionK(10))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(memstore.New()),
+		rag.WithContentExtractor(&stubExtractor{}),
+		rag.WithRetrievers(rankedRetriever{"vector", []string{"v"}}, rankedRetriever{"bm25", []string{"k"}}),
+		rag.WithFusionWeights(map[string]float64{"bm25": 3}),
+		rag.WithFusionK(10),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

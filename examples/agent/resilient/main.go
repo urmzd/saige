@@ -19,29 +19,42 @@ import (
 
 func main() {
 	// Primary provider: llama3.2 with retry.
-	primaryClient := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
-	primaryAdapter := ollama.New(ollama.Config{Client: primaryClient})
+	primaryAdapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	retryProvider := retry.New(primaryAdapter, retry.Config{
+	retryProvider, err := retry.New(primaryAdapter, retry.Config{
 		MaxAttempts: 3,
 		BaseDelay:   500 * time.Millisecond,
 		MaxDelay:    5 * time.Second,
 		Multiplier:  2.0,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Secondary provider: different model as fallback.
-	secondaryClient := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "mistral"})
-	secondaryAdapter := ollama.New(ollama.Config{Client: secondaryClient})
+	secondaryAdapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "mistral"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Compose: retry the primary, then fall back to the secondary.
-	composed := fallback.New(retryProvider, secondaryAdapter)
+	composed, err := fallback.Of(retryProvider, secondaryAdapter)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Build agent with the composed provider.
-	agent := agentsdk.New(agentsdk.Config{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "resilient-agent",
 		SystemPrompt: "You are a helpful assistant.",
 		Provider:     composed,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Invoke and stream the response.
 	stream := agent.Invoke(context.Background(), []types.Message{

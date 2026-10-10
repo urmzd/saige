@@ -23,14 +23,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer bundle.Close()
+	defer bundle.Close(ctx)
 
 	weather := agent.Func("weather", "Current weather for a city",
 		func(rc agent.RunContext[agent.NoDeps], in WeatherIn) (string, error) {
 			return "18C and sunny in " + in.City, nil
 		})
 
-	a := agent.New(agent.Config{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	a, err := agent.New(agent.Config{Tools: types.NewToolRegistry(weather)}, agent.WithPreset(bundle))
+	if err != nil {
+		log.Fatal(err)
+	}
 	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What's the weather in Lisbon?"))}))
 	if err != nil {
 		log.Fatal(err)

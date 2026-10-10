@@ -107,7 +107,13 @@ func TestRAGPipelinePostgres(t *testing.T) {
 	requireEmbedDim(t, ctx, embedder)
 	truncate(t, pool, "rag_document", "rag_original", "rag_section", "rag_variant")
 
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))), rag.WithContentExtractor(extractor.NewAuto()), rag.WithEmbedders(embedderregistry.NewTextOnly(variantTextEmbedder{embedder})), rag.WithRecursiveChunker(256, 25), rag.WithBM25(nil))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(must.Get(ragpgstore.New(ragpgstore.Config{Pool: pool}))),
+		rag.WithContentExtractor(extractor.NewAuto()),
+		rag.WithEmbedders(embedderregistry.NewTextOnly(variantTextEmbedder{embedder})),
+		rag.WithRecursiveChunker(256, 25),
+		rag.WithBM25(nil),
+	)
 	if err != nil {
 		t.Fatalf("create pipeline: %v", err)
 	}
@@ -175,7 +181,11 @@ func TestKnowledgeGraphPostgres(t *testing.T) {
 	requireEmbedDim(t, ctx, ollama.NewEmbedder(client))
 	truncate(t, pool, "kg_entity", "kg_relation", "kg_episode", "kg_mention")
 
-	graph, err := knowledge.New(knowledge.Config{}, knowledge.WithPostgres(pool), knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)), knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)))
+	graph, err := knowledge.New(knowledge.Config{},
+		knowledge.WithPostgres(pool),
+		knowledge.WithExtractor(knowledge.NewOllamaExtractor(client)),
+		knowledge.WithEmbedder(knowledge.NewOllamaEmbedder(client)),
+	)
 	if err != nil {
 		t.Fatalf("create graph: %v", err)
 	}

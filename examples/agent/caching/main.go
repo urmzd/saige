@@ -21,12 +21,18 @@ import (
 )
 
 func main() {
-	base := ollama.New(ollama.Config{Client: ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})})
+	base, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	cached := cache.New(base, cache.Config{
+	cached, err := cache.New(base, cache.Config{
 		Cache:        memcache.New[cache.CachedResponse](),
 		KeyNamespace: "demo",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	request := []types.Message{
 		types.SystemMsg(types.Text("You are concise.")),

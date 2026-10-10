@@ -31,8 +31,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	emb := ollama.NewEmbedder(ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"}))
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(pgstore.New(pgstore.Config{Pool: pool})), rag.WithContentExtractor(extractor.NewAuto()), rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))), rag.WithRecursiveChunker(512, 64), rag.WithBM25(nil), // keyword search runs in Postgres through pg_search)
+	client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", EmbeddingModel: "nomic-embed-text"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := pgstore.New(pgstore.Config{Pool: pool})
+	if err != nil {
+		log.Fatal(err)
+	}
+	emb := ollama.NewEmbedder(client)
+	pipe, err := rag.New(rag.Config{Store: store},
+		rag.WithContentExtractor(extractor.NewAuto()),
+		rag.WithEmbedders(embedderregistry.NewTextOnly(embedderregistry.Text(emb))),
+		rag.WithRecursiveChunker(512, 64),
+		rag.WithBM25(nil), // keyword search runs in Postgres through pg_search
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

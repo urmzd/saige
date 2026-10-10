@@ -16,8 +16,10 @@ import (
 
 func main() {
 	// Shared provider for both parent and child.
-	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
-	adapter := ollama.New(ollama.Config{Client: client})
+	adapter, err := ollama.New(ollama.Config{Host: "http://localhost:11434", Model: "llama3.2"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Mock search tool for the researcher sub-agent.
 	searchTool := &types.ToolFunc{
@@ -40,7 +42,7 @@ func main() {
 	}
 
 	// Build the parent agent with a researcher sub-agent.
-	agent := agentsdk.New(agentsdk.Config{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "coordinator",
 		SystemPrompt: "You coordinate research tasks. Delegate research to the researcher.",
 		Provider:     adapter,
@@ -54,6 +56,9 @@ func main() {
 			},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Invoke with a research request.
 	stream := agent.Invoke(context.Background(), []types.Message{

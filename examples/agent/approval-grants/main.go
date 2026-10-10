@@ -51,11 +51,14 @@ func main() {
 		agenttest.TextResponse("Done."),
 	}}
 
-	agent := agentsdk.New(agentsdk.Config{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:     "editor",
 		Provider: model,
 		Tools:    types.NewToolRegistry(write, read, remove),
 	}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{RiskDefaults: true, DenyAfter: 3}))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Set up the app files."))})
 	for d := range stream.Deltas() {

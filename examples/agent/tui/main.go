@@ -31,11 +31,17 @@ func main() {
 	verbose := flag.Bool("verbose", false, "use verbose mode with Runner")
 	flag.Parse()
 
-	client := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+	client, err := ollama.NewClient(ollama.Config{Host: "http://localhost:11434", Model: "qwen3.5:4b"})
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *interactive || (*runner && !*verbose) {
 		client.Logger = log.New(io.Discard, "", 0)
 	}
-	adapter := ollama.New(ollama.Config{Client: client})
+	adapter, err := ollama.New(ollama.Config{Client: client})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	searchTool := &types.ToolFunc{
 		Def: types.ToolDef{
@@ -56,7 +62,7 @@ func main() {
 		},
 	}
 
-	agent := agentsdk.New(agentsdk.Config{
+	agent, err := agentsdk.New(agentsdk.Config{
 		Name:         "coordinator",
 		SystemPrompt: "You coordinate research tasks. Delegate research to the researcher.",
 		Provider:     adapter,
@@ -70,6 +76,9 @@ func main() {
 			},
 		},
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Multi-turn Runner pattern: user types messages in a loop.
 	if *runner {

@@ -166,7 +166,14 @@ func TestPipelineSearchSpans(t *testing.T) {
 	obs, tracer := newObserver(t, nil)
 	store := memstore.New()
 	emb := tableEmbedder{}
-	pipe, err := rag.New(rag.Config{}, rag.WithStore(store), rag.WithContentExtractor(oneSection{}), rag.WithEmbedders(emb), rag.WithRetrievers(vectorretriever.New(store, emb), bm25retriever.New(store, nil)), rag.WithReranker(identityReranker{}), rag.WithObserver(obs))
+	pipe, err := rag.New(rag.Config{},
+		rag.WithStore(store),
+		rag.WithContentExtractor(oneSection{}),
+		rag.WithEmbedders(emb),
+		rag.WithRetrievers(vectorretriever.New(store, emb), bm25retriever.New(store, nil)),
+		rag.WithReranker(identityReranker{}),
+		rag.WithObserver(obs),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
