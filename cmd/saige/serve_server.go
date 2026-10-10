@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +20,7 @@ import (
 	"github.com/urmzd/saige/agent/agui"
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 )
 
 // serveOptions configures the HTTP server behind saige serve.
@@ -38,7 +37,7 @@ type serveOptions struct {
 	// newSessionAgent, when set, replaces newAgent: it also returns what
 	// the session releases when it ends, its grant limit, and a description
 	// of the agent for the session's creation response.
-	newSessionAgent func() (sessionAgent, error)
+	newSessionAgent func() (agenthost.Agent, error)
 	// token, when set, must arrive as "Authorization: Bearer <token>".
 	token string
 	// approvalTimeout denies a pending approval nobody answered in time.
@@ -60,37 +59,17 @@ type serveOptions struct {
 type server struct {
 	opts     serveOptions
 	ctx      context.Context
-	mu       sync.Mutex
-	sessions map[string]*session
-	// reserved counts session slots held by creates that are still
-	// building their agent, so concurrent creates cannot pass the cap.
-	reserved int
+	sessions *agenthost.Manager[*turns]
 }
 
-// sessionAgent is an agent built for one session, with what goes with it.
-type sessionAgent struct {
-	agent *agentsdk.Agent
-	// release frees what the agent holds, such as MCP connections.
-	release func()
-	// checkGrant rejects a grant the agent's definition does not allow.
-	checkGrant func(*types.GrantRequest) error
-	// info is reported as "agent" when the session is created, such as the
-	// pinned definition the session runs.
-	info any
-}
+// session is one serve session: the shared session with serve's turns.
+type session = agenthost.Session[*turns]
 
-type session struct {
-	id    string
-	agent *agentsdk.Agent
-	// release and checkGrant come from sessionAgent; either may be nil.
-	release    func()
-	checkGrant func(*types.GrantRequest) error
-	mu         sync.Mutex
-	turns      map[string]*turn
-	last       *turn
-	// idleSince is when the session was created or its last turn
-	// finished. It is guarded by mu.
-	idleSince time.Time
+// turns are the turns a session ran, kept for replay.
+type turns struct {
+	mu   sync.Mutex
+	byID map[string]*turn
+	last *turn
 }
 
 // turn records one agent run as encoded wire envelopes for SSE replay.
@@ -135,67 +114,16 @@ func newServer(ctx context.Context, opts serveOptions) *server {
 	if opts.logger == nil {
 		opts.logger = slog.Default()
 	}
-	s := &server{opts: opts, ctx: ctx, sessions: map[string]*session{}}
-	go s.sweepIdle()
+	s := &server{opts: opts, ctx: ctx, sessions: agenthost.NewManager[*turns](agenthost.Options{
+		Max: opts.maxSessions, IdleTTL: opts.idleTTL, Prefix: "s_",
+	})}
+	go s.sessions.Sweep(ctx)
 	return s
 }
 
-// sweepIdle drops idle sessions until the server's context ends.
-func (s *server) sweepIdle() {
-	tick := time.NewTicker(min(s.opts.idleTTL/4, time.Minute))
-	defer tick.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case now := <-tick.C:
-			s.evictIdle(now)
-		}
-	}
-}
-
 // evictIdle drops every session with no running turn that has been idle
-// for at least idleTTL. A running turn keeps its session alive however
-// long it takes.
-func (s *server) evictIdle(now time.Time) {
-	s.mu.Lock()
-	var dropped []*session
-	for id, sess := range s.sessions {
-		if sess.idleFor(now) >= s.opts.idleTTL {
-			delete(s.sessions, id)
-			dropped = append(dropped, sess)
-		}
-	}
-	s.mu.Unlock()
-	for _, sess := range dropped {
-		sess.end()
-	}
-}
-
-// end releases what the session's agent holds.
-func (sess *session) end() {
-	if sess.release != nil {
-		sess.release()
-	}
-}
-
-// idleFor reports how long the session has had no running turn, or zero
-// while a turn runs.
-func (sess *session) idleFor(now time.Time) time.Duration {
-	sess.mu.Lock()
-	last, since := sess.last, sess.idleSince
-	sess.mu.Unlock()
-	if last != nil {
-		last.mu.Lock()
-		done, finished := last.done, last.finishedAt
-		last.mu.Unlock()
-		if !done {
-			return 0
-		}
-		since = finished
-	}
-	return now.Sub(since)
-}
+// for at least idleTTL.
+func (s *server) evictIdle(now time.Time) { s.sessions.Evict(now) }
 
 // handler routes the API. Every request passes the host and token checks;
 // every POST must declare a JSON body, which a cross-site form cannot send
@@ -258,37 +186,24 @@ func isLoopbackHost(hostport string) bool {
 }
 
 func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
-	// The slot is reserved before the agent is built, so the cap holds
-	// however many creates run at once.
-	s.mu.Lock()
-	if len(s.sessions)+s.reserved >= s.opts.maxSessions {
-		s.mu.Unlock()
-		writeError(w, http.StatusTooManyRequests, "session limit reached")
+	sess, err := s.sessions.Create("", &turns{byID: map[string]*turn{}}, func() (agenthost.Agent, error) {
+		if s.opts.newSessionAgent != nil {
+			return s.opts.newSessionAgent()
+		}
+		a, err := s.opts.newAgent()
+		return agenthost.Agent{Agent: a}, err
+	})
+	switch {
+	case errors.Is(err, agenthost.ErrLimit):
+		writeError(w, http.StatusTooManyRequests, err.Error())
 		return
-	}
-	s.reserved++
-	s.mu.Unlock()
-
-	var sa sessionAgent
-	var err error
-	if s.opts.newSessionAgent != nil {
-		sa, err = s.opts.newSessionAgent()
-	} else {
-		sa.agent, err = s.opts.newAgent()
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reserved--
-	if err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sess := &session{id: "s_" + randomID(), agent: sa.agent, release: sa.release, checkGrant: sa.checkGrant,
-		turns: map[string]*turn{}, idleSince: time.Now()}
-	s.sessions[sess.id] = sess
-	resp := map[string]any{"session_id": sess.id}
-	if sa.info != nil {
-		resp["agent"] = sa.info
+	resp := map[string]any{"session_id": sess.ID}
+	if info := sess.Agent().Info; info != nil {
+		resp["agent"] = info
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -297,28 +212,15 @@ func (s *server) createSession(w http.ResponseWriter, _ *http.Request) {
 // streams for its turns end with the turn.
 func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("sid")
-	s.mu.Lock()
-	sess := s.sessions[id]
-	delete(s.sessions, id)
-	s.mu.Unlock()
-	if sess == nil {
+	if s.sessions.Remove(id) == nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	sess.mu.Lock()
-	last := sess.last
-	sess.mu.Unlock()
-	if last != nil {
-		last.stream.Cancel()
-	}
-	sess.end()
 	writeJSON(w, http.StatusOK, map[string]string{"session_id": id})
 }
 
 func (s *server) lookup(r *http.Request) *session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sessions[r.PathValue("sid")]
+	return s.sessions.Get(r.PathValue("sid"))
 }
 
 func (s *server) session(w http.ResponseWriter, r *http.Request) *session {
@@ -334,9 +236,9 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) *turn {
 	if sess == nil {
 		return nil
 	}
-	sess.mu.Lock()
-	t := sess.turns[r.PathValue("tid")]
-	sess.mu.Unlock()
+	sess.Host.mu.Lock()
+	t := sess.Host.byID[r.PathValue("tid")]
+	sess.Host.mu.Unlock()
 	if t == nil {
 		writeError(w, http.StatusNotFound, "turn not found")
 	}
@@ -349,7 +251,7 @@ func (s *server) getTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := tree.Print(w, sess.agent.Tree()); err != nil {
+	if err := tree.Print(w, sess.Agent().Agent.Tree()); err != nil {
 		s.opts.logger.Warn("serve: print tree", "error", err)
 	}
 }
@@ -367,22 +269,27 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	if sess.last != nil && !sess.last.finished() {
-		// One run per branch: a new turn waits for the current one.
-		writeError(w, http.StatusConflict, "a turn is already running in this session: "+sess.last.id)
+	sess.Host.mu.Lock()
+	defer sess.Host.mu.Unlock()
+	stream, err := sess.Start(s.ctx, types.UserMsg(types.Text(body.Message)))
+	if err != nil {
+		msg := err.Error()
+		if errors.Is(err, agenthost.ErrBusy) && sess.Host.last != nil {
+			// One run per branch: a new turn waits for the current one.
+			msg += ": " + sess.Host.last.id
+		}
+		writeError(w, http.StatusConflict, msg)
 		return
 	}
 	t := &turn{
 		id:      "t_" + randomID(),
+		stream:  stream,
 		limit:   s.opts.bufferEvents,
 		changed: make(chan struct{}),
 		timers:  map[string]*time.Timer{},
 	}
-	t.stream = sess.agent.Invoke(s.ctx, []types.Message{types.UserMsg(types.Text(body.Message))})
-	sess.turns[t.id] = t
-	sess.last = t
+	sess.Host.byID[t.id] = t
+	sess.Host.last = t
 	go s.record(t)
 	writeJSON(w, http.StatusAccepted, map[string]string{keyTurnID: t.id})
 }
@@ -680,23 +587,24 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `body must include "approved": true or false`)
 		return
 	}
-	if err := checkGrant(body.Grant, *body.Approved, time.Now()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if sess := s.lookup(r); sess != nil && sess.checkGrant != nil {
-		if err := sess.checkGrant(body.Grant); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	id := r.PathValue("toolCallID")
-	err := t.stream.ResolveMarkerErr(id, agentsdk.Resolution{
+	res := agentsdk.Resolution{
 		Approved:     *body.Approved,
 		ModifiedArgs: body.ModifiedArgs,
 		Message:      body.Message,
 		Grant:        body.Grant,
-	})
+	}
+	check := func(r agentsdk.Resolution, now time.Time) error {
+		return agenthost.ValidateGrant(r.Grant, r.Approved, now)
+	}
+	if sess := s.lookup(r); sess != nil {
+		check = sess.CheckDecision
+	}
+	if err := check(res, time.Now()); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := r.PathValue("toolCallID")
+	err := t.stream.ResolveMarkerErr(id, res)
 	switch {
 	case errors.Is(err, agentsdk.ErrUnknownMarker):
 		writeError(w, http.StatusNotFound, err.Error())
@@ -708,25 +616,6 @@ func (s *server) resolveInterrupt(w http.ResponseWriter, r *http.Request) {
 		t.disarm(id)
 		writeJSON(w, http.StatusOK, map[string]any{"tool_call_id": id, "approved": *body.Approved})
 	}
-}
-
-// checkGrant validates the grant a client attached to a decision: only an
-// approval can carry one, its scope and matchers must be well formed, and
-// its expiry must lie in the future.
-func checkGrant(g *types.GrantRequest, approved bool, now time.Time) error {
-	if g == nil {
-		return nil
-	}
-	if !approved {
-		return errors.New(`"grant" requires "approved": true`)
-	}
-	if err := g.Validate(); err != nil {
-		return err
-	}
-	if !g.ExpiresAt.IsZero() && !g.ExpiresAt.After(now) {
-		return fmt.Errorf("%w: expires_at %s is not in the future", types.ErrInvalidGrant, g.ExpiresAt.Format(time.RFC3339))
-	}
-	return nil
 }
 
 func (s *server) cancelTurn(w http.ResponseWriter, r *http.Request) {
@@ -748,8 +637,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func randomID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
+func randomID() string { return agenthost.RandomID() }

@@ -463,12 +463,10 @@ func TestServeDeleteSession(t *testing.T) {
 	f.events(sid, tid, "", func(fr sseFrame) bool { return fr.kind == types.WireMarker })
 	f.post("/v1/sessions", map[string]any{}, http.StatusTooManyRequests)
 
-	f.app.mu.Lock()
-	sess := f.app.sessions[sid]
-	f.app.mu.Unlock()
-	sess.mu.Lock()
-	tr := sess.turns[tid]
-	sess.mu.Unlock()
+	sess := f.app.sessions.Get(sid)
+	sess.Host.mu.Lock()
+	tr := sess.Host.byID[tid]
+	sess.Host.mu.Unlock()
 
 	f.do(http.MethodDelete, "/v1/sessions/"+sid, nil, http.StatusOK)
 	f.do(http.MethodDelete, "/v1/sessions/"+sid, nil, http.StatusNotFound)

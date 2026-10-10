@@ -15,6 +15,7 @@ import (
 	agentsdk "github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/definition"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/cmd/internal/agenthost"
 	"github.com/urmzd/saige/tools"
 	"github.com/urmzd/saige/tools/exec"
 	"github.com/urmzd/saige/tools/fetch"
@@ -105,12 +106,12 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 				}
 				// Each session binds the definition the registry resolves
 				// when it starts and keeps it, pinned, until it ends.
-				opts.newSessionAgent = func() (sessionAgent, error) {
+				opts.newSessionAgent = func() (agenthost.Agent, error) {
 					b, err := h.bind(srvCtx, agentRef)
 					if err != nil {
-						return sessionAgent{}, err
+						return agenthost.Agent{}, err
 					}
-					return sessionAgent{agent: b.NewAgent(), release: func() { _ = b.Close() }, checkGrant: b.CheckGrant, info: b.Pin()}, nil
+					return agenthost.FromBound(b), nil
 				}
 				return listenAndServe(ctx, srvCtx, cmd, addr, opts, -1)
 			}
