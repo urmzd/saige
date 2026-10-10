@@ -1088,8 +1088,11 @@ func satisfiesResponseSchema(schema *types.ParameterSchema, msg *types.Assistant
 // marked unavailable with the reason, and the attempt's conversion plan
 // then rejects it (or omits it, when the modality dial permits). A URI with
 // no resolver, such as https or gs, is left for the provider to fetch: the
-// plan decides per attempt whether the serving endpoint reads it.
+// plan decides per attempt whether the serving endpoint reads it. A part
+// whose bytes were stored as a saige-artifact reference gets them back
+// first (resolveRefs).
 func (a *Agent) resolveSources(ctx context.Context, messages []types.Message) []types.Message {
+	messages = a.resolveRefs(ctx, messages)
 	out := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
 		um, ok := msg.(types.UserMessage)
