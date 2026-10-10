@@ -26,7 +26,7 @@ const (
 const deniedByFlag = "denied by --approve=deny: this session cannot approve tool calls that need confirmation"
 
 func newAskCmd(ctx context.Context) *cobra.Command {
-	var tmplName, approve string
+	var tmplName, approve, agentRef string
 	var hf harnessFlags
 
 	cmd := &cobra.Command{
@@ -48,6 +48,21 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 			}
 
 			out := tui.ResolveOutput(cf.isJSON(), tui.TemplateByName(tmplName))
+
+			if agentRef != "" {
+				run, err := bindCLIAgent(ctx, cmd, cf, agentRef, hf.options(), false)
+				if err != nil {
+					return reported(out, err)
+				}
+				defer run.cleanup()
+				if err := runAsk(ctx, run.bound.NewAgent(), question, out, approve == approveAllow); err != nil {
+					return reported(out, err)
+				}
+				if !cf.isJSON() {
+					fmt.Println()
+				}
+				return nil
+			}
 
 			bundle, err := resolveBundle(ctx, cf, false)
 			if err != nil {
@@ -87,6 +102,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 	cmd.Flags().StringVar(&approve, "approve", approveDeny, "Decision for tool calls that need approval, since ask cannot prompt (deny|allow)")
 	addHarnessFlags(cmd, &hf, toolsNone)
+	cmd.Flags().StringVar(&agentRef, "agent", "", "Run an agent definition: NAME or NAME@RANGE (see saige agent list)")
 
 	return cmd
 }

@@ -50,6 +50,7 @@ saige focuses on three things: running **agents**, supplying their **context and
 - **Harness toolset**: `agent.WithHarnessTools` adds `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `execute_code` (shell, Python, Go behind a subprocess or Docker sandbox), `fetch_url`, and scratch tools, read-only unless you enable more, with approvals and automatic spilling of large results. See [harness tools](docs/harness-tools.md).
 - **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
 - **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
+- **Agent definitions**: an agent as a versioned Markdown file with YAML frontmatter (model, tools, skills, memory, sub-agents, approval rules in Claude Code syntax, compaction, guardrails, limits), loaded from directories, HTTPS or Postgres, resolved by `name@range` and pinned by digest. Run one with `saige ask --agent`. See [agent definitions](docs/agent-definitions.md).
 - **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
 - **MCP client** with pooled sessions, safe retries, catalog drift detection, and `.mcp.json` loading. See [MCP client](docs/mcp-client.md).
 - **Run hooks and guardrails**: one typed seam for lifecycle events that observe, change, or abort a run, recorded for durable replay, and input and output guardrails that pass, block, or rewrite. See [run hooks](docs/hooks.md) and [guardrails](docs/guardrails.md).
@@ -358,6 +359,7 @@ Run any of these with `go run ./examples/quickstart/<name>` from a clone.
 | **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
 | **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
 | **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |
+| **Agent definitions** | One agent as a versioned Markdown file the CLI, server and MCP server all load | [agent definitions](docs/agent-definitions.md) |
 | **RAG** | Ingest, chunk, embed, hybrid search on Postgres, citations | [rag](rag/README.md) |
 | **Evals** | Scorers, gates and experiments for agents, retrieval and graphs | [eval](eval/README.md) |
 | **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/batch.md) |

@@ -11,7 +11,7 @@ import (
 
 func newChatCmd(ctx context.Context) *cobra.Command {
 	var verbose bool
-	var tmplName string
+	var tmplName, agentRef string
 	var hf harnessFlags
 
 	cmd := &cobra.Command{
@@ -22,6 +22,16 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 
 			tmpl := tui.TemplateByName(tmplName)
 			out := tui.ResolveOutput(cf.isJSON(), tmpl)
+
+			if agentRef != "" {
+				run, err := bindCLIAgent(ctx, cmd, cf, agentRef, hf.options(), verbose)
+				if err != nil {
+					return reported(out, err)
+				}
+				defer run.cleanup()
+				runner := &tui.Runner{Title: run.bound.Resolved.Name, Verbose: verbose, Template: tmpl, Output: out}
+				return agentsdk.Run(ctx, run.bound.NewAgent(), runner)
+			}
 
 			bundle, err := resolveBundle(ctx, cf, verbose)
 			if err != nil {
@@ -63,6 +73,7 @@ func newChatCmd(ctx context.Context) *cobra.Command {
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Use plain-text streaming instead of interactive TUI")
 	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
 	addHarnessFlags(cmd, &hf, toolsReadOnly)
+	cmd.Flags().StringVar(&agentRef, "agent", "", "Chat with an agent definition: NAME or NAME@RANGE (see saige agent list)")
 
 	return cmd
 }

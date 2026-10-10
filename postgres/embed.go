@@ -39,3 +39,9 @@ var memoryTmpl = template.Must(template.New("memory").Parse(memoryRaw))
 //
 //go:embed sql/eval.sql
 var evalSQL string
+
+// agentsSQL creates the table behind agent/definition/pgsource and the
+// trigger that announces every change on its channel.
+//
+//go:embed sql/agents.sql
+var agentsSQL string
