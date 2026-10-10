@@ -14,7 +14,7 @@ Or use the [install script](../../README.md#installation) for a pre-built binary
 # Interactive multi-turn chat (Bubble Tea TUI)
 saige chat
 saige chat --provider anthropic --model claude-haiku-5-5
-saige chat --provider ollama --model qwen3.5:4b   # fully local, after `ollama pull qwen3.5:4b`
+saige chat --provider ollama   # fully local, on a model pulled into Ollama
 saige chat --verbose  # plain-text mode for pipes/CI
 
 # Single-shot question (pipe-friendly)
@@ -180,7 +180,7 @@ A project catalog is checked against an allowlist: it may not set `base_url`, `a
 
 `--provider` names a saige adapter, not always a model vendor: `ollama` is a local runtime that serves open-weight models such as qwen3.5:4b. See [vendors, runtimes and adapters](../../docs/concepts.md#vendors-runtimes-and-adapters).
 
-Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the first entry of the catalog's `default_preset` that can serve. The shipped order is Anthropic, OpenAI, Google (whichever key is set first), then the catalog's Ollama model (`qwen3`) when a local Ollama server answers. With none available, it tells you to set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a Google key), or to start Ollama. Cross-vendor failover is opt-in: pass `--preset default`. Each vendor's preset runs its cheapest current model (claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite); `--preset anthropic-quality`, `openai-quality` or `google-quality` runs the mid tier. For Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), or pass `--provider vertex`; it authenticates with Application Default Credentials. `--base-url` applies to the selected adapter's entries; on a multi-vendor preset add `--provider`.
+Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the first entry of the catalog's `default_preset` that can serve. The shipped order is Anthropic, OpenAI, Google (whichever key is set first), then a local Ollama server: it runs `qwen3.5:4b` when that is pulled, else another pulled chat model. With none available, it tells you to set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a Google key), to start Ollama, or, when Ollama runs with no chat model, to run `ollama pull qwen3.5:4b`. `--provider ollama` uses the same rule; `--model` names the model exactly. Cross-vendor failover is opt-in: pass `--preset default`. Each vendor's preset runs its cheapest current model (claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite); `--preset anthropic-quality`, `openai-quality` or `google-quality` runs the mid tier. For Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), or pass `--provider vertex`; it authenticates with Application Default Credentials. `--base-url` applies to the selected adapter's entries; on a multi-vendor preset add `--provider`.
 
 > **Note:** Anthropic has no embedding API. With `--provider anthropic` plus RAG/KG
 > features, also pass `--embed-provider` (openai, google, or ollama) and that

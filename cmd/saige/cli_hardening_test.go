@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -62,10 +63,22 @@ func TestBaseURLAppliesOnPresetPath(t *testing.T) {
 	}
 }
 
-// ollamaServer answers the reachability probe.
-func ollamaServer(t *testing.T) string {
+// ollamaServer answers the reachability probe and lists the given pulled
+// models, or the catalog's default Ollama model when none are given.
+func ollamaServer(t *testing.T, pulled ...string) string {
 	t.Helper()
+	if pulled == nil {
+		pulled = []string{"qwen3.5:4b"}
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			models := make([]map[string]string, len(pulled))
+			for i, name := range pulled {
+				models[i] = map[string]string{"name": name}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"models": models})
+			return
+		}
 		_, _ = w.Write([]byte(`{"version":"0.0.0"}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -102,6 +115,14 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 	}
 	if ids, err := run(ollamaServer(t)); err != nil || strings.Join(ids, ",") != "default/ollama" {
 		t.Fatalf("local only: %v %v", ids, err)
+	}
+	// A server with only another chat model pulled serves that model.
+	if ids, err := run(ollamaServer(t, "nomic-embed-text:latest", "gemma3:latest")); err != nil || strings.Join(ids, ",") != "default/ollama" {
+		t.Fatalf("other model pulled: %v %v", ids, err)
+	}
+	// A server with no chat model says what to pull.
+	if _, err := run(ollamaServer(t, "nomic-embed-text:latest")); err == nil || !strings.Contains(err.Error(), "ollama pull qwen3.5:4b") {
+		t.Fatalf("nothing pulled: %v", err)
 	}
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")

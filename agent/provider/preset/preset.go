@@ -55,6 +55,9 @@ type Options struct {
 	// configuration and should return quickly. Nil uses ProbeOllama, which
 	// checks a local Ollama server and accepts every other provider.
 	Probe func(context.Context, provider.Config) error
+	// ListLocal lists the models pulled on a local server, for entries
+	// with local_fallback. Nil uses ListOllama.
+	ListLocal func(context.Context, provider.Config) ([]catalog.RemoteModel, error)
 }
 
 // probeTimeout bounds the default reachability check.
@@ -68,16 +71,7 @@ func ProbeOllama(ctx context.Context, cfg provider.Config) error {
 	if cfg.Provider != provider.Ollama {
 		return nil
 	}
-	host := cfg.BaseURL
-	if host == "" && cfg.Getenv != nil {
-		host = cfg.Getenv("OLLAMA_HOST")
-	}
-	if host == "" {
-		host = provider.DefaultOllamaHost
-	}
-	if !strings.Contains(host, "://") {
-		host = "http://" + host
-	}
+	host := ollamaHost(cfg)
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(host, "/")+"/api/version", nil)
@@ -109,7 +103,14 @@ func Available(ctx context.Context, e catalog.ResolvedEntry, o Options) error {
 		return fmt.Errorf("no credentials for %s: %s", e.Provider, credentialHint(e))
 	}
 	if needsNoKey(e) {
-		return o.Probe(ctx, config(e, "", o))
+		if err := o.Probe(ctx, config(e, "", o)); err != nil {
+			return err
+		}
+	}
+	if e.Provider == provider.Ollama && e.LocalFallback {
+		if pulled, err := o.ListLocal(ctx, config(e, "", o)); err == nil && chooseLocalModel(e.Model, pulled) == "" {
+			return noLocalModel(e.Model)
+		}
 	}
 	return nil
 }
@@ -129,6 +130,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Probe == nil {
 		o.Probe = ProbeOllama
+	}
+	if o.ListLocal == nil {
+		o.ListLocal = ListOllama
 	}
 	return o
 }
@@ -150,6 +154,11 @@ var _ types.Preset = (*Bundle)(nil)
 // "provider/model" resolves through catalog.ResolveModel. Construction fails
 // on the first error, except that an optional entry whose credentials are
 // missing is dropped with a warning.
+//
+// An Ollama entry with local_fallback whose model is not pulled serves
+// another pulled chat model instead (see EntrySpec.LocalFallback), with a
+// WarnLocalModel warning. When the server has no chat model pulled, the
+// entry fails with ErrNoLocalModel, or is dropped when it is optional.
 func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []string, o Options) (*Bundle, error) {
 	if cat == nil {
 		return nil, errors.New("preset: Build needs a catalog")
@@ -171,6 +180,10 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []str
 		}
 		return nil, err
 	}
+	// Entries with local_fallback name a model that is pulled before they
+	// resolve, so each is validated against the model that will serve.
+	cat, localWarnings, noLocal := pickLocalModels(ctx, cat, names, o)
+	b.warnings = append(b.warnings, localWarnings...)
 	var primarySpec catalog.ResolvedPreset
 	for _, name := range names {
 		rp, err := resolve(cat, name)
@@ -194,6 +207,16 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary string, also []str
 				}
 				return fail(&types.ProviderError{Provider: e.Provider, Model: e.Model, Kind: types.ErrorKindAuth,
 					Err: fmt.Errorf("%w: preset %s entry %s: %s", types.ErrAuth, name, e.ID, credentialHint(e))})
+			}
+			if e.Provider == provider.Ollama {
+				if err := noLocal[localKey(e.BaseURL, e.Model)]; err != nil {
+					if !e.Optional {
+						return fail(fmt.Errorf("preset %s entry %s: %w", name, e.ID, err))
+					}
+					b.warnings = append(b.warnings, catalog.Issue{Path: "presets." + name, Code: "entry_dropped",
+						Message: fmt.Sprintf("optional entry %s dropped: %v", e.ID, err), Severity: catalog.SeverityWarning})
+					continue
+				}
 			}
 			if e.Optional && needsNoKey(e) {
 				// An entry without credentials is only known to serve once

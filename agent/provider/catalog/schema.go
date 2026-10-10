@@ -319,6 +319,11 @@ type EntrySpec struct {
 	Vertex *VertexSpec `json:"vertex,omitempty"`
 	// Optional drops the whole entry when its credentials are missing.
 	Optional bool `json:"optional,omitempty"`
+	// LocalFallback applies to an Ollama entry: when Model is not pulled on
+	// the server, preset.Build serves another pulled chat model instead and
+	// records a warning. With no chat model pulled, the entry fails (or is
+	// dropped when Optional) with preset.ErrNoLocalModel.
+	LocalFallback bool `json:"local_fallback,omitempty"`
 }
 
 // VertexSpec selects Vertex AI for a Google entry. Credentials come from
