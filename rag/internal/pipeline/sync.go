@@ -16,14 +16,15 @@ import (
 //
 // For each fetched document: a URI with no stored document is ingested, or
 // recorded as unchanged when another URI already holds identical content; a
-// URI whose newest document has the same fingerprint, or whose
-// SourceModifiedAt is not after opts.Since, is unchanged; any other URI is
-// updated in place through Update, so its document UUID survives. With
-// opts.Prune, stored URIs under opts.PrunePrefix that the source did not
-// return are deleted, as are older duplicates of a returned URI. A URI the
-// source returned is never pruned, even when it was rejected. The cursor
-// moves only past documents that were written or found unchanged; see
-// ragtypes.SyncResult.Cursor.
+// URI whose newest document has the same fingerprint, or whose fetched
+// document carries no bytes and a SourceModifiedAt not after opts.Since, is
+// unchanged; any other URI is updated in place through Update, so its
+// document UUID survives. With opts.Prune, stored URIs under
+// opts.PrunePrefix that the source did not return are deleted, as are older
+// duplicates of a returned URI. A URI the source returned is never pruned,
+// even when it was rejected, and neither is one a ragtypes.FilteringSource
+// reported as skipped. The cursor moves only past documents that were
+// written or found unchanged; see ragtypes.SyncResult.Cursor.
 //
 //nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts ragtypes.SyncOptions) (result *ragtypes.SyncResult, err error) {
@@ -38,7 +39,7 @@ func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts
 	ctx, span := p.cfg.Observer.StartSpan(ctx, ragtypes.SpanSync, ragtypes.Attr(ragtypes.AttrScope, scope))
 	defer func() { endSpan(span, err) }()
 
-	raws, err := src.Fetch(ctx)
+	raws, skipped, err := fetchSource(ctx, src)
 	if err != nil {
 		return nil, fmt.Errorf("fetch source: %w", err)
 	}
@@ -54,7 +55,7 @@ func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts
 		sort.SliceStable(docs, func(i, j int) bool { return docs[i].UpdatedAt.After(docs[j].UpdatedAt) })
 	}
 
-	result = &ragtypes.SyncResult{Cursor: opts.Since}
+	result = &ragtypes.SyncResult{Cursor: opts.Since, Skipped: skipped}
 	fail := func(uri string, err error) {
 		result.Failed = append(result.Failed, ragtypes.SyncError{SourceURI: uri, Err: err})
 	}
@@ -112,8 +113,15 @@ func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts
 				p.prune(ctx, result, old)
 			}
 		}
-		unchanged := (!opts.Since.IsZero() && !raw.SourceModifiedAt.IsZero() && !raw.SourceModifiedAt.After(opts.Since)) ||
-			current.Fingerprint == ragtypes.Fingerprint(scope, raw.Data)
+		// With the bytes in hand the fingerprint decides: a modification
+		// time can move backwards (cp -p, rsync -a), so it only stands in
+		// for the bytes when the source sent none.
+		var unchanged bool
+		if raw.Data == nil {
+			unchanged = !opts.Since.IsZero() && !raw.SourceModifiedAt.IsZero() && !raw.SourceModifiedAt.After(opts.Since)
+		} else {
+			unchanged = current.Fingerprint == ragtypes.Fingerprint(scope, raw.Data)
+		}
 		if unchanged {
 			result.Unchanged = append(result.Unchanged, current.UUID)
 			advance(&raw, true)
@@ -127,7 +135,7 @@ func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts
 	if opts.Prune {
 		uris := make([]string, 0, len(byURI))
 		for uri := range byURI {
-			if !seen[uri] && strings.HasPrefix(uri, opts.PrunePrefix) {
+			if !seen[uri] && strings.HasPrefix(uri, opts.PrunePrefix) && !isSkipped(skipped, uri) {
 				uris = append(uris, uri)
 			}
 		}
@@ -139,6 +147,26 @@ func (p *pipelineImpl) SyncSource(ctx context.Context, src ragtypes.Source, opts
 		}
 	}
 	return result, syncErrors(result)
+}
+
+// fetchSource fetches src, together with what it skipped by rule when it is
+// a ragtypes.FilteringSource.
+func fetchSource(ctx context.Context, src ragtypes.Source) ([]ragtypes.RawDocument, []ragtypes.SkippedSource, error) {
+	if fs, ok := src.(ragtypes.FilteringSource); ok {
+		return fs.FetchWithSkips(ctx)
+	}
+	raws, err := src.Fetch(ctx)
+	return raws, nil, err
+}
+
+// isSkipped reports whether the source skipped uri by rule.
+func isSkipped(skipped []ragtypes.SkippedSource, uri string) bool {
+	for _, s := range skipped {
+		if s.Covers(uri) {
+			return true
+		}
+	}
+	return false
 }
 
 // syncCursor returns the cursor for the next sync: the later of since and

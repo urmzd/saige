@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/urmzd/saige/rag/internal/pipeline"
 	"github.com/urmzd/saige/rag/memstore"
+	"github.com/urmzd/saige/rag/source"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -300,5 +303,117 @@ func TestPipelineSyncSourceIdenticalContentSettles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPipelineSyncSourceDetectsEditWithRestoredMtime edits a file and puts
+// its old modification time back, as cp -p and rsync -a do. The bytes are in
+// hand, so the fingerprint must catch the change even though the time is not
+// after the cursor.
+func TestPipelineSyncSourceDetectsEditWithRestoredMtime(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.md")
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(path, []byte("alpha v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	pipe, store := newScopedPipeline("", types.DedupSkip)
+	syncer := pipe.(types.SourceSyncer)
+	src := &source.Filesystem{Dir: dir}
+	first, err := syncer.SyncSource(ctx, src, types.SyncOptions{})
+	if err != nil || len(first.Created) != 1 {
+		t.Fatalf("first sync = %+v, %v", first, err)
+	}
+
+	if err := os.WriteFile(path, []byte("alpha v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	second, err := syncer.SyncSource(ctx, src, types.SyncOptions{Since: first.Cursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(second.Updated, first.Created) {
+		t.Fatalf("second sync = %+v, want %v updated", second, first.Created)
+	}
+	doc, err := store.GetDocument(ctx, first.Created[0])
+	if err != nil || doc.Sections[0].Variants[0].Text != "alpha v2" {
+		t.Fatalf("document not updated: %v", err)
+	}
+}
+
+// TestPipelineSyncSourceTrustsTimeWithoutBytes keeps the cursor shortcut for
+// a source that sends no bytes for an item it reports as not modified.
+func TestPipelineSyncSourceTrustsTimeWithoutBytes(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	pipe, _ := newScopedPipeline("", types.DedupSkip)
+	syncer := pipe.(types.SourceSyncer)
+	src := &listSource{docs: []types.RawDocument{{SourceURI: "u://a", Data: []byte("a v1"), SourceModifiedAt: t0}}}
+	first, err := syncer.SyncSource(ctx, src, types.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.docs = []types.RawDocument{{SourceURI: "u://a", SourceModifiedAt: t0}}
+	r, err := syncer.SyncSource(ctx, src, types.SyncOptions{Since: first.Cursor})
+	if err != nil || !slices.Equal(r.Unchanged, first.Created) {
+		t.Fatalf("result = %+v, %v", r, err)
+	}
+}
+
+// filteringSource returns a fixed listing and a fixed skip list.
+type filteringSource struct {
+	listSource
+	skipped []types.SkippedSource
+}
+
+func (s *filteringSource) FetchWithSkips(context.Context) ([]types.RawDocument, []types.SkippedSource, error) {
+	return s.docs, s.skipped, nil
+}
+
+// TestPipelineSyncSourcePruneKeepsSkippedURIs: a URI the source skipped by
+// rule is reported and kept, not pruned as absent. Only a URI that is gone
+// is pruned.
+func TestPipelineSyncSourcePruneKeepsSkippedURIs(t *testing.T) {
+	ctx := context.Background()
+	pipe, store := newScopedPipeline("", types.DedupSkip)
+	syncer := pipe.(types.SourceSyncer)
+	src := &filteringSource{listSource: listSource{docs: []types.RawDocument{
+		{SourceURI: "fs://r/a.md", Data: []byte("a")},
+		{SourceURI: "fs://r/.env", Data: []byte("SECRET=1")},
+		{SourceURI: "fs://r/vendor/x.md", Data: []byte("x")},
+		{SourceURI: "fs://r/gone.md", Data: []byte("gone")},
+	}}}
+	first, err := syncer.SyncSource(ctx, src, types.SyncOptions{})
+	if err != nil || len(first.Created) != 4 {
+		t.Fatalf("first sync = %+v, %v", first, err)
+	}
+
+	src.docs = []types.RawDocument{{SourceURI: "fs://r/a.md", Data: []byte("a")}}
+	src.skipped = []types.SkippedSource{
+		{SourceURI: "fs://r/.env", Reason: "secret"},
+		{SourceURI: "fs://r/vendor/", Prefix: true, Reason: "excluded"},
+	}
+	r, err := syncer.SyncSource(ctx, src, types.SyncOptions{Prune: true, PrunePrefix: "fs://r/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Pruned) != 1 || !slices.Equal(r.Skipped, src.skipped) {
+		t.Fatalf("result = %+v, want only gone.md pruned and the skips reported", r)
+	}
+	for _, uri := range []string{"fs://r/.env", "fs://r/vendor/x.md"} {
+		if docs, err := store.FindBySourceURI(ctx, "", uri); err != nil || len(docs) != 1 {
+			t.Errorf("%s: %v, %v; a skipped URI must not be pruned", uri, docs, err)
+		}
+	}
+	if docs, _ := store.FindBySourceURI(ctx, "", "fs://r/gone.md"); len(docs) != 0 {
+		t.Error("gone.md survived prune")
 	}
 }

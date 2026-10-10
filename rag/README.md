@@ -127,12 +127,29 @@ The deduplication fingerprint is `types.Fingerprint(scope, data)`: the plain SHA
 ```go
 res, err := rag.SyncSource(ctx, pipe, &source.Filesystem{Dir: "docs", Recursive: true}, types.SyncOptions{
     Scope:       "acme",
-    Since:       lastCursor,     // skip files not modified since the previous sync
+    Since:       lastCursor,
     Prune:       true,
     PrunePrefix: "docs/",
 })
 lastCursor = res.Cursor
 ```
+
+Content is compared by fingerprint whenever the source sends the bytes, as `source.Filesystem` and `source.HTTP` always do, so an edit that keeps an old modification time (`cp -p`, `rsync -a`, `tar x`) is still picked up. `Since` lets only a document without bytes (nil `Data`) count as unchanged by its time alone.
+
+### Filesystem filters
+
+`source.Filesystem` skips these by default:
+
+| Rule | Default | Turn off with |
+| --- | --- | --- |
+| Tool directories | `.git`, `.hg`, `.svn`, `node_modules` (`source.DefaultSkipDirs`) | `IncludeToolDirs` |
+| Dot files and dot directories | any name starting with `.` | `IncludeHidden` |
+| Secret file names | `.env*`, `*.env`, `*.pem`, `*.key`, `id_rsa*`, `id_dsa*`, `id_ecdsa*`, `id_ed25519*`, `*.p12`, `*.pfx`, `*.kdbx`, `credentials*.json`, `*.tfstate*`, `.netrc`, `.npmrc`, `.pypirc` (`source.DefaultDenyPatterns`, case-insensitive) | `AllowSecretNames` |
+| Ignore files | `.gitignore` and `.saigeignore` in every walked directory, with gitignore semantics: nested files, `!` negation, trailing `/` for directories, leading `/` anchors. `.saigeignore` wins over `.gitignore` in the same directory. | `NoIgnoreFiles` |
+
+Then `Exclude` and `Include` (doublestar globs on the path relative to `Dir`, such as `docs/**/*.md`) and `Extensions` apply. A skipped directory is not walked, so nothing under it can be re-included. Ignore files above `Dir`, `.git/info/exclude`, and the global git excludes file are not read.
+
+`Filesystem` implements `types.FilteringSource`, so `res.Skipped` lists every skipped file or directory with the rule that skipped it. A skipped URI is never pruned: changing a rule is not evidence that a file is gone, and a mistyped `Exclude` should not empty an index. To remove documents a new rule now skips, delete them by UUID.
 
 The store must implement `types.SourceLister` (memstore and pgstore do); `types.SourceFinder` looks up one URI. A per-URI failure does not stop the sync: it is listed in `res.Failed` and joined into `err`.
 

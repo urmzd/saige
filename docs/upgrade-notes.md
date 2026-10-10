@@ -88,6 +88,14 @@ These behavior changes can affect existing code. Each entry says what changed an
 | pgstore node reads are scoped to the conversation. `SaveNode` returns `ErrVersionConflict` for a stale version and `ErrConversationMismatch` for a node of another conversation. memstore also rejects stale versions. | Handle the errors instead of relying on silent skips. |
 | The DBOS backend is removed. | Use the local engine or the duraturo adapter. |
 
+## RAG sources
+
+| Change | What to do |
+| --- | --- |
+| `source.Filesystem` skips `.git`, `.hg`, `.svn` and `node_modules`, dot files and dot directories, secret file names (`source.DefaultDenyPatterns`: `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*.json`, `*.tfstate*` and similar), and paths matched by `.gitignore` or `.saigeignore`. Before, it read every file under `Dir`. | Set `IncludeHidden`, `IncludeToolDirs`, `AllowSecretNames` or `NoIgnoreFiles` to keep a file the new defaults skip. Documents already ingested from such files stay in the store; delete them by UUID. |
+| `SyncSource` compares the fingerprint of every fetched document that carries bytes, even when its `SourceModifiedAt` is not after `Since`. Before, an edit that kept an old modification time (`cp -p`, `rsync -a`) was counted as unchanged. | None. `Since` now only lets a document without bytes count as unchanged by time. |
+| With `Prune`, `SyncSource` keeps documents whose URI a `types.FilteringSource` reports in `SyncResult.Skipped`. A `Filesystem` reports every file or directory a rule skipped, including files outside `Extensions` and subdirectories of a non-recursive walk, which were pruned before. | Delete documents a narrower filter now skips by UUID. |
+
 ## Toolchain
 
 | Change | What to do |
