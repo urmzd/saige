@@ -6,6 +6,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestRouteAttemptsAreSpanEvents(t *testing.T) {
@@ -18,7 +19,7 @@ func TestRouteAttemptsAreSpanEvents(t *testing.T) {
 		types.PartDelta{Index: 0, Text: "ok"},
 	}}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +43,9 @@ func TestRouteAttemptsAreSpanEvents(t *testing.T) {
 }
 
 func TestProviderNameSkipsDecorators(t *testing.T) {
-	inner := retry.New(&fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}, retry.DefaultConfig())
+	inner := must.Get(retry.New(&fakeProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "ok"}}}, retry.DefaultConfig()))
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestConversionReportsAreSpanEventsAndAttributes(t *testing.T) {
 		types.PartDelta{Index: 0, Text: "ok"},
 	}}
 	tracer, rec := newSpyTracer()
-	ch, err := NewTracedProvider(inner, tracer).Stream(context.Background(), types.Request{})
+	ch, err := must.Get(NewTracedProvider(inner, tracer)).Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}

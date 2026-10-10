@@ -2015,17 +2015,14 @@ func (a *Agent) resolveActive(resolved *resolvedConfig, llmMessages []types.Mess
 }
 
 // applyTarget re-targets the active provider when a ConfigPart block set a
-// target. A provider that can switch neither targets nor models is used
-// unchanged, with a warning so a requested model is never dropped
+// target. A provider that cannot be re-targeted is used unchanged, with a warning so a requested model is never dropped
 // silently. A target the provider rejects, such as a profile a router
 // does not define, fails the turn.
 func (a *Agent) applyTarget(ac activeContext, t types.Target) (activeContext, error) {
 	if t.IsZero() {
 		return ac, nil
 	}
-	_, ts := ac.provider.(types.TargetSwitcher)
-	_, ms := ac.provider.(types.ModelSwitcher)
-	if !ts && !ms {
+	if _, ts := ac.provider.(types.TargetSwitcher); !ts {
 		if t.Model == "" || types.ProviderModel(ac.provider) != string(t.Model) {
 			a.cfg.Logger.Warn("config requested a target but the provider cannot switch",
 				"agent", a.cfg.Name, "target", t.String(), "provider", types.NameOf(ac.provider))

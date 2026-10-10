@@ -26,8 +26,8 @@ type Request struct {
 // then usage, then DoneDelta or an ErrorDelta.
 //
 // Model selection is handled via ConfigPart in the message tree, not as a
-// parameter: providers that implement ModelSwitcher are re-targeted by the
-// agent loop when a ConfigPart sets a model; others use their own
+// parameter: providers that implement TargetSwitcher are re-targeted by the
+// agent loop when a ConfigPart sets a target; others use their own
 // configured default.
 type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan Delta, error)
@@ -64,17 +64,11 @@ type ModelProvider interface {
 	Model() string
 }
 
-// ModelSwitcher is an optional interface providers can implement to produce
-// a variant of themselves targeting a different model. The agent loop uses it
-// to honor ConfigPart.Model at runtime.
-type ModelSwitcher interface {
-	Provider
-	WithModel(model string) Provider
-}
-
-// Closer is an optional interface providers can implement for graceful shutdown.
+// Closer is an optional interface for providers that own resources, such as
+// a connection pool or a background worker. A decorator owns the provider
+// it wraps and closes it too.
 type Closer interface {
-	Close() error
+	Close(ctx context.Context) error
 }
 
 // NameOf returns the name of a provider if it implements NamedProvider,
@@ -95,23 +89,10 @@ func ProviderModel(p Provider) string {
 	return ""
 }
 
-// ProviderWithModel returns a variant of p targeting the given model. It
-// returns p unchanged when model is empty, already p's configured model, or
-// p does not implement ModelSwitcher.
-func ProviderWithModel(p Provider, model string) Provider {
-	if model == "" || ProviderModel(p) == model {
-		return p
-	}
-	if ms, ok := p.(ModelSwitcher); ok {
-		return ms.WithModel(model)
-	}
-	return p
-}
-
 // CloseProvider closes a provider if it implements Closer, otherwise returns nil.
-func CloseProvider(p Provider) error {
+func CloseProvider(ctx context.Context, p Provider) error {
 	if c, ok := p.(Closer); ok {
-		return c.Close()
+		return c.Close(ctx)
 	}
 	return nil
 }

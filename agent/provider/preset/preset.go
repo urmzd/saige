@@ -176,7 +176,7 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary types.PresetName, 
 	var closers []types.Provider
 	fail := func(err error) (*Bundle, error) {
 		for _, p := range closers {
-			_ = types.CloseProvider(p)
+			_ = types.CloseProvider(ctx, p)
 		}
 		return nil, err
 	}
@@ -237,12 +237,12 @@ func Build(ctx context.Context, cat *catalog.Catalog, primary types.PresetName, 
 				return fail(fmt.Errorf("preset %s entry %s: %w", name, e.ID, err))
 			}
 			closers = append(closers, p)
-			if e.Retry == nil || !e.Retry.Disable {
-				p = retry.New(p, retryConfig(e.Retry))
-			}
 			// The deadline sits inside retry, so each attempt gets its own.
-			if e.AttemptTimeout > 0 {
-				p = retryInside(p, e.AttemptTimeout)
+			p = withAttemptTimeout(p, e.AttemptTimeout)
+			if e.Retry == nil || !e.Retry.Disable {
+				if p, err = retry.New(p, retryConfig(e.Retry)); err != nil {
+					return fail(fmt.Errorf("preset %s entry %s: %w", name, e.ID, err))
+				}
 			}
 			profiles = append(profiles, router.Profile{ID: e.ProfileID, Provider: p,
 				ConfigHash: e.ConfigHash, Preset: name, CatalogRevision: rp.CatalogRevision})
@@ -311,14 +311,6 @@ func resolve(cat *catalog.Catalog, name types.PresetName) (catalog.ResolvedPrese
 		return cat.ResolveModel(types.ProviderName(p), types.ModelID(m))
 	}
 	return cat.Resolve(name)
-}
-
-// retryInside places the deadline under an existing retry decorator.
-func retryInside(p types.Provider, d time.Duration) types.Provider {
-	if r, ok := p.(*retry.Provider); ok {
-		return &retry.Provider{Inner: withAttemptTimeout(r.Inner, d), Config: r.Config}
-	}
-	return withAttemptTimeout(p, d)
 }
 
 // credentials returns the API key to pass and whether the entry has none.
@@ -487,4 +479,4 @@ func (b *Bundle) ConfigKey(t types.Target) string {
 }
 
 // Close closes every built adapter.
-func (b *Bundle) Close() error { return b.router.Close() }
+func (b *Bundle) Close(ctx context.Context) error { return b.router.Close(ctx) }

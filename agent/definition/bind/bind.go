@@ -93,7 +93,7 @@ type Bound struct {
 	// accept grants check them with CheckGrant.
 	MaxGrant types.GrantScope
 
-	closers []func() error
+	closers []func(context.Context) error
 }
 
 // NewAgent builds the root agent. extra options apply after the binding's.
@@ -124,10 +124,10 @@ func (b *Bound) CheckGrant(g *types.GrantRequest) error {
 }
 
 // Close releases every resource binding opened.
-func (b *Bound) Close() error {
+func (b *Bound) Close(ctx context.Context) error {
 	var errs []error
 	for i := len(b.closers) - 1; i >= 0; i-- {
-		errs = append(errs, b.closers[i]())
+		errs = append(errs, b.closers[i](ctx))
 	}
 	b.closers = nil
 	return errors.Join(errs...)
@@ -145,7 +145,7 @@ func Bind(ctx context.Context, res *definition.Resolved, env Env) (*Bound, error
 	}
 	p, err := bindParts(ctx, &env, res, true, b)
 	if err != nil {
-		_ = b.Close()
+		_ = b.Close(ctx)
 		return nil, err
 	}
 	b.Config = agent.AgentConfig{
@@ -232,7 +232,7 @@ func bindParts(ctx context.Context, env *Env, res *definition.Resolved, root boo
 			return nil, err
 		}
 		prov := p.preset.Provider()
-		b.closers = append(b.closers, func() error { return types.CloseProvider(prov) })
+		b.closers = append(b.closers, func(ctx context.Context) error { return types.CloseProvider(ctx, prov) })
 	case root:
 		return nil, fmt.Errorf("%w: agent %s names no model and the host provides none", ErrUnsupported, d.Name)
 	}

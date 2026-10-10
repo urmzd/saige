@@ -7,10 +7,11 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func newProvider(inner types.Provider) *Provider {
-	return New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	return must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 }
 
 func collect(ch <-chan types.Delta) []types.Delta {
@@ -103,7 +104,7 @@ func TestToolCallIsCached(t *testing.T) {
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 		agenttest.ToolCallResponse("t1", "search", map[string]any{"q": "go"}),
 	}}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse](), CacheToolCalls: true}))
 	msgs := []types.Message{types.UserMsg(types.Text("find"))}
 
 	collect(mustStream(t, p, msgs)) // miss records the tool-call deltas

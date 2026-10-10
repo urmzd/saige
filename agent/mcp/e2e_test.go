@@ -154,7 +154,7 @@ func connect(t *testing.T, spec ServerSpec) *Client {
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
 	return c
 }
 
@@ -264,7 +264,7 @@ func TestCloseDuringCallReturnsClosedError(t *testing.T) {
 	}()
 	time.Sleep(50 * time.Millisecond)
 	start := time.Now()
-	_ = c.Close() // may report that the hung server kept its session
+	_ = c.Close(context.Background()) // may report that the hung server kept its session
 	if time.Since(start) > closeTimeout+time.Second {
 		t.Errorf("Close took %v; it must be bounded", time.Since(start))
 	}
@@ -503,7 +503,7 @@ func TestToolListChangeRemovesTools(t *testing.T) {
 	}
 
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	c, err := pool.Acquire(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -581,7 +581,7 @@ func TestCloseCancelsHungListing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
 
 	inner := *ts.handler.Load()
 	entered := make(chan struct{}, 1)
@@ -619,7 +619,7 @@ func TestCloseCancelsHungListing(t *testing.T) {
 	}
 
 	closed := make(chan error, 1)
-	go func() { closed <- c.Close() }()
+	go func() { closed <- c.Close(context.Background()) }()
 	select {
 	case err := <-closed:
 		if err != nil {
@@ -755,7 +755,7 @@ func TestUntrustedReadHintIsNotRetriedAfterReconnect(t *testing.T) {
 func TestPoolHealthAndProbe(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	if _, err := pool.Acquire(context.Background(), ts.spec()); err != nil {
 		t.Fatal(err)
 	}
@@ -817,7 +817,7 @@ func TestPoolAcquireSharesOneHandshake(t *testing.T) {
 	})
 
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	var wg sync.WaitGroup
 	clients := make([]*Client, 8)
 	for i := range clients {
@@ -855,7 +855,7 @@ func TestPoolAcquireSharesOneHandshake(t *testing.T) {
 func TestAddAllKeepsEarlierClients(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	first, err := pool.Add(context.Background(), ts.spec())
 	if err != nil {
 		t.Fatal(err)
@@ -895,7 +895,7 @@ func TestRegistrationRefusesToReplaceLocalTools(t *testing.T) {
 	}{
 		{"pool", func(reg *types.ToolRegistry) error {
 			pool := NewPool()
-			t.Cleanup(func() { _ = pool.Close() })
+			t.Cleanup(func() { _ = pool.Close(context.Background()) })
 			if _, err := pool.Add(context.Background(), spec); err != nil {
 				return err
 			}

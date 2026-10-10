@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 var testTools = []types.ToolDef{
@@ -67,7 +68,7 @@ func TestToolChoiceEmulation(t *testing.T) {
 
 func TestWithModelKeepsToolChoice(t *testing.T) {
 	a := NewAdapter(NewClient("http://unused", "qwen3:4b", ""), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired}))
-	if err := a.WithModel("llama3.1").(*Adapter).Validate(); err == nil {
+	if err := must.Get(a.WithTarget(types.ModelTarget("llama3.1"))).(*Adapter).Validate(); err == nil {
 		t.Fatal("a switched adapter must keep, and still reject, the configured choice")
 	}
 }

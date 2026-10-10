@@ -11,6 +11,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/provider/fallback"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // These tests need no external services: they prove that three agent-core
@@ -88,12 +89,9 @@ func composedContext(t *testing.T) context.Context {
 func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 	ctx := composedContext(t)
 
-	subProvider := fallback.New(
-		errorProvider("provider boom: simulated mid-stream 529"),
-		&agenttest.ScriptedProvider{Responses: [][]types.Delta{
-			agenttest.TextResponse("recovered: sub-agent result"),
-		}},
-	)
+	subProvider := must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"), &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.TextResponse("recovered: sub-agent result"),
+	}}))
 	ag := delegatingParent(subProvider)
 
 	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
@@ -134,7 +132,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 	failing := agentsdk.NewAgent(agentsdk.AgentConfig{
 		Name:         "doomed",
 		SystemPrompt: "You will fail.",
-		Provider:     fallback.New(errorProvider("provider boom: simulated mid-stream 529")),
+		Provider:     must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"))),
 	})
 	stream := failing.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	sawErrorDelta := false
@@ -161,7 +159,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 	// Composed: the same failing provider behind a sub-agent. The parent run
 	// itself completes (a failed delegation is a tool error, not a crash), but
 	// the persisted tool result must record the failure.
-	ag := delegatingParent(fallback.New(errorProvider("provider boom: simulated mid-stream 529")))
+	ag := delegatingParent(must.Get(fallback.Of(errorProvider("provider boom: simulated mid-stream 529"))))
 	pstream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
 	var delegationErr string
 	for d := range pstream.Deltas() {

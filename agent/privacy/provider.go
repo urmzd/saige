@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -32,7 +33,13 @@ import (
 // Held text is released at the end of each part, on completion, and on
 // error.
 type Provider struct {
-	Inner types.Provider
+	wrapper.Base
+	Config
+}
+
+// Config is a privacy decorator's vault and media policy.
+type Config struct {
+	// Vault tokenizes and restores personal data. Required.
 	Vault Vault
 	// Media is what happens to media the vault cannot tokenize. The
 	// default is MediaRefuse with a Sensitive vault, else MediaPass.
@@ -42,15 +49,45 @@ type Provider struct {
 	AllowAudioOut bool
 }
 
-// NewProvider wraps inner with v.
-func NewProvider(inner types.Provider, v Vault) *Provider {
-	return &Provider{Inner: inner, Vault: v}
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithMediaPolicy sets Config.Media.
+func WithMediaPolicy(m MediaPolicy) Option { return func(c *Config) { c.Media = m } }
+
+// WithAudioOut sets Config.AllowAudioOut.
+func WithAudioOut() Option { return func(c *Config) { c.AllowAudioOut = true } }
+
+// New wraps inner with cfg.Vault. A nil inner or vault is an error wrapping
+// types.ErrInvalidConfig.
+func New(inner types.Provider, cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: privacy: no provider to wrap", types.ErrInvalidConfig)
+	}
+	if cfg.Vault == nil {
+		return nil, fmt.Errorf("%w: privacy: Config.Vault is required", types.ErrInvalidConfig)
+	}
+	switch cfg.Media {
+	case MediaDefault, MediaPass, MediaRefuse, MediaRequireText:
+	default:
+		return nil, fmt.Errorf("%w: privacy: unknown media policy %q", types.ErrInvalidConfig, cfg.Media)
+	}
+	return newProvider(inner, cfg), nil
 }
 
-// with returns a decorator with the same vault and policy around inner.
-func (p *Provider) with(inner types.Provider) *Provider {
-	return &Provider{Inner: inner, Vault: p.Vault, Media: p.Media, AllowAudioOut: p.AllowAudioOut}
+func newProvider(inner types.Provider, cfg Config) *Provider {
+	p := &Provider{Config: cfg}
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p
 }
+
+// rewrap keeps the vault and policy around another inner provider. The
+// vault is shared, so placeholders keep their meaning after a model switch
+// and in a new session.
+func (p *Provider) rewrap(inner types.Provider) types.Provider { return newProvider(inner, p.Config) }
 
 // MediaPolicy returns the policy in effect: Media, or the default for the
 // vault.
@@ -67,45 +104,6 @@ func (p *Provider) MediaPolicy() MediaPolicy {
 // Name implements types.NamedProvider.
 func (p *Provider) Name() string { return "privacy(" + types.NameOf(p.Inner) + ")" }
 
-// Model implements types.ModelProvider.
-func (p *Provider) Model() string { return types.ProviderModel(p.Inner) }
-
-// WithModel implements types.ModelSwitcher. The vault is shared, so
-// placeholders keep their meaning after a model switch.
-func (p *Provider) WithModel(model string) types.Provider {
-	return p.with(types.ProviderWithModel(p.Inner, model))
-}
-
-// WithTarget implements types.TargetSwitcher. The vault is shared.
-func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
-	inner, err := types.ProviderWithTarget(p.Inner, t)
-	if err != nil {
-		return nil, err
-	}
-	return p.with(inner), nil
-}
-
-// NewSession implements types.SessionProvider. The session shares the vault.
-func (p *Provider) NewSession() types.Provider {
-	return p.with(types.NewProviderSession(p.Inner))
-}
-
-// Capabilities implements types.CapabilityReporter. Controls that need
-// request options are dropped when the inner provider cannot receive them.
-func (p *Provider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(p.Inner)
-	if !types.AcceptsOptions(p.Inner) {
-		caps = caps.Without(types.CapToolChoice, types.CapParallelToolControl)
-	}
-	return caps
-}
-
-// Unwrap returns the inner provider.
-func (p *Provider) Unwrap() types.Provider { return p.Inner }
-
-// Close implements types.Closer.
-func (p *Provider) Close() error { return types.CloseProvider(p.Inner) }
-
 // Stream implements types.Provider. A schema or options the inner provider
 // cannot receive are rejected, not dropped.
 func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
@@ -121,12 +119,6 @@ func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.
 		return p.Inner.Stream(ctx, r)
 	})
 }
-
-// SupportsSchema implements types.StructuredOutputProvider.
-func (p *Provider) SupportsSchema() bool { return true }
-
-// SupportsOptions implements types.OptionsProvider.
-func (p *Provider) SupportsOptions() bool { return true }
 
 func (p *Provider) unsupported(what string) error {
 	return &types.ProviderError{
@@ -476,11 +468,4 @@ func restoreStream(ctx context.Context, v Vault, in <-chan types.Delta, refuseAu
 		flushAll()
 	}()
 	return out
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the
-// inner provider.
-func (p *Provider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(p.Inner)
-	return o
 }

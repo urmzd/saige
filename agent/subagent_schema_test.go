@@ -175,10 +175,11 @@ func newRecordingSwitcher(model string, responses [][]types.Delta) *recordingSwi
 
 func (p *recordingSwitcher) Name() string  { return "recording" }
 func (p *recordingSwitcher) Model() string { return p.model }
-func (p *recordingSwitcher) WithModel(m string) types.Provider {
+func (p *recordingSwitcher) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
 	c := *p
 	c.model = m
-	return &c
+	return &c, nil
 }
 
 func (p *recordingSwitcher) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {

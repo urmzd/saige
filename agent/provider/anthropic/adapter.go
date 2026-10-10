@@ -37,7 +37,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 	_ types.OptionsReporter          = (*Adapter)(nil)
 )
@@ -267,12 +267,16 @@ func (a *Adapter) Name() string { return "anthropic" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// targeting the given model, sharing the underlying client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter targeting that model, sharing the underlying client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	c := *a
-	c.model = anthropic.Model(model)
-	return &c
+	c.model = anthropic.Model(m)
+	return &c, nil
 }
 
 // Generate sends a single-turn user prompt with no tools and returns the

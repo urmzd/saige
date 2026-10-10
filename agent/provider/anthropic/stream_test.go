@@ -14,6 +14,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 const testModel = "claude-sonnet-4-5"
@@ -321,7 +322,7 @@ func TestSDKRetriesDisabledByDefault(t *testing.T) {
 			defer server.Close()
 			var p types.Provider = NewAdapter("test", testModel, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
 			if tc.outer > 0 {
-				p = retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
+				p = must.Get(retry.New(p, retry.Config{MaxAttempts: tc.outer, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond}))
 			}
 			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 			if err == nil {

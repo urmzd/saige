@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // finishedStream is the smallest complete chat completion stream: one chunk
@@ -116,8 +117,8 @@ func TestModelSwitchAndRetryCannotHideInvalidSettings(t *testing.T) {
 	if err := a.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	switched := a.WithModel("o3")
-	wrapped := retry.New(switched, retry.Config{MaxAttempts: 2})
+	switched := must.Get(a.WithTarget(types.ModelTarget("o3")))
+	wrapped := must.Get(retry.New(switched, retry.Config{MaxAttempts: 2}))
 	_, err := wrapped.Stream(context.Background(), types.Request{})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("got %v", err)

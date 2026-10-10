@@ -16,6 +16,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func allRecordable() CachedResponse {
@@ -80,8 +81,8 @@ func TestBytesCacheSharedAcrossInstances(t *testing.T) {
 	first := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("orig", "read", map[string]any{"n": 1})}}
 	second := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("unused")}}
 	cfg := Config{Cache: store, ScopeKey: "tenant", ConfigKey: "v1", CacheToolCalls: true}
-	collect(mustStream(t, New(first, cfg), msgs))
-	replayed := collect(mustStream(t, New(second, cfg), msgs))
+	collect(mustStream(t, must.Get(New(first, cfg)), msgs))
+	replayed := collect(mustStream(t, must.Get(New(second, cfg)), msgs))
 	calls := agenttest.CollectToolCalls(replayChan(replayed))
 	if len(calls) != 1 || calls[0].ID == "orig" || calls[0].Arguments["n"] != json.Number("1") {
 		t.Fatalf("calls = %+v, want one replayed call with a fresh ID", calls)
@@ -154,11 +155,11 @@ func TestGetErrorIsReported(t *testing.T) {
 	var logs bytes.Buffer
 	metrics := &recordingMetrics{}
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("live")}}
-	p := New(inner, Config{
+	p := must.Get(New(inner, Config{
 		Cache:   failingStore{memcache.New[CachedResponse]()},
 		Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
 		Metrics: metrics,
-	})
+	}))
 	if got := text(collect(mustStream(t, p, []types.Message{types.UserMsg(types.Text("q"))}))); got != "live" {
 		t.Fatalf("a read error must fall through to the provider, got %q", got)
 	}
@@ -197,7 +198,7 @@ func (p *slowProvider) Stream(ctx context.Context, _ types.Request) (<-chan type
 
 func TestSingleFlightCollapsesConcurrentMisses(t *testing.T) {
 	inner := &slowProvider{release: make(chan struct{}), resp: agenttest.ToolCallResponse("orig", "read", map[string]any{"q": "x"})}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true, CacheToolCalls: true})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true, CacheToolCalls: true}))
 	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 
 	const n = 10
@@ -241,7 +242,7 @@ func TestSingleFlightCollapsesConcurrentMisses(t *testing.T) {
 
 func TestSingleFlightCancelledLeaderHandsOver(t *testing.T) {
 	inner := &slowProvider{release: make(chan struct{}), resp: agenttest.TextResponse("answer")}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true}))
 	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())

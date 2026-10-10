@@ -121,7 +121,11 @@ func BatchProviderFor(p types.Provider, concurrency int) types.BatchProvider {
 		if cp, ok := wrapper.As[*convert.Provider](p); ok {
 			return cp.Batch(bp)
 		}
-		return convert.NewBatch(bp, types.ConversionPolicy{})
+		cb, err := convert.NewBatch(bp, convert.Config{})
+		if err != nil {
+			return bp
+		}
+		return cb
 	}
 	return batch.NewLocal(p, concurrency)
 }

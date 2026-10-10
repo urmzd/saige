@@ -7,6 +7,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func benchMessages() []types.Message {
@@ -35,7 +36,7 @@ func BenchmarkCacheHit(b *testing.B) {
 		{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "cached answer"}, types.PartEnd{Index: 0},
 			types.UsageDelta{PromptTokens: 50, CompletionTokens: 12, TotalTokens: 62}},
 	}}
-	p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+	p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 	msgs := benchMessages()
 
 	// Prime the cache (miss) so every measured call is a hit.
@@ -60,7 +61,7 @@ func BenchmarkCacheMiss(b *testing.B) {
 		inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
 			agenttest.TextResponse("fresh"),
 		}}
-		p := New(inner, Config{Cache: memcache.New[CachedResponse]()})
+		p := must.Get(New(inner, Config{Cache: memcache.New[CachedResponse]()}))
 		ch, _ := p.Stream(context.Background(), types.Request{Messages: msgs})
 		drain(ch)
 	}

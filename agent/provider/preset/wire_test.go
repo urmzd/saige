@@ -49,7 +49,7 @@ func TestWireConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	sess := b.Session().(types.TargetSwitcher)
 	for _, id := range []types.ProfileID{"w/claude", "w/haiku", "w/gpt", "w/o3", "w/gemini"} {
 		pinned, err := sess.WithTarget(types.ProfileTarget(id))

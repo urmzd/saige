@@ -248,7 +248,11 @@ func buildEvalClient(ctx context.Context, cfg evalClientConfig, dryRun bool) (*h
 	rc.MaxAttempts = 6
 	rc.MaxDelay = 16 * time.Second
 	rc.MaxRetryAfter = harness.MaxRetryAfter
-	return harness.NewProviderClient(retry.New(p, rc)), tr, nil
+	rp, err := retry.New(p, rc)
+	if err != nil {
+		return nil, tr, err
+	}
+	return harness.NewProviderClient(rp), tr, nil
 }
 
 func buildEvalHTTPClient(cfg evalClientConfig, dryRun bool) (*harness.Client, evalTransport, error) {

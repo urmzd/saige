@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 
 	"go.opentelemetry.io/otel/trace/noop"
@@ -14,195 +13,77 @@ import (
 	"github.com/urmzd/saige/agent/privacy"
 	"github.com/urmzd/saige/agent/provider/cache"
 	"github.com/urmzd/saige/agent/provider/fallback"
+	"github.com/urmzd/saige/agent/provider/internal/wrappertest"
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/provider/router"
 	"github.com/urmzd/saige/agent/provider/split"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
-// fullProvider implements every optional provider interface, plus one that
-// only describes this member (router.LockReporter).
-type fullProvider struct {
-	closed   *atomic.Int32
-	optCalls *atomic.Int32
-	schemas  *atomic.Int32
-	finish   []string
-}
-
-func newFull() *fullProvider {
-	return &fullProvider{closed: &atomic.Int32{}, optCalls: &atomic.Int32{}, schemas: &atomic.Int32{}}
-}
-
-func (p *fullProvider) stream() <-chan types.Delta {
-	ch := make(chan types.Delta, 4)
-	ch <- types.PartDelta{Index: 0, Text: "full"}
-	ch <- types.UsageDelta{PromptTokens: 3, CompletionTokens: 2, FinishReasons: p.finish}
-	close(ch)
-	return ch
-}
-
-func (p *fullProvider) chatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
-	return p.stream(), nil
-}
-
-// Stream implements types.Provider.
-func (p *fullProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	if req.Options != nil {
-		return p.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
-	}
-	if req.Schema != nil {
-		return p.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
-	}
-	return p.chatStream(ctx, req.Messages, req.Tools)
-}
-
-// SupportsOptions implements types.OptionsProvider.
-func (p *fullProvider) SupportsOptions() bool { return true }
-
-// SupportsSchema implements types.StructuredOutputProvider.
-func (p *fullProvider) SupportsSchema() bool { return true }
-func (p *fullProvider) chatStreamWithSchema(context.Context, []types.Message, []types.ToolDef, *types.ParameterSchema) (<-chan types.Delta, error) {
-	p.schemas.Add(1)
-	return p.stream(), nil
-}
-func (p *fullProvider) chatStreamWithOptions(context.Context, []types.Message, []types.ToolDef, types.RequestOptions) (<-chan types.Delta, error) {
-	p.optCalls.Add(1)
-	return p.stream(), nil
-}
-func (p *fullProvider) Name() string                    { return "full" }
-func (p *fullProvider) Model() string                   { return "full-model" }
-func (p *fullProvider) WithModel(string) types.Provider { return p }
-func (p *fullProvider) NewSession() types.Provider      { return p }
-func (p *fullProvider) Close() error                    { p.closed.Add(1); return nil }
-func (p *fullProvider) RouteLocks() []string            { return []string{router.LockContextCache} }
-func (p *fullProvider) EffectiveOptions() types.RequestOptions {
-	seed := int64(5)
-	return types.RequestOptions{Seed: &seed}
-}
-func (p *fullProvider) ContentSupport() types.ContentSupport {
-	return types.ContentSupport{NativeTypes: map[types.MediaType]bool{types.MediaPNG: true}}
-}
-func (p *fullProvider) Capabilities() types.ModelCapabilities {
-	return types.ModelCapabilities{Provider: "full", Model: "full-model", Known: true, ContextWindow: 1000,
-		Caps:  map[types.Capability]bool{types.CapTools: true, types.CapStructuredOutput: true, types.CapToolChoice: true, types.CapSeed: true},
-		Media: types.ContentSupport{NativeTypes: map[types.MediaType]bool{types.MediaPNG: true}}}
-}
-
-// forwarded lists the optional interfaces the agent loop finds by a direct
-// type assertion. Every built-in decorator must implement each one itself.
-// Adding an optional interface means adding it here.
-var forwarded = []struct {
-	name string
-	has  func(types.Provider) bool
-}{
-	{"NamedProvider", func(p types.Provider) bool { _, ok := p.(types.NamedProvider); return ok }},
-	{"ModelProvider", func(p types.Provider) bool { _, ok := p.(types.ModelProvider); return ok }},
-	// A model switch reaches the inner provider through ModelSwitcher, or
-	// through TargetSwitcher, which the router implements in its place.
-	{"ModelSwitcher", func(p types.Provider) bool {
-		_, ms := p.(types.ModelSwitcher)
-		_, ts := p.(types.TargetSwitcher)
-		return ms || ts
-	}},
-	{"TargetSwitcher", func(p types.Provider) bool { _, ok := p.(types.TargetSwitcher); return ok }},
-	{"CapabilityReporter", func(p types.Provider) bool { _, ok := p.(types.CapabilityReporter); return ok }},
-	{"StructuredOutputProvider", func(p types.Provider) bool { _, ok := p.(types.StructuredOutputProvider); return ok }},
-	{"OptionsProvider", func(p types.Provider) bool { _, ok := p.(types.OptionsProvider); return ok }},
-	{"SessionProvider", func(p types.Provider) bool { _, ok := p.(types.SessionProvider); return ok }},
-}
-
-type wrapped struct {
-	name  string
-	build func(inner types.Provider) types.Provider
-	// closes reports whether Close on the wrapper reaches the inner provider.
-	// A router session shares its profiles with other sessions, so only the
-	// Router closes them.
-	closes bool
-}
-
-func wrappers(t *testing.T) []wrapped {
-	return []wrapped{
-		{"retry", func(p types.Provider) types.Provider { return retry.New(p, retry.DefaultConfig()) }, true},
-		{"convert", func(p types.Provider) types.Provider { return convert.New(p, types.ConversionPolicy{}) }, true},
-		{"fallback", func(p types.Provider) types.Provider { return fallback.New(p) }, true},
-		{"cache", func(p types.Provider) types.Provider {
-			return cache.New(p, cache.Config{Cache: memcache.New[cache.CachedResponse]()})
-		}, true},
-		{"router session", func(p types.Provider) types.Provider {
-			r, err := router.New(router.Config{Profiles: []router.Profile{{ID: "only", Provider: p}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			return r.Session()
-		}, false},
-		{"split", func(p types.Provider) types.Provider {
+func cases(t *testing.T) []wrappertest.Case {
+	mem := func() types.Cache[cache.CachedResponse] { return memcache.New[cache.CachedResponse]() }
+	return []wrappertest.Case{
+		{Name: "retry", Build: func(p types.Provider) types.Provider { return must.Get(retry.New(p, retry.DefaultConfig())) }},
+		{Name: "convert", Build: func(p types.Provider) types.Provider { return must.Get(convert.New(p, convert.Config{})) }},
+		{Name: "fallback", Multi: true, Build: func(p types.Provider) types.Provider { return must.Get(fallback.Of(p)) }},
+		{Name: "cache", Build: func(p types.Provider) types.Provider {
+			return must.Get(cache.New(p, cache.Config{Cache: mem()}))
+		}},
+		{Name: "router session", Multi: true, SharedClose: true, SharedSessions: true, Profiles: true, RetargetTo: types.ProfileTarget("only"),
+			Build: func(p types.Provider) types.Provider {
+				r, err := router.New(router.Config{Profiles: []router.Profile{{ID: "only", Provider: p}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r.Session()
+			}},
+		{Name: "split", Multi: true, Build: func(p types.Provider) types.Provider {
 			s, err := split.New(split.Config{Experiment: "exp", Arms: []split.Arm{{Label: "only", Weight: 1, Provider: p}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return s
-		}, true},
-		{"privacy", func(p types.Provider) types.Provider { return privacy.NewProvider(p, privacy.NewVault(nil)) }, true},
-		{"tracing", func(p types.Provider) types.Provider {
-			return otel.NewTracedProvider(p, noop.NewTracerProvider().Tracer("test"))
-		}, true},
-		{"stacked", func(p types.Provider) types.Provider {
-			return retry.New(fallback.New(cache.New(p, cache.Config{Cache: memcache.New[cache.CachedResponse]()})), retry.DefaultConfig())
-		}, true},
+		}},
+		{Name: "privacy", Build: func(p types.Provider) types.Provider {
+			return must.Get(privacy.New(p, privacy.Config{Vault: privacy.NewVault(nil)}))
+		}},
+		{Name: "tracing", Build: func(p types.Provider) types.Provider {
+			return must.Get(otel.NewTracedProvider(p, noop.NewTracerProvider().Tracer("test")))
+		}},
+		{Name: "no close", SharedClose: true, Build: wrapper.NoClose},
+		{Name: "stacked", Build: func(p types.Provider) types.Provider {
+			return must.Get(retry.New(must.Get(convert.New(must.Get(cache.New(p, cache.Config{Cache: mem()})), convert.Config{})), retry.DefaultConfig()))
+		}},
 	}
 }
 
-func TestWrappersKeepOptionalInterfaces(t *testing.T) {
-	for _, w := range wrappers(t) {
-		t.Run(w.name, func(t *testing.T) {
-			inner := newFull()
-			p := w.build(inner)
-			for _, iface := range forwarded {
-				if !iface.has(p) {
-					t.Errorf("%s hides %s", w.name, iface.name)
-				}
-			}
-			if lr, ok := wrapper.As[router.LockReporter](p); !ok || len(lr.RouteLocks()) != 1 {
-				t.Errorf("%s hides a member-specific interface from wrapper.As", w.name)
-			}
-			if found, ok := wrapper.As[*fullProvider](p); !ok || found != inner {
-				t.Errorf("%s: wrapper.As did not reach the inner provider", w.name)
-			}
+// Every built-in decorator forwards every optional interface the agent loop
+// finds by a type assertion, and each reaches the provider it wraps.
+func TestWrappersForwardEveryOptionalInterface(t *testing.T) {
+	wrappertest.Run(t, cases(t))
+}
 
-			caps, _ := types.ProviderCapabilities(p)
-			if !caps.SupportsAll(types.CapTools, types.CapStructuredOutput, types.CapToolChoice) {
-				t.Errorf("%s capabilities = %v", w.name, caps.List())
-			}
-
-			choice := types.ToolChoice{Mode: types.ToolChoiceRequired}
-			ch, err := p.(types.OptionsProvider).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: []types.ToolDef{{Name: "t"}}, Options: &types.RequestOptions{ToolChoice: &choice}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for range ch {
-			}
-			if inner.optCalls.Load() != 1 {
-				t.Errorf("%s did not forward request options", w.name)
-			}
-
-			ch, err = p.(types.StructuredOutputProvider).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Schema: &types.ParameterSchema{Type: "object"}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for range ch {
-			}
-			if inner.schemas.Load() != 1 {
-				t.Errorf("%s did not forward the schema", w.name)
-			}
-
-			if w.closes {
-				if err := types.CloseProvider(p); err != nil || inner.closed.Load() != 1 {
-					t.Errorf("%s Close reached the inner provider %d times, err %v", w.name, inner.closed.Load(), err)
-				}
-			}
-		})
+// A NoClose view does not close the shared provider.
+func TestNoCloseKeepsTheProviderOpen(t *testing.T) {
+	inner := wrappertest.NewFull()
+	if err := types.CloseProvider(context.Background(), wrapper.NoClose(inner)); err != nil || inner.C.Closed.Load() != 0 {
+		t.Fatalf("NoClose closed the provider: %d, %v", inner.C.Closed.Load(), err)
 	}
+}
+
+type wrapped struct {
+	name  string
+	build func(inner types.Provider) types.Provider
+}
+
+func wrappers(t *testing.T) []wrapped {
+	var out []wrapped
+	for _, c := range cases(t) {
+		out = append(out, wrapped{c.Name, c.Build})
+	}
+	return out
 }
 
 // bare implements only types.Provider.
@@ -237,29 +118,13 @@ func TestWrappersRejectOptionsTheInnerProviderCannotReceive(t *testing.T) {
 	}
 }
 
-// Single-provider decorators report the options their inner provider sends,
-// so a router validates and records what reaches the wire.
-func TestSingleWrappersForwardEffectiveOptions(t *testing.T) {
-	for _, w := range wrappers(t) {
-		switch w.name {
-		case "retry", "convert", "cache", "privacy", "tracing":
-		default:
-			continue
-		}
-		o, ok := types.ProviderEffectiveOptions(w.build(newFull()))
-		if !ok || o.Seed == nil || *o.Seed != 5 {
-			t.Errorf("%s: effective options %+v, %v", w.name, o, ok)
-		}
-	}
-}
-
 func TestInnermostFollowsSingleWrappers(t *testing.T) {
-	inner := newFull()
-	stack := retry.New(cache.New(inner, cache.Config{}), retry.DefaultConfig())
+	inner := wrappertest.NewFull()
+	stack := must.Get(retry.New(must.Get(cache.New(inner, cache.Config{Cache: memcache.New[cache.CachedResponse]()})), retry.DefaultConfig()))
 	if wrapper.Innermost(stack) != types.Provider(inner) {
 		t.Fatal("Innermost did not reach the adapter")
 	}
-	if got := wrapper.Members(fallback.New(inner, bare{})); len(got) != 2 {
+	if got := wrapper.Members(must.Get(fallback.Of(inner, bare{}))); len(got) != 2 {
 		t.Fatalf("Members = %d", len(got))
 	}
 }
@@ -275,9 +140,9 @@ func TestGenerateKeepsUsageAndReportsTruncation(t *testing.T) {
 		{"cut off at length", []string{"length"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			inner := newFull()
-			inner.finish = tc.finish
-			g := AsGenerator(retry.New(inner, retry.DefaultConfig()))
+			inner := wrappertest.NewFull()
+			inner.Finish = tc.finish
+			g := AsGenerator(must.Get(retry.New(inner, retry.DefaultConfig())))
 			res, err := g.GenerateWithUsage(context.Background(), "prompt")
 			if errors.Is(err, types.ErrResponseTruncated) != tc.wantTruncated {
 				t.Fatalf("err = %v", err)
@@ -352,7 +217,7 @@ func TestWrappersDropOptionCapabilitiesTheInnerProviderCannotReceive(t *testing.
 	}
 	// A member that can receive options keeps the capability for the whole
 	// chain, because an options call is routed to that member.
-	mixed := fallback.New(declaresOnly{}, newFull())
+	mixed := must.Get(fallback.Of(declaresOnly{}, wrappertest.NewFull()))
 	if caps, _ := types.ProviderCapabilities(mixed); !caps.Supports(types.CapToolChoice) {
 		t.Fatalf("mixed chain lost tool choice: %v", caps.List())
 	}

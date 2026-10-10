@@ -66,7 +66,7 @@ func FromBound(b *bind.Bound, extra ...agentsdk.AgentOption) Agent {
 	}
 	return Agent{
 		Agent:      b.NewAgent(opts...),
-		Release:    func() { _ = b.Close() },
+		Release:    func() { _ = b.Close(context.Background()) },
 		CheckGrant: b.CheckGrant,
 		MaxGrant:   b.MaxGrant,
 		Tools:      b.Config.Tools,

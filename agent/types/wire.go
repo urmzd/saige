@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -378,19 +380,25 @@ func (e *RemoteError) Unwrap() error { return e.Err }
 
 func (e *RemoteError) Is(target error) bool {
 	for _, c := range e.Codes {
-		if s, ok := sentinelByCode[c]; ok && s == target {
+		if s := sentinelForCode(c); s != nil && s == target {
 			return true
 		}
 	}
 	return false
 }
 
-// wireSentinels lists the sentinel errors with a stable wire code, in match
-// order. Codes are part of the wire contract: never rename one.
-var wireSentinels = []struct {
+// ErrorKind implements KindReporter.
+func (e *RemoteError) ErrorKind() ErrorKind { return e.Kind }
+
+type wireSentinel struct {
 	code string
 	err  error
-}{
+}
+
+// wireSentinels lists the sentinel errors with a stable wire code, in match
+// order: this package's, then those other packages register. Codes are part
+// of the wire contract: never rename one.
+var wireSentinels = []wireSentinel{
 	{"stream_canceled", ErrStreamCanceled},
 	{"context_canceled", context.Canceled},
 	{"deadline_exceeded", context.DeadlineExceeded},
@@ -421,21 +429,72 @@ var wireSentinels = []struct {
 	{"modality_unsupported", ErrModalityUnsupported},
 	{"wire_unrepresentable", ErrWireUnrepresentable},
 	{"wire_inline_too_large", ErrWireInlineTooLarge},
+	{"invalid_config", ErrInvalidConfig},
 }
 
-var sentinelByCode = func() map[string]error {
-	m := make(map[string]error, len(wireSentinels))
-	for _, s := range wireSentinels {
-		m[s.code] = s.err
-	}
-	return m
-}()
+var (
+	sentinelMu     sync.RWMutex
+	sentinelByCode = func() map[string]error {
+		m := make(map[string]error, len(wireSentinels))
+		for _, s := range wireSentinels {
+			m[s.code] = s.err
+		}
+		return m
+	}()
+)
 
-// ErrorCodes returns the stable wire codes of every known sentinel err matches.
+// RegisterWireSentinel gives err the stable wire code code, so that after
+// an error crosses a process boundary (EncodeError, DecodeError, an error
+// envelope, a durable record) errors.Is(decoded, err) still holds. A
+// package that defines a sentinel the agent loop can surface registers it
+// from init; this package cannot import those packages, so it cannot list
+// them itself. Codes are part of the wire contract: never rename one.
+//
+// It panics when code is empty or taken by another error, or err is nil:
+// those are programming errors, found when the program starts.
+// Registering the same pair twice is a no-op.
+func RegisterWireSentinel(code string, err error) {
+	if code == "" || err == nil {
+		panic("types: RegisterWireSentinel needs a code and an error")
+	}
+	sentinelMu.Lock()
+	defer sentinelMu.Unlock()
+	if prev, ok := sentinelByCode[code]; ok {
+		if prev == err {
+			return
+		}
+		panic("types: wire code " + strconv.Quote(code) + " is already registered")
+	}
+	sentinelByCode[code] = err
+	wireSentinels = append(wireSentinels, wireSentinel{code: code, err: err})
+}
+
+// WireSentinels returns every registered sentinel by its wire code.
+func WireSentinels() map[string]error {
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
+	out := make(map[string]error, len(sentinelByCode))
+	for c, e := range sentinelByCode {
+		out[c] = e
+	}
+	return out
+}
+
+// sentinelForCode returns the sentinel registered under code, or nil.
+func sentinelForCode(code string) error {
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
+	return sentinelByCode[code]
+}
+
+// ErrorCodes returns the stable wire codes of every registered sentinel err
+// matches, in registration order.
 func ErrorCodes(err error) []string {
 	if err == nil {
 		return nil
 	}
+	sentinelMu.RLock()
+	defer sentinelMu.RUnlock()
 	var codes []string
 	for _, s := range wireSentinels {
 		if errors.Is(err, s.err) {

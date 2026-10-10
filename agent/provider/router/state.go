@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 
@@ -298,7 +297,7 @@ type Affinity struct {
 func (a Affinity) Select(_ context.Context, rc RouteContext, st RouteState) (RouteDecision, error) {
 	c := rc.Candidates
 	if len(c) == 0 {
-		return RouteDecision{}, errors.New("no eligible routing profile")
+		return RouteDecision{}, ErrNoEligibleProfile
 	}
 	fits := func(i int) bool {
 		w := c[i].Capabilities.ContextWindow

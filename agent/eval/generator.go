@@ -60,7 +60,9 @@ func NewGenerator(p types.Provider, opts ...GeneratorOption) *Generator {
 		o(g)
 	}
 	if _, ok := wrapper.As[types.ConversionPlanner](g.provider); !ok {
-		g.provider = convert.New(g.provider, types.ConversionPolicy{Cache: g.conversion.Cache})
+		if cp, err := convert.New(g.provider, convert.Config{Policy: types.ConversionPolicy{Cache: g.conversion.Cache}}); err == nil {
+			g.provider = cp
+		}
 	}
 	return g
 }

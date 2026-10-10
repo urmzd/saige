@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urmzd/saige/agent/provider/internal/wrappertest"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -43,4 +44,12 @@ func TestAttemptTimeoutIsTransient(t *testing.T) {
 			t.Fatal("a caller cancellation must not read as an attempt timeout")
 		}
 	}
+}
+
+// The attempt deadline forwards every optional interface, so a preset
+// entry with a timeout can still be re-targeted and isolated.
+func TestAttemptTimeoutForwardsEveryOptionalInterface(t *testing.T) {
+	wrappertest.Run(t, []wrappertest.Case{{Name: "attempt timeout", Build: func(p types.Provider) types.Provider {
+		return withAttemptTimeout(p, time.Minute)
+	}}})
 }

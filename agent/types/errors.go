@@ -16,12 +16,23 @@ import (
 // ── Sentinel errors ──────────────────────────────────────────────────
 
 var (
-	ErrToolNotFound         = errors.New("tool not found")
-	ErrMaxIterations        = errors.New("max iterations reached")
-	ErrStreamCanceled       = errors.New("stream canceled")
-	ErrProviderFailed       = errors.New("provider failed")
+	// ErrToolNotFound reports a call to a tool the registry does not hold.
+	ErrToolNotFound = errors.New("tool not found")
+	// ErrMaxIterations reports a run that reached its iteration limit.
+	ErrMaxIterations = errors.New("max iterations reached")
+	// ErrStreamCanceled reports a stream its consumer canceled.
+	ErrStreamCanceled = errors.New("stream canceled")
+	// ErrProviderFailed matches every *ProviderError and *FallbackError.
+	ErrProviderFailed = errors.New("provider failed")
+	// ErrUnsupportedMediaType reports media no resolver or extractor takes.
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
-	ErrResolverNotFound     = errors.New("no resolver for URI scheme")
+	// ErrResolverNotFound reports a URI scheme no resolver serves.
+	ErrResolverNotFound = errors.New("no resolver for URI scheme")
+	// ErrInvalidConfig reports a constructor given a configuration it
+	// cannot build from: a missing required field, a value out of range,
+	// or fields that contradict each other. Every New in this module
+	// returns an error wrapping it instead of panicking.
+	ErrInvalidConfig = errors.New("invalid configuration")
 )
 
 // Kind sentinels. A ProviderError matches the sentinel for its Kind, so

@@ -79,18 +79,18 @@ func (t Target) String() string {
 }
 
 // TargetSwitcher is an optional interface for providers that can be
-// re-targeted at a model, a router profile or a preset. Unlike
-// ModelSwitcher it reports a target it cannot serve as an error, wrapping
-// ErrUnknownTarget, instead of deferring the failure to the next request.
+// re-targeted at a model, a router profile or a preset. A target it cannot
+// serve is an error wrapping ErrUnknownTarget, never a failure deferred to
+// the next request.
 type TargetSwitcher interface {
 	Provider
 	WithTarget(t Target) (Provider, error)
 }
 
 // ProviderWithTarget returns a variant of p serving t. The zero target
-// returns p. A TargetSwitcher decides for itself; otherwise a model target
-// goes through ModelSwitcher, and a profile or preset target is an error,
-// since only a router defines them.
+// returns p, and so does a model target naming p's configured model. A
+// TargetSwitcher decides for itself; any other provider cannot be
+// re-targeted, which is an error wrapping ErrUnknownTarget.
 func ProviderWithTarget(p Provider, t Target) (Provider, error) {
 	if t.IsZero() {
 		return p, nil
@@ -107,15 +107,26 @@ func ProviderWithTarget(p Provider, t Target) (Provider, error) {
 	if ProviderModel(p) == string(t.Model) {
 		return p, nil
 	}
-	if ms, ok := p.(ModelSwitcher); ok {
-		return ms.WithModel(string(t.Model)), nil
-	}
 	return nil, fmt.Errorf("%w %s: provider %s cannot switch models", ErrUnknownTarget, t, NameOf(p))
 }
 
+// TargetModel is the WithTarget rule of a provider that serves one model at
+// a time, such as an adapter: a model target names the model to switch to,
+// and a profile or preset target is an error wrapping ErrUnknownTarget,
+// since only a router defines them. provider names the caller in errors.
+func TargetModel(t Target, provider string) (ModelID, error) {
+	if err := t.Validate(); err != nil {
+		return "", err
+	}
+	if t.Model == "" {
+		return "", fmt.Errorf("%w %s: provider %s has no profiles or presets", ErrUnknownTarget, t, provider)
+	}
+	return t.Model, nil
+}
+
 // RetargetMembers re-targets the members of a multi-provider decorator
-// (named in errors) at a model target. A member that can switch neither
-// targets nor models is kept as-is, so a mixed chain still serves. A
+// (named in errors) at a model target. A member that cannot be re-targeted
+// is kept as-is, so a mixed chain still serves. A
 // profile or preset target is an error: only a router defines them.
 func RetargetMembers(members []Provider, t Target, decorator string) ([]Provider, error) {
 	if err := t.Validate(); err != nil && !t.IsZero() {
@@ -126,9 +137,7 @@ func RetargetMembers(members []Provider, t Target, decorator string) ([]Provider
 	}
 	out := make([]Provider, len(members))
 	for i, p := range members {
-		_, ts := p.(TargetSwitcher)
-		_, ms := p.(ModelSwitcher)
-		if !ts && !ms {
+		if _, ts := p.(TargetSwitcher); !ts {
 			out[i] = p
 			continue
 		}

@@ -18,6 +18,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // spyTracerProvider hands out one spyTracer.
@@ -259,7 +260,7 @@ func TestAgentTracerParentsRunSpans(t *testing.T) {
 	tracer := cfg.tracer()
 
 	ctx, end := at.StartAgent(context.Background(), "parent")
-	ch, err := NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer).Stream(ctx, types.Request{})
+	ch, err := must.Get(NewTracedProvider(&fakeProvider{deltas: []types.Delta{types.DoneDelta{}}}, tracer)).Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +345,7 @@ func TestTracedProviderCapabilitiesFollowOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tracer, _ := newSpyTracer()
-			caps := NewTracedProvider(tt.inner, tracer).Capabilities()
+			caps := must.Get(NewTracedProvider(tt.inner, tracer)).Capabilities()
 			if got := caps.Supports(types.CapToolChoice); got != tt.wantChoice {
 				t.Errorf("tool choice = %v, want %v", got, tt.wantChoice)
 			}

@@ -540,7 +540,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // Close ends the session and, for a local server, waits for the child process
 // to exit. Safe to call more than once.
-func (c *Client) Close() error {
+func (c *Client) Close(ctx context.Context) error {
 	// Guarded: Close races a concurrent CallTool, which reads c.session on the
 	// same mutex that protects the tool map.
 	c.mu.Lock()
@@ -565,6 +565,8 @@ func (c *Client) Close() error {
 	case <-unwound:
 	case <-deadline.C:
 		return fmt.Errorf("mcp: close %q: in-flight calls did not stop within %v", c.spec.Name, closeTimeout)
+	case <-ctx.Done():
+		return fmt.Errorf("mcp: close %q: %w", c.spec.Name, ctx.Err())
 	}
 
 	// Closing the session closes the transport, and for a local server the
@@ -576,6 +578,8 @@ func (c *Client) Close() error {
 		return err
 	case <-deadline.C:
 		return fmt.Errorf("mcp: close %q: server did not release its session within %v", c.spec.Name, closeTimeout)
+	case <-ctx.Done():
+		return fmt.Errorf("mcp: close %q: %w", c.spec.Name, ctx.Err())
 	}
 }
 

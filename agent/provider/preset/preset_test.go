@@ -162,7 +162,7 @@ func TestFallbackConsistencyRecording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	rp, _ := b.Resolved("p")
 	for _, e := range rp.Chain {
 		if got := rec.configs[string(e.Model)].Options; !reflect.DeepEqual(got, e.Options) {
@@ -371,7 +371,7 @@ func TestDefaultsCarryCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	cc := b.Defaults().Compaction
 	if cc == nil || cc.Strategy != types.CompactKeepRecent || cc.KeepTurns != 6 {
 		t.Fatalf("compaction = %+v", cc)

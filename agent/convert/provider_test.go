@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestProviderConvertsBeforeDispatch(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: visionChat(), opts: true}
 	c := &fake{action: types.ActTranscribe, media: types.ModalityAudio, text: "spoken words"}
-	p := New(inner, types.ConversionPolicy{Converters: []types.Converter{c}},
-		layer(types.DialScopePreset, per(types.ModalityAudio, types.ActTranscribe)))
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{c}}, Layers: []types.DialLayer{layer(types.DialScopePreset, per(types.ModalityAudio, types.ActTranscribe))}}))
 	msgs := []types.Message{types.UserMsg(types.Text("q"), wav("clip"))}
 	temp := 0.5
 	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs, Options: &types.RequestOptions{Temperature: &temp}})
@@ -41,7 +41,7 @@ func TestProviderConvertsBeforeDispatch(t *testing.T) {
 
 func TestProviderSpendsTheModalityDial(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: visionChat()} // takes no options
-	p := New(inner, types.ConversionPolicy{})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
 	d := per(types.ModalityAudio, types.ActOmit)
 	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(wav("a"))},
 		Options: &types.RequestOptions{Dials: types.Dials{Modality: &d}}})
@@ -61,7 +61,7 @@ func TestProviderSpendsTheModalityDial(t *testing.T) {
 
 func TestProviderRejectsBeforeDispatch(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: textOnly()}
-	p := New(inner, types.ConversionPolicy{})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
 	_, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}})
 	if !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want ErrModalityUnsupported", err)
@@ -76,7 +76,7 @@ func TestProviderRejectsBeforeDispatch(t *testing.T) {
 
 func TestProviderNativeRequestPassesThrough(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: visionChat()}
-	p := New(inner, types.ConversionPolicy{})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
 	msgs := []types.Message{types.UserMsg(pngPart("x"))}
 	ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestProviderNativeRequestPassesThrough(t *testing.T) {
 func TestProviderRuntimePolicy(t *testing.T) {
 	inner := &stubProvider{name: "chat", offering: visionChat()}
 	c := &fake{action: types.ActTranscribe, media: types.ModalityAudio, text: "agent transcript"}
-	p := New(inner, types.ConversionPolicy{Dial: per(types.ModalityAudio, types.ActReject)})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{Dial: per(types.ModalityAudio, types.ActReject)}}))
 	ctx := WithRuntime(context.Background(), Runtime{Policy: types.ConversionPolicy{
 		Dial: per(types.ModalityAudio, types.ActTranscribe), Converters: []types.Converter{c}}})
 	ch, err := p.Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(wav("a"))}})
@@ -119,7 +119,7 @@ func TestProviderRuntimePolicy(t *testing.T) {
 
 func TestProviderWithoutCapabilitiesPassesThrough(t *testing.T) {
 	inner := bareProvider{}
-	p := New(inner, types.ConversionPolicy{})
+	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
 	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(wav("a"))}})
 	if err != nil {
 		t.Fatal(err)

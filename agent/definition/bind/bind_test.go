@@ -67,7 +67,7 @@ func bind(t *testing.T, res *definition.Resolved, env Env) *Bound {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = b.Close() })
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
 	return b
 }
 
@@ -564,7 +564,7 @@ func TestBindMCP(t *testing.T) {
 	if err != nil || !strings.Contains(out, "echo") {
 		t.Fatalf("call: %q %v", out, err)
 	}
-	if err := b.Close(); err != nil {
+	if err := b.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

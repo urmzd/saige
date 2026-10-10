@@ -37,7 +37,7 @@ func TestBaseURLAppliesOnPresetPath(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = b.Close() }()
+		defer func() { _ = b.Close(context.Background()) }()
 		rp, _ := b.Resolved(types.PresetName(presetName))
 		urls := map[string]string{}
 		for _, e := range rp.Chain {
@@ -100,7 +100,7 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = b.Close() }()
+		defer func() { _ = b.Close(context.Background()) }()
 		rp, _ := b.Resolved("default")
 		var ids []string
 		for _, e := range rp.Chain {
@@ -138,7 +138,7 @@ func TestDefaultPresetIsSingleVendor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = b.Close() }()
+	defer func() { _ = b.Close(context.Background()) }()
 	if rp, _ := b.Resolved("default"); len(rp.Chain) != 2 {
 		t.Fatalf("explicit preset chain %+v", rp.Chain)
 	}

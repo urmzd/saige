@@ -34,10 +34,11 @@ func (p *modelSwitchProvider) Stream(_ context.Context, _ types.Request) (<-chan
 
 func (p *modelSwitchProvider) Model() string { return p.model }
 
-func (p *modelSwitchProvider) WithModel(model string) types.Provider {
+func (p *modelSwitchProvider) WithTarget(t types.Target) (types.Provider, error) {
+	model := string(t.Model)
 	c := *p
 	c.model = model
-	return &c
+	return &c, nil
 }
 
 // A ConfigPart block that sets Model must re-target the provider call.

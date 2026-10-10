@@ -125,7 +125,11 @@ func traceProvider(p types.Provider, tracer trace.Tracer, opts []ProviderOption)
 	if _, ok := p.(*TracedProvider); ok {
 		return p
 	}
-	return NewTracedProvider(p, tracer, opts...)
+	tp, err := NewTracedProvider(p, tracer, opts...)
+	if err != nil {
+		return p // no tracer: the provider runs untraced
+	}
+	return tp
 }
 
 // combineMetrics returns a sink that records to both existing and m. A nil or

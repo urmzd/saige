@@ -95,7 +95,7 @@ func TestRetryPolicyRespectsIdempotency(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Connect: %v", err)
 			}
-			t.Cleanup(func() { _ = c.Close() })
+			t.Cleanup(func() { _ = c.Close(context.Background()) })
 			front.fail.Store(tt.failures)
 			front.seen.Store(0)
 			if tt.connectRT {
@@ -105,7 +105,7 @@ func TestRetryPolicyRespectsIdempotency(t *testing.T) {
 				if err != nil {
 					t.Fatalf("handshake not retried: %v", err)
 				}
-				_ = c2.Close()
+				_ = c2.Close(context.Background())
 				if got := front.seen.Load(); got != tt.wantSeen {
 					t.Errorf("initialize requests = %d, want %d", got, tt.wantSeen)
 				}
@@ -254,7 +254,7 @@ func TestPoolRefusesToShareAcrossPolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := NewPool()
-			t.Cleanup(func() { _ = pool.Close() })
+			t.Cleanup(func() { _ = pool.Close(context.Background()) })
 			a, b := ts.spec(), ts.spec()
 			tt.first(&a)
 			tt.second(&b)
@@ -426,7 +426,7 @@ func TestLoadConfigRecordsRevisions(t *testing.T) {
 func TestExpiredCallerDoesNotFailSharedHandshake(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := pool.Acquire(ctx, ts.spec()); !errors.Is(err, context.Canceled) {
@@ -442,12 +442,12 @@ var _ types.ToolGate = CapabilityGate(CapabilityPolicy{})
 func TestAcquireReplacesAClientClosedOutsideThePool(t *testing.T) {
 	ts := newTestServer(t)
 	pool := NewPool()
-	t.Cleanup(func() { _ = pool.Close() })
+	t.Cleanup(func() { _ = pool.Close(context.Background()) })
 	first, err := pool.Acquire(context.Background(), ts.spec())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = first.Close()
+	_ = first.Close(context.Background())
 	second, err := pool.Acquire(context.Background(), ts.spec())
 	if err != nil || second == first || len(pool.Clients()) != 1 {
 		t.Errorf("second=%p first=%p clients=%d err=%v", second, first, len(pool.Clients()), err)

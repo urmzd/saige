@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 	"google.golang.org/genai"
 )
 
@@ -65,7 +66,7 @@ func TestDynamicThinkingAndModelSwitch(t *testing.T) {
 		t.Fatal("dynamic thinking lost")
 	}
 	WithoutThinking()(a)
-	if err := a.WithModel("gemini-2.5-pro").(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if err := must.Get(a.WithTarget(types.ModelTarget("gemini-2.5-pro"))).(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("model switch: %v", err)
 	}
 	if err := a.Validate(); err != nil {

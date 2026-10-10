@@ -84,7 +84,7 @@ loaded again (session/load) or listed (session/list).`,
 				return err
 			}
 			slog.Info("saige acp agent", "agent", first.Pin().String())
-			_ = first.Close()
+			_ = first.Close(ctx)
 
 			srv := newACPServer(ctx, acpOptions{
 				agent:           agentRef,

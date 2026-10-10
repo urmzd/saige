@@ -246,7 +246,7 @@ func listRemote(ctx context.Context, opts reconcileOptions, name string) ([]cata
 		return nil, err
 	}
 	if c, ok := l.(types.Provider); ok {
-		defer func() { _ = types.CloseProvider(c) }()
+		defer func() { _ = types.CloseProvider(ctx, c) }()
 	}
 	return l.ListModels(ctx)
 }
@@ -502,7 +502,7 @@ func buildReconcileLister(ctx context.Context, name string) (catalog.ModelLister
 	}
 	l, ok := wrapper.As[catalog.ModelLister](p)
 	if !ok {
-		_ = types.CloseProvider(p)
+		_ = types.CloseProvider(ctx, p)
 		return nil, fmt.Errorf("the %s adapter cannot list models", name)
 	}
 	return l, nil

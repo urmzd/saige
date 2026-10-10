@@ -109,7 +109,7 @@ tools. --deny-after stops asking about a tool after that many denials.`,
 					return err
 				}
 				slog.Info("saige serve agent", "agent", first.Pin().String())
-				_ = first.Close()
+				_ = first.Close(ctx)
 				if agentsReload > 0 {
 					stopWatch, err := h.reg.Watch(srvCtx, definition.WatchOptions{Interval: agentsReload, OnReload: func(changed bool, err error) {
 						switch {

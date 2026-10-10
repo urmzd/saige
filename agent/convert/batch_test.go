@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // batchStub is a vendor batch provider that is also the provider it
@@ -31,7 +32,7 @@ func (b *batchStub) Cancel(context.Context, types.BatchHandle) error { return ni
 func TestBatchConvertsEachRequestAtSubmit(t *testing.T) {
 	inner := &batchStub{stubProvider: &stubProvider{name: "chat", offering: textOnly()}}
 	c := &fake{action: types.ActExtract, media: types.ModalityDocument, text: "extracted text"}
-	bp := NewBatch(inner, types.ConversionPolicy{Converters: []types.Converter{c}})
+	bp := must.Get(NewBatch(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{c}}}))
 	d := per(types.ModalityDocument, types.ActExtract)
 	reqs := []types.BatchRequest{
 		{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("summarize"), pdf([]byte("%PDF-1")))},
@@ -63,7 +64,7 @@ func TestBatchConvertsEachRequestAtSubmit(t *testing.T) {
 func TestBatchRejectsBeforeUpload(t *testing.T) {
 	inner := &batchStub{stubProvider: &stubProvider{name: "chat", offering: textOnly()}}
 	c := &fake{action: types.ActExtract, media: types.ModalityDocument, text: "x"}
-	bp := NewBatch(inner, types.ConversionPolicy{Converters: []types.Converter{c}})
+	bp := must.Get(NewBatch(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{c}}}))
 	reqs := []types.BatchRequest{
 		{CustomID: "ok", Messages: []types.Message{types.UserMsg(types.Text("plain"))}},
 		{CustomID: "img", Messages: []types.Message{types.UserMsg(pngPart("x"))}},
@@ -83,7 +84,7 @@ func TestBatchRejectsBeforeUpload(t *testing.T) {
 func TestBatchRuntimePolicyAndForwarding(t *testing.T) {
 	inner := &batchStub{stubProvider: &stubProvider{name: "chat", offering: textOnly()}}
 	c := &fake{action: types.ActExtract, media: types.ModalityDocument, text: "from runtime"}
-	bp := NewBatch(inner, types.ConversionPolicy{})
+	bp := must.Get(NewBatch(inner, Config{Policy: types.ConversionPolicy{}}))
 	if n, ok := bp.(interface{ Name() string }); !ok || n.Name() != "chat" {
 		t.Fatal("the decorator does not report the inner name")
 	}

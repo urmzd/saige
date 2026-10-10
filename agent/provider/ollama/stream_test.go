@@ -15,6 +15,7 @@ import (
 	"github.com/urmzd/saige/agent/provider/cache"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // lineServer writes each line, sleeping gap before every line after the
@@ -132,7 +133,7 @@ func TestStreamIntegrity(t *testing.T) {
 
 func TestTruncatedStreamNotCached(t *testing.T) {
 	server := lineServer(t, 0, true, content("partial"))
-	p := cache.New(NewAdapter(NewClient(server.URL, "test-model", "")), cache.Config{Cache: memcache.New[cache.CachedResponse]()})
+	p := must.Get(cache.New(NewAdapter(NewClient(server.URL, "test-model", "")), cache.Config{Cache: memcache.New[cache.CachedResponse]()}))
 	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	for i := range 2 {
 		ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})

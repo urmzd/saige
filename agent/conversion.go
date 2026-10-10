@@ -70,7 +70,11 @@ func (a *Agent) converting(p types.Provider) types.Provider {
 	if _, ok := wrapper.As[types.ConversionPlanner](p); ok {
 		return p
 	}
-	return convert.New(p, types.ConversionPolicy{Cache: a.cfg.Conversion.Cache})
+	cp, err := convert.New(p, convert.Config{Policy: types.ConversionPolicy{Cache: a.cfg.Conversion.Cache}})
+	if err != nil {
+		return p // no provider: the call reports that itself
+	}
+	return cp
 }
 
 // conversionEstimate bounds what the call's planned conversions cost, for

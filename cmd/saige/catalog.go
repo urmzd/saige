@@ -511,7 +511,7 @@ func dryBuildIssues(ctx context.Context, cat *catalog.Catalog) []catalog.Issue {
 					Message: err.Error(), Severity: catalog.SeverityError})
 				continue
 			}
-			_ = types.CloseProvider(p)
+			_ = types.CloseProvider(ctx, p)
 		}
 	}
 	return out

@@ -281,7 +281,7 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 			return nil, err
 		}
 	}
-	return convert.New(p, cfg.Conversion, modality...), nil
+	return convert.New(p, convert.Config{Policy: cfg.Conversion, Layers: modality})
 }
 
 // splitModality separates the modality dial from the layers an adapter

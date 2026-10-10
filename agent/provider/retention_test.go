@@ -31,7 +31,7 @@ func TestBuildRejectsUndeclaredRetention(t *testing.T) {
 			t.Errorf("%s %s: built (%v)", tc.model, tc.retention, err)
 		}
 		if p != nil {
-			_ = types.CloseProvider(p)
+			_ = types.CloseProvider(context.Background(), p)
 		}
 	}
 }

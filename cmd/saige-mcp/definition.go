@@ -79,7 +79,7 @@ func newDefinitionTool(ctx context.Context, f definitionFlags, packs *agenttypes
 		return agentTool{}, false, fmt.Errorf("--agent %s: %w", f.ref, err)
 	}
 	gated := boundGated(first)
-	_ = first.Close()
+	_ = first.Close(ctx)
 
 	at = agentTool{name: f.name, description: f.description, schema: schema, timeout: f.timeout, gated: gated,
 		// Each call binds the resolution pinned at start, so calls share no

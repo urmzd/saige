@@ -8,6 +8,7 @@ import (
 
 	"github.com/urmzd/saige/agent/provider/retry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestDefaultFallbackOn(t *testing.T) {
@@ -62,7 +63,7 @@ func TestDefaultPolicyStopsOnTerminalErrors(t *testing.T) {
 				primary = &errorProviderSimple{err: tc.syncErr}
 			}
 			secondary := &scriptProvider{deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "backup"}, types.PartEnd{Index: 0}}}
-			ch, err := New(primary, secondary).Stream(context.Background(), types.Request{})
+			ch, err := must.Get(Of(primary, secondary)).Stream(context.Background(), types.Request{})
 			if err == nil {
 				collect(ch)
 			}
@@ -80,7 +81,7 @@ func TestSchemaSkipsMembersThatCannotEnforceIt(t *testing.T) {
 	plain := &scriptProvider{deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "free text"}, types.PartEnd{Index: 0}}}
 	schema := &types.ParameterSchema{Type: "object"}
 
-	ch, err := New(failing, plain).Stream(context.Background(), types.Request{Schema: schema})
+	ch, err := must.Get(Of(failing, plain)).Stream(context.Background(), types.Request{Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestSchemaSkipsMembersThatCannotEnforceIt(t *testing.T) {
 		t.Fatal("a member without schema support served a schema request")
 	}
 
-	_, err = New(plain, &scriptProvider{}).Stream(context.Background(), types.Request{Schema: schema})
+	_, err = must.Get(Of(plain, &scriptProvider{})).Stream(context.Background(), types.Request{Schema: schema})
 	if !errors.As(err, &fe) || !errors.Is(err, types.ErrInvalidModelConfig) || plain.callCount() != 0 {
 		t.Fatalf("err = %v, want a FallbackError matching ErrInvalidModelConfig", err)
 	}
@@ -111,14 +112,14 @@ func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 		{
 			name: "retry wrapped plain then capable",
 			members: func(plain, capable types.Provider) []types.Provider {
-				return []types.Provider{retry.New(plain, retry.DefaultConfig()), retry.New(capable, retry.DefaultConfig())}
+				return []types.Provider{must.Get(retry.New(plain, retry.DefaultConfig())), must.Get(retry.New(capable, retry.DefaultConfig()))}
 			},
 			wantText: "{}",
 		},
 		{
 			name: "plain wrapped twice then capable",
 			members: func(plain, capable types.Provider) []types.Provider {
-				return []types.Provider{retry.New(retry.New(plain, retry.DefaultConfig()), retry.DefaultConfig()), capable}
+				return []types.Provider{must.Get(retry.New(must.Get(retry.New(plain, retry.DefaultConfig())), retry.DefaultConfig())), capable}
 			},
 			wantText: "{}",
 		},
@@ -132,7 +133,7 @@ func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 		{
 			name: "only retry wrapped plain",
 			members: func(plain, _ types.Provider) []types.Provider {
-				return []types.Provider{retry.New(plain, retry.DefaultConfig())}
+				return []types.Provider{must.Get(retry.New(plain, retry.DefaultConfig()))}
 			},
 			wantErr: true,
 		},
@@ -140,7 +141,7 @@ func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			plain := &scriptProvider{deltas: text}
 			capable := &schemaScriptProvider{&scriptProvider{deltas: text}}
-			ch, err := New(tc.members(plain, capable)...).Stream(context.Background(), types.Request{Schema: schema})
+			ch, err := must.Get(Of(tc.members(plain, capable)...)).Stream(context.Background(), types.Request{Schema: schema})
 			if plain.callCount() != 0 {
 				t.Fatal("a member without schema support served a schema request")
 			}
@@ -204,10 +205,10 @@ func TestOptionsSkipMembersThatCannotReceiveThem(t *testing.T) {
 	}{
 		{"skips a member without options", []types.Provider{plain, accepting}, "forced", false},
 		{"no member accepts options", []types.Provider{plain}, "", true},
-		{"through a retry decorator", []types.Provider{retry.New(plain, retry.DefaultConfig()), accepting}, "forced", false},
+		{"through a retry decorator", []types.Provider{must.Get(retry.New(plain, retry.DefaultConfig())), accepting}, "forced", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ch, err := New(tc.members...).Stream(context.Background(), types.Request{Options: &opts})
+			ch, err := must.Get(Of(tc.members...)).Stream(context.Background(), types.Request{Options: &opts})
 			if err != nil {
 				if !tc.wantErr || !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v", err)

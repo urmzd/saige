@@ -16,7 +16,7 @@ var (
 	_ types.StructuredOutputProvider = (*Adapter)(nil)
 	_ types.NamedProvider            = (*Adapter)(nil)
 	_ types.ModelProvider            = (*Adapter)(nil)
-	_ types.ModelSwitcher            = (*Adapter)(nil)
+	_ types.TargetSwitcher           = (*Adapter)(nil)
 	_ types.CapabilityReporter       = (*Adapter)(nil)
 )
 
@@ -26,12 +26,17 @@ func (a *Adapter) Name() string { return "ollama" }
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return a.Client.Model }
 
-// WithModel implements types.ModelSwitcher: it returns a copy of the adapter
-// (and its client) targeting the given model, sharing the HTTP client.
-func (a *Adapter) WithModel(model string) types.Provider {
+// WithTarget implements types.TargetSwitcher: a model target returns a copy
+// of the adapter (and its client) targeting that model, sharing the HTTP
+// client.
+func (a *Adapter) WithTarget(t types.Target) (types.Provider, error) {
+	m, err := types.TargetModel(t, a.Name())
+	if err != nil {
+		return nil, err
+	}
 	client := *a.Client
-	client.Model = model
-	return &Adapter{Client: &client, toolChoice: a.toolChoice, dials: a.dials, dialPolicy: a.dialPolicy}
+	client.Model = string(m)
+	return &Adapter{Client: &client, toolChoice: a.toolChoice, dials: a.dials, dialPolicy: a.dialPolicy}, nil
 }
 
 // Adapter wraps the Ollama Client and implements types.Provider.

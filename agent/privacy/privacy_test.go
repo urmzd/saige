@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func labels(t *testing.T, d Detector, text string) []string {
@@ -306,7 +307,7 @@ func TestProviderDecorator(t *testing.T) {
 		types.DoneDelta{},
 	}}
 	v := NewVault(nil)
-	p := NewProvider(inner, v)
+	p := must.Get(New(inner, Config{Vault: v}))
 	msgs := []types.Message{
 		types.UserMsg(types.Text("email ada@example.com please")),
 		types.AssistantMessage{Parts: []types.AssistantPart{
@@ -371,7 +372,7 @@ func TestProviderDecorator(t *testing.T) {
 }
 
 func TestProviderRejectsUnsupportedControls(t *testing.T) {
-	p := NewProvider(&fakeProvider{}, NewVault(nil))
+	p := must.Get(New(&fakeProvider{}, Config{Vault: NewVault(nil)}))
 	if _, err := p.Stream(context.Background(), types.Request{Options: &types.RequestOptions{}}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("options err = %v", err)
 	}
@@ -385,7 +386,7 @@ func TestProviderRejectsUnsupportedControls(t *testing.T) {
 
 func TestProviderFailsClosedOnDetectorError(t *testing.T) {
 	inner := &fakeProvider{}
-	p := NewProvider(inner, NewVault(DetectorFunc(func(context.Context, string) ([]Span, error) { return nil, errors.New("down") })))
+	p := must.Get(New(inner, Config{Vault: NewVault(DetectorFunc(func(context.Context, string) ([]Span, error) { return nil, errors.New("down") }))}))
 	if _, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("x"))}}); err == nil {
 		t.Fatal("want error")
 	}

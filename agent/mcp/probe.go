@@ -80,7 +80,7 @@ func Probe(ctx context.Context, spec ServerSpec) ProbeResult {
 	res := ProbeResult{}
 	c, err := Connect(ctx, spec)
 	if err == nil {
-		defer func() { _ = c.Close() }()
+		defer func() { _ = c.Close(ctx) }()
 		var cat Catalog
 		cat, err = c.Catalog(ctx)
 		if err == nil {

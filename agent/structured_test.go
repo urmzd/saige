@@ -31,10 +31,11 @@ func newSwitchingProvider(model string, schema [][]types.Delta) *switchingProvid
 
 func (p *switchingProvider) Name() string  { return "switching" }
 func (p *switchingProvider) Model() string { return p.model }
-func (p *switchingProvider) WithModel(m string) types.Provider {
+func (p *switchingProvider) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
 	c := *p
 	c.model = m
-	return &c
+	return &c, nil
 }
 
 func (p *switchingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {

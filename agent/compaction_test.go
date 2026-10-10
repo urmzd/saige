@@ -220,8 +220,9 @@ type modelSwitchingProvider struct {
 }
 
 func (s *modelSwitchingProvider) Model() string { return s.model }
-func (s *modelSwitchingProvider) WithModel(m string) types.Provider {
-	return &modelSwitchingProvider{namedProvider: s.namedProvider, model: m}
+func (s *modelSwitchingProvider) WithTarget(t types.Target) (types.Provider, error) {
+	m := string(t.Model)
+	return &modelSwitchingProvider{namedProvider: s.namedProvider, model: m}, nil
 }
 
 func TestOrchestratorWithoutCompactionChildWithIt(t *testing.T) {

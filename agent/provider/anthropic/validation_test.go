@@ -10,6 +10,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 func TestThinkingValidation(t *testing.T) {
@@ -61,7 +62,7 @@ func TestAdaptiveThinkingEncodingAndManualSchemaConflict(t *testing.T) {
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("forced schema while thinking: %v", err)
 	}
-	if err := a.WithModel("claude-3-5-sonnet").(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
+	if err := must.Get(a.WithTarget(types.ModelTarget("claude-3-5-sonnet"))).(*Adapter).Validate(); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("model switch: %v", err)
 	}
 }

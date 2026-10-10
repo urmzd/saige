@@ -281,7 +281,7 @@ func bindCLIAgent(ctx context.Context, cmd *cobra.Command, cf *commonFlags, ref 
 		h.cleanup()
 		return nil, err
 	}
-	return &agentRun{bound: b, cleanup: func() { _ = b.Close(); h.cleanup() }}, nil
+	return &agentRun{bound: b, cleanup: func() { _ = b.Close(ctx); h.cleanup() }}, nil
 }
 
 // cliHarness is the harness configuration of ask and chat.

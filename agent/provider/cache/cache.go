@@ -9,12 +9,11 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
-	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -54,14 +53,14 @@ type Config struct {
 // Provider memoizes Stream responses. Only fully-completed, error-free
 // streams are cached.
 type Provider struct {
-	inner    types.Provider
+	wrapper.Base
 	cfg      Config
 	identity string
 	flights  *flights
 }
 
 // flights tracks in-progress leader calls by key. It is shared by every copy
-// of a Provider (WithModel, NewSession), since copies share the store.
+// of a Provider (WithTarget, NewSession), since copies share the store.
 type flights struct {
 	mu       sync.Mutex
 	inflight map[string]*flight
@@ -78,15 +77,37 @@ var (
 	_ types.StructuredOutputProvider = (*Provider)(nil)
 	_ types.NamedProvider            = (*Provider)(nil)
 	_ types.ModelProvider            = (*Provider)(nil)
-	_ types.ModelSwitcher            = (*Provider)(nil)
+	_ types.TargetSwitcher           = (*Provider)(nil)
 	_ types.CapabilityReporter       = (*Provider)(nil)
 	_ types.OptionsProvider          = (*Provider)(nil)
 	_ types.SessionProvider          = (*Provider)(nil)
 	_ types.Closer                   = (*Provider)(nil)
 )
 
-// New wraps a provider with response caching. cfg.Cache is required.
-func New(inner types.Provider, cfg Config) *Provider {
+// Option adjusts a Config before New validates it.
+type Option func(*Config)
+
+// WithTTL sets Config.TTL.
+func WithTTL(d time.Duration) Option { return func(c *Config) { c.TTL = d } }
+
+// WithSingleFlight sets Config.SingleFlight.
+func WithSingleFlight() Option { return func(c *Config) { c.SingleFlight = true } }
+
+// New wraps inner with response caching. A nil inner or cfg.Cache is an
+// error wrapping types.ErrInvalidConfig.
+func New(inner types.Provider, cfg Config, opts ...Option) (*Provider, error) {
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if inner == nil {
+		return nil, fmt.Errorf("%w: cache: no provider to wrap", types.ErrInvalidConfig)
+	}
+	if cfg.Cache == nil {
+		return nil, fmt.Errorf("%w: cache: Config.Cache is required", types.ErrInvalidConfig)
+	}
+	if cfg.TTL < 0 {
+		return nil, fmt.Errorf("%w: cache: negative TTL", types.ErrInvalidConfig)
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -98,42 +119,23 @@ func New(inner types.Provider, cfg Config) *Provider {
 		raw, _ := json.Marshal([]string{cfg.ScopeKey, cfg.ConfigKey, types.NameOf(inner)})
 		identity = string(raw)
 	}
-	return &Provider{inner: inner, cfg: cfg, identity: identity, flights: &flights{inflight: map[string]*flight{}}}
+	p := &Provider{cfg: cfg, identity: identity, flights: &flights{inflight: map[string]*flight{}}}
+	p.Base = wrapper.NewBase(inner, p.rewrap)
+	return p, nil
+}
+
+// rewrap keeps the cache config, store identity and flights around another
+// inner provider. A model switch therefore keys on the new model, and never
+// replays the old model's entries.
+func (p *Provider) rewrap(inner types.Provider) types.Provider {
+	c := *p
+	c.Base = wrapper.NewBase(inner, c.rewrap)
+	return &c
 }
 
 // Name implements types.NamedProvider.
 func (p *Provider) Name() string {
-	return "cache(" + types.NameOf(p.inner) + ")"
-}
-
-// Model implements types.ModelProvider by delegating to the inner provider.
-func (p *Provider) Model() string { return types.ProviderModel(p.inner) }
-
-// WithModel implements types.ModelSwitcher: it re-targets the inner provider
-// and keeps the same cache config. Without it a ConfigPart model switch was
-// silently dropped under a cache decorator, and every switched request was
-// answered from the original model's cache entries.
-func (p *Provider) WithModel(model string) types.Provider {
-	return &Provider{inner: types.ProviderWithModel(p.inner, model), cfg: p.cfg, identity: p.identity, flights: p.flights}
-}
-
-// WithTarget implements types.TargetSwitcher: it re-targets the inner
-// provider and keeps the same cache config.
-func (p *Provider) WithTarget(t types.Target) (types.Provider, error) {
-	inner, err := types.ProviderWithTarget(p.inner, t)
-	if err != nil {
-		return nil, err
-	}
-	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity, flights: p.flights}, nil
-}
-
-// Capabilities implements types.CapabilityReporter by delegating to the inner
-// provider. A cache changes latency, not what the model accepts. Capabilities
-// that need request options are dropped when the inner provider cannot
-// receive them.
-func (p *Provider) Capabilities() types.ModelCapabilities {
-	caps, _ := types.ProviderCapabilities(p.inner)
-	return optionscheck.Narrow(caps, p.inner)
+	return "cache(" + types.NameOf(p.Inner) + ")"
 }
 
 // Stream implements types.Provider. The options and schema are part of the
@@ -142,14 +144,16 @@ func (p *Provider) Capabilities() types.ModelCapabilities {
 // types.ErrInvalidModelConfig instead of being dropped; a schema it cannot
 // enforce fails the call on a miss.
 func (p *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	if req.Options != nil && !types.AcceptsOptions(p.inner) {
-		return nil, optionscheck.Unsupported(p.inner)
+	if req.Options != nil {
+		if err := p.Check(types.Request{Options: req.Options}); err != nil {
+			return nil, err
+		}
 	}
 	call := func() (<-chan types.Delta, error) {
-		if req.Schema != nil && !types.AcceptsSchema(p.inner) {
-			return nil, schemacheck.Unsupported(p.inner, "provider cannot enforce a response schema")
+		if err := p.Check(req); err != nil {
+			return nil, err
 		}
-		return p.inner.Stream(ctx, req)
+		return p.Inner.Stream(ctx, req)
 	}
 	view, ok := p.plannedView(ctx, req)
 	if !ok {
@@ -172,7 +176,7 @@ type view struct {
 // if there is one. A request with no media plans nothing and keys on its
 // parts alone. ok is false when the plan rejects the request.
 func (p *Provider) plannedView(ctx context.Context, req types.Request) (view, bool) {
-	planner, found := wrapper.As[types.ConversionPlanner](p.inner)
+	planner, found := wrapper.As[types.ConversionPlanner](p.Inner)
 	if !found {
 		return view{}, true
 	}
@@ -192,18 +196,6 @@ func (p *Provider) plannedView(ctx context.Context, req types.Request) (view, bo
 	return v, true
 }
 
-// SupportsSchema implements types.StructuredOutputProvider.
-func (p *Provider) SupportsSchema() bool { return true }
-
-// SupportsOptions implements types.OptionsProvider.
-func (p *Provider) SupportsOptions() bool { return true }
-
-// Unwrap returns the inner provider. See package wrapper.
-func (p *Provider) Unwrap() types.Provider { return p.inner }
-
-// Close implements types.Closer by closing the inner provider.
-func (p *Provider) Close() error { return types.CloseProvider(p.inner) }
-
 func (p *Provider) stream(
 	ctx context.Context,
 	msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema,
@@ -215,7 +207,7 @@ func (p *Provider) stream(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	parts := []string{p.identity, types.ProviderModel(p.inner)}
+	parts := []string{p.identity, types.ProviderModel(p.Inner)}
 	if opts != nil {
 		raw, err := json.Marshal(opts)
 		if err != nil {
@@ -323,20 +315,4 @@ func (p *Provider) finish(key string, fl *flight, stored, canceled bool) {
 	}
 	f.mu.Unlock()
 	close(fl.done)
-}
-
-// NewSession preserves cache configuration while isolating inner routing state.
-func (p *Provider) NewSession() types.Provider {
-	inner := p.inner
-	if sessions, ok := inner.(types.SessionProvider); ok {
-		inner = sessions.NewSession()
-	}
-	return &Provider{inner: inner, cfg: p.cfg, identity: p.identity, flights: p.flights}
-}
-
-// EffectiveOptions implements types.OptionsReporter by forwarding to the
-// inner provider.
-func (p *Provider) EffectiveOptions() types.RequestOptions {
-	o, _ := types.ProviderEffectiveOptions(p.inner)
-	return o
 }

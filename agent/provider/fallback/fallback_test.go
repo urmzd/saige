@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/internal/must"
 )
 
 // mockProvider returns a fixed text response.
@@ -37,7 +38,7 @@ func TestFallbackProvider_FirstSucceeds(t *testing.T) {
 	p1 := &mockProvider{response: "from-primary"}
 	p2 := &mockProvider{response: "from-backup"}
 
-	fb := New(p1, p2)
+	fb := must.Get(Of(p1, p2))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -62,7 +63,7 @@ func TestFallbackProvider_FallsBackOnError(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
+	fb := must.Get(Of(failing, good))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,7 +84,7 @@ func TestFallbackProvider_AllFail(t *testing.T) {
 	p1 := &errorProviderSimple{err: &types.ProviderError{Provider: "a", Kind: types.ErrorKindTransient, Err: errors.New("fail-a")}}
 	p2 := &errorProviderSimple{err: &types.ProviderError{Provider: "b", Kind: types.ErrorKindTransient, Err: errors.New("fail-b")}}
 
-	fb := New(p1, p2)
+	fb := must.Get(Of(p1, p2))
 	_, err := fb.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
@@ -105,10 +106,10 @@ func TestFallbackProvider_StopsOnPermanentWhenConfigured(t *testing.T) {
 	perm := &errorProviderSimple{err: &types.ProviderError{Provider: "auth-fail", Kind: types.ErrorKindPermanent, Err: errors.New("unauthorized")}}
 	good := &mockProvider{response: "should not reach"}
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{perm, good},
 		FallbackOn: types.IsTransient, // only fallback on transient
-	}
+	}))
 
 	_, err := fb.Stream(context.Background(), types.Request{})
 	if err == nil {
@@ -131,7 +132,7 @@ func TestFallbackProvider_ContextCancelled(t *testing.T) {
 	p1 := &errorProviderSimple{err: &types.ProviderError{Provider: "a", Kind: types.ErrorKindTransient, Err: errors.New("fail")}}
 	p2 := &mockProvider{response: "should not reach"}
 
-	fb := New(p1, p2)
+	fb := must.Get(Of(p1, p2))
 	_, err := fb.Stream(ctx, types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
@@ -183,7 +184,7 @@ func TestFallbackProvider_MidStreamErrorBeforeContent(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
+	fb := must.Get(Of(failing, good))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -208,7 +209,7 @@ func TestFallbackProvider_MidStreamErrorAfterUsageStillFallsBack(t *testing.T) {
 	}}
 	good := &mockProvider{response: "from-backup"}
 
-	fb := New(failing, good)
+	fb := must.Get(Of(failing, good))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -248,7 +249,7 @@ func TestFallbackProvider_MidStreamErrorAfterContent(t *testing.T) {
 	}}
 	backup := &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "from-backup"}}}
 
-	fb := New(flaky, backup)
+	fb := must.Get(Of(flaky, backup))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -274,10 +275,10 @@ func TestFallbackProvider_MidStreamErrorNotFallbackable(t *testing.T) {
 	failing := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: permErr}}}
 	backup := &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "should not reach"}}}
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{failing, backup},
 		FallbackOn: types.IsTransient, // permanent errors must not fall back
-	}
+	}))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -304,7 +305,7 @@ func TestFallbackProvider_MidStreamAllFail(t *testing.T) {
 	p1 := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: err1}}}
 	p2 := &scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: err2}}}
 
-	fb := New(p1, p2)
+	fb := must.Get(Of(p1, p2))
 	ch, err := fb.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -329,7 +330,7 @@ func TestFallbackProvider_WithSchemaMidStreamErrorBeforeContent(t *testing.T) {
 	}}
 	good := &schemaProvider{mockProvider{response: "from-backup"}}
 
-	fb := New(&schemaScriptProvider{failing}, good)
+	fb := must.Get(Of(&schemaScriptProvider{failing}, good))
 	ch, err := fb.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -350,7 +351,7 @@ func TestFallbackProvider_MidStreamContextCancelled(t *testing.T) {
 	blocked := make(chan types.Delta)
 	blocking := &funcProvider{fn: func() (<-chan types.Delta, error) { return blocked, nil }}
 
-	fb := New(blocking)
+	fb := must.Get(Of(blocking))
 	ch, err := fb.Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -394,7 +395,7 @@ func TestFallbackProvider_CancelDrainsBlockedProducer(t *testing.T) {
 		return src, nil
 	}}
 
-	fb := New(p)
+	fb := must.Get(Of(p))
 	ch, err := fb.Stream(ctx, types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -429,8 +430,9 @@ func (p *switchableProvider) Stream(_ context.Context, _ types.Request) (<-chan 
 
 func (p *switchableProvider) Model() string { return p.model }
 
-func (p *switchableProvider) WithModel(model string) types.Provider {
-	return &switchableProvider{model: model}
+func (p *switchableProvider) WithTarget(t types.Target) (types.Provider, error) {
+	model := string(t.Model)
+	return &switchableProvider{model: model}, nil
 }
 
 func TestFallbackProvider_WithModel(t *testing.T) {
@@ -438,14 +440,14 @@ func TestFallbackProvider_WithModel(t *testing.T) {
 	s2 := &switchableProvider{model: "model-a"}
 	plain := &mockProvider{response: "no-switch"} // does not implement ModelSwitcher
 
-	fb := &Provider{
+	fb := must.Get(New(Config{
 		Providers:  []types.Provider{s1, s2, plain},
 		FallbackOn: types.IsTransient,
-	}
+	}))
 
-	switched, ok := fb.WithModel("model-b").(*Provider)
+	switched, ok := must.Get(fb.WithTarget(types.ModelTarget("model-b"))).(*Provider)
 	if !ok {
-		t.Fatalf("WithModel returned %T, want *Provider", fb.WithModel("model-b"))
+		t.Fatalf("WithModel returned %T, want *Provider", must.Get(fb.WithTarget(types.ModelTarget("model-b"))))
 	}
 	if len(switched.Providers) != 3 {
 		t.Fatalf("Providers = %d, want 3", len(switched.Providers))
@@ -466,12 +468,11 @@ func TestFallbackProvider_WithModel(t *testing.T) {
 		t.Errorf("original providers mutated: %q, %q", s1.model, s2.model)
 	}
 
-	// Compile-time-style assertion that *Provider satisfies ModelSwitcher.
-	var _ types.ModelSwitcher = fb
+	var _ types.TargetSwitcher = fb
 }
 
 func TestFallbackProvider_Name(t *testing.T) {
-	fb := New()
+	fb := must.Get(Of())
 	if fb.Name() != "fallback" {
 		t.Errorf("Name() = %q, want %q", fb.Name(), "fallback")
 	}
@@ -512,7 +513,7 @@ func TestFallbackProvider_RoutePreambleStillFallsBack(t *testing.T) {
 			good := &scriptProvider{deltas: []types.Delta{
 				types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "from-backup"}, types.PartEnd{Index: 0},
 			}}
-			ch, err := New(failing, good).Stream(context.Background(), types.Request{})
+			ch, err := must.Get(Of(failing, good)).Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatal(err)
 			}
