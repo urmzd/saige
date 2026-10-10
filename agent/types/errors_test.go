@@ -285,3 +285,80 @@ func TestIsContentFilterFinishReason(t *testing.T) {
 		}
 	}
 }
+
+// A FallbackError answers for its last attempt only.
+func TestFallbackErrorIsClassifiedByItsLastAttempt(t *testing.T) {
+	limited := &ProviderError{Provider: "a", Kind: ErrorKindRateLimit, RetryAfter: time.Second, Err: errors.New("slow down")}
+	refused := &ProviderError{Provider: "b", Kind: ErrorKindAuth, Err: errors.New("bad key")}
+
+	last := &FallbackError{Errors: []error{limited, refused}}
+	if errors.Is(last, ErrRateLimited) || IsTransient(last) || RetryAfter(last) != 0 {
+		t.Errorf("an earlier rate limit leaked into the chain's classification: %v", last)
+	}
+	if !errors.Is(last, ErrAuth) || KindOf(last) != ErrorKindAuth || !errors.Is(last, ErrProviderFailed) {
+		t.Errorf("last attempt not reported: kind %v", KindOf(last))
+	}
+	var pe *ProviderError
+	if !errors.As(last, &pe) || pe != refused {
+		t.Errorf("errors.As found %v, want the last attempt", pe)
+	}
+
+	first := &FallbackError{Errors: []error{refused, limited}}
+	if !errors.Is(first, ErrRateLimited) || !IsTransient(first) || RetryAfter(first) != time.Second {
+		t.Errorf("a rate-limited last attempt is not transient: %v", first)
+	}
+	if KindOf(&FallbackError{}) != ErrorKindPermanent || (&FallbackError{}).Unwrap() != nil {
+		t.Error("an empty FallbackError is not permanent")
+	}
+}
+
+type kinded struct{}
+
+func (kinded) Error() string        { return "kinded" }
+func (kinded) ErrorKind() ErrorKind { return ErrorKindUnavailable }
+
+// An error type outside this package classifies itself with KindReporter.
+func TestKindReporterClassifies(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", kinded{})
+	if KindOf(err) != ErrorKindUnavailable || !IsTransient(err) {
+		t.Fatalf("KindOf = %v", KindOf(err))
+	}
+	if KindOf(&RetryError{Attempts: 2, Last: err}) != ErrorKindUnavailable {
+		t.Fatal("a RetryError does not report its last attempt's kind")
+	}
+	decoded := DecodeError(EncodeError(err))
+	if KindOf(decoded) != ErrorKindUnavailable {
+		t.Fatalf("decoded kind %v", KindOf(decoded))
+	}
+}
+
+// The retry delay survives the wire.
+func TestRetryAfterSurvivesTheWire(t *testing.T) {
+	err := fmt.Errorf("call: %w", &ProviderError{Provider: "p", Kind: ErrorKindRateLimit, RetryAfter: 1500 * time.Millisecond, Err: errors.New("429")})
+	if got := RetryAfter(DecodeError(EncodeError(err))); got != 1500*time.Millisecond {
+		t.Fatalf("RetryAfter = %v", got)
+	}
+}
+
+func TestRegisterWireSentinel(t *testing.T) {
+	sentinel := errors.New("test sentinel")
+	RegisterWireSentinel("test.register_wire_sentinel", sentinel)
+	RegisterWireSentinel("test.register_wire_sentinel", sentinel) // the same pair again is a no-op
+	if !errors.Is(DecodeError(EncodeError(fmt.Errorf("x: %w", sentinel))), sentinel) {
+		t.Fatal("a registered sentinel lost its identity on the wire")
+	}
+	for _, bad := range []func(){
+		func() { RegisterWireSentinel("", sentinel) },
+		func() { RegisterWireSentinel("test.nil", nil) },
+		func() { RegisterWireSentinel("test.register_wire_sentinel", errors.New("other")) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("an invalid registration did not panic")
+				}
+			}()
+			bad()
+		}()
+	}
+}

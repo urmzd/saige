@@ -130,52 +130,38 @@ func (k ErrorKind) sentinel() error {
 	}
 }
 
-// IsTransient returns true if err is a transient (retry-worthy) error.
-func IsTransient(err error) bool {
-	var pe *ProviderError
-	if errors.As(err, &pe) {
-		return pe.Kind.Transient()
-	}
-	// Unwrap FallbackError: transient if the last error was transient.
-	var fe *FallbackError
-	if errors.As(err, &fe) && len(fe.Errors) > 0 {
-		return IsTransient(fe.Errors[len(fe.Errors)-1])
-	}
-	var re *RemoteError
-	if errors.As(err, &re) {
-		return re.Kind.Transient()
-	}
-	return false
+// KindReporter is implemented by errors that carry an ErrorKind:
+// *ProviderError, *RemoteError, *ResponseTruncatedError and *FallbackError.
+// KindOf and IsTransient find the first one in an error's chain with
+// errors.As, so an error type outside this package classifies itself by
+// implementing it.
+type KindReporter interface {
+	error
+	ErrorKind() ErrorKind
 }
 
-// KindOf returns the ErrorKind carried by err. A FallbackError reports the
-// kind of its last attempt. Errors without a classification are permanent.
+// IsTransient reports whether err is a transient (retry-worthy) error: its
+// KindOf is transient.
+func IsTransient(err error) bool {
+	return KindOf(err).Transient()
+}
+
+// KindOf returns the ErrorKind of the first KindReporter in err's chain.
+// Errors without one are permanent. A FallbackError reports the kind of its
+// last attempt (see FallbackError).
 func KindOf(err error) ErrorKind {
-	var fe *FallbackError
-	if errors.As(err, &fe) && len(fe.Errors) > 0 {
-		return KindOf(fe.Errors[len(fe.Errors)-1])
-	}
-	var pe *ProviderError
-	if errors.As(err, &pe) {
-		return pe.Kind
-	}
-	var re *RemoteError
-	if errors.As(err, &re) {
-		return re.Kind
-	}
-	var te *ResponseTruncatedError
-	if errors.As(err, &te) {
-		return ErrorKindTruncated
+	var kr KindReporter
+	if errors.As(err, &kr) {
+		return kr.ErrorKind()
 	}
 	return ErrorKindPermanent
 }
 
-// RetryAfter returns the server-requested delay carried by err, or 0.
+// RetryAfter returns the server-requested delay carried by err, or 0: the
+// delay of the first *ProviderError in its chain. A FallbackError's chain
+// is its last attempt, and a decoded error keeps the provider error it
+// carried, so the delay survives both.
 func RetryAfter(err error) time.Duration {
-	var fe *FallbackError
-	if errors.As(err, &fe) && len(fe.Errors) > 0 {
-		return RetryAfter(fe.Errors[len(fe.Errors)-1])
-	}
 	var pe *ProviderError
 	if errors.As(err, &pe) {
 		return pe.RetryAfter
@@ -411,6 +397,9 @@ func (e *ProviderError) Error() string {
 
 func (e *ProviderError) Unwrap() error { return e.Err }
 
+// ErrorKind implements KindReporter.
+func (e *ProviderError) ErrorKind() ErrorKind { return e.Kind }
+
 func (e *ProviderError) Is(target error) bool {
 	if target == ErrProviderFailed {
 		return true
@@ -439,6 +428,9 @@ func (e *ResponseTruncatedError) Error() string {
 }
 
 func (e *ResponseTruncatedError) Is(target error) bool { return target == ErrResponseTruncated }
+
+// ErrorKind implements KindReporter.
+func (e *ResponseTruncatedError) ErrorKind() ErrorKind { return ErrorKindTruncated }
 
 // IsTruncationFinishReason reports whether a provider finish reason means the
 // output token limit cut the response short.
@@ -470,7 +462,15 @@ func IsContentFilterFinishReason(reason string) bool {
 	}
 }
 
-// FallbackError is returned when all providers in a FallbackProvider fail.
+// FallbackError is returned when every member of a fallback chain or router
+// failed. Errors holds every attempt, in order.
+//
+// It is classified by its last attempt, the one that ended the chain:
+// Unwrap returns that attempt alone, so errors.Is, errors.As, KindOf,
+// IsTransient and RetryAfter all answer for it, and an earlier attempt that
+// was rate limited does not make the whole failure look rate limited. Read
+// Errors for the earlier attempts. errors.Is(err, ErrProviderFailed) is
+// always true.
 type FallbackError struct {
 	Errors []error // one per provider attempted, in order
 }
@@ -479,10 +479,19 @@ func (e *FallbackError) Error() string {
 	return fmt.Sprintf("all %d providers failed: %v", len(e.Errors), errors.Join(e.Errors...))
 }
 
-// Unwrap returns the list of errors for Go 1.20+ multi-unwrap.
-func (e *FallbackError) Unwrap() []error { return e.Errors }
+// Unwrap returns the last attempt, or nil when there was none.
+func (e *FallbackError) Unwrap() error {
+	if len(e.Errors) == 0 {
+		return nil
+	}
+	return e.Errors[len(e.Errors)-1]
+}
 
+// Is matches ErrProviderFailed.
 func (e *FallbackError) Is(target error) bool { return target == ErrProviderFailed }
+
+// ErrorKind implements KindReporter with the last attempt's kind.
+func (e *FallbackError) ErrorKind() ErrorKind { return KindOf(e.Unwrap()) }
 
 // RetryError is returned when all retry attempts are exhausted.
 type RetryError struct {
@@ -495,3 +504,6 @@ func (e *RetryError) Error() string {
 }
 
 func (e *RetryError) Unwrap() error { return e.Last }
+
+// ErrorKind implements KindReporter with the final attempt's kind.
+func (e *RetryError) ErrorKind() ErrorKind { return KindOf(e.Last) }

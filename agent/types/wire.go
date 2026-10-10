@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/urmzd/saige/agent/selector/rank"
 )
 
 // WireVersion is the envelope version this package writes. Readers accept
@@ -430,6 +432,31 @@ var wireSentinels = []wireSentinel{
 	{"wire_unrepresentable", ErrWireUnrepresentable},
 	{"wire_inline_too_large", ErrWireInlineTooLarge},
 	{"invalid_config", ErrInvalidConfig},
+	// rank cannot import this package, so its sentinel is listed here.
+	{"selector.rank.empty_query", rank.ErrEmptyQuery},
+	{"batch_ambiguous", ErrBatchAmbiguous},
+	{"batch_not_found", ErrBatchNotFound},
+	{"batch_request", ErrBatchRequest},
+	{"invalid_channel", ErrInvalidChannel},
+	{"invalid_grant", ErrInvalidGrant},
+	{"invalid_target", ErrInvalidTarget},
+	{"invalid_tool_arguments", ErrInvalidToolArguments},
+	{"notifier_closed", ErrNotifierClosed},
+	{"options_unsupported", ErrOptionsUnsupported},
+	{"part_role", ErrPartRole},
+	{"reservation_active", ErrReservationActive},
+	{"schema_mismatch", ErrSchemaMismatch},
+	{"schema_unsupported", ErrSchemaUnsupported},
+	{"split_tool_call", ErrSplitToolCall},
+	{"tool_exists", ErrToolExists},
+	{"tool_quota_exceeded", ErrToolQuotaExceeded},
+	{"unknown_part_kind", ErrUnknownPartKind},
+	{"unknown_reservation", ErrUnknownReservation},
+	{"unknown_target", ErrUnknownTarget},
+	{"unknown_wire_kind", ErrUnknownWireKind},
+	{"untrusted_locator", ErrUntrustedLocator},
+	{"version_conflict", ErrVersionConflict},
+	{"wire_version", ErrWireVersion},
 }
 
 var (
@@ -504,15 +531,21 @@ func ErrorCodes(err error) []string {
 	return codes
 }
 
-type wireError struct {
-	Message   string             `json:"message"`
-	Kind      string             `json:"kind"`
-	Retryable bool               `json:"retryable"`
-	Codes     []string           `json:"codes,omitempty"`
-	Provider  *wireProviderError `json:"provider,omitempty"`
+// EncodedError is the wire form of an error: its message, its ErrorKind,
+// the wire codes of every registered sentinel it matches (see
+// RegisterWireSentinel), and the provider details of a *ProviderError in its
+// chain. It is the data of an error envelope, and what a durable record
+// stores for a failed step.
+type EncodedError struct {
+	Message   string                `json:"message"`
+	Kind      string                `json:"kind"`
+	Retryable bool                  `json:"retryable"`
+	Codes     []string              `json:"codes,omitempty"`
+	Provider  *EncodedProviderError `json:"provider,omitempty"`
 }
 
-type wireProviderError struct {
+// EncodedProviderError is the wire form of a *ProviderError.
+type EncodedProviderError struct {
 	Name         string   `json:"name,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	Kind         string   `json:"kind"`
@@ -521,11 +554,12 @@ type wireProviderError struct {
 	Cause        string   `json:"cause"`
 }
 
-func encodeError(err error) *wireError {
+// EncodeError returns the wire form of err, or nil for a nil error.
+func EncodeError(err error) *EncodedError {
 	if err == nil {
 		return nil
 	}
-	w := &wireError{
+	w := &EncodedError{
 		Message:   err.Error(),
 		Kind:      KindOf(err).String(),
 		Retryable: IsTransient(err),
@@ -533,7 +567,7 @@ func encodeError(err error) *wireError {
 	}
 	var pe *ProviderError
 	if errors.As(err, &pe) {
-		wp := &wireProviderError{Name: pe.Provider, Model: pe.Model, Kind: pe.Kind.String(), Status: pe.Code}
+		wp := &EncodedProviderError{Name: pe.Provider, Model: pe.Model, Kind: pe.Kind.String(), Status: pe.Code}
 		if pe.Err != nil {
 			wp.Cause = pe.Err.Error()
 		}
@@ -545,7 +579,11 @@ func encodeError(err error) *wireError {
 	return w
 }
 
-func decodeError(w *wireError) error {
+// DecodeError rebuilds an error from its wire form. The result keeps the
+// message and the kind, matches with errors.Is every registered sentinel the
+// original matched, and carries a *ProviderError when the original did. A
+// nil form decodes to nil.
+func DecodeError(w *EncodedError) error {
 	if w == nil {
 		return nil
 	}
@@ -927,7 +965,7 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 	case CitationDelta:
 		return WireCitation, v, wireCitation(x), nil
 	case ErrorDelta:
-		w := encodeError(x.Error)
+		w := EncodeError(x.Error)
 		if w == nil {
 			return WireError, v, wireEmpty{}, nil
 		}
@@ -1075,11 +1113,11 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 		if isEmptyObject(data) {
 			return ErrorDelta{}, nil
 		}
-		w, err := decodeAs[wireError](kind, data)
+		w, err := decodeAs[EncodedError](kind, data)
 		if err != nil {
 			return nil, err
 		}
-		return ErrorDelta{Error: decodeError(&w)}, nil
+		return ErrorDelta{Error: DecodeError(&w)}, nil
 	case WireDone:
 		return DoneDelta{}, nil
 	case WireFeedback:

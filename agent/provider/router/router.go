@@ -50,12 +50,6 @@ var ErrUnknownProfile = errors.New("unknown routing profile")
 // reason when there is one.
 var ErrNoEligibleProfile = errors.New("no eligible routing profile")
 
-func init() {
-	types.RegisterWireSentinel("router_session_busy", ErrSessionBusy)
-	types.RegisterWireSentinel("router_unknown_profile", ErrUnknownProfile)
-	types.RegisterWireSentinel("router_no_eligible_profile", ErrNoEligibleProfile)
-}
-
 // Route reasons reported on types.RouteDelta.Reason. An empty reason means the
 // policy's first choice.
 const (

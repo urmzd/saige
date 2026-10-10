@@ -43,11 +43,11 @@ func TestFallbackError_Is(t *testing.T) {
 	}
 }
 
-func TestFallbackError_Unwrap(t *testing.T) {
-	inner := errors.New("specific")
-	err := &types.FallbackError{Errors: []error{inner, errors.New("other")}}
-	if !errors.Is(err, inner) {
-		t.Error("FallbackError should unwrap to find inner errors")
+func TestFallbackError_UnwrapsToTheLastAttempt(t *testing.T) {
+	first, last := errors.New("first"), errors.New("last")
+	err := &types.FallbackError{Errors: []error{first, last}}
+	if !errors.Is(err, last) || errors.Is(err, first) {
+		t.Error("FallbackError should unwrap to its last attempt only")
 	}
 }
 

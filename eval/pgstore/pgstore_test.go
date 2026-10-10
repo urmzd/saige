@@ -55,7 +55,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 
 func newStore(t *testing.T, pool *pgxpool.Pool) *pgstore.Store {
 	t.Helper()
-	s, err := pgstore.New(context.Background(), pgstore.Config{Pool: pool, Tenant: "test-"+rand.Text()[:10]})
+	s, err := pgstore.New(context.Background(), pgstore.Config{Pool: pool, Tenant: "test-" + rand.Text()[:10]})
 	if err != nil {
 		t.Fatal(err)
 	}
