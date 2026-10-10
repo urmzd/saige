@@ -14,9 +14,14 @@ type ChatMessage struct {
 	Thinking  string     `json:"thinking,omitempty"`
 	Images    []string   `json:"images,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID and ToolName tie a tool message to the call it answers.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
 }
 
 type ToolCall struct {
+	// ID is the call ID the server assigns; it is echoed on replay.
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 

@@ -1,0 +1,7 @@
+# deltas
+start 0 tool_call id=generated-0 name=list_files
+delta 0 args="{}"
+end 0 {"type":"tool_call","id":"generated-0","name":"list_files"}
+usage prompt=20 completion=8 finish=[stop]
+# parts
+{"type":"tool_call","id":"generated-0","name":"list_files"}

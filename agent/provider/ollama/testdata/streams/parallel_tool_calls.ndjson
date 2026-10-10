@@ -1,0 +1,4 @@
+{"model":"qwen3.5:4b","created_at":"2026-10-10T04:05:52Z","message":{"role":"assistant","content":"Checking both."},"done":false}
+{"model":"qwen3.5:4b","created_at":"2026-10-10T04:05:52Z","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_a","function":{"index":0,"name":"get_weather","arguments":{"city":"Paris"}}},{"id":"call_b","function":{"index":1,"name":"get_weather","arguments":{"city":"Rome"}}}]},"done":false}
+{"model":"qwen3.5:4b","created_at":"2026-10-10T04:05:52Z","message":{"role":"assistant","content":"Done."},"done":false}
+{"model":"qwen3.5:4b","created_at":"2026-10-10T04:05:52Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":50,"eval_count":40}

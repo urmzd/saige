@@ -1,0 +1,14 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Be brief."
+    },
+    {
+      "role": "user",
+      "content": "Hello there"
+    }
+  ],
+  "stream": true
+}
