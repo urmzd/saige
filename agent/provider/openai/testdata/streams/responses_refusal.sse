@@ -1,0 +1,24 @@
+event: response.output_item.added
+data: {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "msg_fx", "role": "assistant", "status": "in_progress", "content": []}, "sequence_number": 0}
+
+event: response.content_part.added
+data: {"type": "response.content_part.added", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "part": {"type": "refusal", "refusal": ""}, "sequence_number": 1}
+
+event: response.refusal.delta
+data: {"type": "response.refusal.delta", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "delta": "I can't help", "sequence_number": 2}
+
+event: response.refusal.delta
+data: {"type": "response.refusal.delta", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "delta": " with that.", "sequence_number": 3}
+
+event: response.refusal.done
+data: {"type": "response.refusal.done", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "refusal": "I can't help with that.", "sequence_number": 4}
+
+event: response.content_part.done
+data: {"type": "response.content_part.done", "item_id": "msg_fx", "output_index": 0, "content_index": 0, "part": {"type": "refusal", "refusal": "I can't help with that."}, "sequence_number": 5}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_fx", "role": "assistant", "status": "completed", "content": [{"type": "refusal", "refusal": "I can't help with that."}]}, "sequence_number": 6}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_fx", "object": "response", "model": "gpt-6-luna", "status": "completed", "output": [], "usage": {"input_tokens": 5, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 7, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 12}}, "sequence_number": 7}
+

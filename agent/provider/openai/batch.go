@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -63,49 +65,12 @@ func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts ty
 	return a.submitBatch(ctx, reqs, lines, openai.BatchNewParamsEndpointV1ChatCompletions, opts)
 }
 
-// batchParams builds the Chat Completions body of one request.
+// batchParams builds the Chat Completions body of one request, with the
+// part mapping and validation of a streamed request.
 func (a *Adapter) batchParams(r types.BatchRequest) (openai.ChatCompletionNewParams, error) {
-	var params openai.ChatCompletionNewParams
-	c, err := a.withRequestOptions(r.Options.Raw())
-	if err != nil {
-		return params, err
-	}
-	if c, err = c.compileDials(r.Options, r.Tools, r.Schema != nil, types.SurfaceChat); err != nil {
-		return params, err
-	}
-	if err := c.Validate(); err != nil {
-		return params, err
-	}
-	if err := c.Capabilities().ValidateRequest(r.Tools, r.Schema != nil); err != nil {
-		return params, err
-	}
-	if err := c.checkToolChoice(r.Tools); err != nil {
-		return params, err
-	}
-	effortNone, err := c.checkChatTools(r.Tools)
-	if err != nil {
-		return params, err
-	}
-	params = openai.ChatCompletionNewParams{Model: c.model, Messages: toOpenAIMessages(r.Messages)}
-	c.applyParams(&params)
-	if err := c.applyPromptCache(&params); err != nil {
-		return params, err
-	}
-	if tools := toOpenAITools(r.Tools); len(tools) > 0 {
-		params.Tools = tools
-		c.applyToolChoice(&params)
-		if effortNone {
-			params.ReasoningEffort = shared.ReasoningEffort("none")
-		}
-	}
-	if r.Schema != nil {
-		schemaMap, strict := responseSchema(*r.Schema)
-		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
-			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
-				Name: "response", Schema: schemaMap, Strict: openai.Bool(strict)}},
-		}
-	}
-	return params, nil
+	opts := r.Options
+	_, params, err := a.chatParams(types.Request{Messages: r.Messages, Tools: r.Tools, Schema: r.Schema, Options: &opts})
+	return params, err
 }
 
 // Submit implements types.BatchProvider with the Batch API on
@@ -114,15 +79,8 @@ func (a *Adapter) batchParams(r types.BatchRequest) (openai.ChatCompletionNewPar
 func (r *ResponsesAdapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts types.BatchSubmitOptions) (types.BatchHandle, error) {
 	lines := make([]batchLine, len(reqs))
 	for i, q := range reqs {
-		base, err := r.base.withRequestOptions(q.Options.Raw())
-		if err != nil {
-			return types.BatchHandle{}, fmt.Errorf("request %s: %w", q.CustomID, err)
-		}
-		if base, err = base.compileDials(q.Options, q.Tools, q.Schema != nil, types.SurfaceResponses); err != nil {
-			return types.BatchHandle{}, fmt.Errorf("request %s: %w", q.CustomID, err)
-		}
-		c := &ResponsesAdapter{base: *base}
-		params, err := c.buildParams(q.Messages, q.Tools, q.Schema)
+		opts := q.Options
+		_, params, err := r.requestParams(types.Request{Messages: q.Messages, Tools: q.Tools, Schema: q.Schema, Options: &opts})
 		if err != nil {
 			return types.BatchHandle{}, fmt.Errorf("request %s: %w", q.CustomID, err)
 		}
@@ -316,7 +274,7 @@ func (a *Adapter) decodeResultLine(line []byte, responses, expired, canceled boo
 		if responses {
 			err = decodeResponsesBody(l.Response.Body, &res)
 		} else {
-			err = decodeChatBody(l.Response.Body, &res)
+			err = a.decodeChatBody(l.Response.Body, &res)
 		}
 		if err != nil {
 			return types.BatchResult{}, fmt.Errorf("openai: decode batch result %s: %w", l.CustomID, err)
@@ -364,8 +322,15 @@ type chatBody struct {
 	Choices []struct {
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Content   *string `json:"content"`
-			Refusal   *string `json:"refusal"`
+			Content     *string      `json:"content"`
+			Refusal     *string      `json:"refusal"`
+			Annotations []annotation `json:"annotations"`
+			Audio       *struct {
+				ID         string `json:"id"`
+				Data       string `json:"data"`
+				Transcript string `json:"transcript"`
+				ExpiresAt  int64  `json:"expires_at"`
+			} `json:"audio"`
 			ToolCalls []struct {
 				ID       string `json:"id"`
 				Function struct {
@@ -385,20 +350,40 @@ type chatBody struct {
 	} `json:"usage"`
 }
 
-func decodeChatBody(raw json.RawMessage, res *types.BatchResult) error {
+// decodeChatBody maps a Chat Completions response to parts as the stream
+// does: text, a refusal, audio, tool calls, then the text's citations.
+func (a *Adapter) decodeChatBody(raw json.RawMessage, res *types.BatchResult) error {
 	var b chatBody
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return err
 	}
+	var parts []types.AssistantPart
 	if len(b.Choices) > 0 {
 		ch := b.Choices[0]
 		res.FinishReason = ch.FinishReason
+		var spans []textSpan
 		if ch.Message.Content != nil && *ch.Message.Content != "" {
-			res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: *ch.Message.Content})
+			spans = append(spans, textSpan{len(parts), *ch.Message.Content})
+			parts = append(parts, types.TextPart{Text: *ch.Message.Content})
 		}
 		if ch.Message.Refusal != nil && *ch.Message.Refusal != "" {
 			res.FinishReason = finishContentFilter
-			res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: *ch.Message.Refusal})
+			parts = append(parts, types.RefusalPart{Text: *ch.Message.Refusal})
+		}
+		if au := ch.Message.Audio; au != nil {
+			data, err := base64.StdEncoding.DecodeString(au.Data)
+			if err != nil {
+				return fmt.Errorf("audio: %w", err)
+			}
+			mt, meta := a.audioOutMeta()
+			p := types.AudioOutPart{Source: types.Source{MediaType: mt}, AudioMeta: meta, Transcript: au.Transcript, VendorID: au.ID}
+			if len(data) > 0 {
+				p.Source = types.Bytes(mt, data)
+			}
+			if au.ExpiresAt > 0 {
+				p.ExpiresAt = time.Unix(au.ExpiresAt, 0).UTC()
+			}
+			parts = append(parts, p)
 		}
 		for _, tc := range ch.Message.ToolCalls {
 			args, err := streamcheck.DecodeArguments(tc.Function.Arguments)
@@ -406,9 +391,13 @@ func decodeChatBody(raw json.RawMessage, res *types.BatchResult) error {
 			if err != nil {
 				tu.ArgumentsError = err.Error()
 			}
-			res.Message.Parts = append(res.Message.Parts, tu)
+			parts = append(parts, tu)
+		}
+		for _, cp := range citationsAcross(spans, ch.Message.Annotations) {
+			parts = append(parts, cp)
 		}
 	}
+	res.Message.Parts = append(res.Message.Parts, parts...)
 	u := b.Usage
 	res.Usage = types.UsageDelta{Cumulative: true, PromptTokens: u.PromptTokens, CachedPromptTokens: u.PromptTokensDetails.CachedTokens,
 		CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, ResponseID: b.ID, ResponseModel: b.Model}
@@ -427,14 +416,19 @@ type responsesBody struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
 	Output []struct {
-		Type      string `json:"type"`
-		CallID    string `json:"call_id"`
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-		Content   []struct {
-			Type    string `json:"type"`
-			Text    string `json:"text"`
-			Refusal string `json:"refusal"`
+		Type             string `json:"type"`
+		CallID           string `json:"call_id"`
+		Name             string `json:"name"`
+		Arguments        string `json:"arguments"`
+		EncryptedContent string `json:"encrypted_content"`
+		Summary          []struct {
+			Text string `json:"text"`
+		} `json:"summary"`
+		Content []struct {
+			Type        string       `json:"type"`
+			Text        string       `json:"text"`
+			Refusal     string       `json:"refusal"`
+			Annotations []annotation `json:"annotations"`
 		} `json:"content"`
 	} `json:"output"`
 	Usage struct {
@@ -447,6 +441,9 @@ type responsesBody struct {
 	} `json:"usage"`
 }
 
+// decodeResponsesBody maps a Responses API response to parts as the stream
+// does: reasoning, text with its citations, refusals and function calls,
+// in output order.
 func decodeResponsesBody(raw json.RawMessage, res *types.BatchResult) error {
 	var b responsesBody
 	if err := json.Unmarshal(raw, &b); err != nil {
@@ -461,16 +458,31 @@ func decodeResponsesBody(raw json.RawMessage, res *types.BatchResult) error {
 			res.FinishReason = finishContentFilter
 		}
 	}
+	add := func(p types.AssistantPart) { res.Message.Parts = append(res.Message.Parts, p) }
 	for _, item := range b.Output {
 		switch item.Type {
-		case "message":
+		case itemReasoning:
+			var texts []string
+			for _, sm := range item.Summary {
+				if sm.Text != "" {
+					texts = append(texts, sm.Text)
+				}
+			}
+			if len(texts) > 0 || item.EncryptedContent != "" {
+				add(types.ThinkingPart{Text: strings.Join(texts, "\n\n"), Signature: item.EncryptedContent, Summary: len(texts) > 0})
+			}
+		case itemMessage:
 			for _, c := range item.Content {
 				switch c.Type {
-				case "output_text":
-					res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: c.Text})
-				case "refusal":
+				case contentOutputText:
+					idx := len(res.Message.Parts)
+					add(types.TextPart{Text: c.Text})
+					for _, cp := range citationsAcross([]textSpan{{idx, c.Text}}, c.Annotations) {
+						add(cp)
+					}
+				case contentRefusal:
 					res.FinishReason = finishContentFilter
-					res.Message.Parts = append(res.Message.Parts, types.TextPart{Text: c.Refusal})
+					add(types.RefusalPart{Text: c.Refusal})
 				}
 			}
 		case itemFunctionCall:
@@ -479,7 +491,7 @@ func decodeResponsesBody(raw json.RawMessage, res *types.BatchResult) error {
 			if err != nil {
 				tu.ArgumentsError = err.Error()
 			}
-			res.Message.Parts = append(res.Message.Parts, tu)
+			add(tu)
 		}
 	}
 	u := b.Usage

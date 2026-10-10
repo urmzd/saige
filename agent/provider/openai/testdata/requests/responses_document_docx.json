@@ -1,0 +1,19 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "file_data": "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsgZml4dHVyZQ==",
+          "filename": "plan.docx",
+          "type": "input_file"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

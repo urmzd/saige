@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "file": {
+            "file_id": "file-pdf"
+          },
+          "type": "file"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}

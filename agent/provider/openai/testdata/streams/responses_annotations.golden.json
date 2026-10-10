@@ -1,0 +1,41 @@
+{
+  "parts": [
+    {
+      "type": "text",
+      "text": "Go 1.26 shipped in Feb [1]. See the notes [2]."
+    },
+    {
+      "type": "citation",
+      "citation": {
+        "kind": "web",
+        "uri": "https://go.dev/doc/go1.26",
+        "title": "Go 1.26 Release Notes",
+        "end": 15,
+        "producer": "openai"
+      },
+      "anchor": {
+        "part_index": 0,
+        "start": 0,
+        "end": 15
+      }
+    },
+    {
+      "type": "citation",
+      "citation": {
+        "kind": "document",
+        "title": "notes.pdf",
+        "start": 46,
+        "end": 46,
+        "producer": "openai",
+        "meta": {
+          "file_id": "file-fx"
+        }
+      },
+      "anchor": {
+        "part_index": 0,
+        "start": 46,
+        "end": 46
+      }
+    }
+  ]
+}

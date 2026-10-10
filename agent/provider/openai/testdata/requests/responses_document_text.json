@@ -1,0 +1,19 @@
+{
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "file_data": "data:text/csv;base64,YSxiCjEsMg==",
+          "filename": "document.csv",
+          "type": "input_file"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "gpt-6-luna"
+}
