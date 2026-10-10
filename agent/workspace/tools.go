@@ -79,15 +79,23 @@ func WriteTool(ws Workspace) types.Tool {
 
 // ReadTool returns scratch_read.
 func ReadTool(ws Workspace) types.Tool {
+	return readTool(ws, ReadToolName,
+		fmt.Sprintf("Read from the scratch workspace by saige-artifact:// URI or by name. Returns up to %d bytes by default; use offset to page through larger artifacts.", DefaultReadLimit),
+		"ref", "A saige-artifact:// URI or an artifact name.")
+}
+
+// readTool reads one artifact a page at a time. arg names the argument that
+// holds the URI or name.
+func readTool(ws Workspace, name, description, arg, argDescription string) types.Tool {
 	return &types.ToolFunc{
 		Def: types.ToolDef{
-			Name:        ReadToolName,
-			Description: fmt.Sprintf("Read from the scratch workspace by saige-artifact:// URI or by name. Returns up to %d bytes by default; use offset to page through larger artifacts.", DefaultReadLimit),
+			Name:        name,
+			Description: description,
 			Parameters: types.ParameterSchema{
 				Type:     types.SchemaObject,
-				Required: []string{"ref"},
+				Required: []string{arg},
 				Properties: map[string]types.PropertyDef{
-					"ref":    {Type: types.SchemaString, Description: "A saige-artifact:// URI or an artifact name."},
+					arg:      {Type: types.SchemaString, Description: argDescription},
 					"offset": {Type: types.SchemaInteger, Description: "Byte offset to start at. Default 0."},
 					"limit":  {Type: types.SchemaInteger, Description: fmt.Sprintf("Bytes to read, at most %d.", MaxReadLimit)},
 				},
@@ -99,7 +107,7 @@ func ReadTool(ws Workspace) types.Tool {
 			if err != nil {
 				return "", err
 			}
-			s, _ := args["ref"].(string)
+			s, _ := args[arg].(string)
 			ref, err := ParseRef(s)
 			if err != nil {
 				return "", err

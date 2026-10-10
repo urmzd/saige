@@ -10,6 +10,7 @@ import (
 
 	"github.com/urmzd/saige/agent/tree"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/agent/workspace"
 )
 
 // SubAgentMode selects how a parent runs a sub-agent.
@@ -66,6 +67,7 @@ type SubAgentHandle struct {
 	id, name, task string
 	stream         *EventStream // nil for a recorded delegation
 	done           chan struct{}
+	scratch        workspace.Workspace // read-only view of the child's scratch
 
 	mu        sync.Mutex
 	status    HandleStatus
@@ -169,6 +171,9 @@ func spawnsFrom(ctx context.Context) *spawnRegistry {
 // add registers a running child.
 func (r *spawnRegistry) add(id, name, task string, stream *EventStream) *SubAgentHandle {
 	h := &SubAgentHandle{id: id, name: name, task: task, stream: stream, done: make(chan struct{}), status: HandleRunning}
+	if stream != nil && stream.capture != nil {
+		h.scratch = readOnlyView(stream.capture.scratch)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handles[id] = h
@@ -208,7 +213,7 @@ func (r *spawnRegistry) recordDelegation(id, name string, result SubAgentResult,
 	if r == nil {
 		return
 	}
-	h := &SubAgentHandle{id: id, name: name, task: result.Task, done: make(chan struct{}), delivered: true}
+	h := &SubAgentHandle{id: id, name: name, task: result.Task, done: make(chan struct{}), delivered: true, scratch: result.Scratch}
 	h.result, h.err, h.status = result, err, statusOf(err)
 	close(h.done)
 	r.mu.Lock()
@@ -445,6 +450,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types
 		if cause := context.Cause(childCtx); err != nil && clock != nil && errors.Is(cause, context.DeadlineExceeded) {
 			err = cause
 		}
+		stream.attachScratch(result.Scratch)
 		reg.finish(h, result, err)
 	}()
 
@@ -477,14 +483,18 @@ func (a *Agent) injectSpawned(ctx context.Context, stream *EventStream, tr *tree
 // it is escaped and cannot end the wrapper early.
 func spawnResultMessage(h *SubAgentHandle) types.UserMessage {
 	h.mu.Lock()
-	output, err, status := h.result.Output, h.err, h.status
+	result, err, status := h.result, h.err, h.status
 	h.mu.Unlock()
-	body := output
+	body := result.ParentText()
 	if err != nil {
 		body = "error: " + err.Error()
 	}
 	body = strings.ReplaceAll(body, "</subagent_result", "<\\/subagent_result")
-	text := fmt.Sprintf("<subagent_result handle=%q name=%q status=%q>\n%s\n</subagent_result>", h.id, h.name, status, body)
+	attrs := fmt.Sprintf("handle=%q name=%q status=%q iterations=\"%d\"", h.id, h.name, status, result.Iterations)
+	if result.Forced {
+		attrs += ` forced="true"`
+	}
+	text := fmt.Sprintf("<subagent_result %s>\n%s\n</subagent_result>", attrs, body)
 	return types.NewUserMessage(text)
 }
 

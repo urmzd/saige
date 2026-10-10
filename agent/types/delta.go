@@ -313,7 +313,7 @@ func (TruncatedDelta) isDelta() {}
 // message is held until the run reaches a safe point.
 type QueuedDelta struct {
 	SubmissionID string
-	Mode         string // "queue", "steer", or "interrupt"
+	Mode         string // "queue", "steer", "interrupt", "subagent", or "wrap_up"
 	Position     int    // 1-based position among pending submissions
 }
 
@@ -323,7 +323,7 @@ func (QueuedDelta) isDelta() {}
 // the conversation and will be seen by the next model call.
 type InjectedDelta struct {
 	SubmissionID string
-	Mode         string // "queue", "steer", or "interrupt"
+	Mode         string // "queue", "steer", "interrupt", "subagent", or "wrap_up"
 	NodeID       string // tree node the message was appended as
 }
 

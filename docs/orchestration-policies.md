@@ -21,6 +21,8 @@ The host must supply those boundaries.
 
 ## Subagent results
 
+Iteration budgets, private scratch, and passing large tasks and results by reference are covered in [delegation](delegation.md).
+
 `delegate_to_<name>` starts a new child. `InvokeSubAgent` starts the same child directly from a service.
 The default result contains only the final assistant text. Intermediate text remains in the trace.
 

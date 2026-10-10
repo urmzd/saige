@@ -26,9 +26,12 @@ type AgentConfig struct {
 	Provider     types.Provider
 	Tools        *types.ToolRegistry
 	CompactCfg   *types.CompactConfig // initial compaction config (replaces Compactor)
-	MaxIter      int
-	SubAgents    []SubAgentDef
-	Tree         *tree.Tree // optional; auto-created if nil
+	// MaxIter caps the model turns of one user turn. 0 uses 10, and
+	// NoIterLimit (any negative value) removes the cap, which suits an
+	// orchestrator whose sub-agents carry their own bounded budgets.
+	MaxIter   int
+	SubAgents []SubAgentDef
+	Tree      *tree.Tree // optional; auto-created if nil
 
 	// Agent handoffs: a group of agents that share this (entry) agent's tree and
 	// transfer control via handoff_to_<name> tools (see agent/handoff.go).
@@ -164,6 +167,15 @@ type AgentConfig struct {
 	OnMaxIter MaxIterPolicy
 	// ForceFinalPrompt replaces DefaultForceFinalPrompt for MaxIterForceFinal.
 	ForceFinalPrompt string
+	// WrapUpAt adds a wrap-up note to the conversation once this many model
+	// turns of a user turn have run with work still pending: it says how
+	// many turns remain and that the agent must return its result now. 0
+	// sends none. It has no effect without a MaxIter cap, or at or past it.
+	// Sub-agents get one by default (see SubAgentDef.WrapUpAt).
+	WrapUpAt int
+	// WrapUpPrompt replaces the instruction in the wrap-up note. The note
+	// still states the turns that remain.
+	WrapUpPrompt string
 
 	// Dials are the agent's model-neutral generation intents, sent with every
 	// call and compiled for the model that serves it (see types.ResolveDials).
@@ -404,6 +416,9 @@ type Agent struct {
 	// admission is the budget reservation a spawned child holds from its
 	// start until its first provider call. Nil for every other agent.
 	admission *childAdmission
+	// scratch is a sub-agent's private scratch workspace for one
+	// invocation, nil for a top-level agent or with scratch turned off.
+	scratch workspace.Workspace
 }
 
 // NewAgent creates a new Agent. If no Tree is provided, one is created
@@ -414,8 +429,11 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	if cfg.MaxIter <= 0 {
+	switch {
+	case cfg.MaxIter == 0:
 		cfg.MaxIter = 10
+	case cfg.MaxIter < 0:
+		cfg.MaxIter = NoIterLimit
 	}
 	if cfg.MaxHandoffs <= 0 {
 		cfg.MaxHandoffs = 8
@@ -462,6 +480,9 @@ func NewAgent(cfg AgentConfig, opts ...AgentOption) *Agent {
 	}
 	if spawning {
 		registerSubAgentControls(tools)
+	}
+	if referencesResults(cfg.SubAgents) {
+		registerArtifactTools(tools)
 	}
 
 	a := &Agent{cfg: cfg, tools: tools, citations: types.NewCitationRegistry(), spawning: spawning}
@@ -521,12 +542,29 @@ func registerSubAgent(registry *types.ToolRegistry, sa SubAgentDef, parent Agent
 				},
 			},
 		},
-		factory: func(runner types.StepRunner) *Agent {
+		factory: func(ctx context.Context, runner types.StepRunner, id string) (*Agent, error) {
+			cfg := inheritConfig(parent, sa, runner)
+			scratch, err := sa.Scratch.open(ctx, sa.Name, id)
+			if err != nil {
+				return nil, fmt.Errorf("sub-agent %s scratch: %w", sa.Name, err)
+			}
+			if scratch != nil {
+				cfg.Workspace = workspace.NewLayers(scratch, cfg.Workspace)
+			}
 			// The output mode is chosen last, from the provider the
 			// options leave in place.
 			opts := append(slices.Clone(sa.Options), resolveChildOutputMode)
-			return NewAgent(inheritConfig(parent, sa, runner), opts...)
+			child := NewAgent(cfg, opts...)
+			child.scratch = scratch
+			// A child with no tools of its own answers in one turn, so
+			// scratch tools would only add a schema-free draft turn.
+			if scratch != nil && !sa.Scratch.NoTools && len(child.tools.All()) > 0 {
+				registerScratchTools(child.tools)
+			}
+			return child, nil
 		},
+		refs:     sa.References.withDefaults(),
+		parentWS: parent.Workspace,
 	}
 	if sa.Mode != SubAgentSpawn {
 		registry.Register(tool)
@@ -557,8 +595,10 @@ func (a *Agent) Info() AgentInfo {
 
 	for _, td := range a.tools.Definitions() {
 		// Skip internal delegate/handoff tools: they show as sub-agents/handoffs.
+		// The artifact tools come with delegation, so they are skipped too.
 		if strings.HasPrefix(td.Name, "delegate_to_") || strings.HasPrefix(td.Name, "spawn_") ||
-			strings.HasPrefix(td.Name, "handoff_to_") || isSubAgentControlTool(td.Name) {
+			strings.HasPrefix(td.Name, "handoff_to_") || isSubAgentControlTool(td.Name) ||
+			(len(a.cfg.SubAgents) > 0 && isArtifactTool(td.Name)) {
 			continue
 		}
 		info.Tools = append(info.Tools, td.Name)
@@ -1175,6 +1215,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 	if a.spawning {
 		stream.spawns = newSpawnRegistry()
 	}
+	if len(a.cfg.SubAgents) > 0 {
+		stream.artifacts = workspace.NewLayers(a.cfg.Workspace)
+	}
 	var loopErr error
 	defer func() {
 		// Background children end with the run, before the stream closes,
@@ -1329,7 +1372,16 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// forcedSpent records that the configured forced tool choice has
 		// been used, so it applies to one turn per run.
 		forcedSpent bool
+		// wrapped records that this user turn has had its wrap-up note.
+		wrapped bool
 	)
+	// The caller of a sub-agent learns how many turns it used.
+	defer func() {
+		stream.iterations = iterCount
+		if stream.forced {
+			stream.iterations++
+		}
+	}()
 
 	// pendingWork is true when the previous iteration executed tool calls and the
 	// loop continued, meaning the assistant still owes a turn to consume those
@@ -1350,7 +1402,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	finish := func() (bool, error) {
 		resumed, err := a.resumeAtFinish(ctx, stream, tr, branch)
 		if resumed && err == nil {
-			turnStart, pendingWork, guards, outputRepairs = iterCount, false, loopGuards{}, 0
+			turnStart, pendingWork, guards, outputRepairs, wrapped = iterCount, false, loopGuards{}, 0, false
 		}
 		return resumed, err
 	}
@@ -1379,7 +1431,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			return err
 		}
 		if interrupted {
-			turnStart, pendingWork, guards = iterCount, false, loopGuards{}
+			turnStart, pendingWork, guards, wrapped = iterCount, false, loopGuards{}, false
 		}
 
 		// Flatten the branch to get current message history.
@@ -1419,7 +1471,16 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// trip only after a turn's tool results are recorded, so they also
 		// leave work pending.
 		limitErr := guards.tripped
-		if iterCount-turnStart >= resolved.maxIter {
+		if !wrapped && pendingWork && limitErr == nil && wrapUpDue(a.cfg.WrapUpAt, iterCount-turnStart, resolved.maxIter) {
+			// The note joins the branch at this safe point, and the turn
+			// is prepared again so the next call carries it.
+			wrapped = true
+			if err := a.injectWrapUp(ctx, stream, tr, branch, iterCount-turnStart, resolved.maxIter, out); err != nil {
+				return err
+			}
+			continue
+		}
+		if resolved.maxIter > 0 && iterCount-turnStart >= resolved.maxIter {
 			if !pendingWork {
 				if resumed, err := finish(); resumed || err != nil {
 					if err != nil {
@@ -2393,7 +2454,9 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	ctx = types.WithToolCallInfo(ctx, types.ToolCallInfo{
 		ID: tc.ID, Name: tc.Name, Agent: a.toolOwner(ctx), RunID: stream.runID, Branch: stream.branch,
 	})
-	if a.cfg.Workspace != nil {
+	if stream.artifacts != nil {
+		ctx = workspace.NewContext(ctx, stream.artifacts)
+	} else if a.cfg.Workspace != nil {
 		ctx = workspace.NewContext(ctx, a.cfg.Workspace)
 	}
 	if a.cfg.Deps != nil {
@@ -2663,7 +2726,9 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 	res := toolResult{toolCallID: tc.ID, result: resultBuf.String()}
 	if st, native := tool.(*subAgentTool); native {
 		result, err := childStream.SubAgentResult()
-		res.result = result.Output
+		res.result = result.ParentText()
+		// The parent's tools can follow references into the child's scratch.
+		stream.attachScratch(result.Scratch)
 		if err != nil && !errors.Is(childErr, errNonStreamingApproval) {
 			childErr = err
 		}
