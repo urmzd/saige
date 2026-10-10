@@ -31,6 +31,9 @@ const (
 	approvalDeny approvalMode = "deny"
 )
 
+// kindHumanApproval is the marker kind whose message describes an approval.
+const kindHumanApproval = "human_approval"
+
 func parseApprovalMode(s string) (approvalMode, error) {
 	switch m := approvalMode(strings.ToLower(strings.TrimSpace(s))); m {
 	case approvalElicit, approvalHost, approvalDeny:
@@ -59,7 +62,7 @@ func approvalMarker(tool agenttypes.Tool) (agenttypes.Marker, bool) {
 			return first, found
 		}
 		for _, m := range marked.Markers {
-			if m.Kind == "human_approval" {
+			if m.Kind == kindHumanApproval {
 				return m, true
 			}
 			if mutating, _ := m.Meta["mutating"].(bool); mutating {
@@ -133,7 +136,7 @@ func (b bridge) approve(ctx context.Context, session *mcp.ServerSession, name st
 	message := marker.Message
 	if message == "" {
 		message = name + " needs your approval"
-		if marker.Kind != "" && marker.Kind != "human_approval" {
+		if marker.Kind != "" && marker.Kind != kindHumanApproval {
 			message = name + " is marked " + marker.Kind + " and needs your approval"
 		}
 	}
