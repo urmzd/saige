@@ -12,8 +12,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/urmzd/saige/agent/batch"
-	"github.com/urmzd/saige/agent/provider/catalog"
-	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -82,72 +80,15 @@ func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, _ types
 	return types.BatchHandle{Provider: a.Name(), Model: a.Model(), ID: mb.ID}, nil
 }
 
-// batchParams validates one request and builds its Messages parameters, as
-// the streaming entry points do: a schema goes out as native structured
-// output where the model supports it, else as a forced hidden tool.
+// batchParams validates one request and builds its Messages parameters
+// exactly as Stream does, parts included.
 func (a *Adapter) batchParams(r types.BatchRequest) (anthropic.MessageNewParams, error) {
-	var params anthropic.MessageNewParams
-	c, err := a.withRequestOptions(r.Options.Raw())
+	c, params, _, err := a.buildParams(r.Messages, r.Tools, r.Schema, r.Options)
 	if err != nil {
 		return params, err
 	}
-	schema := r.Schema
-	if c, err = c.compileDials(r.Options, r.Tools, schema != nil); err != nil {
-		return params, err
-	}
-	caps := c.Capabilities()
-	native := schema != nil && c.nativeSchema(catalog.MustLookup("anthropic", string(c.model)))
-	if schema != nil && !native {
-		if why := c.forcedToolBlocked(catalog.MustLookup("anthropic", string(c.model))); why != "" {
-			return params, schemacheck.Unsupported(c, "forced-tool schema output: "+why)
-		}
-	}
-	if err := caps.ValidateRequest(r.Tools, schema != nil); err != nil {
-		return params, err
-	}
-	if err := c.Validate(); err != nil {
-		return params, err
-	}
 	if c.maxTokens <= 0 {
-		return params, caps.OptionError("max_output_tokens", "a batch request needs max_tokens above zero")
-	}
-	if schema != nil && !native {
-		if err := caps.Require(types.CapTools, types.CapToolChoice); err != nil {
-			return params, err
-		}
-		if err := c.checkSchemaToolChoice(); err != nil {
-			return params, err
-		}
-	}
-	if err := c.checkToolChoice(r.Tools); err != nil {
-		return params, err
-	}
-
-	systemBlocks, msgs := toAnthropicParams(r.Messages)
-	tools := append(toAnthropicTools(r.Tools), c.serverToolParams()...)
-	params = anthropic.MessageNewParams{Model: c.model, MaxTokens: c.maxTokens, Messages: msgs, System: systemBlocks}
-	c.applyParams(&params)
-	switch {
-	case native:
-		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: outputFormatSchema(*schema)}
-	case schema != nil:
-		props := make(map[string]any, len(schema.Properties))
-		for k, v := range schema.Properties {
-			props[k] = propertyToSchema(v)
-		}
-		tools = append(tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
-			Name:        structuredToolName,
-			Description: anthropic.String("Return the structured response"),
-			InputSchema: anthropic.ToolInputSchemaParam{Properties: props, Required: schema.Required},
-		}})
-		params.ToolChoice = anthropic.ToolChoiceParamOfTool(structuredToolName)
-	}
-	if len(tools) > 0 {
-		params.Tools = tools
-	}
-	c.applyToolChoice(&params, len(params.Tools) > 0)
-	if err := c.applyPromptCache(&params); err != nil {
-		return params, err
+		return params, c.Capabilities().OptionError("max_output_tokens", "a batch request needs max_tokens above zero")
 	}
 	return params, nil
 }
@@ -157,9 +98,10 @@ const structuredToolName = "structured_output"
 
 // Content block types of a complete message.
 const (
-	blockText     = "text"
-	blockThinking = "thinking"
-	blockToolUse  = "tool_use"
+	blockText             = "text"
+	blockThinking         = "thinking"
+	blockRedactedThinking = "redacted_thinking"
+	blockToolUse          = "tool_use"
 )
 
 // Status implements types.BatchProvider.
@@ -219,7 +161,7 @@ func (a *Adapter) batchResult(r anthropic.MessageBatchIndividualResponse) types.
 	case "succeeded":
 		out.Outcome = types.BatchSucceeded
 		m := r.Result.Message
-		out.Message, out.Err = assistantFromMessage(m)
+		out.Message, out.Err = a.assistantFromMessage(m)
 		out.FinishReason = string(m.StopReason)
 		u := m.Usage
 		prompt := int(u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens)
@@ -267,17 +209,28 @@ func errorKind(t string) types.ErrorKind {
 	return types.ErrorKindPermanent
 }
 
-// assistantFromMessage converts a complete message. The hidden schema tool
-// becomes the text answer, as the streaming path emits it.
-func assistantFromMessage(m anthropic.Message) (types.AssistantMessage, error) {
+// assistantFromMessage converts a complete message to the parts the
+// streaming path emits for it: one part per content block in block order,
+// then the citations of the text blocks, anchored to them, then a refusal.
+// The hidden schema tool becomes the text answer.
+func (a *Adapter) assistantFromMessage(m anthropic.Message) (types.AssistantMessage, error) {
 	var out types.AssistantMessage
+	var cited []types.CitationPart
+	calls := map[string]types.ServerToolKind{}
 	for _, b := range m.Content {
-		switch b.Type {
-		case blockText:
+		switch {
+		case b.Type == blockText:
+			for _, c := range b.Citations {
+				if cit, ok := citationFrom(c.RawJSON()); ok {
+					cited = append(cited, anchored(cit, len(out.Parts), len(b.Text)))
+				}
+			}
 			out.Parts = append(out.Parts, types.TextPart{Text: b.Text})
-		case blockThinking:
+		case b.Type == blockThinking:
 			out.Parts = append(out.Parts, types.ThinkingPart{Text: b.Thinking, Signature: b.Signature})
-		case blockToolUse:
+		case b.Type == blockRedactedThinking:
+			out.Parts = append(out.Parts, types.ThinkingPart{Redacted: true, Signature: b.Data})
+		case b.Type == blockToolUse:
 			if b.Name == structuredToolName {
 				out.Parts = append(out.Parts, types.TextPart{Text: string(b.Input)})
 				continue
@@ -288,10 +241,19 @@ func assistantFromMessage(m anthropic.Message) (types.AssistantMessage, error) {
 				tu.ArgumentsError = err.Error()
 			}
 			out.Parts = append(out.Parts, tu)
-		case blockServerToolUse:
+		case b.Type == blockServerToolUse:
 			input, _ := streamcheck.DecodeArguments(string(b.Input))
-			out.Parts = append(out.Parts, types.ServerToolCallPart{ID: b.ID, ToolKind: serverToolKind(b.Name), Name: b.Name, Input: input})
+			calls[b.ID] = serverToolKind(b.Name)
+			out.Parts = append(out.Parts, types.ServerToolCallPart{ID: b.ID, ToolKind: calls[b.ID], Name: b.Name, Input: input})
+		case isServerToolResult(b.Type) && b.ToolUseID != "":
+			out.Parts = append(out.Parts, a.serverToolResult(b.RawJSON(), serverResultKind(b.Type, b.ToolUseID, calls)))
 		}
+	}
+	for _, c := range cited {
+		out.Parts = append(out.Parts, c)
+	}
+	if string(m.StopReason) == stopRefusal {
+		out.Parts = append(out.Parts, refusalPart(m.StopDetails))
 	}
 	return out, nil
 }

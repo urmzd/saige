@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "data": "JVBERi0xLjQgdGlueQ==",
+            "media_type": "application/pdf",
+            "type": "base64"
+          },
+          "type": "document"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "q",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_1",
+          "input": {},
+          "name": "render",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "rendered",
+              "type": "text"
+            },
+            {
+              "text": "{\"n\":1}",
+              "type": "text"
+            },
+            {
+              "source": {
+                "data": "iVBORw0KGgo=",
+                "media_type": "image/png",
+                "type": "base64"
+              },
+              "type": "image"
+            },
+            {
+              "source": {
+                "data": "JVBERi0xLjQgdGlueQ==",
+                "media_type": "application/pdf",
+                "type": "base64"
+              },
+              "type": "document"
+            }
+          ],
+          "is_error": false,
+          "tool_use_id": "toolu_1",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

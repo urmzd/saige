@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "data": "iVBORw0KGgo=",
+            "media_type": "image/png",
+            "type": "base64"
+          },
+          "type": "image"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

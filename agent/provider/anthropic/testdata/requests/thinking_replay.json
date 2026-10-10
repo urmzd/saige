@@ -1,0 +1,40 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "q",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "signature": "sig1",
+          "thinking": "hmm",
+          "type": "thinking"
+        },
+        {
+          "data": "opaque",
+          "type": "redacted_thinking"
+        },
+        {
+          "text": "answer",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "more",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

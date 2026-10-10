@@ -2,17 +2,14 @@ package anthropic
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
-	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
@@ -67,6 +64,7 @@ type Adapter struct {
 	requestOpts   []option.RequestOption
 	dials         []types.DialLayer
 	dialPolicy    *types.DialPolicy
+	endpoint      string // workspace that scopes Files API IDs
 }
 
 // Option configures the Anthropic adapter.
@@ -284,27 +282,22 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 	return generate.Text(ctx, a, prompt)
 }
 
-// Stream implements types.Provider. A request may carry a schema or
-// options, not both.
+// Stream implements types.Provider. A request may carry a schema, options,
+// or both: each option set overrides the adapter's configured value for this
+// call only. Every check, including the mapping of each part, runs before
+// any network I/O, so a request the model cannot take fails with an error
+// matching types.ErrInvalidModelConfig and a fallback can try another
+// member.
 func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	var (
-		ch  <-chan types.Delta
-		err error
-	)
-	switch {
-	case req.Options != nil && req.Schema != nil:
-		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
-	case req.Options != nil:
-		ch, err = a.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
-	case req.Schema != nil:
-		ch, err = a.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
-	default:
-		ch, err = a.streamPlain(ctx, req.Messages, req.Tools)
+	var opts types.RequestOptions
+	if req.Options != nil {
+		opts = *req.Options
 	}
+	c, params, structured, err := a.buildParams(req.Messages, req.Tools, req.Schema, opts)
 	if err != nil {
 		return nil, err
 	}
-	return types.UpgradeV1Stream(ch), nil
+	return c.consumeStream(c.client.Messages.NewStreaming(ctx, params), structured), nil
 }
 
 // SupportsSchema implements types.StructuredOutputProvider.
@@ -313,352 +306,81 @@ func (a *Adapter) SupportsSchema() bool { return true }
 // SupportsOptions implements types.OptionsProvider.
 func (a *Adapter) SupportsOptions() bool { return true }
 
-func (a *Adapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	a, err := a.compileDials(types.RequestOptions{}, tools, false)
+// buildParams validates one request and builds its Messages parameters. It
+// returns the adapter with the request's options applied, and whether the
+// schema rides on the forced hidden tool, whose input the stream reports as
+// text. A schema goes out as native structured output
+// (output_config.format) on models that reject a forced tool choice, and as
+// the hidden tool on the others. The streaming and batch paths share it, so
+// a batch request carries exactly what a streaming call would.
+func (a *Adapter) buildParams(messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema, opts types.RequestOptions) (*Adapter, anthropic.MessageNewParams, bool, error) {
+	var params anthropic.MessageNewParams
+	c, err := a.withRequestOptions(opts.Raw())
 	if err != nil {
-		return nil, err
+		return nil, params, false, err
 	}
-	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
-		return nil, err
+	if c, err = c.compileDials(opts, tools, schema != nil); err != nil {
+		return nil, params, false, err
 	}
-
-	if err := a.Validate(); err != nil {
-		return nil, err
-	}
-	if err := a.checkToolChoice(tools); err != nil {
-		return nil, err
-	}
-
-	systemBlocks, aMsgs := toAnthropicParams(messages)
-	aTools := append(toAnthropicTools(tools), a.serverToolParams()...)
-
-	params := anthropic.MessageNewParams{
-		Model:     a.model,
-		MaxTokens: a.maxTokens,
-		Messages:  aMsgs,
-		System:    systemBlocks,
-	}
-	if len(aTools) > 0 {
-		params.Tools = aTools
-	}
-	a.applyParams(&params)
-	a.applyToolChoice(&params, len(params.Tools) > 0)
-	if err := a.applyPromptCache(&params); err != nil {
-		return nil, err
-	}
-
-	stream := a.client.Messages.NewStreaming(ctx, params)
-	return a.consumeStream(stream, nil), nil
-}
-
-// This adapter constrains output with a hidden tool and forces the model to call it.
-func (a *Adapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
-	if err != nil {
-		return nil, err
-	}
-	native := schema != nil && a.nativeSchema(catalog.MustLookup("anthropic", string(a.model)))
+	caps := c.Capabilities()
+	row := catalog.MustLookup("anthropic", string(c.model))
+	native := schema != nil && c.nativeSchema(row)
 	if schema != nil && !native {
 		// Schema output forces a hidden tool, which the API rejects with a
-		// manual thinking budget. This error is returned before any request,
-		// so fallback can try another member.
-		if why := a.forcedToolBlocked(catalog.MustLookup("anthropic", string(a.model))); why != "" {
-			return nil, schemacheck.Unsupported(a, "forced-tool schema output: "+why)
+		// manual thinking budget.
+		if why := c.forcedToolBlocked(row); why != "" {
+			return nil, params, false, schemacheck.Unsupported(c, "forced-tool schema output: "+why)
 		}
 	}
-	if err := a.Capabilities().ValidateRequest(tools, schema != nil); err != nil {
-		return nil, err
+	if err := caps.ValidateRequest(tools, schema != nil); err != nil {
+		return nil, params, false, err
 	}
-
-	if err := a.Validate(); err != nil {
-		return nil, err
+	if err := c.Validate(); err != nil {
+		return nil, params, false, err
 	}
-
 	if schema != nil && !native {
-		if err := a.Capabilities().Require(types.CapTools, types.CapToolChoice); err != nil {
-			return nil, err
+		if err := caps.Require(types.CapTools, types.CapToolChoice); err != nil {
+			return nil, params, false, err
 		}
-		if err := a.checkSchemaToolChoice(); err != nil {
-			return nil, err
+		if err := c.checkSchemaToolChoice(); err != nil {
+			return nil, params, false, err
 		}
 	}
-	if err := a.checkToolChoice(tools); err != nil {
-		return nil, err
+	if err := c.checkToolChoice(tools); err != nil {
+		return nil, params, false, err
 	}
 
-	systemBlocks, aMsgs := toAnthropicParams(messages)
-	aTools := append(toAnthropicTools(tools), a.serverToolParams()...)
-
-	params := anthropic.MessageNewParams{
-		Model:     a.model,
-		MaxTokens: a.maxTokens,
-		Messages:  aMsgs,
-		System:    systemBlocks,
+	systemBlocks, msgs, err := c.toAnthropicParams(messages)
+	if err != nil {
+		return nil, params, false, err
 	}
-	a.applyParams(&params)
-
+	aTools := append(toAnthropicTools(tools), c.serverToolParams()...)
+	params = anthropic.MessageNewParams{Model: c.model, MaxTokens: c.maxTokens, Messages: msgs, System: systemBlocks}
+	c.applyParams(&params)
 	switch {
 	case native:
 		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: outputFormatSchema(*schema)}
 	case schema != nil:
-		// Inject a hidden tool whose input schema is the desired response schema.
+		// A hidden tool whose input schema is the response schema.
 		props := make(map[string]any, len(schema.Properties))
 		for k, v := range schema.Properties {
 			props[k] = propertyToSchema(v)
 		}
-		hiddenTool := anthropic.ToolUnionParam{
-			OfTool: &anthropic.ToolParam{
-				Name:        "structured_output",
-				Description: anthropic.String("Return the structured response"),
-				InputSchema: anthropic.ToolInputSchemaParam{
-					Properties: props,
-					Required:   schema.Required,
-				},
-			},
-		}
-		aTools = append(aTools, hiddenTool)
-		params.ToolChoice = anthropic.ToolChoiceParamOfTool("structured_output")
+		aTools = append(aTools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
+			Name:        structuredToolName,
+			Description: anthropic.String("Return the structured response"),
+			InputSchema: anthropic.ToolInputSchemaParam{Properties: props, Required: schema.Required},
+		}})
+		params.ToolChoice = anthropic.ToolChoiceParamOfTool(structuredToolName)
 	}
-
 	if len(aTools) > 0 {
 		params.Tools = aTools
 	}
-	a.applyToolChoice(&params, len(params.Tools) > 0)
-	if err := a.applyPromptCache(&params); err != nil {
-		return nil, err
+	c.applyToolChoice(&params, len(params.Tools) > 0)
+	if err := c.applyPromptCache(&params); err != nil {
+		return nil, params, false, err
 	}
-
-	isStructured := func(name string) bool {
-		return schema != nil && !native && name == "structured_output"
-	}
-
-	stream := a.client.Messages.NewStreaming(ctx, params)
-	return a.consumeStream(stream, isStructured), nil
-}
-
-// consumeStream reads from the Anthropic streaming response and emits deltas.
-// If isStructuredTool is non-nil and returns true for a tool_use block name,
-// the tool's input JSON is emitted as text deltas instead of tool call deltas.
-//
-// A tool call whose argument JSON does not decode is held open, because
-// Anthropic sends content_block_stop before the message_delta that carries
-// stop_reason. When a later block starts, or the stop reason is not
-// max_tokens, the model finished writing the call: it closes with
-// ToolCallEndDelta.ArgumentsError set and nil Arguments, so the loop refuses
-// it and the model can correct it. A max_tokens stop, or a stream that ends
-// before any stop reason, never closes the call and reports a truncation or
-// an incomplete stream instead. Malformed structured output is always an
-// error. Errors arrive after the usage delta, so the consumer can still
-// account for the tokens.
-//
-//nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
-func (a *Adapter) consumeStream(stream *ssestream.Stream[anthropic.MessageStreamEventUnion], isStructuredTool func(string) bool) <-chan types.Delta {
-	out := make(chan types.Delta, 64)
-	model := string(a.model)
-	maxTokens := int(a.maxTokens)
-	go func() {
-		defer close(out)
-
-		var currentBlockType string
-		var currentBlockName string
-		var currentBlockID string
-		var toolArgsBuf []byte
-		var signatureBuf string
-		// serverKinds remembers each server tool call's kind, so its result
-		// block, which carries only the call ID, reports the same kind.
-		serverKinds := map[string]types.ServerToolKind{}
-
-		// Track response metadata for the final UsageDelta.
-		var responseID string
-		var responseModel string
-		var finishReason string
-		var outputTokens int
-		stopped := false
-
-		// emitted turns true once a content delta reaches the consumer; after
-		// that a transport error can no longer be retried.
-		emitted := false
-		var argsFailure streamcheck.ArgsFailure
-		emit := func(d types.Delta) {
-			if _, usage := d.(types.UsageDelta); !usage {
-				emitted = true
-			}
-			out <- d
-		}
-		// heldCall is a tool call whose arguments did not decode, waiting to
-		// learn whether the model finished writing it.
-		var heldCall *streamcheck.ArgsFailure
-		releaseHeld := func(complete bool) {
-			if heldCall == nil {
-				return
-			}
-			if complete {
-				emit(types.ToolCallEndDelta{ID: heldCall.ToolCallID, ArgumentsError: heldCall.Err.Error()})
-			} else {
-				argsFailure.Set(heldCall.ToolCallID, heldCall.Name, heldCall.Err)
-			}
-			heldCall = nil
-		}
-
-		for stream.Next() {
-			evt := stream.Current()
-
-			switch evt.Type {
-			case "message_start":
-				responseID = evt.Message.ID
-				responseModel = string(evt.Message.Model)
-				if evt.Message.Usage.InputTokens+evt.Message.Usage.CacheReadInputTokens+evt.Message.Usage.CacheCreationInputTokens > 0 {
-					emit(types.UsageDelta{Cumulative: true,
-						CompletionTokens:   int(evt.Message.Usage.OutputTokens),
-						PromptTokens:       int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens),
-						CachedPromptTokens: int(evt.Message.Usage.CacheReadInputTokens),
-						CacheWriteTokens:   int(evt.Message.Usage.CacheCreationInputTokens),
-						TotalTokens:        int(evt.Message.Usage.InputTokens + evt.Message.Usage.CacheReadInputTokens + evt.Message.Usage.CacheCreationInputTokens + evt.Message.Usage.OutputTokens),
-						ResponseID:         evt.Message.ID,
-						ResponseModel:      string(evt.Message.Model),
-					})
-				}
-
-			case "content_block_start":
-				releaseHeld(true)
-				currentBlockType = evt.ContentBlock.Type
-				currentBlockName = evt.ContentBlock.Name
-				currentBlockID = evt.ContentBlock.ID
-				switch evt.ContentBlock.Type {
-				case "text":
-					emit(types.TextStartDelta{})
-				case "thinking":
-					signatureBuf = ""
-					emit(types.ThinkingStartDelta{})
-				case "tool_use":
-					toolArgsBuf = toolArgsBuf[:0]
-					if isStructuredTool != nil && isStructuredTool(evt.ContentBlock.Name) {
-						emit(types.TextStartDelta{})
-					} else {
-						emit(types.ToolCallStartDelta{
-							ID:   evt.ContentBlock.ID,
-							Name: evt.ContentBlock.Name,
-						})
-					}
-				case blockServerToolUse:
-					// The input streams like a tool call's; the call is
-					// reported once it is complete.
-					toolArgsBuf = toolArgsBuf[:0]
-					serverKinds[evt.ContentBlock.ID] = serverToolKind(evt.ContentBlock.Name)
-				default:
-					// Server tool results arrive whole in the start event.
-					if strings.HasSuffix(evt.ContentBlock.Type, "_tool_result") && evt.ContentBlock.ToolUseID != "" {
-						kind, ok := serverKinds[evt.ContentBlock.ToolUseID]
-						if !ok {
-							kind = serverToolKind(strings.TrimSuffix(evt.ContentBlock.Type, "_tool_result"))
-						}
-						emit(serverToolResult(evt.ContentBlock.RawJSON(), kind))
-					}
-				}
-
-			case "content_block_delta":
-				switch evt.Delta.Type {
-				case "text_delta":
-					emit(types.TextContentDelta{Content: evt.Delta.Text})
-				case "thinking_delta":
-					emit(types.ThinkingContentDelta{Content: evt.Delta.Thinking})
-				case "signature_delta":
-					signatureBuf += evt.Delta.Signature
-				case "input_json_delta":
-					toolArgsBuf = append(toolArgsBuf, evt.Delta.PartialJSON...)
-					if currentBlockType == blockServerToolUse {
-						break
-					}
-					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
-						emit(types.TextContentDelta{Content: evt.Delta.PartialJSON})
-					} else {
-						emit(types.ToolCallArgumentDelta{ID: currentBlockID, Content: evt.Delta.PartialJSON})
-					}
-				}
-
-			case "content_block_stop":
-				switch currentBlockType {
-				case "text":
-					emit(types.TextEndDelta{})
-				case "thinking":
-					emit(types.ThinkingEndDelta{Signature: signatureBuf})
-				case "tool_use":
-					args, err := streamcheck.DecodeArguments(string(toolArgsBuf))
-					if isStructuredTool != nil && isStructuredTool(currentBlockName) {
-						if err != nil {
-							argsFailure.Set("", "", err)
-						}
-						emit(types.TextEndDelta{})
-					} else if err != nil {
-						heldCall = &streamcheck.ArgsFailure{ToolCallID: currentBlockID, Name: currentBlockName, Err: err}
-					} else {
-						emit(types.ToolCallEndDelta{ID: currentBlockID, Arguments: args})
-					}
-				case blockServerToolUse:
-					// Input that does not decode is reported as absent; the
-					// provider ran the call, so there is nothing to refuse.
-					input, _ := streamcheck.DecodeArguments(string(toolArgsBuf))
-					emit(types.ServerToolCallDelta{ID: currentBlockID, Kind: serverKinds[currentBlockID],
-						Name: currentBlockName, Input: input})
-				}
-				currentBlockType = ""
-				currentBlockName = ""
-				currentBlockID = ""
-
-			case "message_stop":
-				stopped = true
-
-			case "message_delta":
-				if string(evt.Delta.StopReason) != "" {
-					finishReason = string(evt.Delta.StopReason)
-					releaseHeld(!types.IsTruncationFinishReason(finishReason) && !types.IsContentFilterFinishReason(finishReason) &&
-						finishReason != stopContextWindowExceeded)
-				}
-				if evt.Usage.OutputTokens > 0 {
-					outputTokens = int(evt.Usage.OutputTokens)
-					ud := types.UsageDelta{Cumulative: true,
-						CompletionTokens: int(evt.Usage.OutputTokens),
-						TotalTokens:      int(evt.Usage.OutputTokens),
-						ResponseID:       responseID,
-						ResponseModel:    responseModel,
-					}
-					if finishReason != "" {
-						ud.FinishReasons = []string{finishReason}
-					}
-					emit(ud)
-				}
-			}
-		}
-
-		releaseHeld(false)
-		switch err := stream.Err(); {
-		case err != nil:
-			out <- types.ErrorDelta{Error: classifyAnthropicError(model, err, !emitted)}
-		case !stopped && finishReason == "":
-			// A clean close without message_stop or stop_reason means the
-			// connection ended early; reporting success would hand the loop a
-			// partial answer.
-			out <- types.ErrorDelta{Error: streamcheck.StreamError("anthropic", model, streamcheck.ErrIncompleteStream, !emitted)}
-		case types.IsContentFilterFinishReason(finishReason):
-			out <- types.ErrorDelta{Error: streamcheck.Refused("anthropic", model, finishReason)}
-		case finishReason == stopContextWindowExceeded:
-			// The answer is partial; reporting it as the context limit lets
-			// the loop compact or fail instead of taking it as final.
-			out <- types.ErrorDelta{Error: &types.ProviderError{Provider: "anthropic", Model: model,
-				Kind: types.ErrorKindContextLength, Err: errContextWindowExceeded}}
-		case finishReason == stopPauseTurn:
-			// The API paused a long server tool turn and expects the partial
-			// response sent back to continue it. Server tool blocks are not
-			// replayed, so the turn cannot continue: report it rather than
-			// hand the loop a partial answer as final.
-			out <- types.ErrorDelta{Error: &types.ProviderError{Provider: "anthropic", Model: model,
-				Kind: types.ErrorKindPermanent, Err: errPausedTurn}}
-		case argsFailure.Failed():
-			out <- types.ErrorDelta{Error: argsFailure.Error("anthropic", model, finishReason, outputTokens, maxTokens)}
-		}
-	}()
-
-	return out
+	return c, params, schema != nil && !native, nil
 }
 
 // Capabilities implements types.CapabilityReporter: it resolves the target
@@ -690,71 +412,12 @@ func (a *Adapter) ContentSupport() types.ContentSupport {
 			types.MediaGIF:  true,
 			types.MediaWebP: true,
 			types.MediaPDF:  true,
+			types.MediaText: true,
 		},
 	}
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
-
-func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anthropic.MessageParam) {
-	var system []anthropic.TextBlockParam
-	var out []anthropic.MessageParam
-
-	for _, m := range msgs {
-		switch v := m.(type) {
-		case types.SystemMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					// The API rejects an empty text block, so a blank system
-					// prompt is dropped; with none left, no system is sent.
-					if strings.TrimSpace(bc.Text) != "" {
-						system = append(system, anthropic.TextBlockParam{Text: bc.Text})
-					}
-				case types.ToolResultPart:
-					out = appendMsg(out, "user", toToolResultBlock(bc))
-				}
-			}
-
-		case types.UserMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					out = appendMsg(out, "user", anthropic.NewTextBlock(bc.Text))
-				case types.ToolResultPart:
-					out = appendMsg(out, "user", toToolResultBlock(bc))
-				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
-					fc, _ := legacyparts.MediaOf(bc)
-					if fc.Data != nil && isImageType(fc.MediaType) {
-						b64 := base64.StdEncoding.EncodeToString(fc.Data)
-						out = appendMsg(out, "user", anthropic.NewImageBlockBase64(string(fc.MediaType), b64))
-					} else if fc.Data != nil && fc.MediaType == types.MediaPDF {
-						// Native PDF pass-through, matching the ContentSupport claim.
-						out = appendMsg(out, "user", anthropic.ContentBlockParamUnion{
-							OfDocument: documentBlockFromBytes(fc.Data),
-						})
-					} else if fc.Data != nil {
-						out = appendMsg(out, "user", anthropic.NewTextBlock("[File: "+fc.Filename+"] "+string(fc.Data)))
-					}
-				}
-			}
-
-		case types.AssistantMessage:
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.ThinkingPart:
-					out = appendMsg(out, "assistant", anthropic.NewThinkingBlock(bc.Signature, bc.Text))
-				case types.TextPart:
-					out = appendMsg(out, "assistant", anthropic.NewTextBlock(bc.Text))
-				case types.ToolCallPart:
-					out = appendMsg(out, "assistant", anthropic.NewToolUseBlock(bc.ID, bc.Arguments, bc.Name))
-				}
-			}
-		}
-	}
-
-	return system, trimPrefill(out)
-}
 
 // trimPrefill prepares a request that ends with an assistant turn, which the
 // model continues (prefill). The API rejects a final assistant text that ends
@@ -792,90 +455,6 @@ func appendMsg(msgs []anthropic.MessageParam, role string, block anthropic.Conte
 		Role:    r,
 		Content: []anthropic.ContentBlockParamUnion{block},
 	})
-}
-
-func isImageType(mt types.MediaType) bool {
-	switch mt {
-	case types.MediaJPEG, types.MediaPNG, types.MediaGIF, types.MediaWebP:
-		return true
-	}
-	return false
-}
-
-// toToolResultBlock converts a ToolResultPart into an Anthropic tool_result
-// block. When the result has no rich Blocks it takes the exact back-compat path
-// (anthropic.NewToolResultBlock). With Blocks it builds a multi-content
-// tool_result carrying text, images (base64), and PDF documents; unsupported
-// media degrades to a text placeholder so the request never errors.
-func toToolResultBlock(c types.ToolResultPart) anthropic.ContentBlockParamUnion {
-	if len(legacyparts.Blocks(c.Parts)) == 0 {
-		return anthropic.NewToolResultBlock(c.CallID, c.Text(), c.IsError)
-	}
-
-	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(legacyparts.Blocks(c.Parts)))
-	for _, b := range legacyparts.Blocks(c.Parts) {
-		switch b.Kind {
-		case legacyparts.BlockText:
-			content = append(content, anthropic.ToolResultBlockParamContentUnion{
-				OfText: &anthropic.TextBlockParam{Text: b.Text},
-			})
-		case legacyparts.BlockJSON:
-			content = append(content, anthropic.ToolResultBlockParamContentUnion{
-				OfText: &anthropic.TextBlockParam{Text: string(b.JSON)},
-			})
-		case legacyparts.BlockImage:
-			if b.Data != nil && isImageType(b.MediaType) {
-				b64 := base64.StdEncoding.EncodeToString(b.Data)
-				content = append(content, anthropic.ToolResultBlockParamContentUnion{
-					OfImage: &anthropic.ImageBlockParam{
-						Source: anthropic.ImageBlockParamSourceUnion{
-							OfBase64: &anthropic.Base64ImageSourceParam{
-								Data:      b64,
-								MediaType: anthropic.Base64ImageSourceMediaType(b.MediaType),
-							},
-						},
-					},
-				})
-			} else {
-				content = append(content, anthropic.ToolResultBlockParamContentUnion{
-					OfText: &anthropic.TextBlockParam{Text: "[image: " + b.Filename + "]"},
-				})
-			}
-		case legacyparts.BlockFile:
-			if b.Data != nil && b.MediaType == types.MediaPDF {
-				content = append(content, anthropic.ToolResultBlockParamContentUnion{
-					OfDocument: documentBlockFromBytes(b.Data),
-				})
-			} else {
-				content = append(content, anthropic.ToolResultBlockParamContentUnion{
-					OfText: &anthropic.TextBlockParam{Text: "[file: " + b.Filename + "]"},
-				})
-			}
-		}
-	}
-
-	// Guarantee non-empty content: if every block was dropped, fall back to text.
-	if len(content) == 0 {
-		return anthropic.NewToolResultBlock(c.CallID, c.Text(), c.IsError)
-	}
-	return anthropic.ContentBlockParamUnion{
-		OfToolResult: &anthropic.ToolResultBlockParam{
-			ToolUseID: c.CallID,
-			IsError:   anthropic.Bool(c.IsError),
-			Content:   content,
-		},
-	}
-}
-
-// documentBlockFromBytes builds a base64 PDF document block.
-func documentBlockFromBytes(data []byte) *anthropic.DocumentBlockParam {
-	return &anthropic.DocumentBlockParam{
-		Source: anthropic.DocumentBlockParamSourceUnion{
-			OfBase64: &anthropic.Base64PDFSourceParam{
-				Data: base64.StdEncoding.EncodeToString(data),
-			},
-		},
-	}
 }
 
 func toAnthropicTools(defs []types.ToolDef) []anthropic.ToolUnionParam {

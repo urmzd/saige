@@ -1,0 +1,22 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "citations": {
+            "enabled": true
+          },
+          "context": "a field note",
+          "source": {
+            "data": "The sky is blue.",
+            "media_type": "text/plain",
+            "type": "text"
+          },
+          "title": "Sky",
+          "type": "document"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

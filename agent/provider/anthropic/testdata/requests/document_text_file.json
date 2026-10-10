@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "file_id": "file_txt",
+            "type": "file"
+          },
+          "type": "document"
+        }
+      ],
+      "role": "user"
+    }
+  ]
+}

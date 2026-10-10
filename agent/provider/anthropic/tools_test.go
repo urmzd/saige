@@ -290,7 +290,7 @@ func TestServerToolStream(t *testing.T) {
 }
 
 func TestServerToolContentIsNotReplayed(t *testing.T) {
-	_, out := toAnthropicParams([]types.Message{
+	_, out := toParams([]types.Message{
 		types.UserMsg(types.Text("q")),
 		types.AssistantMessage{Parts: []types.AssistantPart{
 			types.ServerToolCallPart{ID: "srvtoolu_1", ToolKind: types.ServerToolWebSearch},
