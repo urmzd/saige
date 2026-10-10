@@ -63,10 +63,10 @@ func TestNotifierFanOut(t *testing.T) {
 			OnReconnect:     func() { reconnects.Add(1) },
 			Logger:          quietLogger,
 		})
-		t.Cleanup(func() { _ = ns[i].Close() })
+		t.Cleanup(func() { _ = ns[i].Close(context.Background()) })
 	}
 	pub := postgres.NewNotifier(pool, postgres.NotifierOptions{ApplicationName: "saige-stress-publisher"})
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	// Each subscriber counts the payloads it receives.
 	counts := make([]map[string]int, subscribers)
@@ -199,7 +199,7 @@ func TestCacheCoherence(t *testing.T) {
 	caches := make([]*notify.Cache[[]byte], processes)
 	for i := range caches {
 		n := postgres.NewNotifier(pool, postgres.NotifierOptions{Logger: quietLogger})
-		t.Cleanup(func() { _ = n.Close() })
+		t.Cleanup(func() { _ = n.Close(context.Background()) })
 		c, err := notify.NewCache(ctx, notify.CacheConfig[[]byte]{
 			Local:    memcache.New[[]byte](),
 			Shared:   store,
@@ -209,7 +209,7 @@ func TestCacheCoherence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = c.Close() })
+		t.Cleanup(func() { _ = c.Close(context.Background()) })
 		caches[i] = c
 	}
 
