@@ -2449,7 +2449,7 @@ func interruptRequested(ctx context.Context) bool {
 // part returns the result as recorded in the conversation. An error with no
 // text records the error message as the text.
 func (r toolResult) part() types.ToolResultPart {
-	trc := types.ToolResultPart{CallID: r.toolCallID, Parts: r.output(), ToolVersion: r.version}
+	trc := types.ToolResultPart{CallID: r.toolCallID, Parts: r.output(), ToolVersion: r.version, Citations: slices.Clone(r.citations)}
 	if r.err != "" {
 		trc.IsError = true
 		if trc.Text() == "" && !trc.HasMedia() {
@@ -2522,6 +2522,9 @@ type toolResult struct {
 	version string
 	// approvals records the approval policy's decisions about the call.
 	approvals []types.ApprovalPart
+	// citations are the sources the tool attributed its output to, as the
+	// run's registry numbered them.
+	citations []types.Citation
 }
 
 // executeToolsConcurrently runs all tool calls, streaming deltas as they arrive.
@@ -3090,6 +3093,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		var (
 			text    string
 			parts   []types.ToolOutputPart
+			cites   []types.Citation
 			execErr error
 		)
 		// Placeholders become real values only here, after the gate and any
@@ -3105,16 +3109,11 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 			if !tr.HasMedia() && !hasJSON(tr.Parts) {
 				parts = nil // plain text: the projection is the whole output
 			}
-			// Register the tool's sources in the run-wide registry so a page
-			// found by a local search tool and the same page found by the
-			// provider's server-side search share one footnote number. A
-			// citation is tool output too, so it is tokenized first.
-			cites := tr.Citations
+			// A citation is tool output too, so it is tokenized inside the
+			// step, and recorded with the result so a replay restores it.
+			cites = tr.Citations
 			if a.cfg.ToolRedactor != nil {
 				cites = a.tokenizeCitations(stepCtx, tool.Definition(), cites)
-			}
-			for _, c := range a.citations.AddAll(cites) {
-				stream.send(types.CitationDelta{Citation: c, ToolCallID: tc.ID})
 			}
 			if execErr == nil && tr.IsError {
 				execErr = errors.New(tr.Text()) // tool-signalled error without a Go error
@@ -3136,7 +3135,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 			// tokenized too.
 			text, parts, execErr = a.tokenizeToolOutput(stepCtx, tool.Definition(), text, parts, execErr)
 		}
-		out := types.StepResult{Kind: types.StepKindTool, ToolCallID: tc.ID, ToolResult: text, ToolParts: parts}
+		out := types.StepResult{Kind: types.StepKindTool, ToolCallID: tc.ID, ToolResult: text, ToolParts: parts, ToolCitations: cites}
 		if execErr != nil {
 			out.ToolError = execErr.Error() // error-in-payload: recorded once, not retried
 		}
@@ -3157,13 +3156,21 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		res = toolResult{toolCallID: tc.ID, err: stepErr.Error()}
 	} else {
 		res = toolResult{toolCallID: tc.ID, result: sr.ToolResult, parts: sr.ToolParts, err: sr.ToolError}
+		// Register the tool's sources in the run-wide registry so a page
+		// found by a local search tool and the same page found by the
+		// provider's server-side search share one footnote number.
+		res.citations = a.citations.AddAll(sr.ToolCitations)
+		for _, c := range res.citations {
+			stream.send(types.CitationDelta{Citation: c, ToolCallID: tc.ID})
+		}
 		a.afterToolHooks(ctx, stream, tc, tool.Definition(), &res)
 	}
 	var endParts []types.ToolOutputPart
 	if res.parts != nil {
 		endParts = res.output()
 	}
-	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Parts: endParts, Error: res.err, Version: types.ToolVersion(tool)})
+	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Parts: endParts, Error: res.err,
+		Citations: slices.Clone(res.citations), Version: types.ToolVersion(tool)})
 	return res
 }
 

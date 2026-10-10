@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/urmzd/saige/agent/batch"
+	"github.com/urmzd/saige/agent/convert"
 	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -66,6 +67,10 @@ func (a *Agent) RunBatch(ctx context.Context, inputs []BatchInput, cfg BatchConf
 		}
 		reqs[i] = types.BatchRequest{CustomID: id, Messages: msgs, Schema: schema, Options: opts.Clone()}
 	}
+	// The agent's conversion policy applies to every request, planned when
+	// the batch is submitted; converters that call a model are charged to
+	// the agent's budget.
+	ctx = convert.WithRuntime(ctx, convert.Runtime{Policy: a.cfg.Conversion, Budget: a.cfg.Budget})
 	return runBatch(ctx, a.cfg.Provider, a.cfg.Budget, cfg, "agent-"+a.cfg.Name, reqs)
 }
 
@@ -101,12 +106,22 @@ func runBatch(ctx context.Context, p types.Provider, budget *types.Budget, cfg B
 // BatchProviderFor returns the types.BatchProvider behind p: the first
 // provider in its decorator chain that implements one, else a local batch
 // over p with the given concurrency. It returns nil for a nil p.
+//
+// A vendor batch provider is returned behind the conversion decorator
+// (convert.Batch), so each request is planned against the offering at
+// submit and a request the offering cannot take fails before upload: with
+// the policy of the conversion decorator in p's chain when there is one,
+// else with the default policy, which rejects media the offering does not
+// take. A local batch makes ordinary calls through p, which converts them.
 func BatchProviderFor(p types.Provider, concurrency int) types.BatchProvider {
 	if p == nil {
 		return nil
 	}
 	if bp, ok := wrapper.As[types.BatchProvider](p); ok {
-		return bp
+		if cp, ok := wrapper.As[*convert.Provider](p); ok {
+			return cp.Batch(bp)
+		}
+		return convert.NewBatch(bp, types.ConversionPolicy{})
 	}
 	return batch.NewLocal(p, concurrency)
 }

@@ -615,6 +615,11 @@ type wireUsage struct {
 	ResponseID         string   `json:"response_id,omitempty"`
 	FinishReasons      []string `json:"finish_reasons,omitempty"`
 	CacheHit           bool     `json:"cache_hit,omitempty"`
+	// PromptByModality and CompletionByModality are absent from streams
+	// written before they existed, which decode with nil maps.
+	PromptByModality     map[Modality]int `json:"prompt_by_modality,omitempty"`
+	CompletionByModality map[Modality]int `json:"completion_by_modality,omitempty"`
+	Requests             int              `json:"requests,omitempty"`
 }
 
 type wireRoute struct {
@@ -856,6 +861,7 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 			PromptTokens: x.PromptTokens, CachedPromptTokens: x.CachedPromptTokens,
 			CacheWriteTokens: x.CacheWriteTokens, CompletionTokens: x.CompletionTokens, TotalTokens: x.TotalTokens,
 			ResponseModel: x.ResponseModel, ResponseID: x.ResponseID, FinishReasons: x.FinishReasons, CacheHit: x.CacheHit,
+			PromptByModality: x.PromptByModality, CompletionByModality: x.CompletionByModality, Requests: x.Requests,
 		}
 		if x.Latency != 0 {
 			w.LatencyMS = durationMS(x.Latency)
@@ -1005,6 +1011,7 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 			PromptTokens: w.PromptTokens, CachedPromptTokens: w.CachedPromptTokens,
 			CacheWriteTokens: w.CacheWriteTokens, CompletionTokens: w.CompletionTokens, TotalTokens: w.TotalTokens,
 			ResponseModel: w.ResponseModel, ResponseID: w.ResponseID, FinishReasons: w.FinishReasons, CacheHit: w.CacheHit,
+			PromptByModality: w.PromptByModality, CompletionByModality: w.CompletionByModality, Requests: w.Requests,
 		}
 		if w.LatencyMS != nil {
 			u.Latency = msDuration(*w.LatencyMS)

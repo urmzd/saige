@@ -47,10 +47,14 @@ type StepResult struct {
 	ToolCallID string            // populated when Kind == StepKindTool
 	ToolResult string            // tool text projection / aggregated sub-agent text
 	ToolParts  []ToolOutputPart  // rich tool output; survives durable replay
-	ToolError  string            // non-empty => tool errored (recorded, not retried)
-	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
-	Hook       *HookRecord       // populated when Kind == StepKindHook
-	Conversion *ConversionEntry  // populated when Kind == StepKindConvert
+	// ToolCitations are the sources a rich tool attributed its output to,
+	// tokenized and not yet numbered: the loop numbers them after the
+	// step, so a replay numbers them the same way.
+	ToolCitations []Citation
+	ToolError     string           // non-empty => tool errored (recorded, not retried)
+	Approval      *ApprovalVerdict // populated when Kind == StepKindApproval
+	Hook          *HookRecord      // populated when Kind == StepKindHook
+	Conversion    *ConversionEntry // populated when Kind == StepKindConvert
 	// ConversionReceipts are the settlements of the conversions an LLM
 	// step ran, so replaying the step restores their spend too.
 	ConversionReceipts []BudgetReceipt

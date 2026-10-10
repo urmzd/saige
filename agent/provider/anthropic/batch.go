@@ -211,21 +211,21 @@ func errorKind(t string) types.ErrorKind {
 
 // assistantFromMessage converts a complete message to the parts the
 // streaming path emits for it: one part per content block in block order,
-// then the citations of the text blocks, anchored to them, then a refusal.
+// each text block followed by its citations, anchored to it, then a refusal.
 // The hidden schema tool becomes the text answer.
 func (a *Adapter) assistantFromMessage(m anthropic.Message) (types.AssistantMessage, error) {
 	var out types.AssistantMessage
-	var cited []types.CitationPart
 	calls := map[string]types.ServerToolKind{}
 	for _, b := range m.Content {
 		switch {
 		case b.Type == blockText:
+			at := len(out.Parts)
+			out.Parts = append(out.Parts, types.TextPart{Text: b.Text})
 			for _, c := range b.Citations {
 				if cit, ok := citationFrom(c.RawJSON()); ok {
-					cited = append(cited, anchored(cit, len(out.Parts), len(b.Text)))
+					out.Parts = append(out.Parts, anchored(cit, at, len(b.Text)))
 				}
 			}
-			out.Parts = append(out.Parts, types.TextPart{Text: b.Text})
 		case b.Type == blockThinking:
 			out.Parts = append(out.Parts, types.ThinkingPart{Text: b.Thinking, Signature: b.Signature})
 		case b.Type == blockRedactedThinking:
@@ -248,9 +248,6 @@ func (a *Adapter) assistantFromMessage(m anthropic.Message) (types.AssistantMess
 		case isServerToolResult(b.Type) && b.ToolUseID != "":
 			out.Parts = append(out.Parts, a.serverToolResult(b.RawJSON(), serverResultKind(b.Type, b.ToolUseID, calls)))
 		}
-	}
-	for _, c := range cited {
-		out.Parts = append(out.Parts, c)
 	}
 	if string(m.StopReason) == stopRefusal {
 		out.Parts = append(out.Parts, refusalPart(m.StopDetails))
