@@ -156,3 +156,19 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
+
+  # The README embeds the programs under examples/quickstart with fsrc
+  # markers. The build job compiles those programs; this job fails when the
+  # README no longer matches them. Fix with `fsrc run README.md`.
+  embed:
+    name: Embedded examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: urmzd/fsrc@v4
+        with:
+          files: README.md
+          commit-dry: "true"
+          commit-push: "false"
+      # The action stages README.md, so compare against HEAD, not the index.
+      - run: git diff --exit-code HEAD -- README.md
