@@ -620,11 +620,6 @@ func TestFilterScripts(t *testing.T) {
 			if strings.Join(ids, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("FilterScripts = %v, want %v", ids, tt.want)
 			}
-			// The deprecated name keeps working through the alias.
-			legacy := FilterExperiments(scripts, tt.prefix, tt.count)
-			if len(legacy) != len(got) {
-				t.Errorf("FilterExperiments = %d scripts, want %d", len(legacy), len(got))
-			}
 		})
 	}
 }
@@ -689,7 +684,7 @@ func TestCustomFlowAndAssemble(t *testing.T) {
 	runner := &Runner{
 		Client: NewClient(server.URL, "test-key", "mock"),
 		Flows:  []Flow{countingFlow{}},
-		Assemble: func(exp Experiment, results map[string]FlowResult) (any, error) {
+		Assemble: func(exp Script, results map[string]FlowResult) (any, error) {
 			return map[string]any{
 				"experiment_id": exp.ID,
 				"turns_seen":    results["counting"].Extra["turns_seen"],
@@ -713,7 +708,7 @@ type countingFlow struct{}
 
 func (countingFlow) Name() string { return "counting" }
 
-func (countingFlow) Run(ctx context.Context, c *Client, exp Experiment, fc *FlowContext) (FlowResult, error) {
+func (countingFlow) Run(ctx context.Context, c *Client, exp Script, fc *FlowContext) (FlowResult, error) {
 	if len(exp.Turns) == 0 {
 		return FlowResult{}, fmt.Errorf("no turns")
 	}

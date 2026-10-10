@@ -38,7 +38,7 @@ func readGoldenLines(t *testing.T, path string) []string {
 
 // wantUpgraded is the part stream the golden v1 stream means.
 func wantUpgraded() []Delta {
-	img := FileContent{URI: "file:///a.png", MediaType: MediaPNG, Filename: "a.png", Data: []byte{1, 2, 3}}.Source()
+	img := wireFile{URI: "file:///a.png", MediaType: MediaPNG, Filename: "a.png", Data: []byte{1, 2, 3}}.source()
 	return []Delta{
 		PartStart{Index: 0, Kind: KindText},
 		PartDelta{Index: 0, Text: "hel"},
@@ -120,16 +120,19 @@ func TestV1UpgraderGolden(t *testing.T) {
 	}
 }
 
-func TestUpgradeV1Stream(t *testing.T) {
-	in := make(chan Delta, 4)
-	in <- TextContentDelta{Content: "no start"}
-	in <- TextEndDelta{}
-	in <- ToolCallArgumentDelta{Content: "orphan"}
-	in <- DoneDelta{}
-	close(in)
+func TestDecoderUpgradesV1(t *testing.T) {
+	dec := NewDecoder()
 	var got []Delta
-	for d := range UpgradeV1Stream(in) {
-		got = append(got, d)
+	for _, d := range []Delta{v1TextContent{Content: "no start"}, v1TextEnd{}, v1ToolCallArgument{Content: "orphan"}, DoneDelta{}} {
+		env, err := NewDeltaEnvelope(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ds, err := dec.Decode(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, ds...)
 	}
 	want := []Delta{
 		PartStart{Index: 0, Kind: KindText}, PartDelta{Index: 0, Text: "no start"}, PartEnd{Index: 0}, DoneDelta{},
@@ -143,12 +146,12 @@ func TestV1UpgraderToolCallRules(t *testing.T) {
 	up := NewV1Upgrader()
 	var got []Delta
 	for _, d := range []Delta{
-		ToolCallStartDelta{ID: "a", Name: "fa"},
-		ToolCallStartDelta{ID: "b", Name: "fb"},
-		ToolCallArgumentDelta{Content: `{"x":1}`}, // no ID: the newest call
-		ToolCallStartDelta{ID: "a", Name: "fa"},   // restart of an open call
-		ToolCallEndDelta{},                        // no ID: the oldest call
-		ToolCallEndDelta{ID: "a", ArgumentsError: "bad"},
+		v1ToolCallStart{ID: "a", Name: "fa"},
+		v1ToolCallStart{ID: "b", Name: "fb"},
+		v1ToolCallArgument{Content: `{"x":1}`}, // no ID: the newest call
+		v1ToolCallStart{ID: "a", Name: "fa"},   // restart of an open call
+		v1ToolCallEnd{},                        // no ID: the oldest call
+		v1ToolCallEnd{ID: "a", ArgumentsError: "bad"},
 	} {
 		got = append(got, up(d)...)
 	}
@@ -234,7 +237,7 @@ func TestV1DowngraderUnrepresentable(t *testing.T) {
 		t.Fatalf("got %d unrepresentable errors, want 4: %#v", errs, got)
 	}
 	tail := got[len(got)-3:]
-	if !reflect.DeepEqual(tail, []Delta{TextStartDelta{}, TextContentDelta{Content: "whole"}, TextEndDelta{}}) {
+	if !reflect.DeepEqual(tail, []Delta{v1TextStart{}, v1TextContent{Content: "whole"}, v1TextEnd{}}) {
 		t.Errorf("text with an authoritative end = %#v", tail)
 	}
 

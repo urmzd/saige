@@ -294,8 +294,6 @@ Without `Metrics` it checks the metrics either arm gated, or every shared metric
 
 Cases pair by ID, Turn, Sample, and the `variant` label, so two suites from `Experiment.Run` compare each variant with itself and `CaseDiff.Variant` names it. When each arm holds one variant and they differ, as in `CompareVariants`, cases pair without the variant.
 
-`RunExperiment`, `ExperimentResult`, `ExperimentOption`, `WithExperimentName`, `WithRunOptions`, `WriteExperiment`, and `ReadExperiment` remain as deprecated names for `Compare`, `Comparison`, `Option`, `WithName`, plain options, `WriteComparison`, and `ReadComparison`.
-
 ## Experiments
 
 An `Experiment` states intent: a claim, the variants under test, the scorers, and the gates. It owns no data, so a run pairs it with a dataset.

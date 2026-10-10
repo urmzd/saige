@@ -349,7 +349,7 @@ func TestAssembleDefaultIgnoresFailedTurnSavings(t *testing.T) {
 			{Turn: 2, LatencyMS: 4000, Failed: true, FailureReason: &reason},
 		}},
 	}
-	doc := AssembleDefault("mock", []Flow{BaseFlow{}, StatelessFlow{}}, Experiment{ID: "x"}, results)
+	doc := AssembleDefault("mock", []Flow{BaseFlow{}, StatelessFlow{}}, Script{ID: "x"}, results)
 
 	stateless := doc.Flows["stateless"]
 	if stateless.Reliability == nil || stateless.Reliability.RequestFailureCount != 1 {

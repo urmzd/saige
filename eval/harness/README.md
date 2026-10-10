@@ -15,7 +15,7 @@ Full API reference: [pkg.go.dev/github.com/urmzd/saige/eval/harness](https://pkg
 | `Client` | Metered chat client with two transports: raw HTTP to an OpenAI-compatible API (`NewClient`), or any `types.Provider` (`NewProviderClient`). Usage capture includes cached tokens |
 | `Manifest` | Strict JSON suite manifest (`saige.eval.json`): corpus, subject, flows, policy, and assertions |
 | `Issue` | One validation problem, addressed by file and JSON Pointer, with a severity |
-| `Script` | One scripted multi-turn eval case: named system prompts plus ordered turns (turn 0 synthesizes, later turns edit). `Experiment` is its deprecated former name |
+| `Script` | One scripted multi-turn eval case: named system prompts plus ordered turns (turn 0 synthesizes, later turns edit). |
 | `Flow` | Strategy for driving a script through the model; built-ins are `BaseFlow` and `StatelessFlow`. The flows of a runner act as its variants |
 | `Runner` | Runs flows over scripts with bounded concurrency, skips completed ones, writes `metrics.json` per script, and can resume a stored run and gate the result |
 | `DefaultMetrics` | Generic metrics document: per-flow turn metrics, totals, and comparisons against the first flow over the edit turns both flows completed |
@@ -32,7 +32,7 @@ Each subdirectory of the corpus directory is one script:
   turn-1.md ...     edit instructions, sorted numerically
 ```
 
-`format` defaults to `text/markdown` and controls the output file extension. System values in `script.json` are file paths relative to the script directory, so custom flows can carry additional system prompts under their own names. A directory with only the former `experiment.json` still loads. The config file is decoded strictly: an unknown key fails the load instead of being ignored, and two files for one turn index (`turn-1.md` and `turn-01.md`) are rejected. `FilterScripts` (formerly `FilterExperiments`) selects scripts by ID prefix and count.
+`format` defaults to `text/markdown` and controls the output file extension. System values in `script.json` are file paths relative to the script directory, so custom flows can carry additional system prompts under their own names. A directory with only the former `experiment.json` still loads. The config file is decoded strictly: an unknown key fails the load instead of being ignored, and two files for one turn index (`turn-1.md` and `turn-01.md`) are rejected. `FilterScripts` selects scripts by ID prefix and count.
 
 `ValidateCorpus` checks a corpus without running it and returns every problem, not only the first: unknown config keys with their JSON Pointer, missing system files, a missing `turn-0.md`, duplicate turn indices, and, as warnings, gaps in the turn numbering.
 

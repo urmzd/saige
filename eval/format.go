@@ -142,18 +142,6 @@ func ReadComparison(dir string) (*Comparison, error) {
 	return &result, nil
 }
 
-// WriteExperiment writes a comparison to disk.
-//
-// Deprecated: Use [WriteComparison].
-func WriteExperiment(dir string, result *ExperimentResult) error {
-	return WriteComparison(dir, result)
-}
-
-// ReadExperiment reads a comparison from disk.
-//
-// Deprecated: Use [ReadComparison].
-func ReadExperiment(dir string) (*ExperimentResult, error) { return ReadComparison(dir) }
-
 // WriteSuiteResult writes a [SuiteResult] to a single JSON file.
 func WriteSuiteResult(path string, result *SuiteResult) error {
 	return writeJSON(path, result)
