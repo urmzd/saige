@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.1 (2026-10-10)
+
+### Bug Fixes
+
+- **rag**: safe filesystem source defaults (#83) ([063dcca](https://github.com/urmzd/saige/commit/063dccae148836893c822895dfaa2aea5b64ecca))
+
+### Misc
+
+- **release**: read the sr-releaser key from the release environment (#84) ([e2dae64](https://github.com/urmzd/saige/commit/e2dae64b517156a053ff7511c0925b88ed18ac87))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.31.0...v0.31.1)
+
+
 ## 0.31.0 (2026-10-10)
 
 ### Features
