@@ -426,7 +426,11 @@ func TestSpawnRefusedUnderDurableRunner(t *testing.T) {
 
 func TestInvokeSubAgentFindsSpawnDefinition(t *testing.T) {
 	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("direct")}}
-	a := must.Get(New(Config{Name: "lead", Provider: &agenttest.ScriptedProvider{}, SubAgents: []SubAgentDef{{Name: "worker", Provider: child, Mode: SubAgentSpawn}}}))
+	a := must.Get(New(Config{
+		Name:      "lead",
+		Provider:  &agenttest.ScriptedProvider{},
+		SubAgents: []SubAgentDef{{Name: "worker", Provider: child, Mode: SubAgentSpawn}},
+	}))
 	stream, err := a.InvokeSubAgent(context.Background(), "worker", "task")
 	if err != nil {
 		t.Fatal(err)

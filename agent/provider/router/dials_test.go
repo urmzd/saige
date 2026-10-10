@@ -11,7 +11,8 @@ import (
 )
 
 func catalogProfile(id, vendor, model string, call func() (<-chan types.Delta, error), got *[]types.RequestOptions) Profile {
-	return Profile{ID: types.ProfileID(id), Provider: optsProvider{provider: provider{model: model, call: call, caps: catalog.MustLookup(types.ProviderName(vendor), model)}, got: got}}
+	caps := catalog.MustLookup(types.ProviderName(vendor), model)
+	return Profile{ID: types.ProfileID(id), Provider: optsProvider{provider: provider{model: model, call: call, caps: caps}, got: got}}
 }
 
 func focusedDials() types.RequestOptions {

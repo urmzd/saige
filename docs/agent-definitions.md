@@ -223,7 +223,7 @@ a, err := b.NewAgent()
 | `approval` | A `ToolGate` behind `Env.ToolGate`, and `agent.ApprovalPolicy` |
 | `compaction` | `agent.Config.CompactCfg` |
 | `guardrails` | `agent.InputGuardrail` and `agent.OutputGuardrail` from `agent/guardrail`; a classifier runs on the agent's model |
-| `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`. Each `NewAgent` call, and each delegation, gets a budget of its own |
+| `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`. Each `Bound.NewAgent` call, and each delegation, gets a budget of its own |
 
 A sub-agent inherits its parent's run policy as every sub-agent does (see [delegation](delegation.md)), and its own definition replaces what it declares: its approval rules (still behind the host's gate), compaction, dials, timeouts and budget. A sub-agent with no approval block keeps its parent's. A handoff member shares its entry agent's run, so a definition used with `mode: handoff` may not declare approval, skills, memory, compaction, guardrails, MCP servers, sub-agents, a budget or timeouts; binding says which.
 

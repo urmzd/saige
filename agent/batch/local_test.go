@@ -190,7 +190,8 @@ func TestLocalCancel(t *testing.T) {
 // TestLocalPricedInteractive checks that a local batch is charged at the
 // interactive rates: its calls are ordinary calls.
 func TestLocalPricedInteractive(t *testing.T) {
-	r := must.Get(NewRunner(RunnerConfig{Provider: NewLocal(&echoProvider{}, 1), Store: NewMemoryStore()}, WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5})))
+	r := must.Get(NewRunner(RunnerConfig{Provider: NewLocal(&echoProvider{}, 1), Store: NewMemoryStore()},
+		WithPricing(types.Pricing{InputPerMTok: 2, BatchDiscount: 0.5})))
 	if got := r.batchPricing().InputPerMTok; got != 2 {
 		t.Fatalf("input rate = %v, want 2", got)
 	}

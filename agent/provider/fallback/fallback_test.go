@@ -417,7 +417,7 @@ func TestFallbackProvider_CancelDrainsBlockedProducer(t *testing.T) {
 	}
 }
 
-// switchableProvider implements types.ModelSwitcher for WithModel tests.
+// switchableProvider implements types.TargetSwitcher for WithTarget tests.
 type switchableProvider struct {
 	model string
 }

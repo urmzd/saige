@@ -29,7 +29,8 @@ func TestChatStreamWithOptions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var bodies []map[string]any
-			a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}))
+			a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+				WithHTTPClient(&http.Client{Transport: captureTransport{events: []string{doneEvent}, bodies: &bodies}}))
 			if err != nil {
 				t.Fatal(err)
 			}

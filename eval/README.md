@@ -425,7 +425,7 @@ import (
 pool, _ := postgres.NewPool(ctx, postgres.Config{URL: dsn})
 _ = postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
 
-results, err := pgstore.New(ctx, pool, "acme") // tenant scope; "" for a single tenant
+results, err := pgstore.New(ctx, pgstore.Config{Pool: pool, Tenant: "acme"}) // tenant scope; "" for a single tenant
 run, err := store.SaveSuite(ctx, results, eval.NewRunID(), suite, runErr, prov)
 ```
 

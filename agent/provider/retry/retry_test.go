@@ -391,7 +391,7 @@ func (p *countingProvider) Stream(_ context.Context, _ types.Request) (<-chan ty
 	return ch, nil
 }
 
-// switchableProvider is a minimal types.ModelSwitcher fake.
+// switchableProvider is a minimal types.TargetSwitcher fake.
 type switchableProvider struct {
 	model string
 }
@@ -409,7 +409,7 @@ func (p *switchableProvider) WithTarget(t types.Target) (types.Provider, error) 
 	return &switchableProvider{model: m}, nil
 }
 
-// WithModel must re-target the inner provider so ConfigPart.Model works
+// WithTarget must re-target the inner provider so ConfigPart.Target works
 // through retry-wrapped deployments.
 func TestWithModelRetargetsInner(t *testing.T) {
 	r := must.Get(New(&switchableProvider{model: "base"}, DefaultConfig()))

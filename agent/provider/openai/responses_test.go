@@ -225,7 +225,8 @@ func TestResponsesRequest(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), WithMaxTokens(64), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
+	a := must.Get(NewResponses(Config{APIKey: "test", Model: types.ModelID(testModel)},
+		WithBaseURL(server.URL), WithMaxTokens(64), WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
 	msgs := []types.Message{
 		types.SystemMsg(types.Text("be brief")),
 		types.UserMsg(types.Text("read a.txt")),

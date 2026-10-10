@@ -161,7 +161,7 @@ func (g GenerationConfig) apply(c *genai.GenerateContentConfig) {
 }
 
 // Adapter wraps the official Google GenAI SDK client and implements types.Provider,
-// types.NamedProvider, types.StructuredOutputProvider, and types.ContentNegotiator.
+// types.NamedProvider and types.StructuredOutputProvider.
 type Adapter struct {
 	contextCache *ContextCache
 	client       *genai.Client

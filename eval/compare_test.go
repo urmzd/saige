@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TestRunExperiment covers the deprecated names, which must keep working.
+// TestRunExperiment covers Compare with a base and an experimental subject.
 func TestRunExperiment(t *testing.T) {
 	inputs := []Observation{
 		{ID: "e1", Input: json.RawMessage(`"query1"`)},

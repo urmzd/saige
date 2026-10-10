@@ -429,7 +429,8 @@ func TestBindMemory(t *testing.T) {
 	}
 
 	b = bind(t, resolve(t, "a", file("a", "memory:\n  store: team\n  recall: inject\n  namespace: notes\n", "p")), env)
-	if _, err := agent.Collect(must.Get(b.NewAgent()).Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("when is the deploy window?"))}), nil); err != nil {
+	a := must.Get(b.NewAgent())
+	if _, err := agent.Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("when is the deploy window?"))}), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := userText(lastUser(model.Requests()[0].Messages)); !strings.Contains(got, "Tuesday") || !strings.Contains(got, "deploy window?") {

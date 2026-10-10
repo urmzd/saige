@@ -29,6 +29,17 @@ Definitions in [`agents/`](agents/), run with `saige ask --agents-dir examples/a
 | [`agents/assistant.agent.md`](agents/assistant.agent.md) | A concise assistant with the read harness group |
 | [`agents/repo-steward.agent.md`](agents/repo-steward.agent.md) | Read-only git commands allowed by approval rules, a preset with a fallback, and the assistant as a sub-agent |
 
+## Parts
+
+Messages as typed parts, media input and part deltas. See [parts](../docs/parts.md).
+
+| Example | Description |
+|---------|-------------|
+| [`parts/build`](parts/build/) | Build messages from every part kind offline, print them in the shared part codec, and check client sources |
+| [`parts/image`](parts/image/) | Send an image with a question |
+| [`parts/document`](parts/document/) | Send a PDF, extracted to text for a model that reads no documents |
+| [`parts/stream`](parts/stream/) | Read part deltas, rebuild each turn with a `PartAssembler`, and write wire version 2 envelopes |
+
 ## Agent
 
 | Example | Description |
@@ -38,7 +49,7 @@ Definitions in [`agents/`](agents/), run with `saige ask --agents-dir examples/a
 | [`agent/subagents`](agent/subagents/) | Parent delegating to researcher |
 | [`agent/concurrent-subagents`](agent/concurrent-subagents/) | Parallel sub-agent execution |
 | [`agent/resilient`](agent/resilient/) | Retry + fallback composition |
-| [`agent/multimodal`](agent/multimodal/) | File pipeline with `file://` resolver |
+| [`agent/multimodal`](agent/multimodal/) | Media parts reached through a `file://` resolver |
 | [`agent/caching`](agent/caching/) | Response caching by request hash |
 | [`agent/durable`](agent/durable/) | Durable runs: local engine, or duraturo on Postgres |
 | [`agent/handoffs`](agent/handoffs/) | Agent-to-agent handoffs |

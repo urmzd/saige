@@ -182,7 +182,8 @@ func TestRAGImageIngestReturnsTheImage(t *testing.T) {
 	auto.RegisterImages(agenttypes.ExtractorFunc(func(context.Context, []byte, agenttypes.MediaType) ([]agenttypes.UserPart, error) {
 		return []agenttypes.UserPart{agenttypes.Text("A bar chart of okapi sightings per year.")}, nil
 	}))
-	p, err := rag.New(rag.Config{}, append(ragPipelineOptions(must.Get(pgstore.New(pgstore.Config{Pool: pool})), hashEmbedder()), rag.WithContentExtractor(auto))...)
+	store := must.Get(pgstore.New(pgstore.Config{Pool: pool}))
+	p, err := rag.New(rag.Config{}, append(ragPipelineOptions(store, hashEmbedder()), rag.WithContentExtractor(auto))...)
 	if err != nil {
 		t.Fatal(err)
 	}

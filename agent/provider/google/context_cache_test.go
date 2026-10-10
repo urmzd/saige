@@ -93,7 +93,8 @@ func TestContextCacheToolChoice(t *testing.T) {
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body:   io.NopCloser(strings.NewReader(body))}, nil
 	})
-	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"}, WithHTTPClient(&http.Client{Transport: transport}), WithToolChoice(required))
+	a, err := New(context.Background(), Config{APIKey: "k", Model: "gemini-2.5-flash"},
+		WithHTTPClient(&http.Client{Transport: transport}), WithToolChoice(required))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -93,7 +93,10 @@ func TestEgressTokenizesConverterOutput(t *testing.T) {
 
 func TestEgressTokenizesOmittedNotice(t *testing.T) {
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}, Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActOmit))}}))
+	p := must.Get(New(inner, Config{
+		Policy: types.ConversionPolicy{},
+		Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActOmit))},
+	}))
 	img := types.ImagePart{Source: types.Bytes(types.MediaPNG, []byte("png"))}
 	img.Source.Filename = "bob@example.com.png"
 	ctx := types.WithEgress(context.Background(), types.Egress{Vault: privacy.NewVault(nil)})
@@ -184,7 +187,10 @@ func TestEgressRequireTextRefusesAnUnclearedConverter(t *testing.T) {
 
 	// Without a fallback the refusal rejects the request.
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	p := must.Get(New(inner, Config{Policy: types.ConversionPolicy{Converters: []types.Converter{pricedFake{base}}}, Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActDescribe))}}))
+	p := must.Get(New(inner, Config{
+		Policy: types.ConversionPolicy{Converters: []types.Converter{pricedFake{base}}},
+		Layers: []types.DialLayer{layer(types.DialScopeAgent, per(types.ModalityImage, types.ActDescribe))},
+	}))
 	if _, err := p.Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want a rejection", err)
 	}
@@ -204,12 +210,14 @@ func TestEgressRequireTextChecksTheWholeView(t *testing.T) {
 	out := types.ImageOutPart{Source: types.Bytes(types.MediaPNG, []byte("generated"))}
 	msgs := []types.Message{types.UserMsg(types.Text("draw")), types.AssistantMsg(out), types.UserMsg(types.Text("again"))}
 	inner := &stubProvider{name: "texty", offering: textOnly()}
-	if _, err := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}})).Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
+	strict := must.Get(New(inner, Config{Policy: types.ConversionPolicy{}}))
+	if _, err := strict.Stream(ctx, types.Request{Messages: msgs}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want media in history refused", err)
 	}
 	// A provider with nothing to plan against is checked too.
 	bare := &fakeProviderNoCaps{}
-	if _, err := must.Get(New(bare, Config{Policy: types.ConversionPolicy{}})).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}}); !errors.Is(err, types.ErrModalityUnsupported) {
+	bareConv := must.Get(New(bare, Config{Policy: types.ConversionPolicy{}}))
+	if _, err := bareConv.Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}}); !errors.Is(err, types.ErrModalityUnsupported) {
 		t.Fatalf("err = %v, want media refused without an offering", err)
 	}
 }
@@ -227,7 +235,8 @@ func TestConverterRunsOutsideTheBoundary(t *testing.T) {
 	inner := &stubProvider{name: "texty", offering: textOnly()}
 	pol, l := describeImages(c)
 	ctx := types.WithEgress(context.Background(), types.Egress{Vault: privacy.NewVault(nil), RequireText: true})
-	ch, err := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}})).Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}})
+	p := must.Get(New(inner, Config{Policy: pol, Layers: []types.DialLayer{l}}))
+	ch, err := p.Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(pngPart("x"))}})
 	if err != nil {
 		t.Fatal(err)
 	}

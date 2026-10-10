@@ -273,6 +273,16 @@ func main() {
 ```
 <!-- /fsrc -->
 
+### Images and documents
+
+A message is an ordered list of typed parts. Media is a part whose `Source` holds bytes, an `https` URL, a workspace reference or a vendor upload:
+
+```go
+msg := types.UserMsg(types.Text("What is in this image?"), types.Image(types.Bytes(types.MediaPNG, data)))
+```
+
+A part the serving model cannot take is rejected unless you permit a conversion, such as extracting a PDF's text. Full programs: [`examples/parts`](examples/parts/). See [message parts](docs/parts.md) and [modality conversion](docs/modality-conversion.md).
+
 ### Dials
 
 Dials name an intent instead of a vendor parameter, and are compiled for whichever model serves each call, so one setting works across vendors and survives a failover:
@@ -373,6 +383,7 @@ Run any of these with `go run ./examples/quickstart/<name>` from a clone.
 | **Agent** | The loop: model turn, tool calls, results, repeat | [agent](agent/README.md) |
 | **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/concepts.md#vendors-runtimes-and-adapters) |
 | **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/catalog.md) |
+| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/parts.md) |
 | **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
 | **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
 | **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |

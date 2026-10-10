@@ -68,7 +68,7 @@ The agent loop records `input` and `output` token usage, `cache_read` and `cache
 
 ## Wrappers keep tool behavior
 
-The agent loop looks for optional interfaces on a tool: markers for approval, `RichTool` for blocks and citations, `Cacheable`, `Configurable`, and the handoff and sub-agent interfaces. `otel.WrapTool` keeps each of them:
+The agent loop looks for optional interfaces on a tool: markers for approval, `RichTool` for typed parts and citations, `Cacheable`, `Configurable`, and the handoff and sub-agent interfaces. `otel.WrapTool` keeps each of them:
 
 | Tool | Result |
 |------|--------|

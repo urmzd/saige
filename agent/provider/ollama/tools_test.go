@@ -67,7 +67,8 @@ func TestToolChoiceEmulation(t *testing.T) {
 }
 
 func TestWithModelKeepsToolChoice(t *testing.T) {
-	a := must.Get(New(Config{Client: must.Get(NewClient(Config{Host: "http://unused", Model: "qwen3:4b"}))}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
+	client := must.Get(NewClient(Config{Host: "http://unused", Model: "qwen3:4b"}))
+	a := must.Get(New(Config{Client: client}, WithToolChoice(types.ToolChoice{Mode: types.ToolChoiceRequired})))
 	if err := must.Get(a.WithTarget(types.ModelTarget("llama3.1"))).(*Adapter).Validate(); err == nil {
 		t.Fatal("a switched adapter must keep, and still reject, the configured choice")
 	}

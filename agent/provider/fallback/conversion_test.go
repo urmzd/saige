@@ -35,7 +35,10 @@ func TestFallbackSkipsAMemberThatRejectsTheParts(t *testing.T) {
 	vision := &offered{name: "vision", offering: types.Offering{ID: "vision", Model: types.ModelInfo{Vendor: "b", Known: true},
 		Modalities: types.Modalities{In: map[types.Modality]types.ModalityLimit{
 			types.ModalityImage: {Media: []types.MediaType{types.MediaPNG}}}}}}
-	f := must.Get(Of(must.Get(convert.New(text, convert.Config{Policy: types.ConversionPolicy{}})), must.Get(convert.New(vision, convert.Config{Policy: types.ConversionPolicy{}}))))
+	f := must.Get(Of(
+		must.Get(convert.New(text, convert.Config{Policy: types.ConversionPolicy{}})),
+		must.Get(convert.New(vision, convert.Config{Policy: types.ConversionPolicy{}})),
+	))
 	img := types.Image(types.Bytes(types.MediaPNG, []byte("png")))
 	ch, err := f.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(img)}})
 	if err != nil {

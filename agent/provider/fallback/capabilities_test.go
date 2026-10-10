@@ -57,7 +57,10 @@ func TestCapabilitiesAreTheIntersection(t *testing.T) {
 	// The primary reasons, the secondary does not. A caller that trusted the
 	// primary's declaration would enable thinking and get a 400 the moment the
 	// chain fell through.
-	f := must.Get(Of(&stubProvider{name: "a", caps: mk(types.CapTools, types.CapReasoning, types.CapTemperature)}, &stubProvider{name: "b", caps: mk(types.CapTools, types.CapTemperature)}))
+	f := must.Get(Of(
+		&stubProvider{name: "a", caps: mk(types.CapTools, types.CapReasoning, types.CapTemperature)},
+		&stubProvider{name: "b", caps: mk(types.CapTools, types.CapTemperature)},
+	))
 	caps, ok := types.ProviderCapabilities(f)
 	if !ok {
 		t.Fatal("fallback must report capabilities")

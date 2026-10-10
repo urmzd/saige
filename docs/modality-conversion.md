@@ -20,7 +20,7 @@ For each media part, including media inside a tool result, the planner decides o
 | Decision | When |
 | --- | --- |
 | `native` | The offering's input modalities list the media type, the part is within the limits (bytes, count), and it has a locator the endpoint reads: inline bytes, a URI with a scheme the endpoint fetches (`gs` on Vertex AI, `https`), or a file in the endpoint's own store. |
-| `lowered` | An image in a tool result that the adapter moves to a follow-up user message, as Chat Completions requires. |
+| `lowered` | Media in a tool result that the offering declares `follow_up_user` for (`modalities.tool_result`): the adapter sends it in a user message after the tool results. |
 | one of the actions below | The part is not native, and the modality dial permits the action and a registered converter accepts the part. |
 | `rejected` | Nothing permitted can serve the part. The attempt fails with an error matching `types.ErrModalityUnsupported` (and `types.ErrInvalidModelConfig`), naming the part's path, kind, media type and reason. Media whose bytes cannot be reached also matches `types.ErrMediaUnavailable`. |
 
@@ -49,7 +49,7 @@ The modality dial is `types.Dials.Modality`, a `types.ModalityDial`: a default a
 | --- | --- |
 | Policy | `provider.Config.Conversion.Dial`, the dial of the policy a provider was built with |
 | Global | the catalog's top-level `dials.modality`, or `provider.Config.Dials.Modality` |
-| Model, preset, entry | `dials.modality` in a row's dial defaults, a preset, or a chain entry |
+| Offering, preset, entry | `dials.modality` in an offering's `dials.defaults`, a preset, or a chain entry |
 | Agent | `agent.WithConversion(policy)` (its `Dial`), then `agent.WithDials(types.Dials{Modality: ...})` |
 | Turn | `ConfigPart{Dials: &types.Dials{Modality: ...}}` |
 | Request | `RequestOptions.Dials.Modality` |
@@ -95,10 +95,13 @@ The catalog permits actions; converters that call a model are configured in code
 
 ## Where it runs
 
-1. **Before compaction**, the agent resolves sources: a part without bytes whose URI scheme has a `Resolver` is fetched, and bytes get a digest. A part is never replaced. A resolver error marks the source unavailable, and planning rejects it (or omits it, when permitted). A URI with no resolver, such as `gs://` or `https://`, is left for the endpoint to fetch when it can.
+1. **Before compaction**, the agent resolves sources. A part whose only bytes are a `saige-artifact://` reference, as a stored conversation reads back, gets them from the agent's workspace or a `Resolvers["saige-artifact"]` resolver; a reference neither holds, or whose bytes do not match its digest, marks the part unavailable. A part without bytes whose URI scheme has a `Resolver` is fetched, and bytes get a digest. A part is never replaced. A resolver error marks the source unavailable, and planning rejects it (`types.ErrMediaUnavailable`) or omits it, when permitted. A URI with no resolver, such as `gs://` or `https://`, is left for the endpoint to fetch when it can.
+
+   Parts that come from an untrusted client should pass `types.CheckClientSource` (or `types.CheckClientParts`) where they enter the host, before any of this: a client may send inline bytes, an `https` URL or a `saige-artifact://` digest reference, and anything else, `http` included, is refused with `types.ErrUntrustedLocator` (D-47). `saige serve` and `saige acp` apply it.
 2. **Per attempt**, the conversion decorator (`convert.Provider`) plans the request against the offering of the adapter it wraps, runs the planned conversions on a copy of the messages, and sends the copy. `provider.Build` wraps every adapter with it, so router members and fallback members built from a preset have it, and the agent wraps a bare provider it is given. The modality dial is spent here and removed from the request options, so an adapter that takes no options still works with it.
 3. **In a router**, each member is planned while candidates are filtered. A member whose plan rejects leaves the request with that reason; a member whose plan converts stays. Failover to a member with other modalities plans again for that member: a vision member sends the image, and a text-only member behind it sends the description.
 4. **In a fallback chain**, a member that rejects the request's parts never sent it, so the chain moves on.
+5. **In a batch**, `convert.Batch` plans every request at submit against the offering that serves the batch, and rejects the whole batch before upload when any request's plan rejects. `agent.BatchProviderFor` and `RunBatch` use it with the agent's policy. See [batch processing](batch.md#the-interface).
 
 The adapter reports its offering where it depends on the endpoint: a Google adapter on Vertex AI reports the Vertex offering, which reads `gs://` URIs, and the OpenAI Responses adapter reports the Responses offering.
 
@@ -140,6 +143,5 @@ A reasoning part carries a signature only its own vendor can verify, and the Ant
 
 ## Known limits
 
-- Batch requests are not converted; parts a batch endpoint cannot take are rejected.
-- Native media is not counted in the reservation estimate; only converters are.
+- A call's budget reservation is the budget's per-call bound, and the plan adds only its converters' estimates. Native media is priced by the offering's token rules (`types.EstimateTokensFor`) for the loop's input-pressure estimate and the router's candidate fit, not for the reservation.
 - No converter ships for video frames, uploads to a vendor file store, or fetching an `https` URI to bytes. Write a `types.Converter` for them.

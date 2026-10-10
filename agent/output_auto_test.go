@@ -55,7 +55,8 @@ func TestResponseSchemaAutoAvoidsForcedTool(t *testing.T) {
 		{"claude-sonnet-4-5", []anthropic.Option{anthropic.WithThinking(1024)}, OutputTool},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			a := must.Get(New(Config{Provider: must.Get(anthropic.New(anthropic.Config{APIKey: "key", Model: types.ModelID(tc.model)}, tc.opts...))}, WithResponseSchema(cityPopulationSchema)))
+			p := must.Get(anthropic.New(anthropic.Config{APIKey: "key", Model: types.ModelID(tc.model)}, tc.opts...))
+			a := must.Get(New(Config{Provider: p}, WithResponseSchema(cityPopulationSchema)))
 			out := a.output(context.Background())
 			if out.mode != tc.want {
 				t.Fatalf("mode = %q, want %q", out.mode, tc.want)

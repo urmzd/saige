@@ -203,11 +203,13 @@ func TestBatchRejectsAtSubmit(t *testing.T) {
 	defer server.Close()
 	topK := 5.0
 	reqs := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{TopK: &topK}}}
-	if _, err := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL))).Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	chat := must.Get(New(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
+	if _, err := chat.Submit(context.Background(), reqs, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("chat err = %v", err)
 	}
 	stop := []types.BatchRequest{{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("x"))}, Options: types.RequestOptions{StopSequences: []string{"END"}}}}
-	if _, err := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL))).Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
+	resp := must.Get(NewResponses(Config{APIKey: "k", Model: "gpt-6-luna"}, WithBaseURL(server.URL)))
+	if _, err := resp.Submit(context.Background(), stop, types.BatchSubmitOptions{}); !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("responses err = %v", err)
 	}
 }

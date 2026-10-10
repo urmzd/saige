@@ -46,8 +46,10 @@ Embeddings follow the same split. Anthropic has no embedding API, so a RAG setup
 | Concept | One line | Guide |
 | --- | --- | --- |
 | Agent | The streaming loop: model turn, tool calls, results, repeat | [agent/README.md](../agent/README.md) |
+| Parts | A message is an ordered list of typed parts (text, media with a `Source`, tool calls, citations); output streams as part deltas | [parts.md](parts.md) |
 | Adapter | `types.Provider` implementation for one serving API | [agent/README.md](../agent/README.md#provider-interface) |
-| Catalog and presets | Model capabilities and named provider chains, as data | [catalog.md](catalog.md) |
+| Catalog and presets | Models, endpoints and offerings (a model on an endpoint, with its parameters, modalities, pricing and tiers), and named chains, as data | [catalog.md](catalog.md) |
+| Modality conversion | Media the serving model cannot take is rejected by default, or converted per attempt by a permitted action | [modality-conversion.md](modality-conversion.md) |
 | Dials | Model-neutral settings compiled per attempt | [dials.md](dials.md) |
 | Tools | Client tools, server tools, parallelism and tool choice | [tool-calling.md](tool-calling.md), [func-tools.md](func-tools.md) |
 | Delegation | Handoffs and sub-agents | [delegation.md](delegation.md), [orchestration-policies.md](orchestration-policies.md) |

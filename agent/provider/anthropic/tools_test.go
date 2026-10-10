@@ -187,7 +187,8 @@ func TestServerToolsWire(t *testing.T) {
 	ws := types.WebSearchTool(4)
 	ws.AllowedDomains = []string{"go.dev"}
 	ws.UserLocation = "Austin, Texas, US"
-	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(server.URL), WithServerTools(ws, types.ServerTool{Kind: types.ServerToolCodeExecution})))
+	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(server.URL),
+		WithServerTools(ws, types.ServerTool{Kind: types.ServerToolCodeExecution})))
 	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +327,8 @@ func TestListModels(t *testing.T) {
 		http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`, http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	if _, err := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL))).ListModels(context.Background()); !types.IsAuth(err) {
+	a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, WithBaseURL(failing.URL)))
+	if _, err := a.ListModels(context.Background()); !types.IsAuth(err) {
 		t.Fatalf("err = %v, want an auth error", err)
 	}
 }

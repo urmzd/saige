@@ -164,7 +164,8 @@ func TestVertexBatch(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	a, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"}, WithVertex("proj", "us-central1"), WithHTTPClient(redirectTo(t, srv)), WithCredentials(testCredentials("tok")))
+	a, err := New(context.Background(), Config{Model: "gemini-3.1-flash-lite"},
+		WithVertex("proj", "us-central1"), WithHTTPClient(redirectTo(t, srv)), WithCredentials(testCredentials("tok")))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -625,7 +625,7 @@ type wireToolCall struct {
 	Name      string         `json:"name,omitempty"`
 	Content   string         `json:"content,omitempty"`
 	Arguments map[string]any `json:"arguments,omitempty"`
-	// ArgumentsError carries ToolCallEndDelta.ArgumentsError.
+	// ArgumentsError carries ToolCallPart.ArgumentsError.
 	ArgumentsError string `json:"arguments_error,omitempty"`
 }
 

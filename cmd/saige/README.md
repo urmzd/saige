@@ -244,9 +244,19 @@ saige catalog validate --strict       # exit 1 on errors, or warnings with --str
 saige catalog layers                  # which files were merged, and whether each is trusted
 saige catalog export                  # the merged catalog as canonical JSON
 saige catalog schema                  # the JSON Schema of the file format
+saige catalog migrate my-catalog.json --write   # convert a version 1 layer to version 2 in place
 ```
 
 A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
+
+## Stored Trees
+
+Node messages written by earlier releases are read on the fly. `saige tree migrate` counts them and, with `--write`, rewrites them in the current format. The target is a PostgreSQL URL (every conversation), a tree JSON document or a file WAL. Nothing writes the older format and there is no way back, so take a snapshot first, and stop writers of a WAL while it is rewritten.
+
+```bash
+saige tree migrate "$DATABASE_URL"            # count older messages
+saige tree migrate "$DATABASE_URL" --write    # rewrite them
+```
 
 ## Agent Definitions
 
