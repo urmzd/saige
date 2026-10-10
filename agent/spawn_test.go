@@ -91,8 +91,20 @@ func TestSpawnResultInjectedAtFinish(t *testing.T) {
 		agenttest.TextResponse("waiting for the worker"),
 		agenttest.TextResponse("final answer"),
 	}}
-	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("worker found it")}}
-	run := runSpawn(t, parent, child, SubAgentDef{}, nil)
+	// The child holds until the parent's second turn is streaming, so its
+	// result can only arrive at the finish of that turn.
+	release := make(chan struct{})
+	child := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.ToolCallResponse("hold", "hold", nil),
+		agenttest.TextResponse("worker found it"),
+	}}
+	def := SubAgentDef{Tools: types.NewToolRegistry(holdTool("hold", release))}
+	var once sync.Once
+	run := runSpawn(t, parent, child, def, func(_ *EventStream, d types.Delta) {
+		if _, ok := d.(types.TextContentDelta); ok {
+			once.Do(func() { close(release) })
+		}
+	})
 	if run.err != nil {
 		t.Fatal(run.err)
 	}
@@ -107,7 +119,7 @@ func TestSpawnResultInjectedAtFinish(t *testing.T) {
 		t.Fatalf("parent calls = %d, want 3", parent.CallCount())
 	}
 	msg := lastUserText(parent, 2)
-	for _, want := range []string{`<subagent_result handle="s1" name="worker" status="completed" iterations="1">`, "worker found it"} {
+	for _, want := range []string{`<subagent_result handle="s1" name="worker" status="completed" iterations="2">`, "worker found it"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("injected message %q lacks %q", msg, want)
 		}
