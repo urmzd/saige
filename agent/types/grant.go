@@ -197,7 +197,7 @@ func (g Grant) Covers(tool string, args map[string]any, now time.Time) bool {
 	return false
 }
 
-// ApprovalEvent names what an ApprovalContent records.
+// ApprovalEvent names what an ApprovalPart records.
 type ApprovalEvent string
 
 const (
@@ -219,13 +219,13 @@ const (
 	ApprovalEventSnapshot ApprovalEvent = "snapshot"
 )
 
-// ApprovalContent records one decision of an approval policy in the tree,
+// ApprovalPart records one decision of an approval policy in the tree,
 // next to the result of the call it concerns. The policy's state, its
 // grants and its approval and denial counts, is rebuilt from these records,
 // so a restored or replayed conversation decides the same way. It is
 // metadata: stripped before the provider call. It is system content only,
 // and the loop reads it only from the tool result messages it writes.
-type ApprovalContent struct {
+type ApprovalPart struct {
 	Event      ApprovalEvent `json:"event"`
 	Tool       string        `json:"tool"`
 	ToolCallID string        `json:"tool_call_id"`
@@ -243,7 +243,9 @@ type ApprovalContent struct {
 	Denials   map[string]int `json:"denials,omitempty"`
 }
 
-func (ApprovalContent) isSystemContent() {}
+func (ApprovalPart) Kind() PartKind { return KindApproval }
+func (ApprovalPart) isPart()        {}
+func (ApprovalPart) isSystemPart()  {}
 
 // ApprovalVerdict is an approval policy's decision about one call before
 // anyone is asked. A durable runner records it as a step, so a replay

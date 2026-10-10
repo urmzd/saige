@@ -43,7 +43,7 @@ func runDeferred(t *testing.T, policy *DeferredTools, responses [][]types.Delta,
 		Provider: provider,
 		Tools:    types.NewToolRegistry(tools...),
 	}, agent.WithToolPolicy(policy), agent.WithMaxIter(6))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("run failed: %v", err)

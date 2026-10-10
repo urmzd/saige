@@ -74,7 +74,7 @@ func runText(t *testing.T, a *Agent, input string) (Transcript, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return Collect(a.Invoke(ctx, []types.Message{types.NewUserMessage(input)}), nil)
+	return Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(input))}), nil)
 }
 
 func TestHooksRunInOrder(t *testing.T) {
@@ -223,7 +223,7 @@ func TestHooksChangeInputArgumentsAndResults(t *testing.T) {
 	a := NewAgent(AgentConfig{SystemPrompt: "s", Provider: p, Tools: types.NewToolRegistry(tool)},
 		WithHooks(
 			Hooks{UserInput: func(_ context.Context, ev *UserInputEvent) error {
-				ev.Message = types.NewUserMessage(userText(ev.Message) + " [annotated]")
+				ev.Message = types.UserMsg(types.Text(userText(ev.Message) + " [annotated]"))
 				return nil
 			}},
 			Hooks{
@@ -255,7 +255,7 @@ func TestHooksChangeInputArgumentsAndResults(t *testing.T) {
 		t.Errorf("tool ran with %v", tool.Calls)
 	}
 	res := resultsIn(p.Requests()[1].Messages)
-	if len(res) != 1 || res[0].Text != "tool says hi (checked)" {
+	if len(res) != 1 || res[0].Text() != "tool says hi (checked)" {
 		t.Errorf("recorded results %+v", res)
 	}
 }
@@ -277,12 +277,12 @@ func TestBeforeToolArgumentsAreValidatedAgain(t *testing.T) {
 }
 
 // resultsIn returns the tool results in msgs, in order.
-func resultsIn(msgs []types.Message) []types.ToolResultContent {
-	var out []types.ToolResultContent
+func resultsIn(msgs []types.Message) []types.ToolResultPart {
+	var out []types.ToolResultPart
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if r, ok := c.(types.ToolResultContent); ok {
+			for _, c := range sm.Parts {
+				if r, ok := c.(types.ToolResultPart); ok {
 					out = append(out, r)
 				}
 			}
@@ -367,7 +367,7 @@ func TestInterruptHooksSeeApprovals(t *testing.T) {
 		WithHooks(Hooks{InterruptRaised: record, InterruptResolved: record}))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	for d := range stream.Deltas() {
 		if m, ok := d.(types.MarkerDelta); ok {
 			if err := stream.ResolveMarkerErr(m.ToolCallID, Resolution{Approved: true, Approver: "ana"}); err != nil {
@@ -395,7 +395,7 @@ func TestHooksAreDeterministicUnderDurableReplay(t *testing.T) {
 			WithHooks(Hooks{
 				UserInput: func(_ context.Context, ev *UserInputEvent) error {
 					calls++
-					ev.Message = types.NewUserMessage(fmt.Sprintf("%s #%d", userText(ev.Message), calls))
+					ev.Message = types.UserMsg(types.Text(fmt.Sprintf("%s #%d", userText(ev.Message), calls)))
 					return nil
 				},
 				BeforeTool: func(_ context.Context, ev *BeforeToolEvent) error {
@@ -412,7 +412,7 @@ func TestHooksAreDeterministicUnderDurableReplay(t *testing.T) {
 				},
 			}))
 	}
-	input := []types.Message{types.NewUserMessage("hi")}
+	input := []types.Message{types.UserMsg(types.Text("hi"))}
 
 	first := build(toolThenText("done"))
 	final, err := first.RunDurable(context.Background(), runner, input, "")
@@ -466,8 +466,8 @@ func stripRoutes(msgs []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if am, ok := m.(types.AssistantMessage); ok {
-			am.Content = slices.DeleteFunc(slices.Clone(am.Content), func(c types.AssistantContent) bool {
-				_, route := c.(types.RouteContent)
+			am.Parts = slices.DeleteFunc(slices.Clone(am.Parts), func(c types.AssistantPart) bool {
+				_, route := c.(types.RoutePart)
 				return route
 			})
 			m = am

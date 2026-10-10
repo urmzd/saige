@@ -231,17 +231,17 @@ func (s *Store) redact(ctx context.Context, text string) (string, error) {
 func messageText(m types.Message) string {
 	var parts []string
 	add := func(c any) {
-		if t, ok := c.(types.TextContent); ok && strings.TrimSpace(t.Text) != "" && !memory.IsInjected(t.Text) {
+		if t, ok := c.(types.TextPart); ok && strings.TrimSpace(t.Text) != "" && !memory.IsInjected(t.Text) {
 			parts = append(parts, strings.TrimSpace(t.Text))
 		}
 	}
 	switch m := m.(type) {
 	case types.UserMessage:
-		for _, c := range m.Content {
+		for _, c := range m.Parts {
 			add(c)
 		}
 	case types.AssistantMessage:
-		for _, c := range m.Content {
+		for _, c := range m.Parts {
 			add(c)
 		}
 	}

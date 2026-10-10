@@ -24,7 +24,7 @@ func (a *Agent) reserveProviderCall(stepCtx context.Context, stream *EventStream
 	}
 	reservation, err := a.cfg.Budget.Reserve(types.NewID(), caps.Pricing)
 	if errors.Is(err, types.ErrBudgetExceeded) && a.cfg.Budget.Policy().OnExceed == types.BudgetRequireApproval {
-		call := types.ToolUseContent{ID: stepName, Name: budgetToolName}
+		call := types.ToolCallPart{ID: stepName, Name: budgetToolName}
 		_, approved := a.awaitApprovalPhase(stepCtx, stream, call, []types.Marker{a.cfg.Budget.ApprovalMarker()}, "budget-admission")
 		if interruptRequested(stepCtx) {
 			// SubmitInterruptReplace cancelled the wait: the turn is being

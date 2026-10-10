@@ -25,7 +25,7 @@ func TestDeferredHarnessToolset(t *testing.T) {
 	}}
 	a := agent.NewAgent(agent.AgentConfig{Name: "worker", Provider: provider},
 		agent.WithToolset(set), agent.WithToolPolicy(policy), agent.WithTools(policy.Tool()))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

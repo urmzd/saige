@@ -16,11 +16,11 @@ type mockProvider struct {
 	response string
 }
 
-func (m *mockProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (m *mockProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: m.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: m.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -30,7 +30,7 @@ type errorProviderSimple struct {
 	err error
 }
 
-func (p *errorProviderSimple) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *errorProviderSimple) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	return nil, p.err
 }
 
@@ -38,15 +38,15 @@ func TestRetryProvider_SucceedsFirstTry(t *testing.T) {
 	inner := &mockProvider{response: "ok"}
 	rp := New(inner, DefaultConfig())
 
-	ch, err := rp.ChatStream(context.Background(), nil, nil)
+	ch, err := rp.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text += tc.Content
+		if tc, ok := d.(types.PartDelta); ok {
+			text += tc.Text
 		}
 	}
 	if text != "ok" {
@@ -75,15 +75,15 @@ func TestRetryProvider_RetriesOnTransient(t *testing.T) {
 	}
 	rp := New(inner, cfg)
 
-	ch, err := rp.ChatStream(context.Background(), nil, nil)
+	ch, err := rp.Stream(context.Background(), types.Request{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var text string
 	for d := range ch {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text += tc.Content
+		if tc, ok := d.(types.PartDelta); ok {
+			text += tc.Text
 		}
 	}
 	if text != "recovered" {
@@ -107,7 +107,7 @@ func TestRetryProvider_StopsOnPermanent(t *testing.T) {
 	}
 	rp := New(inner, cfg)
 
-	_, err := rp.ChatStream(context.Background(), nil, nil)
+	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -131,7 +131,7 @@ func TestRetryProvider_ExhaustsAttempts(t *testing.T) {
 	}
 	rp := New(inner, cfg)
 
-	_, err := rp.ChatStream(context.Background(), nil, nil)
+	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -168,7 +168,7 @@ func TestRetryProvider_ContextCancelledDuringBackoff(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := rp.ChatStream(ctx, nil, nil)
+	_, err := rp.Stream(ctx, types.Request{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -195,7 +195,7 @@ func TestRetryProvider_DefaultConfig(t *testing.T) {
 	}
 }
 
-// scriptedStreamProvider replays one delta sequence per ChatStream call,
+// scriptedStreamProvider replays one delta sequence per Stream call,
 // advancing through Scripts on each call. It models providers (and the
 // streaming adapters in front of them) that deliver failures ON the channel as
 // an ErrorDelta rather than via a synchronous error.
@@ -204,7 +204,7 @@ type scriptedStreamProvider struct {
 	Scripts [][]types.Delta
 }
 
-func (p *scriptedStreamProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *scriptedStreamProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	idx := int(p.calls.Add(1)) - 1
 	ch := make(chan types.Delta, 8)
 	go func() {
@@ -240,8 +240,8 @@ func collect(ch <-chan types.Delta) (text string, n int, firstErr error) {
 	for d := range ch {
 		n++
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text += v.Content
+		case types.PartDelta:
+			text += v.Text
 		case types.ErrorDelta:
 			if firstErr == nil {
 				firstErr = v.Error
@@ -272,9 +272,9 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 				},
 				// Attempt 2: clean success.
 				{
-					types.TextStartDelta{},
-					types.TextContentDelta{Content: "recovered"},
-					types.TextEndDelta{},
+					types.PartStart{Index: 0, Kind: types.KindText},
+					types.PartDelta{Index: 0, Text: "recovered"},
+					types.PartEnd{Index: 0},
 				},
 			},
 			wantText:  "recovered",
@@ -285,12 +285,12 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 			name: "error after content is surfaced, not retried",
 			scripts: [][]types.Delta{
 				{
-					types.TextStartDelta{},
-					types.TextContentDelta{Content: "partial"},
+					types.PartStart{Index: 1, Kind: types.KindText},
+					types.PartDelta{Index: 1, Text: "partial"},
 					types.ErrorDelta{Error: transientErr()},
 				},
 				// This second script must never be reached.
-				{types.TextContentDelta{Content: "should-not-happen"}},
+				{types.PartDelta{Index: 1, Text: "should-not-happen"}},
 			},
 			wantText:  "partial",
 			wantErr:   true,
@@ -300,7 +300,7 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 			name: "permanent error before content is surfaced, not retried",
 			scripts: [][]types.Delta{
 				{types.ErrorDelta{Error: permanentErr()}},
-				{types.TextContentDelta{Content: "should-not-happen"}},
+				{types.PartDelta{Index: 1, Text: "should-not-happen"}},
 			},
 			wantText:  "",
 			wantErr:   true,
@@ -319,7 +319,7 @@ func TestRetryProvider_ChannelError(t *testing.T) {
 			}
 			rp := New(inner, cfg)
 
-			ch, err := rp.ChatStream(context.Background(), nil, nil)
+			ch, err := rp.Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatalf("ChatStream returned synchronous error: %v", err)
 			}
@@ -353,7 +353,7 @@ func TestRetryProvider_ChannelErrorExhausted(t *testing.T) {
 	cfg := Config{MaxAttempts: 2, BaseDelay: 1 * time.Millisecond}
 	rp := New(inner, cfg)
 
-	_, err := rp.ChatStream(context.Background(), nil, nil)
+	_, err := rp.Stream(context.Background(), types.Request{})
 	if err == nil {
 		t.Fatal("expected a synchronous RetryError after exhausting attempts")
 	}
@@ -377,15 +377,15 @@ type countingProvider struct {
 	response  string
 }
 
-func (p *countingProvider) ChatStream(_ context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *countingProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	n := p.calls.Add(1)
 	if n <= p.failUntil {
 		return nil, p.err
 	}
 	ch := make(chan types.Delta, 3)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: p.response}
-	ch <- types.TextEndDelta{}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: p.response}
+	ch <- types.PartEnd{Index: 0}
 	close(ch)
 	return ch, nil
 }
@@ -395,7 +395,7 @@ type switchableProvider struct {
 	model string
 }
 
-func (p *switchableProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *switchableProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
@@ -407,7 +407,7 @@ func (p *switchableProvider) WithModel(m string) types.Provider {
 	return &switchableProvider{model: m}
 }
 
-// WithModel must re-target the inner provider so ConfigContent.Model works
+// WithModel must re-target the inner provider so ConfigPart.Model works
 // through retry-wrapped deployments.
 func TestWithModelRetargetsInner(t *testing.T) {
 	r := New(&switchableProvider{model: "base"}, DefaultConfig())
@@ -439,7 +439,7 @@ func TestRetryProvider_RoutePreamble(t *testing.T) {
 			name: "route then transient error retries",
 			scripts: [][]types.Delta{
 				{types.RouteDelta{Profile: "a"}, types.ErrorDelta{Error: transientErr()}},
-				{types.RouteDelta{Profile: "b"}, types.TextContentDelta{Content: "ok"}},
+				{types.RouteDelta{Profile: "b"}, types.PartDelta{Index: 0, Text: "ok"}},
 			},
 			wantText:   "ok",
 			wantRoutes: []string{"b"},
@@ -448,8 +448,8 @@ func TestRetryProvider_RoutePreamble(t *testing.T) {
 		{
 			name: "route then content is not retried",
 			scripts: [][]types.Delta{
-				{types.RouteDelta{Profile: "a"}, types.TextContentDelta{Content: "first"}},
-				{types.RouteDelta{Profile: "b"}, types.TextContentDelta{Content: "second"}},
+				{types.RouteDelta{Profile: "a"}, types.PartDelta{Index: 0, Text: "first"}},
+				{types.RouteDelta{Profile: "b"}, types.PartDelta{Index: 0, Text: "second"}},
 			},
 			wantText:   "first",
 			wantRoutes: []string{"a"},
@@ -460,7 +460,7 @@ func TestRetryProvider_RoutePreamble(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inner := &scriptedStreamProvider{Scripts: tt.scripts}
 			rp := New(inner, Config{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, Multiplier: 1})
-			ch, err := rp.ChatStream(context.Background(), nil, nil)
+			ch, err := rp.Stream(context.Background(), types.Request{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -468,8 +468,8 @@ func TestRetryProvider_RoutePreamble(t *testing.T) {
 			var routes []string
 			for d := range ch {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text += v.Content
+				case types.PartDelta:
+					text += v.Text
 				case types.RouteDelta:
 					routes = append(routes, v.Profile)
 				case types.ErrorDelta:

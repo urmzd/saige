@@ -34,7 +34,8 @@ type gatedProvider struct {
 	called chan struct{}
 }
 
-func (p *gatedProvider) ChatStream(ctx context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *gatedProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs := req.Messages
 	p.mu.Lock()
 	n := len(p.calls)
 	p.calls = append(p.calls, msgs)
@@ -86,8 +87,8 @@ func userTexts(msgs []types.Message) []string {
 		if !ok {
 			continue
 		}
-		for _, c := range um.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range um.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				out = append(out, tc.Text)
 			}
 		}
@@ -397,7 +398,7 @@ func TestRunnerIgnoresStaleStreams(t *testing.T) {
 	m.gen = 2
 	m.phase = phaseStreaming
 
-	model, cmd := m.Update(deltaMsg{gen: 1, delta: types.TextContentDelta{Content: "old"}})
+	model, cmd := m.Update(deltaMsg{gen: 1, delta: types.PartDelta{Index: 0, Text: "old"}})
 	m = model.(runnerModel)
 	if cmd != nil || len(m.act.entries) != 0 {
 		t.Fatal("a delta from an earlier stream was applied")
@@ -481,8 +482,8 @@ func TestRunnerJSONOutputUsesLineMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stdout line %q is not a delta envelope: %v", line, err)
 		}
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text.WriteString(tc.Content)
+		if tc, ok := d.(types.PartDelta); ok {
+			text.WriteString(tc.Text)
 		}
 	}
 	if text.String() != "json answer" {

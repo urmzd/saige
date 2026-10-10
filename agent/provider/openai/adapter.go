@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -256,13 +257,40 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 	return generate.Text(ctx, a, prompt)
 }
 
-// ChatStream implements types.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream implements types.Provider. A request may carry a schema or
+// options, not both.
+func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	var (
+		ch  <-chan types.Delta
+		err error
+	)
+	switch {
+	case req.Options != nil && req.Schema != nil:
+		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
+	case req.Options != nil:
+		ch, err = a.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
+	case req.Schema != nil:
+		ch, err = a.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
+	default:
+		ch, err = a.streamPlain(ctx, req.Messages, req.Tools)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return types.UpgradeV1Stream(ch), nil
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (a *Adapter) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (a *Adapter) SupportsOptions() bool { return true }
+
+func (a *Adapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return a.chatStream(ctx, messages, tools, nil)
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (a *Adapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	var rf *openai.ChatCompletionNewParamsResponseFormatUnion
 	if schema != nil {
 		schemaMap, strict := responseSchema(*schema)
@@ -554,12 +582,12 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 		switch v := m.(type) {
 		case types.SystemMessage:
 			var textParts []string
-			var toolResults []types.ToolResultContent
-			for _, c := range v.Content {
+			var toolResults []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					textParts = append(textParts, bc.Text)
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					toolResults = append(toolResults, bc)
 				}
 			}
@@ -570,15 +598,16 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 
 		case types.UserMessage:
 			var parts []openai.ChatCompletionContentPartUnionParam
-			var toolResults []types.ToolResultContent
-			for _, c := range v.Content {
+			var toolResults []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					parts = append(parts, openai.TextContentPart(bc.Text))
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					toolResults = append(toolResults, bc)
-				case types.FileContent:
-					parts = append(parts, fileContentToPart(bc))
+				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+					fc, _ := legacyparts.MediaOf(bc)
+					parts = append(parts, fileContentToPart(fc))
 				}
 			}
 			if len(parts) == 1 {
@@ -595,11 +624,11 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 		case types.AssistantMessage:
 			var textParts []string
 			var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					textParts = append(textParts, bc.Text)
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					argsJSON, _ := json.Marshal(bc.Arguments)
 					toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 						OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
@@ -625,17 +654,17 @@ func toOpenAIMessages(msgs []types.Message) []openai.ChatCompletionMessageParamU
 // appendOpenAIToolResults emits a tool message (text projection with placeholders
 // for non-text blocks) for each result, plus a follow-up user image message for
 // each image block, since OpenAI tool messages accept text only.
-func appendOpenAIToolResults(out []openai.ChatCompletionMessageParamUnion, toolResults []types.ToolResultContent) []openai.ChatCompletionMessageParamUnion {
+func appendOpenAIToolResults(out []openai.ChatCompletionMessageParamUnion, toolResults []types.ToolResultPart) []openai.ChatCompletionMessageParamUnion {
 	// First pass: emit ALL tool messages. OpenAI requires the tool messages that
 	// answer one assistant tool_calls block to be contiguous, so image follow-ups
 	// (which are user messages) must not be interleaved between them.
 	for _, tr := range toolResults {
-		out = append(out, openai.ToolMessage(openAIToolResultText(tr), tr.ToolCallID))
+		out = append(out, openai.ToolMessage(openAIToolResultText(tr), tr.CallID))
 	}
 	// Second pass: emit image follow-ups after every tool message.
 	for _, tr := range toolResults {
-		for _, b := range tr.Blocks {
-			if b.Kind == types.ToolResultBlockImage && b.Data != nil && isImageType(b.MediaType) {
+		for _, b := range legacyparts.Blocks(tr.Parts) {
+			if b.Kind == legacyparts.BlockImage && b.Data != nil && isImageType(b.MediaType) {
 				dataURI := fmt.Sprintf("data:%s;base64,%s", b.MediaType, base64.StdEncoding.EncodeToString(b.Data))
 				out = append(out, openai.UserMessage([]openai.ChatCompletionContentPartUnionParam{
 					openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURI}),
@@ -649,19 +678,19 @@ func appendOpenAIToolResults(out []openai.ChatCompletionMessageParamUnion, toolR
 // openAIToolResultText projects a tool result to text. With no rich blocks it is
 // exactly the previous behavior; rich blocks add bracketed placeholders so the
 // model is aware of artifacts surfaced as separate image messages.
-func openAIToolResultText(tr types.ToolResultContent) string {
-	text := tr.Text
+func openAIToolResultText(tr types.ToolResultPart) string {
+	text := tr.Text()
 	if tr.IsError {
 		text = "[TOOL ERROR] " + text
 	}
-	for _, b := range tr.Blocks {
+	for _, b := range legacyparts.Blocks(tr.Parts) {
 		switch b.Kind {
-		case types.ToolResultBlockImage:
+		case legacyparts.BlockImage:
 			text += "\n[image: " + b.Filename + "]"
-		case types.ToolResultBlockFile:
+		case legacyparts.BlockFile:
 			text += "\n[file: " + b.Filename + "]"
-		case types.ToolResultBlockJSON:
-			if tr.Text == "" {
+		case legacyparts.BlockJSON:
+			if tr.Text() == "" {
 				text += string(b.JSON)
 			}
 		}
@@ -669,7 +698,7 @@ func openAIToolResultText(tr types.ToolResultContent) string {
 	return text
 }
 
-func fileContentToPart(fc types.FileContent) openai.ChatCompletionContentPartUnionParam {
+func fileContentToPart(fc legacyparts.Media) openai.ChatCompletionContentPartUnionParam {
 	if fc.Data != nil && isImageType(fc.MediaType) {
 		dataURI := fmt.Sprintf("data:%s;base64,%s", fc.MediaType, base64.StdEncoding.EncodeToString(fc.Data))
 		return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{

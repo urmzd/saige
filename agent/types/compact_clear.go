@@ -45,7 +45,7 @@ func (c *ClearToolResultsCompactor) Compact(_ context.Context, messages []Messag
 	var clearable []position
 	for i, m := range messages {
 		for j, r := range toolResults(m) {
-			if slices.Contains(c.Exclude, names[r.ToolCallID]) || isClearedStub(r, names[r.ToolCallID]) {
+			if slices.Contains(c.Exclude, names[r.CallID]) || isClearedStub(r, names[r.CallID]) {
 				continue
 			}
 			clearable = append(clearable, position{i, j})
@@ -71,8 +71,8 @@ func toolCallNames(messages []Message) map[string]string {
 		if !ok {
 			continue
 		}
-		for _, c := range am.Content {
-			if tu, ok := c.(ToolUseContent); ok {
+		for _, c := range am.Parts {
+			if tu, ok := c.(ToolCallPart); ok {
 				names[tu.ID] = tu.Name
 			}
 		}
@@ -81,18 +81,18 @@ func toolCallNames(messages []Message) map[string]string {
 }
 
 // toolResults returns the tool results of a message in block order.
-func toolResults(m Message) []ToolResultContent {
-	var out []ToolResultContent
+func toolResults(m Message) []ToolResultPart {
+	var out []ToolResultPart
 	switch v := m.(type) {
 	case SystemMessage:
-		for _, c := range v.Content {
-			if r, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if r, ok := c.(ToolResultPart); ok {
 				out = append(out, r)
 			}
 		}
 	case UserMessage:
-		for _, c := range v.Content {
-			if r, ok := c.(ToolResultContent); ok {
+		for _, c := range v.Parts {
+			if r, ok := c.(ToolResultPart); ok {
 				out = append(out, r)
 			}
 		}
@@ -100,39 +100,39 @@ func toolResults(m Message) []ToolResultContent {
 	return out
 }
 
-func isClearedStub(r ToolResultContent, tool string) bool {
-	return len(r.Blocks) == 0 && r.Text == ClearedToolResultText(tool, r.ToolCallID)
+func isClearedStub(r ToolResultPart, tool string) bool {
+	return len(r.Parts) == 1 && r.Text() == ClearedToolResultText(tool, r.CallID)
 }
 
 // clearResult returns a copy of m with its nth tool result replaced by a stub.
 func clearResult(m Message, nth int, names map[string]string) Message {
-	stub := func(r ToolResultContent) ToolResultContent {
-		return ToolResultContent{ToolCallID: r.ToolCallID, Text: ClearedToolResultText(names[r.ToolCallID], r.ToolCallID), IsError: r.IsError}
+	stub := func(r ToolResultPart) ToolResultPart {
+		return ToolResultPart{CallID: r.CallID, Parts: []ToolOutputPart{Text(ClearedToolResultText(names[r.CallID], r.CallID))}, IsError: r.IsError}
 	}
 	seen := 0
 	switch v := m.(type) {
 	case SystemMessage:
-		content := slices.Clone(v.Content)
+		content := slices.Clone(v.Parts)
 		for i, c := range content {
-			if r, ok := c.(ToolResultContent); ok {
+			if r, ok := c.(ToolResultPart); ok {
 				if seen == nth {
 					content[i] = stub(r)
 				}
 				seen++
 			}
 		}
-		return SystemMessage{Content: content}
+		return SystemMessage{Parts: content}
 	case UserMessage:
-		content := slices.Clone(v.Content)
+		content := slices.Clone(v.Parts)
 		for i, c := range content {
-			if r, ok := c.(ToolResultContent); ok {
+			if r, ok := c.(ToolResultPart); ok {
 				if seen == nth {
 					content[i] = stub(r)
 				}
 				seen++
 			}
 		}
-		return UserMessage{Content: content}
+		return UserMessage{Parts: content}
 	}
 	return m
 }

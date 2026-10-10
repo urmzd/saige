@@ -139,7 +139,7 @@ func TestRouterExpiry(t *testing.T) {
 func TestRouterApprovalsAndScoping(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
-	req := types.ApprovalRequest{ID: "marker/call", ToolCall: types.ToolUseContent{ID: "call", Name: "write"}, Markers: []types.Marker{{Kind: "approval"}}}
+	req := types.ApprovalRequest{ID: "marker/call", ToolCall: types.ToolCallPart{ID: "call", Name: "write"}, Markers: []types.Marker{{Kind: "approval"}}}
 	for _, id := range []string{"a", "b"} {
 		a := open(t, e, id)
 		if _, err := a.r.ResolveApproval(a.ctx, req); !errors.Is(err, types.ErrSuspended) {

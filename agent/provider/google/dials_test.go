@@ -20,7 +20,7 @@ func TestDialsCompileToThinkingLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+		ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 		if err != nil {
 			t.Fatal(err)
 		}

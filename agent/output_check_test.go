@@ -22,10 +22,10 @@ func (detachedRunner) RunStep(_ context.Context, _ string, fn func(context.Conte
 
 func TestStructuredNativeUnderDetachedStepRunner(t *testing.T) {
 	answer := []types.Delta{
-		types.TextStartDelta{},
-		types.TextContentDelta{Content: `{"city": "Tok`},
-		types.TextContentDelta{Content: `yo"}`},
-		types.TextEndDelta{},
+		types.PartStart{Index: 0, Kind: types.KindText},
+		types.PartDelta{Index: 0, Text: `{"city": "Tok`},
+		types.PartDelta{Index: 0, Text: `yo"}`},
+		types.PartEnd{Index: 0},
 	}
 	tests := []struct {
 		name      string
@@ -56,7 +56,7 @@ func TestStructuredNativeUnderDetachedStepRunner(t *testing.T) {
 			}
 			a := NewAgent(cfg)
 			var partials int
-			got, _, err := Structured(context.Background(), a, []types.Message{types.NewUserMessage("Where?")}, OutputSpec[city]{
+			got, _, err := Structured(context.Background(), a, []types.Message{types.UserMsg(types.Text("Where?"))}, OutputSpec[city]{
 				Mode: OutputNative,
 				OnDelta: func(d types.Delta) {
 					if _, ok := d.(types.PartialJSONDelta); ok {
@@ -102,7 +102,7 @@ func TestConfiguredSchemaChecksTextAnswer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &agenttest.ScriptedProvider{Responses: tt.responses}
 			a := NewAgent(AgentConfig{Provider: p}, WithResponseSchema(cityPopulationSchema), WithOutputMode(tt.mode))
-			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("Where?")}), nil)
+			_, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Where?"))}), nil)
 			if tt.wantErr != errors.Is(err, ErrSchemaInvalid) {
 				t.Fatalf("err = %v, want ErrSchemaInvalid: %v", err, tt.wantErr)
 			}

@@ -69,14 +69,14 @@ func toolLoopActive(messages []types.Message) bool {
 	}
 	switch m := messages[len(messages)-1].(type) {
 	case types.UserMessage:
-		for _, c := range m.Content {
-			if _, ok := c.(types.ToolResultContent); ok {
+		for _, c := range m.Parts {
+			if _, ok := c.(types.ToolResultPart); ok {
 				return true
 			}
 		}
 	case types.SystemMessage:
-		for _, c := range m.Content {
-			if _, ok := c.(types.ToolResultContent); ok {
+		for _, c := range m.Parts {
+			if _, ok := c.(types.ToolResultPart); ok {
 				return true
 			}
 		}
@@ -92,8 +92,8 @@ func signedReasoning(messages []types.Message) bool {
 		if !ok {
 			continue
 		}
-		for _, c := range a.Content {
-			if t, ok := c.(types.ThinkingContent); ok && t.Signature != "" {
+		for _, c := range a.Parts {
+			if t, ok := c.(types.ThinkingPart); ok && t.Signature != "" {
 				return true
 			}
 		}
@@ -104,12 +104,12 @@ func signedReasoning(messages []types.Message) bool {
 
 // RouteState is a session's routing history. It is plain data so the host
 // can persist it with the conversation, for example next to the branch's
-// ConfigContent, and restore it with Session.RestoreRouteState after a
+// ConfigPart, and restore it with Session.RestoreRouteState after a
 // restart. It never holds credentials or message content.
 type RouteState struct {
 	// Profile is the sticky profile the session prefers.
 	Profile string `json:"profile,omitempty"`
-	// Pin is the profile or group selected through ConfigContent.Model, if
+	// Pin is the profile or group selected through ConfigPart.Model, if
 	// any.
 	Pin string `json:"pin,omitempty"`
 	// Last is the profile attempted most recently, and LastFailed reports

@@ -154,30 +154,30 @@ func TestAdapterTranslatesThinkingDeltas(t *testing.T) {
 	)
 
 	adapter := NewAdapter(NewClient(server.URL, "test-model", ""))
-	rx, err := adapter.ChatStream(context.Background(),
-		[]types.Message{types.NewUserMessage("hi")}, nil)
+	rx, err := adapter.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
 
 	var kinds []string
 	var thinking, text strings.Builder
+	open := map[int]types.PartKind{}
 	for d := range rx {
 		switch v := d.(type) {
-		case types.ThinkingStartDelta:
-			kinds = append(kinds, "think-start")
-		case types.ThinkingContentDelta:
-			kinds = append(kinds, "think-content")
-			thinking.WriteString(v.Content)
-		case types.ThinkingEndDelta:
-			kinds = append(kinds, "think-end")
-		case types.TextStartDelta:
-			kinds = append(kinds, "text-start")
-		case types.TextContentDelta:
-			kinds = append(kinds, "text-content")
-			text.WriteString(v.Content)
-		case types.TextEndDelta:
-			kinds = append(kinds, "text-end")
+		case types.PartStart:
+			kinds = append(kinds, map[types.PartKind]string{types.KindThinking: "think", types.KindText: "text"}[v.Kind]+"-start")
+			open[v.Index] = v.Kind
+		case types.PartDelta:
+			switch {
+			case v.Thinking != "":
+				kinds = append(kinds, "think-content")
+				thinking.WriteString(v.Thinking)
+			case v.Text != "":
+				kinds = append(kinds, "text-content")
+				text.WriteString(v.Text)
+			}
+		case types.PartEnd:
+			kinds = append(kinds, map[types.PartKind]string{types.KindThinking: "think", types.KindText: "text"}[open[v.Index]]+"-end")
 		}
 	}
 

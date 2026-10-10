@@ -60,11 +60,11 @@ func (r *recordingRunner) has(name string) bool {
 	return ok
 }
 
-// panicProvider panics if its ChatStream is ever called (used to prove an LLM
+// panicProvider panics if its Stream is ever called (used to prove an LLM
 // step was served from a record, not re-executed).
 type panicProvider struct{}
 
-func (panicProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (panicProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	panic("provider must not be called on replay")
 }
 

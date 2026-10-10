@@ -29,22 +29,22 @@ func feed(deltas ...any) <-chan types.Delta {
 
 func TestCollectAgentRunToolCalls(t *testing.T) {
 	ch := feed(
-		types.TextContentDelta{Content: "Let me look."},
-		types.ToolCallStartDelta{ID: "c1", Name: "search"},
-		types.ToolCallArgumentDelta{ID: "c1", Content: `{"q":"go"}`},
-		types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"q": "go"}},
-		types.ToolCallStartDelta{ID: "c2", Name: "fetch"},
-		types.ToolCallEndDelta{ID: "c2", Arguments: map[string]any{"url": "x"}},
+		types.PartDelta{Index: 0, Text: "Let me look."},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+		types.PartDelta{Index: 1, Args: `{"q":"go"}`},
+		types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go"}}},
+		types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "c2", Name: "fetch"},
+		types.PartEnd{Index: 2, Part: types.ToolCallPart{ID: "c2", Name: "fetch", Arguments: map[string]any{"url": "x"}}},
 		types.UsageDelta{PromptTokens: 10, CompletionTokens: 4},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
 		types.ToolExecStartDelta{ToolCallID: "c2", Name: "fetch"},
 		// Nested sub-agent activity must not enter the top-level trajectory.
-		types.ToolExecDelta{ToolCallID: "c1", Inner: types.ToolCallStartDelta{ID: "inner", Name: "nested"}},
-		types.ToolExecDelta{ToolCallID: "c1", Inner: types.TextContentDelta{Content: "inner text"}},
+		types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartStart{Index: 3, Kind: types.KindToolCall, ID: "inner", Name: "nested"}},
+		types.ToolExecDelta{ToolCallID: "c1", Inner: types.PartDelta{Index: 0, Text: "inner text"}},
 		3*time.Millisecond,
 		types.ToolExecEndDelta{ToolCallID: "c2", Name: "fetch", Error: "timeout"},
 		types.ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "found"},
-		types.TextContentDelta{Content: " Done."},
+		types.PartDelta{Index: 0, Text: " Done."},
 		types.UsageDelta{PromptTokens: 20, CompletionTokens: 6},
 		types.DoneDelta{},
 	)
@@ -86,10 +86,10 @@ func TestCollectAgentRunToolCalls(t *testing.T) {
 func TestCollectAgentRunPairsEndWithoutID(t *testing.T) {
 	// Interleaved starts with ID-less ends: each end closes the oldest open call.
 	run := CollectAgentRun(feed(
-		types.ToolCallStartDelta{ID: "a", Name: "first"},
-		types.ToolCallStartDelta{ID: "b", Name: "second"},
-		types.ToolCallEndDelta{Arguments: map[string]any{"n": 1}},
-		types.ToolCallEndDelta{Arguments: map[string]any{"n": 2}},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "a", Name: "first"},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "b", Name: "second"},
+		types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "a", Name: "first", Arguments: map[string]any{"n": 1}}},
+		types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "b", Name: "second", Arguments: map[string]any{"n": 2}}},
 	))
 	if len(run.ToolCalls) != 2 {
 		t.Fatalf("got %+v", run.ToolCalls)
@@ -101,10 +101,10 @@ func TestCollectAgentRunPairsEndWithoutID(t *testing.T) {
 
 func TestCollectAgentRunArgumentsError(t *testing.T) {
 	run := CollectAgentRun(feed(
-		types.ToolCallStartDelta{ID: "a", Name: "search"},
-		types.ToolCallEndDelta{ID: "a", ArgumentsError: "unexpected end of JSON input"},
-		types.ToolCallStartDelta{ID: "b", Name: "list"},
-		types.ToolCallEndDelta{ID: "b"},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "a", Name: "search"},
+		types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "a", Name: "search", ArgumentsError: "unexpected end of JSON input"}},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "b", Name: "list"},
+		types.PartEnd{Index: 1},
 	))
 	if len(run.ToolCalls) != 2 {
 		t.Fatalf("got %+v", run.ToolCalls)
@@ -149,15 +149,15 @@ func TestCollectAgentRunExecWithoutAnnouncedCall(t *testing.T) {
 
 func TestAnnotateObservationFeedsScorers(t *testing.T) {
 	run := CollectAgentRun(feed(
-		types.ToolCallStartDelta{ID: "c1", Name: "search"},
-		types.ToolCallEndDelta{ID: "c1", Arguments: map[string]any{"q": "go", "k": 3}},
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "search"},
+		types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "c1", Name: "search", Arguments: map[string]any{"q": "go", "k": 3}}},
 		types.ToolExecStartDelta{ToolCallID: "c1", Name: "search"},
 		types.ToolExecEndDelta{ToolCallID: "c1", Name: "search", Result: "r"},
-		types.ToolCallStartDelta{ID: "c2", Name: "answer"},
-		types.ToolCallEndDelta{ID: "c2"},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c2", Name: "answer"},
+		types.PartEnd{Index: 1},
 		types.ToolExecStartDelta{ToolCallID: "c2", Name: "answer"},
 		types.ToolExecEndDelta{ToolCallID: "c2", Name: "answer", Error: "bad"},
-		types.TextContentDelta{Content: "final"},
+		types.PartDelta{Index: 2, Text: "final"},
 		types.UsageDelta{PromptTokens: 1, CompletionTokens: 1},
 	))
 	var obs topeval.Observation
@@ -207,7 +207,7 @@ func TestAnnotateObservationKeepsOutput(t *testing.T) {
 
 func TestCollectAgentRunRecordsErrors(t *testing.T) {
 	run := CollectAgentRun(feed(
-		types.TextContentDelta{Content: "partial"},
+		types.PartDelta{Index: 0, Text: "partial"},
 		types.ErrorDelta{Error: errors.New("provider overloaded")},
 	))
 	if !run.Timing.Failed() || run.Timing.Errors[0] != "provider overloaded" {

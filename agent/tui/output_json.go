@@ -49,8 +49,8 @@ func (o *JSONOutput) StreamDeltasResolving(_ AgentHeader, ch <-chan types.Delta,
 			if resolve != nil {
 				resolve(d)
 			}
-		case types.TextContentDelta:
-			text.WriteString(d.Content)
+		case types.PartDelta:
+			text.WriteString(d.Text)
 		case types.ErrorDelta:
 			return VerboseResult{Text: text.String(), Err: d.Error}
 		}

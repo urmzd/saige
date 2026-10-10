@@ -58,21 +58,18 @@ func main() {
 		imagePath = os.Args[1]
 	}
 
-	msg := types.NewUserMessageWithFiles(
-		"Describe what you see in this image.",
-		types.FileContent{
-			URI:      "file://" + imagePath,
-			Filename: imagePath,
-		},
-	)
+	// The media type is inferred when the file is resolved.
+	src := types.URL("file://" + imagePath)
+	src.Filename = imagePath
+	msg := types.UserMsg(types.Text("Describe what you see in this image."), types.Media(src))
 
 	// Invoke the agent.
 	stream := agent.Invoke(context.Background(), []types.Message{msg})
 
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.ErrorDelta:
 			log.Fatal(d.Error)
 		case types.DoneDelta:

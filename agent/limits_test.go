@@ -17,7 +17,7 @@ import (
 // (a) Per-call timeouts
 // ===================================================================
 
-// hangingProvider blocks inside ChatStream until ctx is cancelled, then closes
+// hangingProvider blocks inside Stream until ctx is cancelled, then closes
 // the channel without emitting any delta. A well-behaved provider that observes
 // the deadline behaves exactly like this.
 type hangingProvider struct {
@@ -25,7 +25,7 @@ type hangingProvider struct {
 	once    sync.Once
 }
 
-func (p *hangingProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *hangingProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	go func() {
 		defer close(ch)
@@ -46,7 +46,7 @@ func TestLLMTimeoutSurfacesError(t *testing.T) {
 	}, WithLLMTimeout(50*time.Millisecond))
 
 	start := time.Now()
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 	elapsed := time.Since(start)
@@ -76,7 +76,7 @@ func TestLLMTimeoutDisabledByDefault(t *testing.T) {
 	provider := &mockProvider{response: "hello"}
 	agent := NewAgent(AgentConfig{Provider: provider, SystemPrompt: "sys"})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,7 +121,7 @@ func TestToolTimeoutSurfacesError(t *testing.T) {
 	}, WithToolTimeout(50*time.Millisecond))
 
 	start := time.Now()
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("run it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("run it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 	elapsed := time.Since(start)
@@ -172,7 +172,7 @@ func TestToolTimeoutCatchesDeadlineIgnoringTool(t *testing.T) {
 		Tools:        types.NewToolRegistry(&ignoresCtxSlowTool{name: "slow", sleep: 30 * time.Millisecond}),
 	}, WithToolTimeout(5*time.Millisecond))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("run it")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("run it"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -205,7 +205,7 @@ func TestToolTimeoutFastToolUnaffected(t *testing.T) {
 		Tools:        types.NewToolRegistry(tool),
 	}, WithToolTimeout(time.Second))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -282,7 +282,7 @@ func TestMaxParallelToolsCapsConcurrency(t *testing.T) {
 		Tools:        types.NewToolRegistry(probe),
 	}, WithMaxParallelTools(cap))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -306,7 +306,7 @@ func TestUnlimitedToolsRunFullyParallel(t *testing.T) {
 		Tools:        types.NewToolRegistry(probe),
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	collectDeltas(stream)
 	stream.Wait()
 
@@ -325,7 +325,7 @@ func TestMaxParallelToolsAllResultsReturned(t *testing.T) {
 		Tools:        types.NewToolRegistry(probe),
 	}, WithMaxParallelTools(1)) // fully serial, still correct
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("fan out")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("fan out"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -348,8 +348,8 @@ func infiniteToolProvider(toolName string) *sequenceProvider {
 	for i := range p.responses {
 		i := i
 		p.responses[i] = func(ch chan<- types.Delta) {
-			ch <- types.ToolCallStartDelta{ID: fmt.Sprintf("call-%d", i), Name: toolName}
-			ch <- types.ToolCallEndDelta{Arguments: map[string]any{}}
+			ch <- types.PartStart{Index: 0, Kind: types.KindToolCall, ID: fmt.Sprintf("call-%d", i), Name: toolName}
+			ch <- types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: fmt.Sprintf("call-%d", i), Name: toolName, Arguments: map[string]any{}}}
 		}
 	}
 	return p
@@ -372,7 +372,7 @@ func TestMaxIterationsEmitsErrMaxIterationsWhenTruncated(t *testing.T) {
 		MaxIter:      3,
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("loop")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("loop"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -401,7 +401,7 @@ func TestCleanFinishDoesNotEmitErrMaxIterations(t *testing.T) {
 		MaxIter:      5,
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -429,7 +429,7 @@ func TestMaxIterationsCleanFinishOnLastTurnNoError(t *testing.T) {
 		MaxIter:      2,
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 

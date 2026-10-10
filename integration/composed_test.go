@@ -50,25 +50,25 @@ func delegatingParent(subProvider types.Provider) *agentsdk.Agent {
 	}))
 }
 
-// toolResults extracts every ToolResultContent persisted on the branch.
-func toolResults(t *testing.T, ag *agentsdk.Agent) []types.ToolResultContent {
+// toolResults extracts every ToolResultPart persisted on the branch.
+func toolResults(t *testing.T, ag *agentsdk.Agent) []types.ToolResultPart {
 	t.Helper()
 	msgs, err := ag.Tree().FlattenBranch("main")
 	if err != nil {
 		t.Fatalf("flatten main: %v", err)
 	}
-	var out []types.ToolResultContent
+	var out []types.ToolResultPart
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
-				if trc, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if trc, ok := c.(types.ToolResultPart); ok {
 					out = append(out, trc)
 				}
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if trc, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if trc, ok := c.(types.ToolResultPart); ok {
 					out = append(out, trc)
 				}
 			}
@@ -96,11 +96,11 @@ func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 	)
 	ag := delegatingParent(subProvider)
 
-	stream := ag.Invoke(ctx, []types.Message{types.NewUserMessage("delegate please")})
+	stream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
 	var text strings.Builder
 	for d := range stream.Deltas() {
-		if tc, ok := d.(types.TextContentDelta); ok {
-			text.WriteString(tc.Content)
+		if tc, ok := d.(types.PartDelta); ok {
+			text.WriteString(tc.Text)
 		}
 	}
 	if err := stream.Wait(); err != nil {
@@ -115,10 +115,10 @@ func TestSubAgentFallbackRecoversMidStreamError(t *testing.T) {
 		t.Fatalf("persisted tool results = %d, want 1", len(results))
 	}
 	if results[0].IsError {
-		t.Errorf("delegation recorded as error: %q; fallback recovery did not compose", results[0].Text)
+		t.Errorf("delegation recorded as error: %q; fallback recovery did not compose", results[0].Text())
 	}
-	if !strings.Contains(results[0].Text, "recovered: sub-agent result") {
-		t.Errorf("delegation result = %q, want recovered sub-agent text", results[0].Text)
+	if !strings.Contains(results[0].Text(), "recovered: sub-agent result") {
+		t.Errorf("delegation result = %q, want recovered sub-agent text", results[0].Text())
 	}
 }
 
@@ -136,7 +136,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 		SystemPrompt: "You will fail.",
 		Provider:     fallback.New(errorProvider("provider boom: simulated mid-stream 529")),
 	})
-	stream := failing.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+	stream := failing.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 	sawErrorDelta := false
 	for d := range stream.Deltas() {
 		if _, ok := d.(types.ErrorDelta); ok {
@@ -162,7 +162,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 	// itself completes (a failed delegation is a tool error, not a crash), but
 	// the persisted tool result must record the failure.
 	ag := delegatingParent(fallback.New(errorProvider("provider boom: simulated mid-stream 529")))
-	pstream := ag.Invoke(ctx, []types.Message{types.NewUserMessage("delegate please")})
+	pstream := ag.Invoke(ctx, []types.Message{types.UserMsg(types.Text("delegate please"))})
 	var delegationErr string
 	for d := range pstream.Deltas() {
 		if te, ok := d.(types.ToolExecEndDelta); ok && te.ToolCallID == "call-1" {
@@ -183,7 +183,7 @@ func TestSubAgentMidStreamErrorFailsDelegation(t *testing.T) {
 	if !results[0].IsError {
 		t.Fatalf("delegation tool result = %+v, want IsError=true", results[0])
 	}
-	if !strings.Contains(results[0].Text, "providers failed") {
-		t.Errorf("delegation tool result text = %q, want the sub-agent's fallback failure", results[0].Text)
+	if !strings.Contains(results[0].Text(), "providers failed") {
+		t.Errorf("delegation tool result text = %q, want the sub-agent's fallback failure", results[0].Text())
 	}
 }

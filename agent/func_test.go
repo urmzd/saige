@@ -90,7 +90,7 @@ func TestFuncDecodeErrorReachesModel(t *testing.T) {
 		agenttest.TextResponse("sorry"),
 	}}
 	a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(weatherTool())}, WithDeps(&weatherDeps{}))
-	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("weather?")}).Deltas())
+	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}).Deltas())
 	end, ok := endDeltaFor(deltas, "c1")
 	if !ok || !strings.Contains(end.Error, types.ErrInvalidToolArguments.Error()) || !strings.Contains(end.Error, "zip") {
 		t.Fatalf("end = %+v", end)
@@ -144,7 +144,7 @@ func TestFuncRunContext(t *testing.T) {
 	a := NewAgent(AgentConfig{Name: "host", Provider: p, Tools: types.NewToolRegistry(tool)},
 		WithDeps(&weatherDeps{base: 3}), WithWorkspace(ws),
 		WithToolContext(types.NewToolContext(map[string]any{types.ToolContextIdempotencyKey: "key-1"})))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("probe")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("probe"))})
 	for d := range stream.Deltas() {
 		if m, ok := d.(types.MarkerDelta); ok {
 			if err := stream.ResolveMarkerErr(m.ToolCallID, Resolution{Approved: true, Approver: "user:ada"}); err != nil {
@@ -238,7 +238,7 @@ func TestFuncVersionRecorded(t *testing.T) {
 		agenttest.TextResponse("warm"),
 	}}
 	a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(tool)}, WithDeps(&weatherDeps{base: 30}))
-	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("weather?")}).Deltas())
+	deltas := agenttest.CollectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))}).Deltas())
 	want := types.ToolVersion(tool)
 	if end, _ := endDeltaFor(deltas, "c1"); end.Version != want {
 		t.Fatalf("delta version = %q, want %q", end.Version, want)

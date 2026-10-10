@@ -42,7 +42,7 @@ func NewGenerator(p types.Provider, opts ...GeneratorOption) *Generator {
 
 // Generate sends prompt as a single user message and returns the reply text.
 func (g *Generator) Generate(ctx context.Context, prompt string) (string, error) {
-	ch, err := g.provider.ChatStream(ctx, g.messages(prompt), nil)
+	ch, err := g.provider.Stream(ctx, types.Request{Messages: g.messages(prompt)})
 	if err != nil {
 		return "", err
 	}
@@ -54,15 +54,14 @@ func (g *Generator) Generate(ctx context.Context, prompt string) (string, error)
 // request otherwise. A schema the provider rejects is returned as an error
 // rather than silently dropped.
 func (g *Generator) GenerateStructured(ctx context.Context, prompt string, schema json.RawMessage) (string, error) {
-	sp, ok := g.provider.(types.StructuredOutputProvider)
-	if !ok {
+	if !types.AcceptsSchema(g.provider) {
 		return g.Generate(ctx, prompt)
 	}
 	var ps types.ParameterSchema
 	if err := json.Unmarshal(schema, &ps); err != nil {
 		return "", fmt.Errorf("response schema: %w", err)
 	}
-	ch, err := sp.ChatStreamWithSchema(ctx, g.messages(prompt), nil, &ps)
+	ch, err := g.provider.Stream(ctx, types.Request{Messages: g.messages(prompt), Schema: &ps})
 	if err != nil {
 		return "", err
 	}
@@ -72,9 +71,9 @@ func (g *Generator) GenerateStructured(ctx context.Context, prompt string, schem
 func (g *Generator) messages(prompt string) []types.Message {
 	msgs := make([]types.Message, 0, 2)
 	if g.system != "" {
-		msgs = append(msgs, types.NewSystemMessage(g.system))
+		msgs = append(msgs, types.SystemMsg(types.Text(g.system)))
 	}
-	return append(msgs, types.NewUserMessage(prompt))
+	return append(msgs, types.UserMsg(types.Text(prompt)))
 }
 
 // collectReply drains a provider stream into its text, returning the first
@@ -87,9 +86,11 @@ func collectReply(ch <-chan types.Delta) (string, error) {
 	)
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
-			gotText = true
+		case types.PartDelta:
+			if v.Text != "" {
+				text.WriteString(v.Text)
+				gotText = true
+			}
 		case types.ErrorDelta:
 			if v.Error != nil {
 				errs = append(errs, v.Error)

@@ -25,14 +25,14 @@ func TestMarkedToolExecuteRichPassesThroughRichResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Text != "see chart" {
-		t.Errorf("Text = %q, want 'see chart'", got.Text)
+	if got.Text() != "see chart" {
+		t.Errorf("Text = %q, want 'see chart'", got.Text())
 	}
-	if len(got.Blocks) != 2 {
-		t.Fatalf("Blocks = %d, want 2 (rich result must not degrade to text)", len(got.Blocks))
+	if len(got.Parts) != 2 {
+		t.Fatalf("Parts = %d, want 2 (rich result must not degrade to text)", len(got.Parts))
 	}
-	if got.Blocks[1].Kind != ToolResultBlockImage || got.Blocks[1].MediaType != MediaPNG {
-		t.Errorf("image block = %+v", got.Blocks[1])
+	if img, ok := got.Parts[1].(ImagePart); !ok || img.Source.MediaType != MediaPNG {
+		t.Errorf("image part = %+v", got.Parts[1])
 	}
 }
 
@@ -43,8 +43,8 @@ func TestMarkedToolExecuteRichWrapsPlainTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Text != "ok" || got.Blocks != nil || got.IsError {
-		t.Errorf("ExecuteRich = %+v, want {Text:ok, Blocks:nil}", got)
+	if got.Text() != "ok" || len(got.Parts) != 1 || got.HasMedia() || got.IsError {
+		t.Errorf("ExecuteRich = %+v, want one text part", got)
 	}
 }
 

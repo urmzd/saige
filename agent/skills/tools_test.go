@@ -60,8 +60,8 @@ func systemText(call agenttest.ScriptedCall) string {
 	for _, m := range call.Messages {
 		if sm, ok := m.(types.SystemMessage); ok {
 			var b strings.Builder
-			for _, c := range sm.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range sm.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					b.WriteString(tc.Text)
 				}
 			}
@@ -87,7 +87,7 @@ func TestWithSkillsLoadNarrowsAndReads(t *testing.T) {
 		Provider:     provider,
 		Tools:        types.NewToolRegistry(mock("read_file"), write),
 	}, WithSkills(cat, nil), agent.WithMaxIter(8), func(c *agent.AgentConfig) { c.MaxConsecutiveErrors = -1 })
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("read the pdf")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("read the pdf"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestWithSkillsOverDeferredTools(t *testing.T) {
 		Provider: provider,
 		Tools:    types.NewToolRegistry(deferred.Tool(), mock("read_file"), mock("write_file"), weather),
 	}, agent.WithToolPolicy(deferred), WithSkills(cat, nil), agent.WithMaxIter(6))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("weather?")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("weather?"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)
@@ -388,7 +388,7 @@ func TestActiveSkillStaysInItsDelegation(t *testing.T) {
 			Scratch: agent.SubAgentScratch{Off: true},
 		}},
 	}, agent.WithToolPolicy(ts.Policy(nil)))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	deltas := agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

@@ -16,13 +16,14 @@ import (
 // test can see which input a provider call served.
 type echoProvider struct{ calls *atomic.Int32 }
 
-func (p echoProvider) ChatStream(_ context.Context, m []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p echoProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	m := req.Messages
 	p.calls.Add(1)
 	last := ""
 	for _, msg := range m {
 		if u, ok := msg.(types.UserMessage); ok {
-			for _, c := range u.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range u.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					last = tc.Text
 				}
 			}
@@ -42,8 +43,8 @@ func lastText(t *testing.T, m *types.AssistantMessage) string {
 		t.Fatal("no assistant message")
 	}
 	var b strings.Builder
-	for _, c := range m.Content {
-		if tc, ok := c.(types.TextContent); ok {
+	for _, c := range m.Parts {
+		if tc, ok := c.(types.TextPart); ok {
 			b.WriteString(tc.Text)
 		}
 	}
@@ -51,7 +52,7 @@ func lastText(t *testing.T, m *types.AssistantMessage) string {
 }
 
 func TestReconcileInput(t *testing.T) {
-	a, b, c := types.NewUserMessage("a"), types.NewUserMessage("b"), types.NewUserMessage("c")
+	a, b, c := types.UserMsg(types.Text("a")), types.UserMsg(types.Text("b")), types.UserMsg(types.Text("c"))
 	tests := []struct {
 		name     string
 		log      [][]types.Message
@@ -110,7 +111,7 @@ func TestRunAppendsInputWithoutRepeatingEarlierSteps(t *testing.T) {
 	e := New(t.TempDir())
 	var calls atomic.Int32
 	factory := func() *agent.Agent { return agent.NewAgent(agent.AgentConfig{Provider: echoProvider{&calls}}) }
-	first := []types.Message{types.NewUserMessage("one")}
+	first := []types.Message{types.UserMsg(types.Text("one"))}
 	got, err := e.Run(ctx, "run", "v1", factory, first)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +119,7 @@ func TestRunAppendsInputWithoutRepeatingEarlierSteps(t *testing.T) {
 	if lastText(t, got) != "re: one" || calls.Load() != 1 {
 		t.Fatalf("first run: %q after %d calls", lastText(t, got), calls.Load())
 	}
-	extended := append(append([]types.Message(nil), first...), types.NewUserMessage("two"))
+	extended := append(append([]types.Message(nil), first...), types.UserMsg(types.Text("two")))
 	got, err = e.Run(ctx, "run", "v1", factory, extended)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +150,7 @@ func TestRunAppendsInputWithoutRepeatingEarlierSteps(t *testing.T) {
 	if _, ok := state.Steps["input-1/llm-main-0"]; !ok {
 		t.Fatalf("appended segment step missing: %v", state.Steps)
 	}
-	diverged := []types.Message{types.NewUserMessage("other")}
+	diverged := []types.Message{types.UserMsg(types.Text("other"))}
 	if _, err := e.Run(ctx, "run", "v1", factory, diverged); !errors.Is(err, ErrConflict) {
 		t.Fatalf("divergent input: %v", err)
 	}
@@ -160,7 +161,7 @@ var errAny = errors.New("any error")
 
 func TestAppend(t *testing.T) {
 	ctx := context.Background()
-	two := []types.Message{types.NewUserMessage("two")}
+	two := []types.Message{types.UserMsg(types.Text("two"))}
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, e *Engine)
@@ -176,7 +177,7 @@ func TestAppend(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "same key with other messages conflicts", key: "k", msgs: []types.Message{types.NewUserMessage("three")}, err: ErrConflict, setup: func(t *testing.T, e *Engine) {
+		{name: "same key with other messages conflicts", key: "k", msgs: []types.Message{types.UserMsg(types.Text("three"))}, err: ErrConflict, setup: func(t *testing.T, e *Engine) {
 			if err := e.Append("run", "v1", "k", two); err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +196,7 @@ func TestAppend(t *testing.T) {
 			e := New(t.TempDir())
 			var calls atomic.Int32
 			factory := func() *agent.Agent { return agent.NewAgent(agent.AgentConfig{Provider: echoProvider{&calls}}) }
-			if _, err := e.Run(ctx, "run", "v1", factory, []types.Message{types.NewUserMessage("one")}); err != nil {
+			if _, err := e.Run(ctx, "run", "v1", factory, []types.Message{types.UserMsg(types.Text("one"))}); err != nil {
 				t.Fatal(err)
 			}
 			if tt.setup != nil {
@@ -237,9 +238,9 @@ func TestAppend(t *testing.T) {
 }
 
 func TestTruncatedStepCommitsInsteadOfIndeterminate(t *testing.T) {
-	partial := &types.AssistantMessage{Content: []types.AssistantContent{
-		types.TextContent{Text: "partial"},
-		types.TruncationContent{Reason: "interrupted"},
+	partial := &types.AssistantMessage{Parts: []types.AssistantPart{
+		types.TextPart{Text: "partial"},
+		types.TruncationPart{Reason: "interrupted"},
 	}}
 	tests := []struct {
 		name      string
@@ -249,12 +250,12 @@ func TestTruncatedStepCommitsInsteadOfIndeterminate(t *testing.T) {
 	}{
 		{name: "truncated provider turn is committed", result: types.StepResult{Kind: types.StepKindLLM, Message: partial}, err: context.Canceled},
 		{name: "truncated turn with another error stays indeterminate", result: types.StepResult{Kind: types.StepKindLLM, Message: partial}, err: types.ErrResponseTruncated, replayErr: ErrIndeterminate},
-		{name: "truncated turn with open tool calls stays indeterminate", result: types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "partial"},
-			types.ToolUseContent{ID: "call", Name: "write"},
-			types.TruncationContent{Reason: "interrupted"},
+		{name: "truncated turn with open tool calls stays indeterminate", result: types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "partial"},
+			types.ToolCallPart{ID: "call", Name: "write"},
+			types.TruncationPart{Reason: "interrupted"},
 		}}}, err: context.Canceled, replayErr: ErrIndeterminate},
-		{name: "unmarked partial stays indeterminate", result: types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "partial"}}}}, err: context.Canceled, replayErr: ErrIndeterminate},
+		{name: "unmarked partial stays indeterminate", result: types.StepResult{Kind: types.StepKindLLM, Message: &types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "partial"}}}}, err: context.Canceled, replayErr: ErrIndeterminate},
 		{name: "cancelled tool stays indeterminate", result: types.StepResult{Kind: types.StepKindTool, ToolCallID: "c"}, err: context.Canceled, replayErr: ErrIndeterminate},
 	}
 	for _, tt := range tests {

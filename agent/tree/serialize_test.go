@@ -18,32 +18,33 @@ func TestMessageRoundTrip(t *testing.T) {
 	}{
 		{
 			name: "tool call with an argument error",
-			msg: types.AssistantMessage{Content: []types.AssistantContent{
-				types.ToolUseContent{ID: "c1", Name: "write", ArgumentsError: "unexpected end of JSON input"},
+			msg: types.AssistantMessage{Parts: []types.AssistantPart{
+				types.ToolCallPart{ID: "c1", Name: "write", ArgumentsError: "unexpected end of JSON input"},
 			}},
 		},
 		{
 			name: "truncated turn",
-			msg: types.AssistantMessage{Content: []types.AssistantContent{
-				types.TextContent{Text: "partial"}, types.TruncationContent{Reason: "max_tokens"},
+			msg: types.AssistantMessage{Parts: []types.AssistantPart{
+				types.TextPart{Text: "partial"}, types.TruncationPart{Reason: "max_tokens"},
 			}},
 		},
 		{
 			name: "server tool call and route",
-			msg: types.AssistantMessage{Content: []types.AssistantContent{
-				types.ServerToolContent{ID: "s1", Kind: types.ServerToolKind("web_search"), Name: "web_search", Text: "found"},
-				types.RouteContent{Profile: "fast", Provider: "openai", Model: "gpt-6-luna", Experiment: "e", Variant: "b"},
+			msg: types.AssistantMessage{Parts: []types.AssistantPart{
+				types.ServerToolCallPart{ID: "s1", ToolKind: types.ServerToolKind("web_search"), Name: "web_search"},
+				types.ServerToolResultPart{CallID: "s1", ToolKind: types.ServerToolKind("web_search"), Text: "found"},
+				types.RoutePart{Profile: "fast", Provider: "openai", Model: "gpt-6-luna", Experiment: "e", Variant: "b"},
 			}},
 		},
 		{
 			name: "steered user message",
-			msg: types.UserMessage{Content: []types.UserContent{
-				types.TextContent{Text: "also check tests"}, types.SteerContent{ID: "sub-1"},
+			msg: types.UserMessage{Parts: []types.UserPart{
+				types.TextPart{Text: "also check tests"}, types.SteerPart{ID: "sub-1"},
 			}},
 		},
 		{
 			name: "compaction record",
-			msg: types.SystemMessage{Content: []types.SystemContent{types.CompactionContent{
+			msg: types.SystemMessage{Parts: []types.SystemPart{types.CompactionPart{
 				Strategy: "chain(clear_tool_results,summary)", Steps: []string{"summary"}, Trigger: types.CompactionTriggerRule,
 				TokensBefore: 10, TokensAfter: 4, FromBranch: "main", Kept: []types.NodeID{"a"}, Selected: []types.NodeID{"b"},
 				Cleared: []types.NodeID{"c"}, Summarized: []types.NodeID{"d"}, Dropped: []types.NodeID{"e"}, SummaryNode: "s",
@@ -51,8 +52,8 @@ func TestMessageRoundTrip(t *testing.T) {
 		},
 		{
 			name: "system route",
-			msg: types.SystemMessage{Content: []types.SystemContent{
-				types.TextContent{Text: "s"}, types.RouteContent{Profile: "p"},
+			msg: types.SystemMessage{Parts: []types.SystemPart{
+				types.TextPart{Text: "s"}, types.RoutePart{Profile: "p"},
 			}},
 		},
 	}
@@ -74,7 +75,7 @@ func TestMessageRoundTrip(t *testing.T) {
 }
 
 func TestUnmarshalJSONFailureLeavesTree(t *testing.T) {
-	tr, err := New(types.NewSystemMessage("sys"))
+	tr, err := New(types.SystemMsg(types.Text("sys")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,18 +97,18 @@ func TestUnmarshalJSONFailureLeavesTree(t *testing.T) {
 }
 
 func TestUnmarshalJSONConcurrentReaders(t *testing.T) {
-	src, err := New(types.NewSystemMessage("sys"))
+	src, err := New(types.SystemMsg(types.Text("sys")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := src.AddChild(context.Background(), src.Root().ID, types.NewUserMessage("hi")); err != nil {
+	if _, err := src.AddChild(context.Background(), src.Root().ID, types.UserMsg(types.Text("hi"))); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, err := New(types.NewSystemMessage("other"))
+	dst, err := New(types.SystemMsg(types.Text("other")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestUnmarshalJSONConcurrentReaders(t *testing.T) {
 }
 
 func TestTreeFormatVersion(t *testing.T) {
-	src, err := New(types.NewSystemMessage("sys"))
+	src, err := New(types.SystemMsg(types.Text("sys")))
 	if err != nil {
 		t.Fatal(err)
 	}

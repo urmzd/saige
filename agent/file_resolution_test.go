@@ -18,7 +18,7 @@ func TestResolveFilesReportsFailures(t *testing.T) {
 	docx := types.ResolverFunc(func(context.Context, string) (types.ResolvedFile, error) {
 		return types.ResolvedFile{Data: []byte("PK\x03\x04binary"), MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}, nil
 	})
-	brokenExtractor := types.ExtractorFunc(func(context.Context, []byte, types.MediaType) ([]types.UserContent, error) {
+	brokenExtractor := types.ExtractorFunc(func(context.Context, []byte, types.MediaType) ([]types.UserPart, error) {
 		return nil, errors.New("corrupt archive")
 	})
 	tests := []struct {
@@ -55,19 +55,19 @@ func TestResolveFilesReportsFailures(t *testing.T) {
 				Extractors: tt.extractors,
 				Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
 			})
-			in := []types.Message{types.UserMessage{Content: []types.UserContent{types.FileContent{URI: tt.uri}}}}
+			in := []types.Message{types.UserMsg(types.Media(types.URL(tt.uri)))}
 			out := a.resolveFiles(context.Background(), in)
-			content := out[0].(types.UserMessage).Content
+			content := out[0].(types.UserMessage).Parts
 			if len(content) != 1 {
 				t.Fatalf("content = %#v, want one block", content)
 			}
 			if tt.wantNotice == "" {
-				if _, ok := content[0].(types.FileContent); !ok {
-					t.Fatalf("block = %#v, want the FileContent kept", content[0])
+				if !types.IsMedia(content[0]) {
+					t.Fatalf("block = %#v, want the media part kept", content[0])
 				}
 				return
 			}
-			text, ok := content[0].(types.TextContent)
+			text, ok := content[0].(types.TextPart)
 			if !ok {
 				t.Fatalf("block = %#v, want a text notice instead of the file", content[0])
 			}

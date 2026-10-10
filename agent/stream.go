@@ -374,16 +374,16 @@ func Replay(messages []types.Message) *EventStream {
 		for _, msg := range messages {
 			switch v := msg.(type) {
 			case types.AssistantMessage:
-				for _, c := range v.Content {
-					if tu, ok := c.(types.ToolUseContent); ok {
+				for _, c := range v.Parts {
+					if tu, ok := c.(types.ToolCallPart); ok {
 						names[tu.ID] = tu.Name
 					}
 				}
 				replayAssistantBlocks(stream, v)
 			case types.SystemMessage:
-				replayToolResults(stream, v.Content, names)
+				replayToolResults(stream, v.Parts, names)
 			case types.UserMessage:
-				replayUserToolResults(stream, v.Content, names)
+				replayUserToolResults(stream, v.Parts, names)
 			}
 		}
 	}()
@@ -391,56 +391,54 @@ func Replay(messages []types.Message) *EventStream {
 	return stream
 }
 
-// replayAssistantBlocks emits an AssistantMessage's content as live deltas. It
-// is shared by Replay and by the durable LLM step's replay path so a memoized
-// (non-streamed) assistant message still produces a consistent delta sequence.
+// replayAssistantBlocks emits an AssistantMessage's parts as live deltas.
+// It is shared by Replay and by the durable LLM step's replay path so a
+// memoized (non-streamed) assistant message still produces a consistent
+// delta sequence. Metadata parts are not output and are not replayed.
 func replayAssistantBlocks(stream *EventStream, msg types.AssistantMessage) {
-	for _, c := range msg.Content {
-		switch bc := c.(type) {
-		case types.ThinkingContent:
-			stream.send(types.ThinkingStartDelta{})
-			stream.send(types.ThinkingContentDelta{Content: bc.Thinking})
-			stream.send(types.ThinkingEndDelta{Signature: bc.Signature})
-		case types.TextContent:
-			stream.send(types.TextStartDelta{})
-			stream.send(types.TextContentDelta{Content: bc.Text})
-			stream.send(types.TextEndDelta{})
-		case types.ToolUseContent:
-			stream.send(types.ToolCallStartDelta{ID: bc.ID, Name: bc.Name})
-			stream.send(types.ToolCallEndDelta{ID: bc.ID, Arguments: bc.Arguments, ArgumentsError: bc.ArgumentsError})
+	for i, p := range msg.Parts {
+		if types.IsMetadata(p) {
+			continue
+		}
+		for _, d := range types.PartDeltas(i, p) {
+			stream.send(d)
 		}
 	}
 }
 
-func replayToolResults(stream *EventStream, content []types.SystemContent, names map[string]string) {
+func replayToolResults(stream *EventStream, content []types.SystemPart, names map[string]string) {
 	for _, c := range content {
 		switch v := c.(type) {
-		case types.ToolResultContent:
+		case types.ToolResultPart:
 			replayToolResult(stream, v, names)
-		case types.HandoffContent:
+		case types.HandoffPart:
 			stream.send(types.HandoffDelta{From: v.From, To: v.To, Reason: v.Reason})
 		}
 	}
 }
 
-func replayUserToolResults(stream *EventStream, content []types.UserContent, names map[string]string) {
+func replayUserToolResults(stream *EventStream, content []types.UserPart, names map[string]string) {
 	for _, c := range content {
 		switch v := c.(type) {
-		case types.ToolResultContent:
+		case types.ToolResultPart:
 			replayToolResult(stream, v, names)
-		case types.FeedbackContent:
+		case types.FeedbackPart:
 			stream.send(types.FeedbackDelta(v))
-		case types.HandoffContent:
+		case types.HandoffPart:
 			stream.send(types.HandoffDelta{From: v.From, To: v.To, Reason: v.Reason})
 		}
 	}
 }
 
 // replayToolResult emits the start and end deltas for one stored result.
-func replayToolResult(stream *EventStream, v types.ToolResultContent, names map[string]string) {
-	name := names[v.ToolCallID]
-	stream.send(types.ToolExecStartDelta{ToolCallID: v.ToolCallID, Name: name})
-	stream.send(types.ToolExecEndDelta{ToolCallID: v.ToolCallID, Name: name, Result: v.Text, Blocks: v.Blocks})
+func replayToolResult(stream *EventStream, v types.ToolResultPart, names map[string]string) {
+	name := names[v.CallID]
+	stream.send(types.ToolExecStartDelta{ToolCallID: v.CallID, Name: name})
+	end := types.ToolExecEndDelta{ToolCallID: v.CallID, Name: name, Result: v.Text()}
+	if v.HasMedia() || hasJSON(v.Parts) {
+		end.Parts = v.Parts
+	}
+	stream.send(end)
 }
 
 func (s *EventStream) stopRun(err error) {

@@ -62,7 +62,7 @@ func (a *Agent) RunBatch(ctx context.Context, inputs []BatchInput, cfg BatchConf
 		}
 		msgs := in.Messages
 		if a.cfg.SystemPrompt != "" {
-			msgs = append([]types.Message{types.NewSystemMessage(a.cfg.SystemPrompt)}, msgs...)
+			msgs = append([]types.Message{types.SystemMsg(types.Text(a.cfg.SystemPrompt))}, msgs...)
 		}
 		reqs[i] = types.BatchRequest{CustomID: id, Messages: msgs, Schema: schema, Options: opts.Clone()}
 	}
@@ -143,9 +143,9 @@ func (f *AIFunction[In, Out]) Batch(ctx context.Context, inputs []In, cfg BatchC
 		}
 		var msgs []types.Message
 		if f.cfg.System != "" {
-			msgs = append(msgs, types.NewSystemMessage(f.cfg.System))
+			msgs = append(msgs, types.SystemMsg(types.Text(f.cfg.System)))
 		}
-		reqs[i] = types.BatchRequest{CustomID: strconv.Itoa(i), Messages: append(msgs, types.NewUserMessage(prompt)), Schema: schema}
+		reqs[i] = types.BatchRequest{CustomID: strconv.Itoa(i), Messages: append(msgs, types.UserMsg(types.Text(prompt))), Schema: schema}
 	}
 	results, err := runBatch(ctx, provider, nil, cfg, "aifunc-"+f.name+"-"+f.version, reqs)
 	if err != nil {

@@ -61,8 +61,8 @@ func TestDefaultPolicyStopsOnTerminalErrors(t *testing.T) {
 			} else {
 				primary = &errorProviderSimple{err: tc.syncErr}
 			}
-			secondary := &scriptProvider{deltas: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "backup"}, types.TextEndDelta{}}}
-			ch, err := New(primary, secondary).ChatStream(context.Background(), nil, nil)
+			secondary := &scriptProvider{deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "backup"}, types.PartEnd{Index: 0}}}
+			ch, err := New(primary, secondary).Stream(context.Background(), types.Request{})
 			if err == nil {
 				collect(ch)
 			}
@@ -77,10 +77,10 @@ func TestSchemaSkipsMembersThatCannotEnforceIt(t *testing.T) {
 	failing := &schemaScriptProvider{&scriptProvider{deltas: []types.Delta{
 		types.ErrorDelta{Error: &types.ProviderError{Kind: types.ErrorKindUnavailable, Err: errors.New("down")}},
 	}}}
-	plain := &scriptProvider{deltas: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "free text"}, types.TextEndDelta{}}}
+	plain := &scriptProvider{deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "free text"}, types.PartEnd{Index: 0}}}
 	schema := &types.ParameterSchema{Type: "object"}
 
-	ch, err := New(failing, plain).ChatStreamWithSchema(context.Background(), nil, nil, schema)
+	ch, err := New(failing, plain).Stream(context.Background(), types.Request{Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestSchemaSkipsMembersThatCannotEnforceIt(t *testing.T) {
 		t.Fatal("a member without schema support served a schema request")
 	}
 
-	_, err = New(plain, &scriptProvider{}).ChatStreamWithSchema(context.Background(), nil, nil, schema)
+	_, err = New(plain, &scriptProvider{}).Stream(context.Background(), types.Request{Schema: schema})
 	if !errors.As(err, &fe) || !errors.Is(err, types.ErrInvalidModelConfig) || plain.callCount() != 0 {
 		t.Fatalf("err = %v, want a FallbackError matching ErrInvalidModelConfig", err)
 	}
@@ -101,7 +101,7 @@ func TestSchemaSkipsMembersThatCannotEnforceIt(t *testing.T) {
 
 func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 	schema := &types.ParameterSchema{Type: "object"}
-	text := []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "{}"}, types.TextEndDelta{}}
+	text := []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "{}"}, types.PartEnd{Index: 0}}
 	for _, tc := range []struct {
 		name     string
 		members  func(plain, capable types.Provider) []types.Provider
@@ -140,7 +140,7 @@ func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			plain := &scriptProvider{deltas: text}
 			capable := &schemaScriptProvider{&scriptProvider{deltas: text}}
-			ch, err := New(tc.members(plain, capable)...).ChatStreamWithSchema(context.Background(), nil, nil, schema)
+			ch, err := New(tc.members(plain, capable)...).Stream(context.Background(), types.Request{Schema: schema})
 			if plain.callCount() != 0 {
 				t.Fatal("a member without schema support served a schema request")
 			}
@@ -167,9 +167,14 @@ func TestSchemaSkipsDecoratedMembersThatCannotEnforceIt(t *testing.T) {
 // sentinel.
 type sentinelDecorator struct{ types.Provider }
 
-func (sentinelDecorator) ChatStreamWithSchema(context.Context, []types.Message, []types.ToolDef, *types.ParameterSchema) (<-chan types.Delta, error) {
+func (d sentinelDecorator) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema == nil {
+		return d.Provider.Stream(ctx, req)
+	}
 	return nil, &types.ProviderError{Kind: types.ErrorKindPermanent, Err: types.ErrSchemaUnsupported}
 }
+
+func (sentinelDecorator) SupportsSchema() bool { return true }
 
 // optionsScript accepts request options and records that it received them.
 type optionsScript struct {
@@ -177,16 +182,20 @@ type optionsScript struct {
 	got int
 }
 
-func (p *optionsScript) ChatStreamWithOptions(ctx context.Context, m []types.Message, tools []types.ToolDef, _ types.RequestOptions) (<-chan types.Delta, error) {
-	p.got++
-	return p.ChatStream(ctx, m, tools)
+func (p *optionsScript) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		p.got++
+	}
+	return p.scriptProvider.Stream(ctx, req)
 }
+
+func (p *optionsScript) SupportsOptions() bool { return true }
 
 func TestOptionsSkipMembersThatCannotReceiveThem(t *testing.T) {
 	choice := types.ToolChoice{Mode: types.ToolChoiceRequired}
 	opts := types.RequestOptions{ToolChoice: &choice}
-	plain := &scriptProvider{deltas: []types.Delta{types.TextContentDelta{Content: "dropped options"}}}
-	accepting := &optionsScript{scriptProvider: &scriptProvider{deltas: []types.Delta{types.TextContentDelta{Content: "forced"}}}}
+	plain := &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "dropped options"}}}
+	accepting := &optionsScript{scriptProvider: &scriptProvider{deltas: []types.Delta{types.PartDelta{Index: 0, Text: "forced"}}}}
 	for _, tc := range []struct {
 		name    string
 		members []types.Provider
@@ -198,7 +207,7 @@ func TestOptionsSkipMembersThatCannotReceiveThem(t *testing.T) {
 		{"through a retry decorator", []types.Provider{retry.New(plain, retry.DefaultConfig()), accepting}, "forced", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ch, err := New(tc.members...).ChatStreamWithOptions(context.Background(), nil, nil, opts)
+			ch, err := New(tc.members...).Stream(context.Background(), types.Request{Options: &opts})
 			if err != nil {
 				if !tc.wantErr || !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v", err)
@@ -207,8 +216,8 @@ func TestOptionsSkipMembersThatCannotReceiveThem(t *testing.T) {
 			}
 			var text string
 			for d := range ch {
-				if v, ok := d.(types.TextContentDelta); ok {
-					text += v.Content
+				if v, ok := d.(types.PartDelta); ok {
+					text += v.Text
 				}
 			}
 			if text != tc.want {

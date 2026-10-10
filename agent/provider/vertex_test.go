@@ -89,7 +89,7 @@ func TestBuildVertexTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err == nil {
 		for range ch {
 		}

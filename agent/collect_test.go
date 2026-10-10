@@ -61,7 +61,7 @@ func TestCollect(t *testing.T) {
 			p := &agenttest.ScriptedProvider{Responses: tt.responses, Errors: tt.errs}
 			a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(lookup, broken)}, WithMaxConsecutiveErrors(-1))
 			var seen int
-			tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}), func(types.Delta) { seen++ })
+			tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), func(types.Delta) { seen++ })
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -103,7 +103,7 @@ func TestCollect(t *testing.T) {
 func TestCollectText(t *testing.T) {
 	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("hi")}}
 	a := NewAgent(AgentConfig{Provider: p})
-	text, err := CollectText(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}))
+	text, err := CollectText(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}))
 	if err != nil || text != "hi" {
 		t.Fatalf("CollectText = %q, %v", text, err)
 	}
@@ -117,7 +117,7 @@ func TestCollectIgnoresSubAgentText(t *testing.T) {
 		agenttest.TextResponse("parent text"),
 	}}
 	a := NewAgent(AgentConfig{Provider: p}, WithSubAgents(child), WithSequentialTools())
-	tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")}), nil)
+	tr, err := Collect(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

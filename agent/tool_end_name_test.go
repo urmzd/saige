@@ -31,7 +31,7 @@ func TestRejectedToolEndCarriesName(t *testing.T) {
 					return types.Deny("not allowed")
 				}),
 			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)

@@ -42,7 +42,7 @@ type StepResult struct {
 	Message    *AssistantMessage // populated when Kind == StepKindLLM
 	ToolCallID string            // populated when Kind == StepKindTool
 	ToolResult string            // tool text projection / aggregated sub-agent text
-	ToolBlocks []ToolResultBlock // rich tool output; survives durable replay
+	ToolParts  []ToolOutputPart  // rich tool output; survives durable replay
 	ToolError  string            // non-empty => tool errored (recorded, not retried)
 	Approval   *ApprovalVerdict  // populated when Kind == StepKindApproval
 	Hook       *HookRecord       // populated when Kind == StepKindHook

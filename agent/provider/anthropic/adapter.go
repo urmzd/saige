@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
@@ -130,7 +131,7 @@ func WithBaseURL(url string) Option {
 // WithMaxRetries sets how many times the SDK itself retries a failed request.
 // The default is 0: retries belong to retry.Provider, which counts every
 // attempt, honors Retry-After, and reports RetryError. SDK retries run inside
-// one ChatStream call, hidden from that accounting, and stack under an outer
+// one Stream call, hidden from that accounting, and stack under an outer
 // retry decorator. Set a positive value only for a bare adapter that has no
 // retry decorator.
 func WithMaxRetries(n int) Option {
@@ -283,8 +284,36 @@ func (a *Adapter) Generate(ctx context.Context, prompt string) (string, error) {
 	return generate.Text(ctx, a, prompt)
 }
 
-// ChatStream implements types.Provider.
-func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream implements types.Provider. A request may carry a schema or
+// options, not both.
+func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	var (
+		ch  <-chan types.Delta
+		err error
+	)
+	switch {
+	case req.Options != nil && req.Schema != nil:
+		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
+	case req.Options != nil:
+		ch, err = a.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
+	case req.Schema != nil:
+		ch, err = a.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
+	default:
+		ch, err = a.streamPlain(ctx, req.Messages, req.Tools)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return types.UpgradeV1Stream(ch), nil
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (a *Adapter) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (a *Adapter) SupportsOptions() bool { return true }
+
+func (a *Adapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, false)
 	if err != nil {
 		return nil, err
@@ -322,9 +351,8 @@ func (a *Adapter) ChatStream(ctx context.Context, messages []types.Message, tool
 	return a.consumeStream(stream, nil), nil
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
 // This adapter constrains output with a hidden tool and forces the model to call it.
-func (a *Adapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (a *Adapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
 	if err != nil {
 		return nil, err
@@ -675,49 +703,50 @@ func toAnthropicParams(msgs []types.Message) ([]anthropic.TextBlockParam, []anth
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					// The API rejects an empty text block, so a blank system
 					// prompt is dropped; with none left, no system is sent.
 					if strings.TrimSpace(bc.Text) != "" {
 						system = append(system, anthropic.TextBlockParam{Text: bc.Text})
 					}
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					out = appendMsg(out, "user", toToolResultBlock(bc))
 				}
 			}
 
 		case types.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					out = appendMsg(out, "user", anthropic.NewTextBlock(bc.Text))
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					out = appendMsg(out, "user", toToolResultBlock(bc))
-				case types.FileContent:
-					if bc.Data != nil && isImageType(bc.MediaType) {
-						b64 := base64.StdEncoding.EncodeToString(bc.Data)
-						out = appendMsg(out, "user", anthropic.NewImageBlockBase64(string(bc.MediaType), b64))
-					} else if bc.Data != nil && bc.MediaType == types.MediaPDF {
+				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+					fc, _ := legacyparts.MediaOf(bc)
+					if fc.Data != nil && isImageType(fc.MediaType) {
+						b64 := base64.StdEncoding.EncodeToString(fc.Data)
+						out = appendMsg(out, "user", anthropic.NewImageBlockBase64(string(fc.MediaType), b64))
+					} else if fc.Data != nil && fc.MediaType == types.MediaPDF {
 						// Native PDF pass-through, matching the ContentSupport claim.
 						out = appendMsg(out, "user", anthropic.ContentBlockParamUnion{
-							OfDocument: documentBlockFromBytes(bc.Data),
+							OfDocument: documentBlockFromBytes(fc.Data),
 						})
-					} else if bc.Data != nil {
-						out = appendMsg(out, "user", anthropic.NewTextBlock("[File: "+bc.Filename+"] "+string(bc.Data)))
+					} else if fc.Data != nil {
+						out = appendMsg(out, "user", anthropic.NewTextBlock("[File: "+fc.Filename+"] "+string(fc.Data)))
 					}
 				}
 			}
 
 		case types.AssistantMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.ThinkingContent:
-					out = appendMsg(out, "assistant", anthropic.NewThinkingBlock(bc.Signature, bc.Thinking))
-				case types.TextContent:
+				case types.ThinkingPart:
+					out = appendMsg(out, "assistant", anthropic.NewThinkingBlock(bc.Signature, bc.Text))
+				case types.TextPart:
 					out = appendMsg(out, "assistant", anthropic.NewTextBlock(bc.Text))
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					out = appendMsg(out, "assistant", anthropic.NewToolUseBlock(bc.ID, bc.Arguments, bc.Name))
 				}
 			}
@@ -773,28 +802,28 @@ func isImageType(mt types.MediaType) bool {
 	return false
 }
 
-// toToolResultBlock converts a ToolResultContent into an Anthropic tool_result
+// toToolResultBlock converts a ToolResultPart into an Anthropic tool_result
 // block. When the result has no rich Blocks it takes the exact back-compat path
 // (anthropic.NewToolResultBlock). With Blocks it builds a multi-content
 // tool_result carrying text, images (base64), and PDF documents; unsupported
 // media degrades to a text placeholder so the request never errors.
-func toToolResultBlock(c types.ToolResultContent) anthropic.ContentBlockParamUnion {
-	if len(c.Blocks) == 0 {
-		return anthropic.NewToolResultBlock(c.ToolCallID, c.Text, c.IsError)
+func toToolResultBlock(c types.ToolResultPart) anthropic.ContentBlockParamUnion {
+	if len(legacyparts.Blocks(c.Parts)) == 0 {
+		return anthropic.NewToolResultBlock(c.CallID, c.Text(), c.IsError)
 	}
 
-	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(c.Blocks))
-	for _, b := range c.Blocks {
+	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(legacyparts.Blocks(c.Parts)))
+	for _, b := range legacyparts.Blocks(c.Parts) {
 		switch b.Kind {
-		case types.ToolResultBlockText:
+		case legacyparts.BlockText:
 			content = append(content, anthropic.ToolResultBlockParamContentUnion{
 				OfText: &anthropic.TextBlockParam{Text: b.Text},
 			})
-		case types.ToolResultBlockJSON:
+		case legacyparts.BlockJSON:
 			content = append(content, anthropic.ToolResultBlockParamContentUnion{
 				OfText: &anthropic.TextBlockParam{Text: string(b.JSON)},
 			})
-		case types.ToolResultBlockImage:
+		case legacyparts.BlockImage:
 			if b.Data != nil && isImageType(b.MediaType) {
 				b64 := base64.StdEncoding.EncodeToString(b.Data)
 				content = append(content, anthropic.ToolResultBlockParamContentUnion{
@@ -812,7 +841,7 @@ func toToolResultBlock(c types.ToolResultContent) anthropic.ContentBlockParamUni
 					OfText: &anthropic.TextBlockParam{Text: "[image: " + b.Filename + "]"},
 				})
 			}
-		case types.ToolResultBlockFile:
+		case legacyparts.BlockFile:
 			if b.Data != nil && b.MediaType == types.MediaPDF {
 				content = append(content, anthropic.ToolResultBlockParamContentUnion{
 					OfDocument: documentBlockFromBytes(b.Data),
@@ -827,11 +856,11 @@ func toToolResultBlock(c types.ToolResultContent) anthropic.ContentBlockParamUni
 
 	// Guarantee non-empty content: if every block was dropped, fall back to text.
 	if len(content) == 0 {
-		return anthropic.NewToolResultBlock(c.ToolCallID, c.Text, c.IsError)
+		return anthropic.NewToolResultBlock(c.CallID, c.Text(), c.IsError)
 	}
 	return anthropic.ContentBlockParamUnion{
 		OfToolResult: &anthropic.ToolResultBlockParam{
-			ToolUseID: c.ToolCallID,
+			ToolUseID: c.CallID,
 			IsError:   anthropic.Bool(c.IsError),
 			Content:   content,
 		},

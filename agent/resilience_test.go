@@ -13,10 +13,10 @@ import (
 // mimicking a provider that overloads after message_start.
 type midStreamErrorProvider struct{}
 
-func (midStreamErrorProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (midStreamErrorProvider) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta, 4)
-	ch <- types.TextStartDelta{}
-	ch <- types.TextContentDelta{Content: "partial"}
+	ch <- types.PartStart{Index: 0, Kind: types.KindText}
+	ch <- types.PartDelta{Index: 0, Text: "partial"}
 	ch <- types.ErrorDelta{Error: errors.New("overloaded")}
 	close(ch)
 	return ch, nil
@@ -26,7 +26,7 @@ func (midStreamErrorProvider) ChatStream(context.Context, []types.Message, []typ
 // instead of being treated as a successful (truncated) response.
 func TestMidStreamErrorFailsTurn(t *testing.T) {
 	a := NewAgent(AgentConfig{Provider: midStreamErrorProvider{}, SystemPrompt: "s"})
-	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")}))
+	deltas := collectDeltas(a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))}))
 
 	errs := collectDeltasByType[types.ErrorDelta](deltas)
 	if len(errs) == 0 {
@@ -49,7 +49,7 @@ func TestMidStreamErrorFailsTurn(t *testing.T) {
 // error (RunDurable captures it rather than returning a phantom success).
 func TestMidStreamErrorDurable(t *testing.T) {
 	a := NewAgent(AgentConfig{Provider: midStreamErrorProvider{}, SystemPrompt: "s"})
-	final, err := a.RunDurable(context.Background(), newRecordingRunner(), []types.Message{types.NewUserMessage("hi")}, "")
+	final, err := a.RunDurable(context.Background(), newRecordingRunner(), []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err == nil {
 		t.Fatal("expected RunDurable to return the mid-stream error")
 	}

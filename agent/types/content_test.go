@@ -3,27 +3,28 @@ package types
 import "testing"
 
 func TestContentRoleInterfaces(t *testing.T) {
-	// TextContent satisfies all three roles
-	var _ SystemContent = TextContent{Text: "sys"}
-	var _ UserContent = TextContent{Text: "usr"}
-	var _ AssistantContent = TextContent{Text: "asst"}
+	// TextPart satisfies all three roles
+	var _ SystemPart = TextPart{Text: "sys"}
+	var _ UserPart = TextPart{Text: "usr"}
+	var _ AssistantPart = TextPart{Text: "asst"}
 
-	// ToolUseContent is assistant-only
-	var _ AssistantContent = ToolUseContent{ID: "1", Name: "test"}
+	// ToolCallPart is assistant-only
+	var _ AssistantPart = ToolCallPart{ID: "1", Name: "test"}
 
-	// ToolResultContent is system and user
-	var _ SystemContent = ToolResultContent{ToolCallID: "1", Text: "ok"}
-	var _ UserContent = ToolResultContent{ToolCallID: "1", Text: "ok"}
+	// ToolResultPart is system and user
+	var _ SystemPart = ToolResultPart{CallID: "1", Parts: []ToolOutputPart{Text("ok")}}
+	var _ UserPart = ToolResultPart{CallID: "1", Parts: []ToolOutputPart{Text("ok")}}
 
-	// ConfigContent is system and user
-	var _ SystemContent = ConfigContent{Model: "gpt-4"}
-	var _ UserContent = ConfigContent{Model: "gpt-4"}
+	// ConfigPart is system and user
+	var _ SystemPart = ConfigPart{Model: "gpt-4"}
+	var _ UserPart = ConfigPart{Model: "gpt-4"}
 
-	// FileContent is user-only
-	var _ UserContent = FileContent{URI: "file:///test.txt"}
+	// Media parts are user input and tool output
+	var _ UserPart = Document(URL("file:///test.txt"))
+	var _ ToolOutputPart = Image(Bytes(MediaPNG, []byte{1}))
 
-	// FeedbackContent is user-only
-	var _ UserContent = FeedbackContent{TargetNodeID: "n-1", Rating: RatingPositive}
+	// FeedbackPart is user-only
+	var _ UserPart = FeedbackPart{TargetNodeID: "n-1", Rating: RatingPositive}
 }
 
 func TestMediaTypes(t *testing.T) {

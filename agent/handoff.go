@@ -260,12 +260,12 @@ func overlaySystem(messages []types.Message, persona string) []types.Message {
 	copy(out, messages)
 	if len(out) > 0 {
 		if sm, ok := out[0].(types.SystemMessage); ok {
-			content := make([]types.SystemContent, len(sm.Content), len(sm.Content)+1)
-			copy(content, sm.Content)
-			content = append(content, types.TextContent{Text: persona})
-			out[0] = types.SystemMessage{Content: content}
+			content := make([]types.SystemPart, len(sm.Parts), len(sm.Parts)+1)
+			copy(content, sm.Parts)
+			content = append(content, types.TextPart{Text: persona})
+			out[0] = types.SystemMessage{Parts: content}
 			return out
 		}
 	}
-	return append([]types.Message{types.NewSystemMessage(persona)}, out...)
+	return append([]types.Message{types.SystemMsg(types.Text(persona))}, out...)
 }

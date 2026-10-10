@@ -65,9 +65,9 @@ func TestEveryAdapterRejectsUnsupportedRequestBeforeHTTP(t *testing.T) {
 					var ch <-chan types.Delta
 					var err error
 					if schema {
-						ch, err = p.(types.StructuredOutputProvider).ChatStreamWithSchema(context.Background(), nil, tools, &types.ParameterSchema{Type: "object"})
+						ch, err = p.(types.StructuredOutputProvider).Stream(context.Background(), types.Request{Tools: tools, Schema: &types.ParameterSchema{Type: "object"}})
 					} else {
-						ch, err = p.ChatStream(context.Background(), nil, tools)
+						ch, err = p.Stream(context.Background(), types.Request{Tools: tools})
 					}
 					if ch != nil {
 						for range ch {

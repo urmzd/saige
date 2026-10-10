@@ -47,11 +47,22 @@ func (p *schemaProvider) next(kind string, script *[][]types.Delta, msgs []types
 	return ch
 }
 
-func (p *schemaProvider) ChatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *schemaProvider) chatStream(_ context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
 	return p.next("plain", &p.plain, msgs), nil
 }
 
-func (p *schemaProvider) ChatStreamWithSchema(_ context.Context, msgs []types.Message, _ []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
+// Stream implements types.Provider.
+func (p *schemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil {
+		return p.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	}
+	return p.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (p *schemaProvider) SupportsSchema() bool { return true }
+
+func (p *schemaProvider) chatStreamWithSchema(_ context.Context, msgs []types.Message, _ []types.ToolDef, _ *types.ParameterSchema) (<-chan types.Delta, error) {
 	return p.next("schema", &p.schema, msgs), nil
 }
 
@@ -98,8 +109,8 @@ func lastAssistantText(t *testing.T, a *Agent) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if am, ok := msgs[i].(types.AssistantMessage); ok {
 			var sb strings.Builder
-			for _, c := range am.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range am.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					sb.WriteString(tc.Text)
 				}
 			}
@@ -121,7 +132,7 @@ func TestResponseSchemaUnsupportedFailsFast(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: tt.provider}, WithResponseSchema(cityPopulationSchema))
-			s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range s.Deltas() {
 			}
 			if err := s.Wait(); !errors.Is(err, types.ErrInvalidModelConfig) {
@@ -173,7 +184,7 @@ func TestResponseSchemaWithTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &schemaProvider{plain: tt.plain, schema: tt.schema}
 			a := NewAgent(AgentConfig{Provider: p, Tools: types.NewToolRegistry(lookup)}, WithResponseSchema(cityPopulationSchema))
-			s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("Where?")})
+			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Where?"))})
 			for range s.Deltas() {
 			}
 			if err := s.Wait(); err != nil {
@@ -214,12 +225,17 @@ func (p *optionsSchemaProvider) Capabilities() types.ModelCapabilities {
 		With(types.CapStreaming, types.CapTools, types.CapToolChoice, types.CapStructuredOutput)
 }
 
-func (p *optionsSchemaProvider) ChatStreamWithOptions(ctx context.Context, msgs []types.Message, tools []types.ToolDef, _ types.RequestOptions) (<-chan types.Delta, error) {
+func (p *optionsSchemaProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options == nil {
+		return p.schemaProvider.Stream(ctx, req)
+	}
 	p.mu.Lock()
 	p.optionCalls++
 	p.mu.Unlock()
-	return p.ChatStream(ctx, msgs, tools)
+	return p.schemaProvider.Stream(ctx, types.Request{Messages: req.Messages, Tools: req.Tools})
 }
+
+func (p *optionsSchemaProvider) SupportsOptions() bool { return true }
 
 // TestToolChoiceNoneKeepsResponseSchema checks that a "none" tool choice on
 // an agent with no tools does not route the call around the response schema.
@@ -231,7 +247,7 @@ func TestToolChoiceNoneKeepsResponseSchema(t *testing.T) {
 				schema: [][]types.Delta{agenttest.TextResponse(`{"city":"Tokyo"}`)},
 			}}
 			a := NewAgent(AgentConfig{Provider: p}, WithResponseSchema(cityPopulationSchema), WithToolChoice(types.ToolChoice{Mode: mode}))
-			s := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			s := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			for range s.Deltas() {
 			}
 			if err := s.Wait(); err != nil {

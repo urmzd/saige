@@ -19,14 +19,14 @@ func TestMessageRoles(t *testing.T) {
 }
 
 func TestNewSystemMessage(t *testing.T) {
-	msg := NewSystemMessage("you are helpful")
+	msg := SystemMsg(Text("you are helpful"))
 	if msg.Role() != RoleSystem {
 		t.Errorf("Role = %q, want system", msg.Role())
 	}
-	if len(msg.Content) != 1 {
-		t.Fatalf("Content len = %d, want 1", len(msg.Content))
+	if len(msg.Parts) != 1 {
+		t.Fatalf("Content len = %d, want 1", len(msg.Parts))
 	}
-	tc, ok := msg.Content[0].(TextContent)
+	tc, ok := msg.Parts[0].(TextPart)
 	if !ok {
 		t.Fatal("Content[0] is not TextContent")
 	}
@@ -36,11 +36,11 @@ func TestNewSystemMessage(t *testing.T) {
 }
 
 func TestNewUserMessage(t *testing.T) {
-	msg := NewUserMessage("hello")
+	msg := UserMsg(Text("hello"))
 	if msg.Role() != RoleUser {
 		t.Errorf("Role = %q, want user", msg.Role())
 	}
-	tc, ok := msg.Content[0].(TextContent)
+	tc, ok := msg.Parts[0].(TextPart)
 	if !ok {
 		t.Fatal("Content[0] is not TextContent")
 	}
@@ -50,32 +50,32 @@ func TestNewUserMessage(t *testing.T) {
 }
 
 func TestNewToolResultMessage(t *testing.T) {
-	msg := NewToolResultMessage(
-		ToolResultContent{ToolCallID: "tc-1", Text: "result1"},
-		ToolResultContent{ToolCallID: "tc-2", Text: "result2"},
+	msg := ToolResults(
+		ToolResultPart{CallID: "tc-1", Parts: []ToolOutputPart{Text("result1")}},
+		ToolResultPart{CallID: "tc-2", Parts: []ToolOutputPart{Text("result2")}},
 	)
 	if msg.Role() != RoleSystem {
 		t.Errorf("Role = %q, want system", msg.Role())
 	}
-	if len(msg.Content) != 2 {
-		t.Fatalf("Content len = %d, want 2", len(msg.Content))
+	if len(msg.Parts) != 2 {
+		t.Fatalf("Content len = %d, want 2", len(msg.Parts))
 	}
 }
 
 func TestNewFileMessage(t *testing.T) {
 	msg := NewFileMessage("file:///test.pdf", MediaPDF)
-	if len(msg.Content) != 1 {
-		t.Fatalf("Content len = %d, want 1", len(msg.Content))
+	if len(msg.Parts) != 1 {
+		t.Fatalf("Content len = %d, want 1", len(msg.Parts))
 	}
-	fc, ok := msg.Content[0].(FileContent)
+	doc, ok := msg.Parts[0].(DocumentPart)
 	if !ok {
-		t.Fatal("Content[0] is not FileContent")
+		t.Fatalf("Parts[0] = %T, want DocumentPart", msg.Parts[0])
 	}
-	if fc.URI != "file:///test.pdf" {
-		t.Errorf("URI = %q", fc.URI)
+	if doc.Source.URI != "file:///test.pdf" {
+		t.Errorf("URI = %q", doc.Source.URI)
 	}
-	if fc.MediaType != MediaPDF {
-		t.Errorf("MediaType = %q, want %q", fc.MediaType, MediaPDF)
+	if doc.Source.MediaType != MediaPDF {
+		t.Errorf("MediaType = %q, want %q", doc.Source.MediaType, MediaPDF)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestNewUserMessageWithFiles(t *testing.T) {
 		FileContent{URI: "file:///a.jpg", MediaType: MediaJPEG},
 		FileContent{URI: "file:///b.png", MediaType: MediaPNG},
 	)
-	if len(msg.Content) != 3 {
-		t.Fatalf("Content len = %d, want 3", len(msg.Content))
+	if len(msg.Parts) != 3 {
+		t.Fatalf("Content len = %d, want 3", len(msg.Parts))
 	}
 }

@@ -29,7 +29,7 @@ func TestRunRecordsSetupFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := New(t.TempDir())
-			input := []types.Message{types.NewUserMessage("go")}
+			input := []types.Message{types.UserMsg(types.Text("go"))}
 			if tc.seed != nil {
 				raw, err := encode(input)
 				if err != nil {
@@ -87,7 +87,7 @@ func TestListAndDelete(t *testing.T) {
 	ctx := context.Background()
 	e := New(t.TempDir())
 	var calls atomic.Int32
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 
 	plain := func() *agent.Agent {
 		return agent.NewAgent(agent.AgentConfig{Provider: &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("done")}}})

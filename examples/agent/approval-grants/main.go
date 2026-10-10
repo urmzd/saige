@@ -57,7 +57,7 @@ func main() {
 		Tools:    types.NewToolRegistry(write, read, remove),
 	}, agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{RiskDefaults: true, DenyAfter: 3}))
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Set up the app files.")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Set up the app files."))})
 	for d := range stream.Deltas() {
 		switch d := d.(type) {
 		case types.MarkerDelta:

@@ -37,7 +37,7 @@ func TestSubmitJoinsRunAfterCompaction(t *testing.T) {
 			defer cancel()
 			before := a.Tree().Active()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			deltas := collect(stream)
 			waitStarted(t, provider, 1)
 			if a.Tree().Active() == before {
@@ -46,7 +46,7 @@ func TestSubmitJoinsRunAfterCompaction(t *testing.T) {
 
 			// An empty branch means the active one, which is now the
 			// compacted branch the run writes.
-			joined, id, err := a.Submit(ctx, "", types.NewUserMessage("more"), tt.mode)
+			joined, id, err := a.Submit(ctx, "", types.UserMsg(types.Text("more")), tt.mode)
 			if err != nil {
 				t.Fatalf("Submit: %v", err)
 			}
@@ -89,10 +89,10 @@ func TestInterruptOnLastStepIsAnswered(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			deltas := collect(stream)
 			waitStarted(t, provider, 0)
-			if _, err := stream.Submit(types.NewUserMessage("new direction"), SubmitInterruptReplace); err != nil {
+			if _, err := stream.Submit(types.UserMsg(types.Text("new direction")), SubmitInterruptReplace); err != nil {
 				t.Fatal(err)
 			}
 			<-deltas
@@ -155,13 +155,13 @@ func TestDurableRunRefusesSubmissions(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			deltas := collect(stream)
 			waitStarted(t, provider, 0)
-			if _, err := stream.Submit(types.NewUserMessage("x"), mode); !errors.Is(err, ErrSubmitUnsupported) {
+			if _, err := stream.Submit(types.UserMsg(types.Text("x")), mode); !errors.Is(err, ErrSubmitUnsupported) {
 				t.Fatalf("EventStream.Submit = %v, want ErrSubmitUnsupported", err)
 			}
-			if _, _, err := a.Submit(ctx, "", types.NewUserMessage("x"), mode); !errors.Is(err, ErrRunActive) {
+			if _, _, err := a.Submit(ctx, "", types.UserMsg(types.Text("x")), mode); !errors.Is(err, ErrRunActive) {
 				t.Fatalf("Agent.Submit = %v, want ErrRunActive", err)
 			}
 			close(hold)
@@ -190,19 +190,19 @@ func TestSubmitFromConsumerWithFullBuffer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			hold := make(chan struct{})
 			var flood []types.Delta
-			flood = append(flood, types.TextStartDelta{})
+			flood = append(flood, types.PartStart{Index: 0, Kind: types.KindText})
 			for range 200 {
-				flood = append(flood, types.TextContentDelta{Content: "x"})
+				flood = append(flood, types.PartDelta{Index: 0, Text: "x"})
 			}
 			provider := newStepProvider(
-				stepCall{before: flood, hold: hold, after: []types.Delta{types.TextEndDelta{}}},
+				stepCall{before: flood, hold: hold, after: []types.Delta{types.PartEnd{Index: 0}}},
 				stepCall{before: agenttest.TextResponse("second")},
 			)
 			a := NewAgent(AgentConfig{Provider: provider})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			deadline := time.Now().Add(5 * time.Second)
 			for len(stream.deltas) < cap(stream.deltas) {
 				if time.Now().After(deadline) {
@@ -213,7 +213,7 @@ func TestSubmitFromConsumerWithFullBuffer(t *testing.T) {
 
 			done := make(chan SubmissionID, 1)
 			go func() {
-				id, err := stream.Submit(types.NewUserMessage("extra"), tt.mode)
+				id, err := stream.Submit(types.UserMsg(types.Text("extra")), tt.mode)
 				if err != nil {
 					t.Errorf("Submit: %v", err)
 				}
@@ -263,7 +263,7 @@ func TestAgentSubmitReportsStartedRun(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream, id, err := a.Submit(ctx, "", types.NewUserMessage("hello"), tt.mode)
+			stream, id, err := a.Submit(ctx, "", types.UserMsg(types.Text("hello")), tt.mode)
 			if err != nil || id == "" {
 				t.Fatalf("Submit = %q, %v", id, err)
 			}

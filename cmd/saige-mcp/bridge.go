@@ -228,32 +228,36 @@ func execute(ctx context.Context, tool agenttypes.Tool, args map[string]any) *mc
 	}
 	out := &mcp.CallToolResult{IsError: res.IsError}
 	hasText := false
-	for _, b := range res.Blocks {
-		switch b.Kind {
-		case agenttypes.ToolResultBlockText:
+	for _, p := range res.Parts {
+		switch v := p.(type) {
+		case agenttypes.TextPart:
 			hasText = true
-			out.Content = append(out.Content, &mcp.TextContent{Text: b.Text})
-		case agenttypes.ToolResultBlockImage:
-			out.Content = append(out.Content, &mcp.ImageContent{MIMEType: string(b.MediaType), Data: b.Data})
-		case agenttypes.ToolResultBlockFile:
-			if strings.HasPrefix(string(b.MediaType), "audio/") {
-				out.Content = append(out.Content, &mcp.AudioContent{MIMEType: string(b.MediaType), Data: b.Data})
-			} else if b.URI != "" || len(b.Data) > 0 {
-				out.Content = append(out.Content, &mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
-					URI: b.URI, MIMEType: string(b.MediaType), Blob: b.Data,
-				}})
-			}
-		case agenttypes.ToolResultBlockJSON:
+			out.Content = append(out.Content, &mcp.TextContent{Text: v.Text})
+		case agenttypes.JSONPart:
 			// MCP structured content must be a JSON object.
 			var obj map[string]any
-			if json.Unmarshal(b.JSON, &obj) == nil && obj != nil {
+			if json.Unmarshal(v.JSON, &obj) == nil && obj != nil {
 				out.StructuredContent = obj
+			}
+		case agenttypes.ImagePart:
+			out.Content = append(out.Content, &mcp.ImageContent{MIMEType: string(v.Source.MediaType), Data: v.Source.Inline})
+		case agenttypes.AudioPart:
+			out.Content = append(out.Content, &mcp.AudioContent{MIMEType: string(v.Source.MediaType), Data: v.Source.Inline})
+		default:
+			if src, ok := agenttypes.SourceOf(p); ok && (src.URI != "" || len(src.Inline) > 0) {
+				if strings.HasPrefix(string(src.MediaType), "audio/") {
+					out.Content = append(out.Content, &mcp.AudioContent{MIMEType: string(src.MediaType), Data: src.Inline})
+					continue
+				}
+				out.Content = append(out.Content, &mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+					URI: src.URI, MIMEType: string(src.MediaType), Blob: src.Inline,
+				}})
 			}
 		}
 	}
-	// The text projection is mandatory; send it when no block carried text.
-	if !hasText && (res.Text != "" || len(out.Content) == 0) {
-		out.Content = append([]mcp.Content{&mcp.TextContent{Text: res.Text}}, out.Content...)
+	// The text projection is mandatory; send it when no part carried text.
+	if !hasText && (res.Text() != "" || len(out.Content) == 0) {
+		out.Content = append([]mcp.Content{&mcp.TextContent{Text: res.Text()}}, out.Content...)
 	}
 	return out
 }

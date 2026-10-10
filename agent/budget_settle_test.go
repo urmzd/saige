@@ -43,13 +43,13 @@ func TestBudgetOvershootFollowsPolicy(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			var text string
 			markers := 0
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text += v.Content
+				case types.PartDelta:
+					text += v.Text
 				case types.MarkerDelta:
 					markers++
 					stream.ResolveMarker(v.ToolCallID, tt.approve, nil)
@@ -81,9 +81,9 @@ func TestInterruptChargesUsedTokens(t *testing.T) {
 		before []types.Delta
 	}{
 		{name: "usage reported before the interrupt", before: []types.Delta{
-			types.UsageDelta{PromptTokens: 1000}, types.TextStartDelta{}, types.TextContentDelta{Content: "half"},
+			types.UsageDelta{PromptTokens: 1000}, types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "half"},
 		}},
-		{name: "no usage reported yet", before: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "half"}}},
+		{name: "no usage reported yet", before: []types.Delta{types.PartStart{Index: 1, Kind: types.KindText}, types.PartDelta{Index: 1, Text: "half"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,7 +95,7 @@ func TestInterruptChargesUsedTokens(t *testing.T) {
 			a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			submitted := false
 			var text string
 			seen := 0
@@ -103,12 +103,12 @@ func TestInterruptChargesUsedTokens(t *testing.T) {
 				if _, usage := d.(types.UsageDelta); !usage {
 					seen++
 				}
-				if v, ok := d.(types.TextContentDelta); ok {
-					text += v.Content
+				if v, ok := d.(types.PartDelta); ok {
+					text += v.Text
 				}
 				if !submitted && seen >= len(tt.before)-1 && text == "half" {
 					submitted = true
-					if _, err := stream.Submit(types.NewUserMessage("new direction"), SubmitInterruptReplace); err != nil {
+					if _, err := stream.Submit(types.UserMsg(types.Text("new direction")), SubmitInterruptReplace); err != nil {
 						t.Fatalf("Submit: %v", err)
 					}
 				}
@@ -144,7 +144,7 @@ func TestInterruptDuringAdmissionApproval(t *testing.T) {
 	a := NewAgent(AgentConfig{Provider: provider}, WithBudget(budget))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	var id SubmissionID
 	markers := 0
 	injected := false
@@ -154,7 +154,7 @@ func TestInterruptDuringAdmissionApproval(t *testing.T) {
 			markers++
 			if markers == 1 {
 				var err error
-				if id, err = stream.Submit(types.NewUserMessage("new direction"), SubmitInterruptReplace); err != nil {
+				if id, err = stream.Submit(types.UserMsg(types.Text("new direction")), SubmitInterruptReplace); err != nil {
 					t.Fatalf("Submit: %v", err)
 				}
 				continue

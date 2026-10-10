@@ -76,21 +76,21 @@ func storedConversation(t *testing.T, pool *pgxpool.Pool, scope, conv string) []
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := tree.New(types.NewSystemMessage("You are a support agent."), tree.WithStore(st))
+	tr, err := tree.New(types.SystemMsg(types.Text("You are a support agent.")), tree.WithStore(st))
 	if err != nil {
 		t.Fatal(err)
 	}
 	parent := tr.Root().ID
 	var ids []types.NodeID
 	for _, msg := range []types.Message{
-		types.NewUserMessage("What is the refund policy?"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.RouteContent{Model: "gpt-6-luna"},
-			types.ToolUseContent{ID: "c1", Name: "lookup_policy", Arguments: map[string]any{}},
+		types.UserMsg(types.Text("What is the refund policy?")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.RoutePart{Model: "gpt-6-luna"},
+			types.ToolCallPart{ID: "c1", Name: "lookup_policy", Arguments: map[string]any{}},
 		}},
-		types.SystemMessage{Content: []types.SystemContent{types.ToolResultContent{ToolCallID: "c1", Text: "30 days"}}},
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.RouteContent{Model: "gpt-6-luna"}, types.TextContent{Text: "Refunds within 30 days."},
+		types.SystemMessage{Parts: []types.SystemPart{types.ToolResultPart{CallID: "c1", Parts: []types.ToolOutputPart{types.Text("30 days")}}}},
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.RoutePart{Model: "gpt-6-luna"}, types.TextPart{Text: "Refunds within 30 days."},
 		}},
 	} {
 		n, err := tr.AddChild(context.Background(), parent, msg)

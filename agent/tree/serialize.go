@@ -3,6 +3,7 @@ package tree
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	contentTypeApproval   = "approval"
 	contentTypeGuardrail  = "guardrail"
 	contentTypeCompaction = "compaction"
+	contentTypeFile       = "file"
 	contentTypeUnknown    = "unknown"
 )
 
@@ -68,16 +70,21 @@ type serializedCheckpoint struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// contentEnvelope wraps a content block with its type for JSON round-tripping.
+// contentEnvelope wraps a part with its type tag for JSON round-tripping.
 type contentEnvelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
 
-// messageEnvelope wraps content blocks with type tags.
+// messageEnvelope wraps a message's parts with type tags.
 type messageEnvelope struct {
 	Content []contentEnvelope `json:"content"`
 }
+
+// contentTypePart tags a part stored in the shared part codec form
+// (types.MarshalPart). Parts with a v1 tag keep their v1 form, so stores
+// written before typed parts and stores written after read the same way.
+const contentTypePart = "part"
 
 // MarshalMessage serializes a Message to its JSON envelope representation.
 func MarshalMessage(msg types.Message) (json.RawMessage, error) {
@@ -91,38 +98,178 @@ func UnmarshalMessage(role types.Role, data json.RawMessage) (types.Message, err
 
 func marshalMessage(msg types.Message) (json.RawMessage, error) {
 	var env messageEnvelope
+	for _, p := range types.PartsOf(msg) {
+		ce, err := marshalPart(p)
+		if err != nil {
+			return nil, err
+		}
+		env.Content = append(env.Content, ce)
+	}
+	return json.Marshal(env)
+}
 
-	switch m := msg.(type) {
-	case types.SystemMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := systemContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
+// The v1 forms of the parts that had one. Field names and tags are the
+// stored format: never change them.
+type (
+	legacyText struct {
+		Text string
+	}
+	legacyToolUse struct {
+		ID             string
+		Name           string
+		Arguments      map[string]any
+		ArgumentsError string
+	}
+	legacyThinking struct {
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	}
+	legacyBlock struct {
+		Kind      string          `json:"kind"`
+		Text      string          `json:"text,omitempty"`
+		MediaType types.MediaType `json:"media_type,omitempty"`
+		URI       string          `json:"uri,omitempty"`
+		Filename  string          `json:"filename,omitempty"`
+		JSON      json.RawMessage `json:"json,omitempty"`
+	}
+	legacyToolResult struct {
+		ToolCallID  string
+		Text        string
+		IsError     bool
+		Blocks      []legacyBlock    `json:"blocks,omitempty"`
+		Citations   []types.Citation `json:"citations,omitempty"`
+		ToolVersion string           `json:"tool_version,omitempty"`
+	}
+	legacyFile struct {
+		URI       string          `json:"uri"`
+		MediaType types.MediaType `json:"media_type,omitempty"`
+		Filename  string          `json:"filename,omitempty"`
+	}
+	legacyServerTool struct {
+		ID     string               `json:"id"`
+		Kind   types.ServerToolKind `json:"kind"`
+		Name   string               `json:"name,omitempty"`
+		Input  map[string]any       `json:"input,omitempty"`
+		Text   string               `json:"text,omitempty"`
+		Result json.RawMessage      `json:"result,omitempty"`
+		Files  []legacyFile         `json:"files,omitempty"`
+	}
+)
+
+//nolint:gocyclo // one case per part kind
+func marshalPart(p types.Part) (contentEnvelope, error) {
+	var tag string
+	var v any
+	switch x := p.(type) {
+	case types.TextPart:
+		tag, v = contentTypeText, legacyText{Text: x.Text}
+	case types.ToolCallPart:
+		tag, v = "tool_use", legacyToolUse(x)
+	case types.ThinkingPart:
+		if !x.Redacted && !x.Summary {
+			tag, v = contentTypeThinking, legacyThinking{Thinking: x.Text, Signature: x.Signature}
 		}
-	case types.UserMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := userContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
+	case types.ToolResultPart:
+		if blocks, ok := legacyBlocks(x.Parts); ok {
+			tag, v = contentTypeToolResult, legacyToolResult{ToolCallID: x.CallID, Text: x.Text(), IsError: x.IsError,
+				Blocks: blocks, Citations: x.Citations, ToolVersion: x.ToolVersion}
 		}
-	case types.AssistantMessage:
-		for _, c := range m.Content {
-			data, err := json.Marshal(c)
-			if err != nil {
-				return nil, err
-			}
-			typeName := assistantContentType(c)
-			env.Content = append(env.Content, contentEnvelope{Type: typeName, Data: data})
+	case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+		if f, ok := legacyFileOf(p); ok {
+			tag, v = contentTypeFile, f
+		}
+	case types.ConfigPart:
+		tag, v = contentTypeConfig, x
+	case types.HandoffPart:
+		tag, v = contentTypeHandoff, x
+	case types.FeedbackPart:
+		tag, v = "feedback", x
+	case types.SteerPart:
+		tag, v = contentTypeSteer, x
+	case types.TruncationPart:
+		tag, v = contentTypeTruncation, x
+	case types.RoutePart:
+		tag, v = contentTypeRoute, x
+	case types.ApprovalPart:
+		tag, v = contentTypeApproval, x
+	case types.GuardrailPart:
+		tag, v = contentTypeGuardrail, x
+	case types.CompactionPart:
+		tag, v = contentTypeCompaction, x
+	}
+	if tag == "" {
+		data, err := types.MarshalPart(p)
+		return contentEnvelope{Type: contentTypePart, Data: data}, err
+	}
+	data, err := json.Marshal(v)
+	return contentEnvelope{Type: tag, Data: data}, err
+}
+
+// legacyBlocks returns the v1 blocks for tool output. Text alone has none.
+// It reports false for output the v1 form cannot hold.
+func legacyBlocks(parts []types.ToolOutputPart) ([]legacyBlock, bool) {
+	plain := true
+	for _, p := range parts {
+		if _, ok := p.(types.TextPart); !ok {
+			plain = false
 		}
 	}
+	if plain {
+		return nil, len(parts) <= 1
+	}
+	out := make([]legacyBlock, 0, len(parts))
+	for _, p := range parts {
+		switch x := p.(type) {
+		case types.TextPart:
+			out = append(out, legacyBlock{Kind: "text", Text: x.Text})
+		case types.JSONPart:
+			out = append(out, legacyBlock{Kind: "json", JSON: x.JSON})
+		default:
+			f, ok := legacyFileOf(p)
+			if !ok {
+				return nil, false
+			}
+			kind := "file"
+			if _, img := p.(types.ImagePart); img {
+				kind = "image"
+			} else if types.Media(types.Source{MediaType: f.MediaType}).Kind() != p.Kind() {
+				return nil, false
+			}
+			out = append(out, legacyBlock{Kind: kind, MediaType: f.MediaType, URI: f.URI, Filename: f.Filename})
+		}
+	}
+	return out, true
+}
 
-	return json.Marshal(env)
+// legacyFileOf returns the v1 attachment form of a media part, when the
+// part carries nothing that form would lose.
+func legacyFileOf(p types.Part) (legacyFile, bool) {
+	src, _ := types.SourceOf(p)
+	if src.Digest != "" || src.Size != 0 || src.Ref != "" || len(src.Files) > 0 || src.Unresolved != "" {
+		return legacyFile{}, false
+	}
+	switch x := p.(type) {
+	case types.ImagePart:
+		if x.ImageMeta != (types.ImageMeta{}) {
+			return legacyFile{}, false
+		}
+	case types.AudioPart:
+		if x.AudioMeta != (types.AudioMeta{}) {
+			return legacyFile{}, false
+		}
+	case types.VideoPart:
+		if x.VideoMeta != (types.VideoMeta{}) {
+			return legacyFile{}, false
+		}
+	case types.DocumentPart:
+		if x.DocumentMeta != (types.DocumentMeta{}) {
+			return legacyFile{}, false
+		}
+	}
+	if types.Media(src).Kind() != p.Kind() {
+		return legacyFile{}, false
+	}
+	return legacyFile{URI: src.URI, MediaType: src.MediaType, Filename: src.Filename}, true
 }
 
 func unmarshalMessage(role types.Role, data json.RawMessage) (types.Message, error) {
@@ -130,211 +277,166 @@ func unmarshalMessage(role types.Role, data json.RawMessage) (types.Message, err
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, err
 	}
-
 	switch role {
 	case types.RoleSystem:
-		var content []types.SystemContent
-		for _, ce := range env.Content {
-			c, err := unmarshalSystemContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.SystemMessage{Content: content}, nil
-
+		parts, err := unmarshalParts[types.SystemPart](role, env.Content)
+		return types.SystemMessage{Parts: parts}, err
 	case types.RoleUser:
-		var content []types.UserContent
-		for _, ce := range env.Content {
-			c, err := unmarshalUserContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.UserMessage{Content: content}, nil
-
+		parts, err := unmarshalParts[types.UserPart](role, env.Content)
+		return types.UserMessage{Parts: parts}, err
 	case types.RoleAssistant:
-		var content []types.AssistantContent
-		for _, ce := range env.Content {
-			c, err := unmarshalAssistantContent(ce)
-			if err != nil {
-				return nil, err
-			}
-			content = append(content, c)
-		}
-		return types.AssistantMessage{Content: content}, nil
-
+		parts, err := unmarshalParts[types.AssistantPart](role, env.Content)
+		return types.AssistantMessage{Parts: parts}, err
 	default:
 		return nil, fmt.Errorf("unknown role: %s", role)
 	}
 }
 
-func systemContentType(c types.SystemContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolResultContent:
-		return contentTypeToolResult
-	case types.ConfigContent:
-		return contentTypeConfig
-	case types.HandoffContent:
-		return contentTypeHandoff
-	case types.RouteContent:
-		return contentTypeRoute
-	case types.ApprovalContent:
-		return contentTypeApproval
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	case types.CompactionContent:
-		return contentTypeCompaction
-	default:
-		return contentTypeUnknown
+// errUnknownContent reports a stored type tag this release does not read.
+var errUnknownContent = errors.New("unknown content type")
+
+func unmarshalParts[T types.Part](role types.Role, content []contentEnvelope) ([]T, error) {
+	var out []T
+	for _, ce := range content {
+		ps, err := unmarshalPart(ce)
+		if errors.Is(err, errUnknownContent) {
+			return nil, fmt.Errorf("unknown %s content type: %s", role, ce.Type)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range ps {
+			v, ok := p.(T)
+			if !ok {
+				return nil, fmt.Errorf("unknown %s content type: %s", role, ce.Type)
+			}
+			out = append(out, v)
+		}
 	}
+	return out, nil
 }
 
-func userContentType(c types.UserContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolResultContent:
-		return contentTypeToolResult
-	case types.ConfigContent:
-		return contentTypeConfig
-	case types.HandoffContent:
-		return contentTypeHandoff
-	case types.FileContent:
-		return "file"
-	case types.FeedbackContent:
-		return "feedback"
-	case types.SteerContent:
-		return contentTypeSteer
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	default:
-		return contentTypeUnknown
-	}
+func decodeNumbers(data json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
 
-func assistantContentType(c types.AssistantContent) string {
-	switch c.(type) {
-	case types.TextContent:
-		return contentTypeText
-	case types.ToolUseContent:
-		return "tool_use"
-	case types.ThinkingContent:
-		return contentTypeThinking
-	case types.ServerToolContent:
-		return contentTypeServerTool
-	case types.TruncationContent:
-		return contentTypeTruncation
-	case types.RouteContent:
-		return contentTypeRoute
-	case types.GuardrailContent:
-		return contentTypeGuardrail
-	default:
-		return contentTypeUnknown
+//nolint:gocyclo // one case per stored kind
+func unmarshalPart(ce contentEnvelope) ([]types.Part, error) {
+	one := func(p types.Part, err error) ([]types.Part, error) {
+		if err != nil {
+			return nil, err
+		}
+		return []types.Part{p}, nil
 	}
-}
-
-func unmarshalSystemContent(ce contentEnvelope) (types.SystemContent, error) {
 	switch ce.Type {
+	case contentTypePart:
+		return one(types.UnmarshalPart(ce.Data))
 	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeToolResult:
-		var c types.ToolResultContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeConfig:
-		var c types.ConfigContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeHandoff:
-		var c types.HandoffContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeRoute:
-		var c types.RouteContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeApproval:
-		var c types.ApprovalContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeCompaction:
-		var c types.CompactionContent
-		return c, json.Unmarshal(ce.Data, &c)
-	default:
-		return nil, fmt.Errorf("unknown system content type: %s", ce.Type)
-	}
-}
-
-func unmarshalUserContent(ce contentEnvelope) (types.UserContent, error) {
-	switch ce.Type {
-	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeToolResult:
-		var c types.ToolResultContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeConfig:
-		var c types.ConfigContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeHandoff:
-		var c types.HandoffContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case "file":
-		var c types.FileContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case "feedback":
-		var c types.FeedbackContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeSteer:
-		var c types.SteerContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
-	default:
-		return nil, fmt.Errorf("unknown user content type: %s", ce.Type)
-	}
-}
-
-func unmarshalAssistantContent(ce contentEnvelope) (types.AssistantContent, error) {
-	switch ce.Type {
-	case contentTypeText:
-		var c types.TextContent
-		return c, json.Unmarshal(ce.Data, &c)
+		var c legacyText
+		err := json.Unmarshal(ce.Data, &c)
+		return one(types.TextPart{Text: c.Text}, err)
 	case "tool_use":
-		var c types.ToolUseContent
-		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&c); err != nil {
-			return nil, err
-		}
-		return c, nil
+		var c legacyToolUse
+		err := decodeNumbers(ce.Data, &c)
+		return one(types.ToolCallPart(c), err)
 	case contentTypeThinking:
-		var c types.ThinkingContent
-		return c, json.Unmarshal(ce.Data, &c)
-	case contentTypeServerTool:
-		var c types.ServerToolContent
-		decoder := json.NewDecoder(bytes.NewReader(ce.Data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&c); err != nil {
+		var c legacyThinking
+		err := json.Unmarshal(ce.Data, &c)
+		return one(types.ThinkingPart{Text: c.Thinking, Signature: c.Signature}, err)
+	case contentTypeToolResult:
+		var c legacyToolResult
+		if err := json.Unmarshal(ce.Data, &c); err != nil {
 			return nil, err
 		}
-		return c, nil
+		return one(toolResultFromLegacy(c), nil)
+	case contentTypeFile:
+		var c legacyFile
+		err := json.Unmarshal(ce.Data, &c)
+		return one(types.Media(types.Source{URI: c.URI, MediaType: c.MediaType, Filename: c.Filename}), err)
+	case contentTypeServerTool:
+		var c legacyServerTool
+		if err := decodeNumbers(ce.Data, &c); err != nil {
+			return nil, err
+		}
+		out := []types.Part{types.ServerToolCallPart{ID: c.ID, ToolKind: c.Kind, Name: c.Name, Input: c.Input}}
+		if c.Text != "" || len(c.Result) > 0 || len(c.Files) > 0 {
+			r := types.ServerToolResultPart{CallID: c.ID, ToolKind: c.Kind, Text: c.Text, Result: c.Result}
+			for _, f := range c.Files {
+				r.Outputs = append(r.Outputs, types.Media(types.Source{URI: f.URI, MediaType: f.MediaType, Filename: f.Filename}))
+			}
+			out = append(out, r)
+		}
+		return out, nil
+	case contentTypeConfig:
+		return decodeLegacy[types.ConfigPart](ce.Data)
+	case contentTypeHandoff:
+		return decodeLegacy[types.HandoffPart](ce.Data)
+	case "feedback":
+		return decodeLegacy[types.FeedbackPart](ce.Data)
+	case contentTypeSteer:
+		return decodeLegacy[types.SteerPart](ce.Data)
 	case contentTypeTruncation:
-		var c types.TruncationContent
-		return c, json.Unmarshal(ce.Data, &c)
+		return decodeLegacy[types.TruncationPart](ce.Data)
 	case contentTypeRoute:
-		var c types.RouteContent
-		return c, json.Unmarshal(ce.Data, &c)
+		return decodeLegacy[types.RoutePart](ce.Data)
+	case contentTypeApproval:
+		return decodeLegacy[types.ApprovalPart](ce.Data)
 	case contentTypeGuardrail:
-		var c types.GuardrailContent
-		return c, json.Unmarshal(ce.Data, &c)
+		return decodeLegacy[types.GuardrailPart](ce.Data)
+	case contentTypeCompaction:
+		return decodeLegacy[types.CompactionPart](ce.Data)
 	default:
-		return nil, fmt.Errorf("unknown assistant content type: %s", ce.Type)
+		return nil, errUnknownContent
 	}
+}
+
+func decodeLegacy[T types.Part](data json.RawMessage) ([]types.Part, error) {
+	var v T
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	return []types.Part{v}, nil
+}
+
+// toolResultFromLegacy reads a v1 tool result: its blocks when it has them,
+// with the text first when no block carries it, else its text.
+func toolResultFromLegacy(c legacyToolResult) types.ToolResultPart {
+	r := types.ToolResultPart{CallID: c.ToolCallID, IsError: c.IsError, Citations: c.Citations, ToolVersion: c.ToolVersion}
+	if len(c.Blocks) == 0 {
+		r.Parts = []types.ToolOutputPart{types.Text(c.Text)}
+		return r
+	}
+	hasText := false
+	for _, b := range c.Blocks {
+		if b.Kind == "text" || b.Kind == "json" {
+			hasText = true
+		}
+	}
+	if !hasText && c.Text != "" {
+		r.Parts = append(r.Parts, types.Text(c.Text))
+	}
+	for _, b := range c.Blocks {
+		switch b.Kind {
+		case "text":
+			r.Parts = append(r.Parts, types.Text(b.Text))
+		case "json":
+			r.Parts = append(r.Parts, types.JSONPart{JSON: b.JSON})
+		default:
+			src := types.Source{URI: b.URI, MediaType: b.MediaType, Filename: b.Filename}
+			if b.Kind == "image" {
+				r.Parts = append(r.Parts, types.Image(src))
+				continue
+			}
+			if p, ok := types.Media(src).(types.ToolOutputPart); ok {
+				r.Parts = append(r.Parts, p)
+			} else {
+				r.Parts = append(r.Parts, types.File(src))
+			}
+		}
+	}
+	return r
 }
 
 // MarshalJSON serializes the tree to JSON.

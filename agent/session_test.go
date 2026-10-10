@@ -25,7 +25,7 @@ func TestSaveAndLoadSession(t *testing.T) {
 
 	// Invoke to build some conversation history
 	stream := a.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("Hello"),
+		types.UserMsg(types.Text("Hello")),
 	})
 	for range stream.Deltas() {
 	}

@@ -77,11 +77,12 @@ type activityEntry struct {
 type activity struct {
 	entries   []activityEntry
 	calls     map[string]int // tool call ID to entry index
+	parts     map[int]int    // part index of a streaming tool call to entry index
 	subAgents map[string]bool
 }
 
 func newActivity(subAgents []string) activity {
-	a := activity{calls: make(map[string]int), subAgents: make(map[string]bool)}
+	a := activity{calls: make(map[string]int), parts: make(map[int]int), subAgents: make(map[string]bool)}
 	for _, s := range subAgents {
 		a.subAgents[s] = true
 	}
@@ -148,17 +149,6 @@ func (a *activity) tool(id, name string) *activityEntry {
 	return e
 }
 
-// oldestOpenTool returns the oldest call whose arguments are still streaming.
-func (a *activity) oldestOpenTool() *activityEntry {
-	for i := range a.entries {
-		e := &a.entries[i]
-		if e.kind == activityTool && !e.argsDone && e.status == toolPending {
-			return e
-		}
-	}
-	return nil
-}
-
 // isCancellation reports whether err means the run was stopped on request.
 func isCancellation(err error) bool {
 	return errors.Is(err, types.ErrStreamCanceled)
@@ -167,28 +157,43 @@ func isCancellation(err error) bool {
 // apply folds one delta into the transcript.
 func (a *activity) apply(d types.Delta) {
 	switch d := d.(type) {
-	case types.TextContentDelta:
-		a.appendText(activityText, d.Content)
-
-	case types.ThinkingContentDelta:
-		a.appendText(activityThinking, d.Content)
-
-	case types.ToolCallStartDelta:
-		e := a.tool(d.ID, d.Name)
-		e.status = toolPending
-
-	case types.ToolCallEndDelta:
-		var e *activityEntry
-		if idx, ok := a.calls[d.ID]; ok && d.ID != "" {
-			e = &a.entries[idx]
-		} else {
-			e = a.oldestOpenTool()
+	case types.PartDelta:
+		switch {
+		case d.Text != "":
+			a.appendText(activityText, d.Text)
+		case d.Thinking != "":
+			a.appendText(activityThinking, d.Thinking)
 		}
-		if e == nil {
+
+	case types.PartStart:
+		if d.Kind != types.KindToolCall {
 			return
 		}
-		e.args = d.Arguments
-		e.argsErr = d.ArgumentsError
+		e := a.tool(d.ID, d.Name)
+		e.status = toolPending
+		if a.parts == nil {
+			a.parts = map[int]int{}
+		}
+		a.parts[d.Index] = a.calls[d.ID]
+		if d.ID == "" {
+			a.parts[d.Index] = len(a.entries) - 1
+		}
+
+	case types.PartEnd:
+		if c, ok := d.Part.(types.CitationPart); ok {
+			a.addNotice(activityNotice, formatCitation(c.Citation))
+			return
+		}
+		idx, ok := a.parts[d.Index]
+		if !ok {
+			return
+		}
+		delete(a.parts, d.Index)
+		e := &a.entries[idx]
+		if call, ok := d.Part.(types.ToolCallPart); ok {
+			e.args = call.Arguments
+			e.argsErr = call.ArgumentsError
+		}
 		e.argsDone = true
 		if e.status == toolPending {
 			e.status = toolReady
@@ -278,10 +283,12 @@ func (a *activity) applyNested(d types.ToolExecDelta) {
 		e.content.WriteString("\n")
 	}
 	switch in := inner.(type) {
-	case types.TextContentDelta:
-		e.content.WriteString(in.Content)
-	case types.ToolCallStartDelta:
-		line(iconTool + " " + in.Name)
+	case types.PartDelta:
+		e.content.WriteString(in.Text)
+	case types.PartStart:
+		if in.Kind == types.KindToolCall {
+			line(iconTool + " " + in.Name)
+		}
 	case types.ToolExecEndDelta:
 		if in.Error != "" {
 			line(iconError + " " + in.Name + ": " + in.Error)

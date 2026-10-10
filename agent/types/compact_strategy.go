@@ -85,10 +85,10 @@ const CompactionSummaryPrefix = "Summary of the earlier conversation, written wh
 // IsCompactionSummary reports whether m is a summary a strategy wrote.
 func IsCompactionSummary(m Message) bool {
 	sm, ok := m.(SystemMessage)
-	if !ok || len(sm.Content) != 1 {
+	if !ok || len(sm.Parts) != 1 {
 		return false
 	}
-	tc, ok := sm.Content[0].(TextContent)
+	tc, ok := sm.Parts[0].(TextPart)
 	return ok && strings.HasPrefix(tc.Text, CompactionSummaryPrefix)
 }
 
@@ -397,7 +397,7 @@ func summarizeSpan(ctx context.Context, req CompactRequest, name string, l layou
 		if err != nil {
 			return unchanged, fmt.Errorf("%s: %w", name, err)
 		}
-		summaryEntry = []CompactEntry{{Message: NewSystemMessage(CompactionSummaryPrefix + text), Index: -1}}
+		summaryEntry = []CompactEntry{{Message: SystemMsg(Text(CompactionSummaryPrefix + text)), Index: -1}}
 	}
 	sel := pick(req.Entries, selected)
 	for i := range sel {
@@ -416,10 +416,10 @@ const SummaryInstruction = "Summarize the following conversation concisely, pres
 // Summarize asks provider to summarize msgs. It fails on a stream error or
 // an empty summary, so a failed call never replaces real history.
 func Summarize(ctx context.Context, provider Provider, msgs []Message) (string, error) {
-	rx, err := provider.ChatStream(ctx, []Message{
-		NewSystemMessage(SummaryInstruction),
-		NewUserMessage(MessagesToText(msgs)),
-	}, nil)
+	rx, err := provider.Stream(ctx, Request{Messages: []Message{
+		SystemMsg(Text(SummaryInstruction)),
+		UserMsg(Text(MessagesToText(msgs))),
+	}})
 	if err != nil {
 		return "", fmt.Errorf("summarization: %w", err)
 	}
@@ -427,8 +427,8 @@ func Summarize(ctx context.Context, provider Provider, msgs []Message) (string, 
 	var streamErr error
 	for d := range rx {
 		switch v := d.(type) {
-		case TextContentDelta:
-			sb.WriteString(v.Content)
+		case PartDelta:
+			sb.WriteString(v.Text)
 		case ErrorDelta:
 			streamErr = v.Error
 		}
@@ -604,16 +604,16 @@ func ToolPairingError(msgs []Message) error {
 	calls := map[string]bool{}
 	for _, m := range msgs {
 		if am, ok := m.(AssistantMessage); ok {
-			for _, c := range am.Content {
-				if tu, ok := c.(ToolUseContent); ok {
+			for _, c := range am.Parts {
+				if tu, ok := c.(ToolCallPart); ok {
 					calls[tu.ID] = true
 				}
 			}
 			continue
 		}
 		for _, r := range toolResults(m) {
-			if !calls[r.ToolCallID] {
-				return fmt.Errorf("%w: %s", ErrSplitToolCall, r.ToolCallID)
+			if !calls[r.CallID] {
+				return fmt.Errorf("%w: %s", ErrSplitToolCall, r.CallID)
 			}
 		}
 	}

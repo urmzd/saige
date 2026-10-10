@@ -1,5 +1,5 @@
 // Package fallback composes multiple Providers into one that tries each in
-// order until a ChatStream call succeeds. Compose with package retry for
+// order until a Stream call succeeds. Compose with package retry for
 // per-provider retry before falling through.
 //
 // By default a terminal error (cancellation, an invalid request, an exhausted

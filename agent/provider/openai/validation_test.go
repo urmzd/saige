@@ -48,7 +48,7 @@ func TestInvalidOptionsRejectBeforeHTTP(t *testing.T) {
 				return nil, errors.New("unexpected network request")
 			})}))
 			for _, schema := range []*types.ParameterSchema{nil, {Type: "object"}} {
-				ch, err := a.ChatStreamWithSchema(context.Background(), nil, nil, schema)
+				ch, err := a.Stream(context.Background(), types.Request{Schema: schema})
 				if ch != nil || !errors.Is(err, types.ErrInvalidModelConfig) || types.IsTransient(err) {
 					t.Fatalf("channel=%v error=%v, want permanent configuration rejection", ch, err)
 				}
@@ -95,7 +95,7 @@ func TestAcceptedSettingsReachWire(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(finishedStream)), Request: r}, nil
 			})}))
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hello")}, nil)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hello"))}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +118,7 @@ func TestModelSwitchAndRetryCannotHideInvalidSettings(t *testing.T) {
 	}
 	switched := a.WithModel("o3")
 	wrapped := retry.New(switched, retry.Config{MaxAttempts: 2})
-	_, err := wrapped.ChatStream(context.Background(), nil, nil)
+	_, err := wrapped.Stream(context.Background(), types.Request{})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("got %v", err)
 	}

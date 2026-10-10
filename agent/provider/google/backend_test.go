@@ -82,7 +82,7 @@ func TestAdapterVertexCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ch, err := a.ChatStream(context.Background(), nil, nil); err == nil {
+	if ch, err := a.Stream(context.Background(), types.Request{}); err == nil {
 		for range ch {
 		}
 	}
@@ -188,7 +188,7 @@ func TestSDKDoesNotRetry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+		ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 		if err == nil {
 			for range ch {
 			}

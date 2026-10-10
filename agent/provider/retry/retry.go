@@ -99,41 +99,29 @@ func (r *Provider) Capabilities() types.ModelCapabilities {
 	return optionscheck.Narrow(caps, r.Inner)
 }
 
-func (r *Provider) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return r.Inner.ChatStream(ctx, messages, tools)
-	})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. When the
-// inner provider cannot enforce a schema, a non-nil schema is rejected with
-// types.ErrInvalidModelConfig rather than silently dropped: the caller asked
-// for schema-checked output and must not receive free-form text instead.
-func (r *Provider) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	sp, ok := r.Inner.(types.StructuredOutputProvider)
-	if !ok {
-		if schema != nil {
-			return nil, schemacheck.Unsupported(r.Inner, "provider cannot enforce a response schema")
-		}
-		return r.ChatStream(ctx, messages, tools)
+// Stream implements types.Provider. A schema or options the inner provider
+// cannot receive are rejected with types.ErrInvalidModelConfig rather than
+// silently dropped: the caller asked for them and must not receive output
+// made without them.
+func (r *Provider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil && !types.AcceptsSchema(r.Inner) {
+		return nil, schemacheck.Unsupported(r.Inner, "provider cannot enforce a response schema")
 	}
-	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
-	})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. When the inner
-// provider cannot receive request options they are rejected with
-// types.ErrInvalidModelConfig rather than dropped.
-func (r *Provider) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := r.Inner.(types.OptionsProvider)
-	if !ok {
+	if req.Options != nil && !types.AcceptsOptions(r.Inner) {
 		return nil, optionscheck.Unsupported(r.Inner)
 	}
 	return r.retryLoop(ctx, func() (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, messages, tools, opts)
+		return r.Inner.Stream(ctx, req)
 	})
 }
+
+// SupportsSchema implements types.StructuredOutputProvider. A schema the
+// inner provider cannot enforce is rejected when the request arrives.
+func (r *Provider) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider. Options the inner
+// provider cannot receive are rejected when the request arrives.
+func (r *Provider) SupportsOptions() bool { return true }
 
 // Unwrap returns the inner provider. See package wrapper.
 func (r *Provider) Unwrap() types.Provider { return r.Inner }
@@ -257,7 +245,7 @@ func (c Config) Delay(attempt int, err error, u float64) time.Duration {
 // discarded, so a retried attempt reports only its own route.
 func isContentDelta(d types.Delta) bool {
 	switch d.(type) {
-	case types.UsageDelta, types.RouteDelta, types.DoneDelta, types.ErrorDelta:
+	case types.UsageDelta, types.RouteDelta, types.ConversionDelta, types.DoneDelta, types.ErrorDelta:
 		return false
 	default:
 		return true

@@ -10,18 +10,18 @@ const (
 	// CompactionTriggerInputPressure: the next turn's input exceeded
 	// CompactConfig.MaxInputTokens.
 	CompactionTriggerInputPressure CompactionTrigger = "input_pressure"
-	// CompactionTriggerRequested: a ConfigContent asked for CompactNow.
+	// CompactionTriggerRequested: a ConfigPart asked for CompactNow.
 	CompactionTriggerRequested CompactionTrigger = "requested"
 	// CompactionTriggerContextLength: the provider rejected the turn as
 	// longer than its context window.
 	CompactionTriggerContextLength CompactionTrigger = "context_length"
 )
 
-// CompactionContent records one compaction on the branch it created: the
+// CompactionPart records one compaction on the branch it created: the
 // strategy that ran, the input size before and after, and what happened to
 // each message of the branch it compacted, by node ID on that branch. It is
 // metadata: stripped before the provider call.
-type CompactionContent struct {
+type CompactionPart struct {
 	// Strategy is the configured strategy, for example
 	// "chain(clear_tool_results,summary)". Steps names the ones that changed
 	// the history, in order.
@@ -47,14 +47,16 @@ type CompactionContent struct {
 	SummaryNode NodeID `json:"summary_node,omitempty"`
 }
 
-func (CompactionContent) isSystemContent() {}
+func (CompactionPart) Kind() PartKind { return KindCompaction }
+func (CompactionPart) isPart()        {}
+func (CompactionPart) isSystemPart()  {}
 
 // CompactionDelta reports a compaction. The run continues on Branch, and
-// NodeID is the node holding the CompactionContent record.
+// NodeID is the node holding the CompactionPart record.
 type CompactionDelta struct {
 	Branch BranchID
 	NodeID string
-	Record CompactionContent
+	Record CompactionPart
 }
 
 func (CompactionDelta) isDelta() {}

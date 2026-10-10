@@ -441,7 +441,8 @@ type durableProvider struct {
 	calls *sync.Map // run ID -> *atomic.Int32
 }
 
-func (p durableProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p durableProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	counter(p.calls, p.run).Add(1)
 	deltas := agenttest.TextResponse("done " + p.run)
 	if !hasResult(messages) {
@@ -458,8 +459,8 @@ func (p durableProvider) ChatStream(_ context.Context, messages []types.Message,
 func hasResult(messages []types.Message) bool {
 	for _, m := range messages {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if _, ok := c.(types.ToolResultContent); ok {
+			for _, c := range sm.Parts {
+				if _, ok := c.(types.ToolResultPart); ok {
 					return true
 				}
 			}
@@ -558,7 +559,7 @@ func TestDurableWorkersCompete(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			began := time.Now()
-			input := []types.Message{types.NewUserMessage("go " + id)}
+			input := []types.Message{types.UserMsg(types.Text("go " + id))}
 			_, err := e.Run(ctx, wf, id, input)
 			if strings.HasSuffix(id, "-approve") {
 				if !errors.Is(err, types.ErrSuspended) {

@@ -7,10 +7,10 @@ import (
 )
 
 func TestCompactCount(t *testing.T) {
-	user := types.NewUserMessage("u")
-	text := types.NewAssistantMessage("a")
-	call := types.AssistantMessage{Content: []types.AssistantContent{types.ToolUseContent{ID: "c", Name: "f"}}}
-	result := types.NewToolResultMessage(types.ToolResultContent{ToolCallID: "c", Text: "r"})
+	user := types.UserMsg(types.Text("u"))
+	text := types.AssistantMsg(types.Text("a"))
+	call := types.AssistantMessage{Parts: []types.AssistantPart{types.ToolCallPart{ID: "c", Name: "f"}}}
+	result := types.ToolResults(types.ToolResultPart{CallID: "c", Parts: []types.ToolOutputPart{types.Text("r")}})
 	tests := []struct {
 		name       string
 		candidates []types.Message

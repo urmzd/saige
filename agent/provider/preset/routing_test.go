@@ -18,7 +18,7 @@ import (
 // request's error.
 func serve(t *testing.T, s types.Provider) (string, error) {
 	t.Helper()
-	ch, err := s.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	ch, err := s.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if err != nil {
 		return "", err
 	}
@@ -26,8 +26,8 @@ func serve(t *testing.T, s types.Provider) (string, error) {
 	var failed error
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			out += v.Content
+		case types.PartDelta:
+			out += v.Text
 		case types.ErrorDelta:
 			failed = v.Error
 		}
@@ -189,7 +189,7 @@ func TestRouteNamesTheAdapterNotItsDecorators(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = b.Close() }()
-	routes, _ := drain(t)(b.Session().ChatStream(context.Background(), nil, nil))
+	routes, _ := drain(t)(b.Session().Stream(context.Background(), types.Request{}))
 	// Every entry is wrapped in a retry decorator, which names itself
 	// "retry(openai)"; the route reports the vendor.
 	if len(routes) == 0 || routes[0].Provider != "openai" || routes[0].Model != "gpt-4.1" {

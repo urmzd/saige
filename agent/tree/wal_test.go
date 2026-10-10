@@ -38,15 +38,15 @@ func committedCount(t *testing.T, wal *memwal.WAL) int {
 
 func TestArchiveRecursiveWALSingleTx(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := New(types.NewSystemMessage("system"), WithWAL(wal))
+	tr, _ := New(types.SystemMsg(types.Text("system")), WithWAL(wal))
 	root := tr.Root()
 
 	// root -> user -> asst -> user2: archiving user recursively mutates 3 nodes.
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("q1"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("q1")))
 	asst, _ := tr.AddChild(context.Background(), user.ID, types.AssistantMessage{
-		Content: []types.AssistantContent{types.TextContent{Text: "a1"}},
+		Parts: []types.AssistantPart{types.TextPart{Text: "a1"}},
 	})
-	tr.AddChild(context.Background(), asst.ID, types.NewUserMessage("q2"))
+	tr.AddChild(context.Background(), asst.ID, types.UserMsg(types.Text("q2")))
 
 	before := committedCount(t, wal)
 	if err := tr.Archive(user.ID, "tester", true); err != nil {
@@ -90,9 +90,9 @@ func TestArchiveRecursiveWALSingleTx(t *testing.T) {
 
 func TestCheckpointWritesWAL(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := New(types.NewSystemMessage("system"), WithWAL(wal))
+	tr, _ := New(types.SystemMsg(types.Text("system")), WithWAL(wal))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 
 	before := committedCount(t, wal)
 	cpID, err := tr.Checkpoint("main", "save1")
@@ -112,11 +112,11 @@ func TestCheckpointWritesWAL(t *testing.T) {
 
 func TestRewindWritesWAL(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := New(types.NewSystemMessage("system"), WithWAL(wal))
+	tr, _ := New(types.SystemMsg(types.Text("system")), WithWAL(wal))
 	root := tr.Root()
-	user, _ := tr.AddChild(context.Background(), root.ID, types.NewUserMessage("hello"))
+	user, _ := tr.AddChild(context.Background(), root.ID, types.UserMsg(types.Text("hello")))
 	cpID, _ := tr.Checkpoint("main", "save1")
-	tr.AddChild(context.Background(), user.ID, types.NewUserMessage("more"))
+	tr.AddChild(context.Background(), user.ID, types.UserMsg(types.Text("more")))
 
 	before := committedCount(t, wal)
 	rewindBranch, err := tr.Rewind(cpID)
@@ -135,9 +135,9 @@ func TestRewindWritesWAL(t *testing.T) {
 
 func TestSetActiveWritesWAL(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := New(types.NewSystemMessage("system"), WithWAL(wal))
+	tr, _ := New(types.SystemMsg(types.Text("system")), WithWAL(wal))
 	root := tr.Root()
-	branchID, child, err := tr.Branch(context.Background(), root.ID, "side", types.NewUserMessage("alt"))
+	branchID, child, err := tr.Branch(context.Background(), root.ID, "side", types.UserMsg(types.Text("alt")))
 	if err != nil {
 		t.Fatalf("Branch: %v", err)
 	}
@@ -161,14 +161,14 @@ func TestSetActiveWritesWAL(t *testing.T) {
 
 func TestCompactWritesOneWALTx(t *testing.T) {
 	wal := memwal.New()
-	tr, _ := New(types.NewSystemMessage("system"), WithWAL(wal))
+	tr, _ := New(types.SystemMsg(types.Text("system")), WithWAL(wal))
 	current := tr.Root()
 	for i := range 6 {
 		var msg types.Message
 		if i%2 == 0 {
-			msg = types.NewUserMessage("user message")
+			msg = types.UserMsg(types.Text("user message"))
 		} else {
-			msg = types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "assistant reply"}}}
+			msg = types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "assistant reply"}}}
 		}
 		node, err := tr.AddChild(context.Background(), current.ID, msg)
 		if err != nil {

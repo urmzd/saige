@@ -35,20 +35,37 @@ func newFull() *fullProvider {
 
 func (p *fullProvider) stream() <-chan types.Delta {
 	ch := make(chan types.Delta, 4)
-	ch <- types.TextContentDelta{Content: "full"}
+	ch <- types.PartDelta{Index: 0, Text: "full"}
 	ch <- types.UsageDelta{PromptTokens: 3, CompletionTokens: 2, FinishReasons: p.finish}
 	close(ch)
 	return ch
 }
 
-func (p *fullProvider) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (p *fullProvider) chatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
 	return p.stream(), nil
 }
-func (p *fullProvider) ChatStreamWithSchema(context.Context, []types.Message, []types.ToolDef, *types.ParameterSchema) (<-chan types.Delta, error) {
+
+// Stream implements types.Provider.
+func (p *fullProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Options != nil {
+		return p.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
+	}
+	if req.Schema != nil {
+		return p.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
+	}
+	return p.chatStream(ctx, req.Messages, req.Tools)
+}
+
+// SupportsOptions implements types.OptionsProvider.
+func (p *fullProvider) SupportsOptions() bool { return true }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (p *fullProvider) SupportsSchema() bool { return true }
+func (p *fullProvider) chatStreamWithSchema(context.Context, []types.Message, []types.ToolDef, *types.ParameterSchema) (<-chan types.Delta, error) {
 	p.schemas.Add(1)
 	return p.stream(), nil
 }
-func (p *fullProvider) ChatStreamWithOptions(context.Context, []types.Message, []types.ToolDef, types.RequestOptions) (<-chan types.Delta, error) {
+func (p *fullProvider) chatStreamWithOptions(context.Context, []types.Message, []types.ToolDef, types.RequestOptions) (<-chan types.Delta, error) {
 	p.optCalls.Add(1)
 	return p.stream(), nil
 }
@@ -154,8 +171,7 @@ func TestWrappersKeepOptionalInterfaces(t *testing.T) {
 			}
 
 			choice := types.ToolChoice{Mode: types.ToolChoiceRequired}
-			ch, err := p.(types.OptionsProvider).ChatStreamWithOptions(context.Background(),
-				[]types.Message{types.NewUserMessage("hi")}, []types.ToolDef{{Name: "t"}}, types.RequestOptions{ToolChoice: &choice})
+			ch, err := p.(types.OptionsProvider).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: []types.ToolDef{{Name: "t"}}, Options: &types.RequestOptions{ToolChoice: &choice}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,8 +181,7 @@ func TestWrappersKeepOptionalInterfaces(t *testing.T) {
 				t.Errorf("%s did not forward request options", w.name)
 			}
 
-			ch, err = p.(types.StructuredOutputProvider).ChatStreamWithSchema(context.Background(),
-				[]types.Message{types.NewUserMessage("hi")}, nil, &types.ParameterSchema{Type: "object"})
+			ch, err = p.(types.StructuredOutputProvider).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Schema: &types.ParameterSchema{Type: "object"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,7 +203,7 @@ func TestWrappersKeepOptionalInterfaces(t *testing.T) {
 // bare implements only types.Provider.
 type bare struct{}
 
-func (bare) ChatStream(context.Context, []types.Message, []types.ToolDef) (<-chan types.Delta, error) {
+func (bare) Stream(_ context.Context, _ types.Request) (<-chan types.Delta, error) {
 	ch := make(chan types.Delta)
 	close(ch)
 	return ch, nil
@@ -202,7 +217,7 @@ func TestWrappersRejectOptionsTheInnerProviderCannotReceive(t *testing.T) {
 			continue // a router rejects ineligible profiles before calling; see its tests
 		}
 		t.Run(w.name, func(t *testing.T) {
-			ch, err := w.build(bare{}).(types.OptionsProvider).ChatStreamWithOptions(context.Background(), nil, []types.ToolDef{{Name: "t"}}, opts)
+			ch, err := w.build(bare{}).(types.OptionsProvider).Stream(context.Background(), types.Request{Tools: []types.ToolDef{{Name: "t"}}, Options: &opts})
 			if err == nil {
 				for d := range ch {
 					if e, ok := d.(types.ErrorDelta); ok {
@@ -319,7 +334,7 @@ func TestWrappersDropOptionCapabilitiesTheInnerProviderCannotReceive(t *testing.
 			if opts != nil || sent != nil {
 				t.Fatalf("forbidding tools sent options %+v and tools %v", opts, sent)
 			}
-			ch, err := p.ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, sent)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Tools: sent})
 			if err != nil {
 				t.Fatal(err)
 			}

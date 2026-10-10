@@ -49,14 +49,14 @@ func main() {
 
 	// Invoke with a user message.
 	stream := agent.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("What is 2 + 3?"),
+		types.UserMsg(types.Text("What is 2 + 3?")),
 	})
 
 	// Stream deltas and print text content.
 	for delta := range stream.Deltas() {
 		switch d := delta.(type) {
-		case types.TextContentDelta:
-			fmt.Print(d.Content)
+		case types.PartDelta:
+			fmt.Print(d.Text)
 		case types.ErrorDelta:
 			log.Fatal(d.Error)
 		case types.DoneDelta:

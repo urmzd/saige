@@ -34,7 +34,8 @@ func newStepProvider(calls ...stepCall) *stepProvider {
 	return &stepProvider{calls: calls, started: make(chan int, 32)}
 }
 
-func (p *stepProvider) ChatStream(ctx context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *stepProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	p.mu.Lock()
 	idx := len(p.reqs)
 	p.reqs = append(p.reqs, append([]types.Message(nil), messages...))
@@ -83,14 +84,14 @@ func textOf(msg types.Message) string {
 	var b strings.Builder
 	switch m := msg.(type) {
 	case types.UserMessage:
-		for _, c := range m.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range m.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				b.WriteString(tc.Text)
 			}
 		}
 	case types.AssistantMessage:
-		for _, c := range m.Content {
-			if tc, ok := c.(types.TextContent); ok {
+		for _, c := range m.Parts {
+			if tc, ok := c.(types.TextPart); ok {
 				b.WriteString(tc.Text)
 			}
 		}
@@ -118,14 +119,14 @@ func hasMetadata(msgs []types.Message) bool {
 	for _, m := range msgs {
 		switch v := m.(type) {
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if types.IsMetadataContent(c) {
+			for _, c := range v.Parts {
+				if types.IsMetadata(c) {
 					return true
 				}
 			}
 		case types.AssistantMessage:
-			for _, c := range v.Content {
-				if types.IsMetadataContent(c) {
+			for _, c := range v.Parts {
+				if types.IsMetadata(c) {
 					return true
 				}
 			}
@@ -176,10 +177,10 @@ func TestSubmitQueueAndSteer(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			deltas := collect(stream)
 			waitStarted(t, provider, 0)
-			id, err := stream.Submit(types.NewUserMessage("extra"), tt.mode)
+			id, err := stream.Submit(types.UserMsg(types.Text("extra")), tt.mode)
 			if err != nil {
 				t.Fatalf("Submit: %v", err)
 			}
@@ -232,15 +233,15 @@ func TestSubmitInterruptReplace(t *testing.T) {
 	}{
 		{
 			name:     "partial text is kept",
-			before:   []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "half an ans"}},
+			before:   []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "half an ans"}},
 			wantText: "half an ans",
 		},
 		{
 			name: "tool calls are dropped",
 			before: []types.Delta{
-				types.TextStartDelta{}, types.TextContentDelta{Content: "let me look"}, types.TextEndDelta{},
-				types.ToolCallStartDelta{ID: "done", Name: "echo"}, types.ToolCallEndDelta{ID: "done", Arguments: map[string]any{}},
-				types.ToolCallStartDelta{ID: "open", Name: "echo"}, types.ToolCallArgumentDelta{ID: "open", Content: `{"a":`},
+				types.PartStart{Index: 1, Kind: types.KindText}, types.PartDelta{Index: 1, Text: "let me look"}, types.PartEnd{Index: 1},
+				types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "done", Name: "echo"}, types.PartEnd{Index: 2, Part: types.ToolCallPart{ID: "done", Name: "echo", Arguments: map[string]any{}}},
+				types.PartStart{Index: 3, Kind: types.KindToolCall, ID: "open", Name: "echo"}, types.PartDelta{Index: 3, Args: `{"a":`},
 			},
 			wantText: "let me look",
 		},
@@ -260,12 +261,12 @@ func TestSubmitInterruptReplace(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 			var got []types.Delta
 			var id SubmissionID
 			submit := func() {
 				var err error
-				if id, err = stream.Submit(types.NewUserMessage("new direction"), SubmitInterruptReplace); err != nil {
+				if id, err = stream.Submit(types.UserMsg(types.Text("new direction")), SubmitInterruptReplace); err != nil {
 					t.Fatalf("Submit: %v", err)
 				}
 			}
@@ -350,10 +351,10 @@ func TestSubmitInterruptBetweenCallsWaitsForTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	deltas := collect(stream)
 	<-started
-	if _, err := stream.Submit(types.NewUserMessage("stop that"), SubmitInterruptReplace); err != nil {
+	if _, err := stream.Submit(types.UserMsg(types.Text("stop that")), SubmitInterruptReplace); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -390,7 +391,7 @@ func TestSubmitErrors(t *testing.T) {
 	provider := newStepProvider(stepCall{before: agenttest.TextResponse("hi")})
 	a := NewAgent(AgentConfig{Provider: provider})
 	ctx := context.Background()
-	finished := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	finished := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	for range finished.Deltas() {
 	}
 	_ = finished.Wait()
@@ -402,12 +403,12 @@ func TestSubmitErrors(t *testing.T) {
 		mode   SubmitMode
 		want   error
 	}{
-		{"finished run", finished, types.NewUserMessage("late"), SubmitQueue, ErrRunFinished},
-		{"replay stream", Replay(nil), types.NewUserMessage("x"), SubmitQueue, ErrSubmitUnsupported},
-		{"side on a stream", finished, types.NewUserMessage("x"), SubmitSide, ErrSubmitUnsupported},
+		{"finished run", finished, types.UserMsg(types.Text("late")), SubmitQueue, ErrRunFinished},
+		{"replay stream", Replay(nil), types.UserMsg(types.Text("x")), SubmitQueue, ErrSubmitUnsupported},
+		{"side on a stream", finished, types.UserMsg(types.Text("x")), SubmitSide, ErrSubmitUnsupported},
 		{"empty message", finished, types.UserMessage{}, SubmitQueue, ErrInvalidSubmission},
-		{"unknown mode", finished, types.NewUserMessage("x"), SubmitMode(42), ErrInvalidSubmission},
-		{"tool result", finished, types.UserMessage{Content: []types.UserContent{types.ToolResultContent{ToolCallID: "c"}}}, SubmitSteer, ErrInvalidSubmission},
+		{"unknown mode", finished, types.UserMsg(types.Text("x")), SubmitMode(42), ErrInvalidSubmission},
+		{"tool result", finished, types.UserMessage{Parts: []types.UserPart{types.ToolResultPart{CallID: "c"}}}, SubmitSteer, ErrInvalidSubmission},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -431,7 +432,7 @@ func TestAgentSubmit(t *testing.T) {
 	main := a.Tree().Active()
 
 	// Idle branch: a new run starts with the message as input.
-	stream, _, err := a.Submit(ctx, "", types.NewUserMessage("one"), SubmitQueue)
+	stream, _, err := a.Submit(ctx, "", types.UserMsg(types.Text("one")), SubmitQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +440,7 @@ func TestAgentSubmit(t *testing.T) {
 	waitStarted(t, provider, 0)
 
 	// Active branch: the message joins the same run.
-	joined, id, err := a.Submit(ctx, main, types.NewUserMessage("two"), SubmitQueue)
+	joined, id, err := a.Submit(ctx, main, types.UserMsg(types.Text("two")), SubmitQueue)
 	if err != nil || joined != stream || id == "" {
 		t.Fatalf("Submit to active run = %v, %v, same stream %v", id, err, joined == stream)
 	}
@@ -450,7 +451,7 @@ func TestAgentSubmit(t *testing.T) {
 	}
 
 	// Finished branch: a new run starts again.
-	next, _, err := a.Submit(ctx, main, types.NewUserMessage("three"), SubmitSteer)
+	next, _, err := a.Submit(ctx, main, types.UserMsg(types.Text("three")), SubmitSteer)
 	if err != nil || next == stream {
 		t.Fatalf("Submit after finish = %v, new stream %v", err, next != stream)
 	}
@@ -489,7 +490,7 @@ func TestAgentSubmitSide(t *testing.T) {
 			defer cancel()
 			main := a.Tree().Active()
 
-			mainStream := a.Invoke(ctx, []types.Message{types.NewUserMessage("main task")})
+			mainStream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("main task"))})
 			mainDeltas := collect(mainStream)
 			if tt.toolTip {
 				<-started
@@ -498,7 +499,7 @@ func TestAgentSubmitSide(t *testing.T) {
 			}
 			mainTip, _ := a.Tree().Tip(main)
 
-			side, _, err := a.Submit(ctx, main, types.NewUserMessage("aside"), SubmitSide)
+			side, _, err := a.Submit(ctx, main, types.UserMsg(types.Text("aside")), SubmitSide)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +556,7 @@ func TestContinue(t *testing.T) {
 			}
 			a := NewAgent(AgentConfig{Provider: provider})
 			ctx := context.Background()
-			first := a.Invoke(ctx, []types.Message{types.NewUserMessage("write")})
+			first := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("write"))})
 			for range first.Deltas() {
 			}
 			if err := first.Wait(); err != nil {
@@ -593,8 +594,8 @@ func TestContinueRefusals(t *testing.T) {
 	if _, err := a.Continue(ctx, ""); !errors.Is(err, ErrNothingToContinue) {
 		t.Fatalf("empty branch: %v", err)
 	}
-	if err := a.appendToBranch(ctx, a.Tree(), a.Tree().Active(), types.AssistantMessage{Content: []types.AssistantContent{
-		types.ToolUseContent{ID: "c", Name: "x"},
+	if err := a.appendToBranch(ctx, a.Tree(), a.Tree().Active(), types.AssistantMessage{Parts: []types.AssistantPart{
+		types.ToolCallPart{ID: "c", Name: "x"},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -605,8 +606,8 @@ func TestContinueRefusals(t *testing.T) {
 
 func TestAutoContinue(t *testing.T) {
 	openCall := []types.Delta{
-		types.TextStartDelta{}, types.TextContentDelta{Content: "x"}, types.TextEndDelta{},
-		types.ToolCallStartDelta{ID: "c1", Name: "echo"},
+		types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "x"}, types.PartEnd{Index: 0},
+		types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "echo"},
 		types.UsageDelta{FinishReasons: []string{"max_tokens"}},
 	}
 	tests := []struct {
@@ -646,7 +647,7 @@ func TestAutoContinue(t *testing.T) {
 			provider := newStepProvider(tt.calls...)
 			tool := &agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"}
 			a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(tool)}, WithAutoContinue(tt.auto))
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("write")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("write"))})
 			for range stream.Deltas() {
 			}
 			err := stream.Wait()
@@ -674,7 +675,7 @@ func TestSubmitConcurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("start")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
 	deltas := collect(stream)
 
 	var (
@@ -688,7 +689,7 @@ func TestSubmitConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range perWriter {
-				id, err := stream.Submit(types.NewUserMessage(fmt.Sprintf("w%d-%d", w, i)), modes[(w+i)%len(modes)])
+				id, err := stream.Submit(types.UserMsg(types.Text(fmt.Sprintf("w%d-%d", w, i))), modes[(w+i)%len(modes)])
 				if errors.Is(err, ErrRunFinished) {
 					return
 				}
@@ -722,7 +723,7 @@ func TestSubmitConcurrent(t *testing.T) {
 			t.Fatalf("submission %s was accepted but neither injected nor undelivered", id)
 		}
 	}
-	if _, err := stream.Submit(types.NewUserMessage("late"), SubmitQueue); !errors.Is(err, ErrRunFinished) {
+	if _, err := stream.Submit(types.UserMsg(types.Text("late")), SubmitQueue); !errors.Is(err, ErrRunFinished) {
 		t.Fatalf("late Submit = %v", err)
 	}
 }
@@ -737,14 +738,14 @@ func TestAgentSubmitRacingRunEnd(t *testing.T) {
 	for i := range 2000 {
 		a := NewAgent(AgentConfig{Provider: &mockProvider{response: "ok"}})
 		branch := a.Tree().Active()
-		first := a.Invoke(ctx, []types.Message{types.NewUserMessage("first")}, branch)
+		first := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("first"))}, branch)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
 			for range first.Deltas() {
 			}
 		}()
-		s, _, err := a.Submit(ctx, branch, types.NewUserMessage("second"), SubmitQueue)
+		s, _, err := a.Submit(ctx, branch, types.UserMsg(types.Text("second")), SubmitQueue)
 		if err != nil {
 			t.Fatalf("iteration %d: Submit = %v", i, err)
 		}

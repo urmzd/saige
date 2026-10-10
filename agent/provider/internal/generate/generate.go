@@ -22,7 +22,7 @@ type Result struct {
 // The partial text and the usage are returned with any error, so the caller
 // can still account for the tokens.
 func Run(ctx context.Context, p types.Provider, prompt string) (Result, error) {
-	ch, err := p.ChatStream(ctx, []types.Message{types.NewUserMessage(prompt)}, nil)
+	ch, err := p.Stream(ctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text(prompt))}})
 	if err != nil {
 		return Result{}, err
 	}
@@ -31,8 +31,8 @@ func Run(ctx context.Context, p types.Provider, prompt string) (Result, error) {
 	var genErr error
 	for d := range ch {
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			sb.WriteString(v.Content)
+		case types.PartDelta:
+			sb.WriteString(v.Text)
 		case types.UsageDelta:
 			res.Usage = res.Usage.Merge(v)
 		case types.ErrorDelta:

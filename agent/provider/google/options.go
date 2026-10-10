@@ -11,7 +11,7 @@ import (
 
 var _ types.OptionsProvider = (*Adapter)(nil)
 
-// ChatStreamWithOptions implements types.OptionsProvider. Each option set in
+// streamOptions serves Request.Options. Each option set in
 // opts overrides the adapter's configured value for this call only; unset
 // options keep the configured ones. The tool choice maps to
 // FunctionCallingConfig: AUTO, NONE, ANY, or ANY with AllowedFunctionNames
@@ -20,7 +20,7 @@ var _ types.OptionsProvider = (*Adapter)(nil)
 // any network I/O with an error matching types.ErrInvalidModelConfig. With a
 // context cache bound, the tool configuration belongs to the cached resource,
 // so a per-call tool choice that changes it is rejected.
-func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
+func (a *Adapter) streamOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
 	c, err := a.withRequestOptions(opts.Raw())
 	if err != nil {
 		return nil, err
@@ -28,7 +28,7 @@ func (a *Adapter) ChatStreamWithOptions(ctx context.Context, messages []types.Me
 	if c, err = c.compileDials(opts, tools, false); err != nil {
 		return nil, err
 	}
-	return c.ChatStream(ctx, messages, tools)
+	return c.streamPlain(ctx, messages, tools)
 }
 
 // withRequestOptions returns a copy of the adapter with opts applied.

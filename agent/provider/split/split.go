@@ -436,39 +436,26 @@ type request struct {
 }
 
 func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta, error) {
-	switch {
-	case q.opts != nil:
-		op, ok := p.(types.OptionsProvider)
-		if !ok {
-			return nil, optionscheck.Unsupported(p)
-		}
-		return op.ChatStreamWithOptions(ctx, q.messages, q.tools, *q.opts)
-	case q.schema != nil:
-		sp, ok := p.(types.StructuredOutputProvider)
-		if !ok {
-			return nil, schemacheck.Unsupported(p, "provider cannot enforce a response schema")
-		}
-		return sp.ChatStreamWithSchema(ctx, q.messages, q.tools, q.schema)
-	default:
-		return p.ChatStream(ctx, q.messages, q.tools)
+	if q.opts != nil && !types.AcceptsOptions(p) {
+		return nil, optionscheck.Unsupported(p)
 	}
+	if q.schema != nil && !types.AcceptsSchema(p) {
+		return nil, schemacheck.Unsupported(p, "provider cannot enforce a response schema")
+	}
+	return p.Stream(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
 }
 
-func (s *Split) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools})
-}
-
-// ChatStreamWithSchema implements types.StructuredOutputProvider. An arm that
-// cannot enforce a schema rejects the request rather than drop the schema.
-func (s *Split) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, schema: schema})
-}
-
-// ChatStreamWithOptions implements types.OptionsProvider. An arm that cannot
+// Stream implements types.Provider. An arm that cannot enforce a schema or
 // receive request options rejects the request rather than drop them.
-func (s *Split) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, opts: &opts})
+func (s *Split) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return s.stream(ctx, request{messages: req.Messages, tools: req.Tools, schema: req.Schema, opts: req.Options})
 }
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (s *Split) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (s *Split) SupportsOptions() bool { return true }
 
 func (s *Split) stream(ctx context.Context, q request) (<-chan types.Delta, error) {
 	if err := ctx.Err(); err != nil {

@@ -65,7 +65,7 @@ func (r *ToolRedactor) TokenizeResult(ctx context.Context, def types.ToolDef, re
 	}
 	out, err := tokenizeResult(ctx, r.Vault, res)
 	if err != nil {
-		return types.ToolResult{Text: WithheldResult, IsError: true}
+		return types.ToolResult{Parts: []types.ToolOutputPart{types.Text(WithheldResult)}, IsError: true}
 	}
 	return out
 }
@@ -75,44 +75,40 @@ func (r *ToolRedactor) skip(def types.ToolDef) bool {
 }
 
 func tokenizeResult(ctx context.Context, v Vault, res types.ToolResult) (types.ToolResult, error) {
-	text, err := v.Tokenize(ctx, res.Text)
-	if err != nil {
-		return types.ToolResult{}, err
+	if res.Parts == nil {
+		return res, nil
 	}
-	res.Text = text
-	if len(res.Blocks) > 0 {
-		blocks := make([]types.ToolResultBlock, len(res.Blocks))
-		for i, b := range res.Blocks {
-			if b, err = tokenizeBlock(ctx, v, b); err != nil {
-				return types.ToolResult{}, err
-			}
-			blocks[i] = b
+	parts := make([]types.ToolOutputPart, len(res.Parts))
+	for i, p := range res.Parts {
+		t, err := tokenizePart(ctx, v, p)
+		if err != nil {
+			return types.ToolResult{}, err
 		}
-		res.Blocks = blocks
+		parts[i] = t
 	}
+	res.Parts = parts
 	return res, nil
 }
 
-func tokenizeBlock(ctx context.Context, v Vault, b types.ToolResultBlock) (types.ToolResultBlock, error) {
-	switch b.Kind {
-	case types.ToolResultBlockText:
-		text, err := v.Tokenize(ctx, b.Text)
+func tokenizePart(ctx context.Context, v Vault, p types.ToolOutputPart) (types.ToolOutputPart, error) {
+	switch x := p.(type) {
+	case types.TextPart:
+		text, err := v.Tokenize(ctx, x.Text)
 		if err != nil {
-			return b, err
+			return p, err
 		}
-		b.Text = text
-	case types.ToolResultBlockJSON:
-		raw, err := v.Tokenize(ctx, string(b.JSON))
+		return types.Text(text), nil
+	case types.JSONPart:
+		raw, err := v.Tokenize(ctx, string(x.JSON))
 		if err != nil {
-			return b, err
+			return p, err
 		}
 		if json.Valid([]byte(raw)) {
-			b.JSON = json.RawMessage(raw)
-		} else {
-			// A span crossed JSON syntax. Send the tokenized text instead of
-			// invalid JSON or the original values.
-			b = types.ToolResultBlock{Kind: types.ToolResultBlockText, Text: raw}
+			return types.JSONPart{JSON: json.RawMessage(raw)}, nil
 		}
+		// A span crossed JSON syntax. Send the tokenized text instead of
+		// invalid JSON or the original values.
+		return types.Text(raw), nil
 	}
-	return b, nil
+	return p, nil
 }

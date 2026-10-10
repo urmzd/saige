@@ -53,7 +53,7 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
-	input := []types.Message{types.NewUserMessage("Summarize the benefits of durable workflows.")}
+	input := []types.Message{types.UserMsg(types.Text("Summarize the benefits of durable workflows."))}
 
 	var (
 		final *types.AssistantMessage
@@ -74,8 +74,8 @@ func main() {
 		log.Fatalf("run: %v", err)
 	}
 	if final != nil {
-		for _, c := range final.Content {
-			if t, ok := c.(types.TextContent); ok {
+		for _, c := range final.Parts {
+			if t, ok := c.(types.TextPart); ok {
 				log.Printf("final: %s", t.Text)
 			}
 		}

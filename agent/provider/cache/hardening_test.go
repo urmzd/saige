@@ -21,15 +21,15 @@ import (
 func allRecordable() CachedResponse {
 	return CachedResponse{
 		Deltas: []types.Delta{
-			types.ThinkingStartDelta{},
-			types.ThinkingContentDelta{Content: "hmm"},
-			types.ThinkingEndDelta{Signature: "sig=="},
-			types.TextStartDelta{},
-			types.TextContentDelta{Content: "hello"},
-			types.TextEndDelta{},
-			types.ToolCallStartDelta{ID: "call_1", Name: "read"},
-			types.ToolCallArgumentDelta{ID: "call_1", Content: `{"n":1}`},
-			types.ToolCallEndDelta{ID: "call_1", Arguments: map[string]any{"n": json.Number("1"), "nested": map[string]any{"s": "x"}}},
+			types.PartStart{Index: 0, Kind: types.KindThinking},
+			types.PartDelta{Index: 0, Thinking: "hmm"},
+			types.PartDelta{Index: 0, Signature: "sig=="}, types.PartEnd{Index: 0},
+			types.PartStart{Index: 1, Kind: types.KindText},
+			types.PartDelta{Index: 1, Text: "hello"},
+			types.PartEnd{Index: 1},
+			types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "call_1", Name: "read"},
+			types.PartDelta{Index: 2, Args: `{"n":1}`},
+			types.PartEnd{Index: 2, Part: types.ToolCallPart{ID: "call_1", Name: "read", Arguments: map[string]any{"n": json.Number("1"), "nested": map[string]any{"s": "x"}}}},
 			types.CitationDelta{Citation: types.Citation{URI: "https://example.com", Title: "ex", Meta: map[string]any{"rank": json.Number("2")}}, ToolCallID: "call_1"},
 		},
 		Usage: types.UsageDelta{Cumulative: true, PromptTokens: 5, CompletionTokens: 7, TotalTokens: 12,
@@ -59,9 +59,9 @@ func TestResponseCodecRejects(t *testing.T) {
 		name string
 		raw  []byte
 	}{
-		{"future version", bytes.Replace(good, []byte(`"v":1`), []byte(`"v":2`), 1)},
+		{"future version", bytes.Replace(good, []byte(`"v":2`), []byte(`"v":3`), 1)},
 		{"not json", []byte("{")},
-		{"non-recordable delta", []byte(`{"v":1,"deltas":[` + string(errDelta) + `]}`)},
+		{"non-recordable delta", []byte(`{"v":2,"deltas":[` + string(errDelta) + `]}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := DecodeResponse(tc.raw); !errors.Is(err, ErrResponseCodec) {
@@ -76,7 +76,7 @@ func TestResponseCodecRejects(t *testing.T) {
 
 func TestBytesCacheSharedAcrossInstances(t *testing.T) {
 	store := BytesCache(memcache.New[[]byte]())
-	msgs := []types.Message{types.NewUserMessage("same")}
+	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 	first := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.ToolCallResponse("orig", "read", map[string]any{"n": 1})}}
 	second := &agenttest.ScriptedProvider{Responses: [][]types.Delta{agenttest.TextResponse("unused")}}
 	cfg := Config{Cache: store, ScopeKey: "tenant", ConfigKey: "v1", CacheToolCalls: true}
@@ -102,15 +102,13 @@ func TestReplayRemapsEveryCallReference(t *testing.T) {
 	var fresh string
 	for _, d := range out {
 		switch v := d.(type) {
-		case types.ToolCallStartDelta:
-			fresh = v.ID
-		case types.ToolCallArgumentDelta:
-			if v.ID != fresh {
-				t.Fatalf("argument ID %q, want %q", v.ID, fresh)
+		case types.PartStart:
+			if v.Kind == types.KindToolCall {
+				fresh = v.ID
 			}
-		case types.ToolCallEndDelta:
-			if v.ID != fresh {
-				t.Fatalf("end ID %q, want %q", v.ID, fresh)
+		case types.PartEnd:
+			if tc, ok := v.Part.(types.ToolCallPart); ok && tc.ID != fresh {
+				t.Fatalf("end ID %q, want %q", tc.ID, fresh)
 			}
 		case types.CitationDelta:
 			if v.ToolCallID != fresh {
@@ -127,7 +125,7 @@ func TestTruncatedResponseNotCached(t *testing.T) {
 	truncated := append(agenttest.TextResponse("cut"), types.UsageDelta{FinishReasons: []string{"max_tokens"}})
 	inner := &agenttest.ScriptedProvider{Responses: [][]types.Delta{truncated, agenttest.TextResponse("full")}}
 	p := newProvider(inner)
-	msgs := []types.Message{types.NewUserMessage("q")}
+	msgs := []types.Message{types.UserMsg(types.Text("q"))}
 	collect(mustStream(t, p, msgs))
 	if got := text(collect(mustStream(t, p, msgs))); got != "full" {
 		t.Fatalf("got %q; a truncated response was replayed", got)
@@ -161,7 +159,7 @@ func TestGetErrorIsReported(t *testing.T) {
 		Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
 		Metrics: metrics,
 	})
-	if got := text(collect(mustStream(t, p, []types.Message{types.NewUserMessage("q")}))); got != "live" {
+	if got := text(collect(mustStream(t, p, []types.Message{types.UserMsg(types.Text("q"))}))); got != "live" {
 		t.Fatalf("a read error must fall through to the provider, got %q", got)
 	}
 	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "backend down") {
@@ -180,7 +178,7 @@ type slowProvider struct {
 	resp    []types.Delta
 }
 
-func (p *slowProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *slowProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	p.calls.Add(1)
 	ch := make(chan types.Delta, len(p.resp))
 	go func() {
@@ -200,7 +198,7 @@ func (p *slowProvider) ChatStream(ctx context.Context, _ []types.Message, _ []ty
 func TestSingleFlightCollapsesConcurrentMisses(t *testing.T) {
 	inner := &slowProvider{release: make(chan struct{}), resp: agenttest.ToolCallResponse("orig", "read", map[string]any{"q": "x"})}
 	p := New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true, CacheToolCalls: true})
-	msgs := []types.Message{types.NewUserMessage("same")}
+	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 
 	const n = 10
 	ids := make(chan string, n)
@@ -209,7 +207,7 @@ func TestSingleFlightCollapsesConcurrentMisses(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ch, err := p.ChatStream(context.Background(), msgs, nil)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 			if err != nil {
 				t.Error(err)
 				return
@@ -244,10 +242,10 @@ func TestSingleFlightCollapsesConcurrentMisses(t *testing.T) {
 func TestSingleFlightCancelledLeaderHandsOver(t *testing.T) {
 	inner := &slowProvider{release: make(chan struct{}), resp: agenttest.TextResponse("answer")}
 	p := New(inner, Config{Cache: memcache.New[CachedResponse](), SingleFlight: true})
-	msgs := []types.Message{types.NewUserMessage("same")}
+	msgs := []types.Message{types.UserMsg(types.Text("same"))}
 
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
-	leader, err := p.ChatStream(leaderCtx, msgs, nil)
+	leader, err := p.Stream(leaderCtx, types.Request{Messages: msgs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +253,7 @@ func TestSingleFlightCancelledLeaderHandsOver(t *testing.T) {
 	texts := make(chan string, followers)
 	for range followers {
 		go func() {
-			ch, err := p.ChatStream(context.Background(), msgs, nil)
+			ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 			if err != nil {
 				texts <- "error: " + err.Error()
 				return

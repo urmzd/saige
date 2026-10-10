@@ -12,8 +12,8 @@ func assistantText(m *types.AssistantMessage) string {
 		return ""
 	}
 	var s string
-	for _, c := range m.Content {
-		if t, ok := c.(types.TextContent); ok {
+	for _, c := range m.Parts {
+		if t, ok := c.(types.TextPart); ok {
 			s += t.Text
 		}
 	}
@@ -41,7 +41,7 @@ func TestRunDurableFirstRunRunsSteps(t *testing.T) {
 	runner := newRecordingRunner()
 	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "live"}, SystemPrompt: "s"})
 
-	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("hi")}, "")
+	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +57,14 @@ func TestRunDurableFirstRunRunsSteps(t *testing.T) {
 }
 
 func TestRunDurableReplaySkipsProvider(t *testing.T) {
-	canned := types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "memoized"}}}
+	canned := types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "memoized"}}}
 	runner := newRecordingRunner()
 	runner.seed("llm-main-0", types.StepResult{Kind: types.StepKindLLM, Message: &canned})
 
 	// panicProvider would panic if the LLM step were re-executed.
 	a := NewAgent(AgentConfig{Provider: panicProvider{}, SystemPrompt: "s"})
 
-	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("hi")}, "")
+	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRunDurableToolMemoization(t *testing.T) {
 		SystemPrompt: "s",
 	})
 
-	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("go")}, "")
+	final, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("go"))}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +102,8 @@ func TestRunDurableToolMemoization(t *testing.T) {
 	found := false
 	for _, m := range msgs {
 		if sm, ok := m.(types.SystemMessage); ok {
-			for _, c := range sm.Content {
-				if tr, ok := c.(types.ToolResultContent); ok && tr.Text == "memoized tool output" {
+			for _, c := range sm.Parts {
+				if tr, ok := c.(types.ToolResultPart); ok && tr.Text() == "memoized tool output" {
 					found = true
 				}
 			}
@@ -120,7 +120,7 @@ func TestRunDurableDistinctStepNames(t *testing.T) {
 	runner := newRecordingRunner()
 
 	a := NewAgent(AgentConfig{Provider: prov, Tools: types.NewToolRegistry(tool), SystemPrompt: "s"})
-	if _, err := a.RunDurable(context.Background(), runner, []types.Message{types.NewUserMessage("go")}, ""); err != nil {
+	if _, err := a.RunDurable(context.Background(), runner, []types.Message{types.UserMsg(types.Text("go"))}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -148,7 +148,7 @@ func TestRunDurableCancelledReturnsError(t *testing.T) {
 		cancel()
 	}()
 
-	msg, err := ag.RunDurable(ctx, nil, []types.Message{types.NewUserMessage("hi")}, "")
+	msg, err := ag.RunDurable(ctx, nil, []types.Message{types.UserMsg(types.Text("hi"))}, "")
 	if err == nil {
 		t.Fatalf("RunDurable after cancellation = (%v, nil), want error", msg)
 	}
@@ -159,7 +159,7 @@ type blockingProvider struct {
 	started chan struct{}
 }
 
-func (p *blockingProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *blockingProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	close(p.started)
 	ch := make(chan types.Delta)
 	go func() {

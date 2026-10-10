@@ -61,7 +61,7 @@ func TestNonStreamingDelegationFailsFastOnChildApproval(t *testing.T) {
 	t.Run("RunDurable", func(t *testing.T) {
 		a := gatedChildAgent()
 		err := withinDeadline(t, 2*time.Second, func() error {
-			_, err := a.RunDurable(context.Background(), nil, []types.Message{types.NewUserMessage("go")}, "")
+			_, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("go"))}, "")
 			return err
 		})
 		if err == nil || !strings.Contains(err.Error(), "ApprovalRunner") {
@@ -141,7 +141,7 @@ func TestDurableChildWithoutApprovalRunner(t *testing.T) {
 			CompactCfg: &types.CompactConfig{Strategy: types.CompactSlidingWindow, WindowSize: 50},
 			SubAgents:  []SubAgentDef{{Name: "child", Provider: child}},
 		})
-		stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 		deltas := agenttest.CollectDeltas(stream.Deltas())
 		if err := stream.Wait(); err != nil {
 			t.Fatal(err)
@@ -154,7 +154,7 @@ func TestDurableChildWithoutApprovalRunner(t *testing.T) {
 		a := gatedChildAgent(WithStepRunner(newRecordingRunner()))
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+		stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 		var markers []string
 		var deltas []types.Delta
 		for d := range stream.Deltas() {
@@ -223,7 +223,7 @@ func TestDelegationTimeouts(t *testing.T) {
 					Tools: types.NewToolRegistry(sleepTool{d: 30 * time.Millisecond}),
 				}},
 			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			deltas := agenttest.CollectDeltas(stream.Deltas())
 			if err := stream.Wait(); err != nil {
 				t.Fatal(err)
@@ -261,7 +261,7 @@ func TestDelegationTimeoutExcludesApprovalWait(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 	var deltas []types.Delta
 	for d := range stream.Deltas() {
 		deltas = append(deltas, d)
@@ -336,7 +336,7 @@ func TestNonStreamingCustomInvokerMarkerFails(t *testing.T) {
 	}}
 	a := NewAgent(AgentConfig{Provider: provider, Tools: types.NewToolRegistry(markerInvoker{})})
 	err := withinDeadline(t, 2*time.Second, func() error {
-		_, err := a.RunDurable(context.Background(), nil, []types.Message{types.NewUserMessage("go")}, "")
+		_, err := a.RunDurable(context.Background(), nil, []types.Message{types.UserMsg(types.Text("go"))}, "")
 		return err
 	})
 	if !errors.Is(err, errNonStreamingApproval) {
@@ -368,7 +368,7 @@ func TestChildParallelApprovalsListedAtRoot(t *testing.T) {
 			})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go"))})
 			first, second := nextMarker(t, stream), nextMarker(t, stream)
 			ids := map[string]bool{first.ToolCallID: true, second.ToolCallID: true}
 			if !ids["delegate/r1"] || !ids["delegate/r2"] {

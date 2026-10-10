@@ -431,7 +431,7 @@ func TestSelectorMode(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
-	text := msg.Content[0].(types.TextContent).Text
+	text := msg.Parts[0].(types.TextPart).Text
 	if !memory.IsInjected(text) || !strings.Contains(text, "vim keybindings") || strings.Contains(text, "make") {
 		t.Fatalf("injected = %q", text)
 	}
@@ -486,12 +486,12 @@ func TestConversationRecall(t *testing.T) {
 	}
 	saveTurns(t, pool, conv,
 		memory.InjectRecords([]memory.Record{{ID: "m", Kind: memory.KindSemantic, Content: "an injected note"}}),
-		types.NewUserMessage("How should we deploy the billing service? Mail me at ada@example.com."),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.TextContent{Text: "Ship it behind a feature flag, then ramp to 10 percent. I noted <<PHONE_1>>."},
-			types.ToolUseContent{ID: "t1", Name: "noop", Arguments: map[string]any{}},
+		types.UserMsg(types.Text("How should we deploy the billing service? Mail me at ada@example.com.")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.TextPart{Text: "Ship it behind a feature flag, then ramp to 10 percent. I noted <<PHONE_1>>."},
+			types.ToolCallPart{ID: "t1", Name: "noop", Arguments: map[string]any{}},
 		}},
-		types.NewUserMessage("Also, my favorite drink is coffee."),
+		types.UserMsg(types.Text("Also, my favorite drink is coffee.")),
 	)
 
 	n, err := s.IndexConversation(ctx, tenant, conv)
@@ -564,7 +564,7 @@ func TestConversationRecall(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("StartMessage = %v, %v", ok, err)
 	}
-	text := msg.Content[0].(types.TextContent).Text
+	text := msg.Parts[0].(types.TextPart).Text
 	if !memory.IsInjected(text) || !strings.Contains(text, "billing") || strings.Contains(text, "coffee") {
 		t.Fatalf("injected = %q", text)
 	}

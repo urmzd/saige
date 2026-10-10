@@ -13,6 +13,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/generate"
+	"github.com/urmzd/saige/agent/provider/internal/legacyparts"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -128,20 +129,47 @@ func (r *ResponsesAdapter) Generate(ctx context.Context, prompt string) (string,
 	return generate.Text(ctx, r, prompt)
 }
 
-// ChatStream implements types.Provider.
-func (r *ResponsesAdapter) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+// Stream implements types.Provider. A request may carry a schema or
+// options, not both.
+func (r *ResponsesAdapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	var (
+		ch  <-chan types.Delta
+		err error
+	)
+	switch {
+	case req.Options != nil && req.Schema != nil:
+		return nil, r.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
+	case req.Options != nil:
+		ch, err = r.streamOptions(ctx, req.Messages, req.Tools, *req.Options)
+	case req.Schema != nil:
+		ch, err = r.streamSchema(ctx, req.Messages, req.Tools, req.Schema)
+	default:
+		ch, err = r.streamPlain(ctx, req.Messages, req.Tools)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return types.UpgradeV1Stream(ch), nil
+}
+
+// SupportsSchema implements types.StructuredOutputProvider.
+func (r *ResponsesAdapter) SupportsSchema() bool { return true }
+
+// SupportsOptions implements types.OptionsProvider.
+func (r *ResponsesAdapter) SupportsOptions() bool { return true }
+
+func (r *ResponsesAdapter) streamPlain(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
 	return r.stream(ctx, messages, tools, nil)
 }
 
-// ChatStreamWithSchema implements types.StructuredOutputProvider.
-func (r *ResponsesAdapter) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (r *ResponsesAdapter) streamSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	return r.stream(ctx, messages, tools, schema)
 }
 
-// ChatStreamWithOptions implements types.OptionsProvider. It follows the
-// rules of Adapter.ChatStreamWithOptions and also rejects the controls the
+// streamOptions serves Request.Options. It follows the
+// rules of Adapter.Stream with options and also rejects the controls the
 // Responses API does not have.
-func (r *ResponsesAdapter) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
+func (r *ResponsesAdapter) streamOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
 	base, err := r.base.withRequestOptions(opts.Raw())
 	if err != nil {
 		return nil, err
@@ -279,12 +307,12 @@ func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
 		switch v := m.(type) {
 		case types.SystemMessage:
 			var text []string
-			var results []types.ToolResultContent
-			for _, c := range v.Content {
+			var results []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					text = append(text, bc.Text)
-				case types.ToolResultContent:
+				case types.ToolResultPart:
 					results = append(results, bc)
 				}
 			}
@@ -295,14 +323,15 @@ func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
 
 		case types.UserMessage:
 			var parts responses.ResponseInputMessageContentListParam
-			var results []types.ToolResultContent
-			for _, c := range v.Content {
+			var results []types.ToolResultPart
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					parts = append(parts, inputText(bc.Text))
-				case types.FileContent:
-					parts = append(parts, fileContentToInput(bc))
-				case types.ToolResultContent:
+				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+					fc, _ := legacyparts.MediaOf(bc)
+					parts = append(parts, fileContentToInput(fc))
+				case types.ToolResultPart:
 					results = append(results, bc)
 				}
 			}
@@ -319,11 +348,11 @@ func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
 					text.Reset()
 				}
 			}
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				switch bc := c.(type) {
-				case types.TextContent:
+				case types.TextPart:
 					text.WriteString(bc.Text)
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					flush()
 					args, _ := json.Marshal(bc.Arguments)
 					out = append(out, responses.ResponseInputItemParamOfFunctionCall(string(args), bc.ID, bc.Name))
@@ -337,15 +366,15 @@ func toResponsesInput(msgs []types.Message) responses.ResponseInputParam {
 
 // appendResponsesToolResults appends a function_call_output per result, then
 // one user message per image block.
-func appendResponsesToolResults(out responses.ResponseInputParam, results []types.ToolResultContent) responses.ResponseInputParam {
+func appendResponsesToolResults(out responses.ResponseInputParam, results []types.ToolResultPart) responses.ResponseInputParam {
 	for _, tr := range results {
 		item := responses.ResponseInputItemParamOfFunctionCallOutput(openAIToolResultText(tr))
-		item.OfFunctionCallOutput.CallID = param.NewOpt(tr.ToolCallID)
+		item.OfFunctionCallOutput.CallID = param.NewOpt(tr.CallID)
 		out = append(out, item)
 	}
 	for _, tr := range results {
-		for _, b := range tr.Blocks {
-			if b.Kind == types.ToolResultBlockImage && b.Data != nil && isImageType(b.MediaType) {
+		for _, b := range legacyparts.Blocks(tr.Parts) {
+			if b.Kind == legacyparts.BlockImage && b.Data != nil && isImageType(b.MediaType) {
 				img := inputImage(dataURI(b.MediaType, b.Data))
 				out = append(out, responses.ResponseInputItemParamOfMessage(
 					responses.ResponseInputMessageContentListParam{img}, responses.EasyInputMessageRoleUser))
@@ -372,7 +401,7 @@ func inputImage(url string) responses.ResponseInputContentUnionParam {
 
 // fileContentToInput maps a file to an input part: images and PDFs pass
 // through, readable text is inlined, and anything else is described.
-func fileContentToInput(fc types.FileContent) responses.ResponseInputContentUnionParam {
+func fileContentToInput(fc legacyparts.Media) responses.ResponseInputContentUnionParam {
 	switch {
 	case fc.Data != nil && isImageType(fc.MediaType):
 		return inputImage(dataURI(fc.MediaType, fc.Data))

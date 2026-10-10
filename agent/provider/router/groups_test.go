@@ -16,16 +16,18 @@ type optsProvider struct {
 	got        *[]types.RequestOptions
 }
 
-func (p optsProvider) ChatStreamWithOptions(_ context.Context, _ []types.Message, _ []types.ToolDef, o types.RequestOptions) (<-chan types.Delta, error) {
-	if p.got != nil {
-		*p.got = append(*p.got, o)
+func (p optsProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	if p.got != nil && req.Options != nil {
+		*p.got = append(*p.got, *req.Options)
 	}
 	return p.call()
 }
+
+func (p optsProvider) SupportsOptions() bool                  { return true }
 func (p optsProvider) EffectiveOptions() types.RequestOptions { return p.configured }
 
 func ok(text string) func() (<-chan types.Delta, error) {
-	return func() (<-chan types.Delta, error) { return deltas(types.TextContentDelta{Content: text}), nil }
+	return func() (<-chan types.Delta, error) { return deltas(types.PartDelta{Index: 0, Text: text}), nil }
 }
 
 func collectRoutes(t *testing.T) func(<-chan types.Delta, error) ([]types.RouteDelta, string) {
@@ -43,8 +45,8 @@ func readRoutes(t *testing.T, ch <-chan types.Delta, err error) ([]types.RouteDe
 		switch v := d.(type) {
 		case types.RouteDelta:
 			routes = append(routes, v)
-		case types.TextContentDelta:
-			text += v.Content
+		case types.PartDelta:
+			text += v.Text
 		case types.ErrorDelta:
 			t.Fatal(v.Error)
 		}
@@ -66,16 +68,16 @@ func TestGroupsRestrictAndPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := r.Session()
-	routes, text := collectRoutes(t)(s.ChatStream(context.Background(), nil, nil))
+	routes, text := collectRoutes(t)(s.Stream(context.Background(), types.Request{}))
 	if text != "a2" || len(routes) != 2 || routes[1].Preset != "a" || routes[1].ConfigHash != "h2" || routes[1].CatalogRevision != "rev" {
 		t.Fatalf("default group: %q %+v", text, routes)
 	}
 	pinned := s.WithModel("b")
-	routes, text = collectRoutes(t)(pinned.ChatStream(context.Background(), nil, nil))
+	routes, text = collectRoutes(t)(pinned.Stream(context.Background(), types.Request{}))
 	if text != "b1" || routes[0].Reason != ReasonPinned || routes[0].Profile != "b/1" {
 		t.Fatalf("group pin: %q %+v", text, routes)
 	}
-	if _, err := s.WithModel("nope").ChatStream(context.Background(), nil, nil); !errors.Is(err, ErrUnknownProfile) {
+	if _, err := s.WithModel("nope").Stream(context.Background(), types.Request{}); !errors.Is(err, ErrUnknownProfile) {
 		t.Fatalf("unknown name: %v", err)
 	}
 }
@@ -112,7 +114,7 @@ func TestEligibilityUsesMergedOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	effort := "high"
-	routes, text := collectRoutes(t)(r.Session().ChatStreamWithOptions(context.Background(), nil, nil, types.RequestOptions{ReasoningEffort: &effort}))
+	routes, text := collectRoutes(t)(r.Session().Stream(context.Background(), types.Request{Options: &types.RequestOptions{ReasoningEffort: &effort}}))
 	if text != "plain" || routes[0].Reason != ReasonOptions {
 		t.Fatalf("got %q %+v", text, routes)
 	}

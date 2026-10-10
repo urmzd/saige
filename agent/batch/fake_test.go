@@ -107,7 +107,7 @@ func (f *fakeVendor) Results(_ context.Context, h types.BatchHandle) iter.Seq2[t
 			}
 			res := types.BatchResult{CustomID: r.CustomID, Outcome: outcome}
 			if outcome == types.BatchSucceeded {
-				res.Message = types.NewAssistantMessage("answer to " + lastText(r.Messages))
+				res.Message = types.AssistantMsg(types.Text("answer to " + lastText(r.Messages)))
 				res.Usage = types.UsageDelta{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100}
 			} else {
 				res.Err = &types.BatchRequestError{Outcome: outcome}
@@ -157,8 +157,8 @@ func lastText(msgs []types.Message) string {
 		return ""
 	}
 	if u, ok := msgs[len(msgs)-1].(types.UserMessage); ok {
-		for _, c := range u.Content {
-			if t, ok := c.(types.TextContent); ok {
+		for _, c := range u.Parts {
+			if t, ok := c.(types.TextPart); ok {
 				return t.Text
 			}
 		}
@@ -169,7 +169,7 @@ func lastText(msgs []types.Message) string {
 func requests(ids ...string) []types.BatchRequest {
 	out := make([]types.BatchRequest, len(ids))
 	for i, id := range ids {
-		out[i] = types.BatchRequest{CustomID: id, Messages: []types.Message{types.NewUserMessage("q-" + id)}}
+		out[i] = types.BatchRequest{CustomID: id, Messages: []types.Message{types.UserMsg(types.Text("q-" + id))}}
 	}
 	return out
 }

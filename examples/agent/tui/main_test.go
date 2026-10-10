@@ -42,7 +42,7 @@ func TestStreamVerbose(t *testing.T) {
 	})
 
 	stream := agent.Invoke(t.Context(), []types.Message{
-		types.NewUserMessage("Research Go features"),
+		types.UserMsg(types.Text("Research Go features")),
 	})
 
 	info := agent.Info()

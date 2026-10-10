@@ -16,7 +16,7 @@
 // provider-side cache.
 //
 // Groups name ordered sets of profiles, such as the chain of one catalog
-// preset. Pinning a group through ConfigContent.Model restricts a request to
+// preset. Pinning a group through ConfigPart.Model restricts a request to
 // its members, and DefaultGroup restricts unpinned requests, so the chain a
 // caller picked is exactly the failover order.
 package router
@@ -102,7 +102,7 @@ type RouteContext struct {
 	// EstimatedTokens approximates the prompt size with types.EstimateTokens.
 	EstimatedTokens int
 	Headroom        Headroom
-	// Pinned is the profile selected through ConfigContent.Model, if any. The
+	// Pinned is the profile selected through ConfigPart.Model, if any. The
 	// router places it first regardless of the policy's order.
 	Pinned string
 	// Locks are the route locks in force for this request. See LockToolLoop.
@@ -359,7 +359,7 @@ func (s *Session) Model() string {
 // session's sticky history, failure counts, and failover to other profiles.
 // Using it records the pin in RouteState, and the session then keeps that
 // profile first on later requests made through either value. The agent loop
-// re-applies ConfigContent.Model on every turn, and the pin must survive the
+// re-applies ConfigPart.Model on every turn, and the pin must survive the
 // turns where the provider already reports the pinned profile and the loop
 // skips the switch. Another WithModel or Unpin changes it.
 func (s *Session) WithModel(id string) types.Provider {
@@ -465,20 +465,19 @@ func (s *Session) ContentSupport() types.ContentSupport {
 	return out
 }
 
-func (s *Session) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools})
+// Stream implements types.Provider. A request with options is eligible
+// only on profiles that accept request options and whose capabilities
+// validate them, so a forced tool choice never reaches a profile that would
+// drop it; a request with a schema only on profiles that can enforce one.
+func (s *Session) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	return s.stream(ctx, request{messages: req.Messages, tools: req.Tools, schema: req.Schema, opts: req.Options})
 }
 
-func (s *Session) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, schema: schema})
-}
+// SupportsSchema implements types.StructuredOutputProvider.
+func (s *Session) SupportsSchema() bool { return true }
 
-// ChatStreamWithOptions implements types.OptionsProvider. Only profiles that
-// accept request options and whose capabilities validate them are eligible,
-// so a forced tool choice never reaches a profile that would drop it.
-func (s *Session) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	return s.stream(ctx, request{messages: messages, tools: tools, opts: &opts})
-}
+// SupportsOptions implements types.OptionsProvider.
+func (s *Session) SupportsOptions() bool { return true }
 
 // request is one provider call as the caller made it.
 type request struct {
@@ -489,18 +488,10 @@ type request struct {
 }
 
 func (q request) call(ctx context.Context, p types.Provider) (<-chan types.Delta, error) {
-	switch {
-	case q.opts != nil:
-		op, ok := p.(types.OptionsProvider)
-		if !ok {
-			return nil, optionscheck.Unsupported(p)
-		}
-		return op.ChatStreamWithOptions(ctx, q.messages, q.tools, *q.opts)
-	case q.schema != nil:
-		return p.(types.StructuredOutputProvider).ChatStreamWithSchema(ctx, q.messages, q.tools, q.schema)
-	default:
-		return p.ChatStream(ctx, q.messages, q.tools)
+	if q.opts != nil && !types.AcceptsOptions(p) {
+		return nil, optionscheck.Unsupported(p)
 	}
+	return p.Stream(ctx, types.Request{Messages: q.messages, Tools: q.tools, Schema: q.schema, Options: q.opts})
 }
 
 // compiled is what a profile sends for one request: its configured options
@@ -527,14 +518,12 @@ func (q request) eligible(c Candidate, p types.Provider, want []types.Capability
 	if missing := c.Capabilities.Missing(want...); len(missing) > 0 {
 		return compiled{}, fmt.Errorf("profile %s: %w: missing %v", c.ID, types.ErrInvalidModelConfig, missing)
 	}
-	if q.schema != nil {
-		if _, ok := p.(types.StructuredOutputProvider); !ok {
-			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrSchemaUnsupported)
-		}
+	if q.schema != nil && !types.AcceptsSchema(p) {
+		return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrSchemaUnsupported)
 	}
 	merged := c.Options
 	if q.opts != nil {
-		if _, ok := p.(types.OptionsProvider); !ok {
+		if !types.AcceptsOptions(p) {
 			return compiled{}, fmt.Errorf("profile %s: %w", c.ID, types.ErrOptionsUnsupported)
 		}
 		merged = merged.Merge(*q.opts)

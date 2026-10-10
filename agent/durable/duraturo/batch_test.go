@@ -8,6 +8,7 @@ import (
 
 	dt "github.com/urmzd/duraturo"
 
+	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/batch"
 	"github.com/urmzd/saige/agent/types"
 )
@@ -19,7 +20,8 @@ type gatedModel struct {
 	calls   atomic.Int32
 }
 
-func (g *gatedModel) ChatStream(ctx context.Context, msgs []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (g *gatedModel) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs := req.Messages
 	g.calls.Add(1)
 	out := make(chan types.Delta, 4)
 	go func() {
@@ -30,8 +32,10 @@ func (g *gatedModel) ChatStream(ctx context.Context, msgs []types.Message, _ []t
 			out <- types.ErrorDelta{Error: ctx.Err()}
 			return
 		}
-		u := msgs[len(msgs)-1].(types.UserMessage).Content[0].(types.TextContent).Text
-		out <- types.TextContentDelta{Content: "done: " + u}
+		u := msgs[len(msgs)-1].(types.UserMessage).Parts[0].(types.TextPart).Text
+		for _, d := range agenttest.TextResponse("done: " + u) {
+			out <- d
+		}
 	}()
 	return out, nil
 }
@@ -57,8 +61,8 @@ func TestAwaitBatchParksAndResumes(t *testing.T) {
 	vendor := &countingLocal{Local: batch.NewLocal(model, 2)}
 	jobs := batch.NewRunner(vendor, batch.NewMemoryStore(), batch.WithPollInterval(5*time.Millisecond, 5*time.Millisecond))
 	reqs := []types.BatchRequest{
-		{CustomID: "a", Messages: []types.Message{types.NewUserMessage("one")}},
-		{CustomID: "b", Messages: []types.Message{types.NewUserMessage("two")}},
+		{CustomID: "a", Messages: []types.Message{types.UserMsg(types.Text("one"))}},
+		{CustomID: "b", Messages: []types.Message{types.UserMsg(types.Text("two"))}},
 	}
 	var bodies atomic.Int32
 	wf := dt.ActivityIn(e.registry, "batch.test", func(ctx context.Context, _ string) ([]string, error) {

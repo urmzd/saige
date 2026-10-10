@@ -79,7 +79,7 @@ func TestToolChoiceWire(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
 			a := NewAdapter("k", testModel, append(tc.opts, WithBaseURL(server.URL))...)
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if err == nil || !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want an invalid configuration", err)
@@ -127,7 +127,7 @@ func TestSchemaToolChoice(t *testing.T) {
 				opts = append(opts, WithToolChoice(*tc.choice))
 			}
 			a := NewAdapter("k", testModel, opts...)
-			ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("go")}, testTools, schema)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: testTools, Schema: schema})
 			if !tc.ok {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want an invalid configuration", err)
@@ -188,7 +188,7 @@ func TestServerToolsWire(t *testing.T) {
 	ws.UserLocation = "Austin, Texas, US"
 	a := NewAdapter("k", testModel, WithBaseURL(server.URL),
 		WithServerTools(ws, types.ServerTool{Kind: types.ServerToolCodeExecution}))
-	ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, nil)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,23 +236,30 @@ func TestServerToolStream(t *testing.T) {
 	if len(r.errs) > 0 {
 		t.Fatal(r.errs)
 	}
-	var calls []types.ServerToolCallDelta
-	var results []types.ServerToolResultDelta
+	var calls []types.ServerToolCallPart
+	var results []types.ServerToolResultPart
 	for _, d := range r.deltas {
 		switch v := d.(type) {
-		case types.ServerToolCallDelta:
-			calls = append(calls, v)
-		case types.ServerToolResultDelta:
-			results = append(results, v)
-		case types.ToolCallStartDelta, types.ToolCallArgumentDelta, types.ToolCallEndDelta:
-			t.Fatalf("server tool leaked as a local tool call: %#v", v)
+		case types.PartEnd:
+			switch p := v.Part.(type) {
+			case types.ServerToolCallPart:
+				calls = append(calls, p)
+			case types.ServerToolResultPart:
+				results = append(results, p)
+			case types.ToolCallPart:
+				t.Fatalf("server tool leaked as a local tool call: %#v", p)
+			}
+		case types.PartStart:
+			if v.Kind == types.KindToolCall {
+				t.Fatalf("server tool leaked as a local tool call: %#v", v)
+			}
 		}
 	}
 	if len(calls) != 2 || len(results) != 3 {
 		t.Fatalf("calls = %+v, results = %+v", calls, results)
 	}
 	for _, tc := range []struct {
-		got  types.ServerToolCallDelta
+		got  types.ServerToolCallPart
 		id   string
 		kind types.ServerToolKind
 		key  string
@@ -261,12 +268,12 @@ func TestServerToolStream(t *testing.T) {
 		{calls[0], "srvtoolu_1", types.ServerToolWebSearch, "query", "go generics"},
 		{calls[1], "srvtoolu_2", types.ServerToolCodeExecution, "command", "ls"},
 	} {
-		if tc.got.ID != tc.id || tc.got.Kind != tc.kind || tc.got.Input[tc.key] != tc.val {
+		if tc.got.ID != tc.id || tc.got.ToolKind != tc.kind || tc.got.Input[tc.key] != tc.val {
 			t.Errorf("call = %+v, want %s %s %s=%s", tc.got, tc.id, tc.kind, tc.key, tc.val)
 		}
 	}
 	for _, tc := range []struct {
-		got     types.ServerToolResultDelta
+		got     types.ServerToolResultPart
 		id      string
 		kind    types.ServerToolKind
 		text    string
@@ -276,7 +283,7 @@ func TestServerToolStream(t *testing.T) {
 		{results[1], "srvtoolu_2", types.ServerToolCodeExecution, "boom", true},
 		{results[2], "srvtoolu_3", types.ServerToolWebSearch, "error: max_uses_exceeded", true},
 	} {
-		if tc.got.ID != tc.id || tc.got.Kind != tc.kind || tc.got.Text != tc.text || tc.got.IsError != tc.isError || len(tc.got.Result) == 0 {
+		if tc.got.CallID != tc.id || tc.got.ToolKind != tc.kind || tc.got.Text != tc.text || tc.got.IsError != tc.isError || len(tc.got.Result) == 0 {
 			t.Errorf("result = %+v, want %s %s %q error=%v", tc.got, tc.id, tc.kind, tc.text, tc.isError)
 		}
 	}
@@ -284,10 +291,11 @@ func TestServerToolStream(t *testing.T) {
 
 func TestServerToolContentIsNotReplayed(t *testing.T) {
 	_, out := toAnthropicParams([]types.Message{
-		types.NewUserMessage("q"),
-		types.AssistantMessage{Content: []types.AssistantContent{
-			types.ServerToolContent{ID: "srvtoolu_1", Kind: types.ServerToolWebSearch, Text: "r"},
-			types.TextContent{Text: "answer"},
+		types.UserMsg(types.Text("q")),
+		types.AssistantMessage{Parts: []types.AssistantPart{
+			types.ServerToolCallPart{ID: "srvtoolu_1", ToolKind: types.ServerToolWebSearch},
+			types.ServerToolResultPart{CallID: "srvtoolu_1", ToolKind: types.ServerToolWebSearch, Text: "r"},
+			types.TextPart{Text: "answer"},
 		}},
 	})
 	if len(out) != 2 || len(out[1].Content) != 1 || out[1].Content[0].OfText == nil {

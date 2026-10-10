@@ -134,20 +134,20 @@ func TestCacheStoreInvalidation(t *testing.T) {
 
 	entry := func(text string) toolcache.Entry {
 		now := time.Now().UTC().Truncate(time.Millisecond)
-		return toolcache.Entry{Result: types.ToolResult{Text: text}, StoredAt: now, ExpiresAt: now.Add(time.Hour)}
+		return toolcache.Entry{Result: types.ToolResult{Parts: []types.ToolOutputPart{types.Text(text)}}, StoredAt: now, ExpiresAt: now.Add(time.Hour)}
 	}
 	if err := p1.Set(ctx, "k", entry("v1"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if e, ok, err := p2.Get(ctx, "k"); !ok || err != nil || e.Result.Text != "v1" {
+	if e, ok, err := p2.Get(ctx, "k"); !ok || err != nil || e.Result.Text() != "v1" {
 		t.Fatalf("p2.Get = %+v %v %v", e, ok, err)
 	}
 	if err := p1.Set(ctx, "k", entry("v2"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, func() bool { _, ok, _ := local2.Get(ctx, "k"); return !ok })
-	if e, _, _ := p2.Get(ctx, "k"); e.Result.Text != "v2" {
-		t.Fatalf("p2 read stale %q", e.Result.Text)
+	if e, _, _ := p2.Get(ctx, "k"); e.Result.Text() != "v2" {
+		t.Fatalf("p2 read stale %q", e.Result.Text())
 	}
 	if err := p2.Invalidate(ctx, "k"); err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestCacheStoreInvalidation(t *testing.T) {
 	// The response cache adapter round-trips through the same store.
 	responses := cache.BytesCache(store)
 	cr := cache.CachedResponse{
-		Deltas: []types.Delta{types.TextStartDelta{}, types.TextContentDelta{Content: "hi"}, types.TextEndDelta{}},
+		Deltas: []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "hi"}, types.PartEnd{Index: 0}},
 		Usage:  types.UsageDelta{PromptTokens: 3, CompletionTokens: 1},
 	}
 	if err := responses.Set(ctx, "r", cr, time.Hour); err != nil {

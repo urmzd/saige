@@ -16,7 +16,7 @@ import (
 // (model, messages, tools, schema). It is stable across process runs: map keys
 // are sorted, byte payloads are hashed by content, and every field is
 // length-prefixed and type-tagged so distinct inputs cannot collide via
-// concatenation. ConfigContent and FeedbackContent are excluded because the
+// concatenation. ConfigPart and FeedbackPart are excluded because the
 // agent loop strips them before they reach the provider.
 func Key(model string, msgs []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) string {
 	h := sha256.New()
@@ -26,11 +26,11 @@ func Key(model string, msgs []types.Message, tools []types.ToolDef, schema *type
 		writeField(h, "role", []byte(m.Role()))
 		switch v := m.(type) {
 		case types.SystemMessage:
-			hashSystemContent(h, v.Content)
+			hashSystemContent(h, v.Parts)
 		case types.UserMessage:
-			hashUserContent(h, v.Content)
+			hashUserContent(h, v.Parts)
 		case types.AssistantMessage:
-			hashAssistantContent(h, v.Content)
+			hashAssistantContent(h, v.Parts)
 		}
 	}
 	hashTools(h, tools)
@@ -50,46 +50,47 @@ func writeField(h io.Writer, tag string, data []byte) {
 	_, _ = h.Write(data)
 }
 
-func hashSystemContent(h hash.Hash, content []types.SystemContent) {
+func hashSystemContent(h hash.Hash, content []types.SystemPart) {
 	for _, c := range content {
 		switch v := c.(type) {
-		case types.TextContent:
+		case types.TextPart:
 			writeField(h, "text", []byte(v.Text))
-		case types.ToolResultContent:
+		case types.ToolResultPart:
 			hashToolResult(h, v)
-			// ConfigContent / HandoffContent excluded: stripped before the provider.
+			// ConfigPart / HandoffPart excluded: stripped before the provider.
 		}
 	}
 }
 
-func hashUserContent(h hash.Hash, content []types.UserContent) {
+func hashUserContent(h hash.Hash, content []types.UserPart) {
 	for _, c := range content {
 		switch v := c.(type) {
-		case types.TextContent:
+		case types.TextPart:
 			writeField(h, "text", []byte(v.Text))
-		case types.ToolResultContent:
+		case types.ToolResultPart:
 			hashToolResult(h, v)
-		case types.FileContent:
-			writeField(h, "file", []byte(v.MediaType))
-			writeField(h, "filename", []byte(v.Filename))
-			writeField(h, "uri", []byte(v.URI))
+		case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
+			src, _ := types.SourceOf(v)
+			writeField(h, "file", []byte(src.MediaType))
+			writeField(h, "filename", []byte(src.Filename))
+			writeField(h, "uri", []byte(src.URI))
 			// Hash the raw bytes (json:"-" would silently drop them).
-			sum := sha256.Sum256(v.Data)
+			sum := sha256.Sum256(src.Inline)
 			writeField(h, "data", sum[:])
-			// ConfigContent / FeedbackContent / HandoffContent excluded.
+			// ConfigPart / FeedbackPart / HandoffPart excluded.
 		}
 	}
 }
 
-func hashAssistantContent(h hash.Hash, content []types.AssistantContent) {
+func hashAssistantContent(h hash.Hash, content []types.AssistantPart) {
 	for _, c := range content {
 		switch v := c.(type) {
-		case types.TextContent:
+		case types.TextPart:
 			writeField(h, "text", []byte(v.Text))
-		case types.ThinkingContent:
-			writeField(h, "thinking", []byte(v.Thinking))
+		case types.ThinkingPart:
+			writeField(h, "thinking", []byte(v.Text))
 			writeField(h, "signature", []byte(v.Signature))
-		case types.ToolUseContent:
+		case types.ToolCallPart:
 			writeField(h, "tooluse", []byte(v.ID))
 			writeField(h, "toolname", []byte(v.Name))
 			hashArgs(h, v.Arguments)
@@ -97,24 +98,45 @@ func hashAssistantContent(h hash.Hash, content []types.AssistantContent) {
 	}
 }
 
-func hashToolResult(h hash.Hash, v types.ToolResultContent) {
-	writeField(h, "toolresult", []byte(v.ToolCallID))
+func hashToolResult(h hash.Hash, v types.ToolResultPart) {
+	writeField(h, "toolresult", []byte(v.CallID))
 	if v.IsError {
 		writeField(h, "iserror", []byte{1})
 	} else {
 		writeField(h, "iserror", []byte{0})
 	}
-	writeField(h, "text", []byte(v.Text))
-	for _, b := range v.Blocks {
-		writeField(h, "block", []byte(b.Kind))
-		writeField(h, "blocktext", []byte(b.Text))
-		writeField(h, "blockmedia", []byte(b.MediaType))
-		writeField(h, "blockuri", []byte(b.URI))
-		if len(b.Data) > 0 {
-			sum := sha256.Sum256(b.Data)
+	writeField(h, "text", []byte(v.Text()))
+	if len(v.Parts) == 1 {
+		if _, plain := v.Parts[0].(types.TextPart); plain {
+			return // a plain text result is its text
+		}
+	}
+	for _, p := range v.Parts {
+		var kind, text, uri string
+		var media types.MediaType
+		var data []byte
+		var raw []byte
+		switch x := p.(type) {
+		case types.TextPart:
+			kind, text = "text", x.Text
+		case types.JSONPart:
+			kind, raw = "json", x.JSON
+		default:
+			src, _ := types.SourceOf(p)
+			kind, media, uri, data = "file", src.MediaType, src.URI, src.Inline
+			if _, img := p.(types.ImagePart); img {
+				kind = "image"
+			}
+		}
+		writeField(h, "block", []byte(kind))
+		writeField(h, "blocktext", []byte(text))
+		writeField(h, "blockmedia", []byte(media))
+		writeField(h, "blockuri", []byte(uri))
+		if len(data) > 0 {
+			sum := sha256.Sum256(data)
 			writeField(h, "blockdata", sum[:])
 		}
-		writeField(h, "blockjson", b.JSON)
+		writeField(h, "blockjson", raw)
 	}
 }
 

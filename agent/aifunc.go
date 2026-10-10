@@ -57,7 +57,7 @@ type AIFunction[In, Out any] struct {
 // input and output schemas, the output mode and the serving configuration
 // hash, so a change to any of them is a new version. The tool from Tool
 // reports it, so the agent loop records it next to each result in the tree
-// (types.ToolResultContent.ToolVersion) and eval provenance lists it
+// (types.ToolResultPart.ToolVersion) and eval provenance lists it
 // (eval.Provenance.Tools).
 func AIFunc[In, Out any](name, description string, cfg AIConfig) (*AIFunction[In, Out], error) {
 	if name == "" {
@@ -116,7 +116,7 @@ func (f *AIFunction[In, Out]) Call(ctx context.Context, in In) (Out, error) {
 		opts = append(opts, WithPreset(f.cfg.Preset))
 	}
 	a := NewAgent(AgentConfig{Name: f.name, SystemPrompt: f.cfg.System, Provider: f.cfg.Provider}, opts...)
-	out, _, err := Structured[Out](ctx, a, []types.Message{types.NewUserMessage(prompt)}, OutputSpec[Out]{
+	out, _, err := Structured[Out](ctx, a, []types.Message{types.UserMsg(types.Text(prompt))}, OutputSpec[Out]{
 		Mode:   f.cfg.Mode,
 		Repair: f.cfg.Repair,
 	})

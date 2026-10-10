@@ -40,10 +40,10 @@ type GuardrailDelta struct {
 
 func (GuardrailDelta) isDelta() {}
 
-// GuardrailContent records a guardrail verdict in the tree. A rewrite is
+// GuardrailPart records a guardrail verdict in the tree. A rewrite is
 // attached to the message it rewrote; a block is recorded as a system
 // message of its own. It is stripped before the provider call.
-type GuardrailContent struct {
+type GuardrailPart struct {
 	Guardrail string `json:"guardrail"`
 	Phase     string `json:"phase"`
 	Action    string `json:"action"`
@@ -53,9 +53,11 @@ type GuardrailContent struct {
 	Canceled bool `json:"canceled,omitempty"`
 }
 
-func (GuardrailContent) isSystemContent()    {}
-func (GuardrailContent) isUserContent()      {}
-func (GuardrailContent) isAssistantContent() {}
+func (GuardrailPart) Kind() PartKind   { return KindGuardrail }
+func (GuardrailPart) isPart()          {}
+func (GuardrailPart) isSystemPart()    {}
+func (GuardrailPart) isUserPart()      {}
+func (GuardrailPart) isAssistantPart() {}
 
 // HookRecord is the outcome of the hooks or guardrails at one point of a run.
 // Under a durable StepRunner it is the result of a StepKindHook step, so a

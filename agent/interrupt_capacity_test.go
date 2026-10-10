@@ -19,7 +19,7 @@ func TestApprovalWaitDoesNotConsumeToolSlot(t *testing.T) {
 	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "done"}, Tools: tools, MaxParallelTools: 2})
 	done := make(chan struct{})
 	go func() {
-		a.executeToolsConcurrently(ctx, stream, []types.ToolUseContent{{ID: "1", Name: "marked"}, {ID: "2", Name: "marked"}, {ID: "3", Name: "read"}}, tools)
+		a.executeToolsConcurrently(ctx, stream, []types.ToolCallPart{{ID: "1", Name: "marked"}, {ID: "2", Name: "marked"}, {ID: "3", Name: "read"}}, tools)
 		close(done)
 	}()
 	var markers []string
@@ -54,7 +54,7 @@ func TestNonStreamingApprovalFailsWithoutResolver(t *testing.T) {
 	stream := newEventStream(ctx, cancel)
 	stream.nonStreaming = true
 	a := NewAgent(AgentConfig{Provider: &mockProvider{response: "done"}})
-	_, _, approved := a.awaitApproval(ctx, stream, types.ToolUseContent{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
+	_, _, approved := a.awaitApproval(ctx, stream, types.ToolCallPart{ID: "call", Name: "write"}, []types.Marker{{Kind: "approval"}})
 	if approved || stream.runError() == nil || ctx.Err() != nil {
 		t.Fatalf("approval did not fail immediately: %v", stream.runError())
 	}

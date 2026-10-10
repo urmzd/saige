@@ -31,7 +31,7 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 			agent.WithHooks(agent.Hooks{
 				UserInput: func(_ context.Context, ev *agent.UserInputEvent) error {
 					n := hookCalls.Add(1)
-					ev.Message = types.NewUserMessage(fmt.Sprintf("go (annotated %d)", n))
+					ev.Message = types.UserMsg(types.Text(fmt.Sprintf("go (annotated %d)", n)))
 					return nil
 				},
 				BeforeTool: func(_ context.Context, ev *agent.BeforeToolEvent) error {
@@ -48,7 +48,7 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 			})}),
 		)
 	}
-	input := []types.Message{types.NewUserMessage("go")}
+	input := []types.Message{types.UserMsg(types.Text("go"))}
 	if _, err := engine.Run(ctx, "run", "v1", factory, input); !errors.Is(err, types.ErrSuspended) {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func TestHookOutcomesSurviveResume(t *testing.T) {
 		t.Errorf("resumed run sent %q, recorded run sent %q", got, firstInput)
 	}
 	var text string
-	for _, c := range result.Content {
-		if tc, ok := c.(types.TextContent); ok {
+	for _, c := range result.Parts {
+		if tc, ok := c.(types.TextPart); ok {
 			text += tc.Text
 		}
 	}
@@ -88,16 +88,17 @@ type recordingInput struct {
 	seen *atomic.Value
 }
 
-func (p recordingInput) ChatStream(ctx context.Context, m []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p recordingInput) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	m, tools := req.Messages, req.Tools
 	for _, msg := range m {
 		if um, ok := msg.(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					p.seen.Store(tc.Text)
-					return p.provider.ChatStream(ctx, m, tools)
+					return p.provider.Stream(ctx, types.Request{Messages: m, Tools: tools})
 				}
 			}
 		}
 	}
-	return p.provider.ChatStream(ctx, m, tools)
+	return p.provider.Stream(ctx, types.Request{Messages: m, Tools: tools})
 }

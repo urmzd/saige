@@ -68,24 +68,24 @@ func (TextMessagesOnly) SelectMessages(_ context.Context, history []types.Messag
 	for _, m := range history {
 		switch v := m.(type) {
 		case types.UserMessage:
-			var content []types.UserContent
-			for _, c := range v.Content {
-				if t, ok := c.(types.TextContent); ok {
+			var content []types.UserPart
+			for _, c := range v.Parts {
+				if t, ok := c.(types.TextPart); ok {
 					content = append(content, t)
 				}
 			}
 			if len(content) > 0 {
-				out = append(out, types.UserMessage{Content: content})
+				out = append(out, types.UserMessage{Parts: content})
 			}
 		case types.AssistantMessage:
-			var content []types.AssistantContent
-			for _, c := range v.Content {
-				if t, ok := c.(types.TextContent); ok {
+			var content []types.AssistantPart
+			for _, c := range v.Parts {
+				if t, ok := c.(types.TextPart); ok {
 					content = append(content, t)
 				}
 			}
 			if len(content) > 0 {
-				out = append(out, types.AssistantMessage{Content: content})
+				out = append(out, types.AssistantMessage{Parts: content})
 			}
 		}
 	}
@@ -164,11 +164,11 @@ func nonEmpty(names []string) []string {
 // definition omits it, then the task.
 func seedMessage(f callFrame, child, task string, omitCaller bool) types.UserMessage {
 	if omitCaller {
-		return types.NewUserMessage(task)
+		return types.UserMsg(types.Text(task))
 	}
-	return types.UserMessage{Content: []types.UserContent{
-		types.TextContent{Text: callerBlock(f, child)},
-		types.TextContent{Text: task},
+	return types.UserMessage{Parts: []types.UserPart{
+		types.TextPart{Text: callerBlock(f, child)},
+		types.TextPart{Text: task},
 	}}
 }
 
@@ -192,16 +192,16 @@ func (a *Agent) parentHistory(stream *EventStream) ([]types.Message, error) {
 	out := make([]types.Message, 0, len(messages))
 	for _, m := range messages {
 		if am, ok := m.(types.AssistantMessage); ok {
-			content := make([]types.AssistantContent, 0, len(am.Content))
-			for _, c := range am.Content {
-				if _, thinking := c.(types.ThinkingContent); !thinking {
+			content := make([]types.AssistantPart, 0, len(am.Parts))
+			for _, c := range am.Parts {
+				if _, thinking := c.(types.ThinkingPart); !thinking {
 					content = append(content, c)
 				}
 			}
 			if len(content) == 0 {
 				continue
 			}
-			m = types.AssistantMessage{Content: content}
+			m = types.AssistantMessage{Parts: content}
 		}
 		out = append(out, m)
 	}
@@ -252,11 +252,11 @@ func checkToolPairs(msgs []types.Message) error {
 		}
 		return nil
 	}
-	answer := func(r types.ToolResultContent) error {
-		if !open[r.ToolCallID] {
-			return fmt.Errorf("tool result %s has no earlier tool call", r.ToolCallID)
+	answer := func(r types.ToolResultPart) error {
+		if !open[r.CallID] {
+			return fmt.Errorf("tool result %s has no earlier tool call", r.CallID)
 		}
-		delete(open, r.ToolCallID)
+		delete(open, r.CallID)
 		return nil
 	}
 	for _, m := range msgs {
@@ -267,23 +267,23 @@ func checkToolPairs(msgs []types.Message) error {
 			}
 			clear(open)
 			order = order[:0]
-			for _, c := range v.Content {
-				if tu, ok := c.(types.ToolUseContent); ok {
+			for _, c := range v.Parts {
+				if tu, ok := c.(types.ToolCallPart); ok {
 					open[tu.ID] = true
 					order = append(order, tu.ID)
 				}
 			}
 		case types.SystemMessage:
-			for _, c := range v.Content {
-				if r, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if r, ok := c.(types.ToolResultPart); ok {
 					if err := answer(r); err != nil {
 						return err
 					}
 				}
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
-				if r, ok := c.(types.ToolResultContent); ok {
+			for _, c := range v.Parts {
+				if r, ok := c.(types.ToolResultPart); ok {
 					if err := answer(r); err != nil {
 						return err
 					}

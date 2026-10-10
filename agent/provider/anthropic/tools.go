@@ -21,7 +21,7 @@ var _ catalog.ModelLister = (*Adapter)(nil)
 //
 // The choice applies to requests that offer tools, local or server. A request
 // without any tools sends no choice. A named choice must name a local tool.
-// ChatStreamWithSchema with a schema forces its hidden structured-output tool,
+// Stream with a schema with a schema forces its hidden structured-output tool,
 // so it rejects any choice other than auto.
 func WithToolChoice(c types.ToolChoice) Option {
 	return func(a *Adapter) { a.toolChoice = &c }

@@ -66,7 +66,7 @@ func TestAgentToolChoiceThroughOllama(t *testing.T) {
 					&agenttest.MockTool{Def: types.ToolDef{Name: "write"}, Result: "w"},
 				),
 			})
-			stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+			stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 			agenttest.CollectDeltas(stream.Deltas())
 			err := stream.Wait()
 

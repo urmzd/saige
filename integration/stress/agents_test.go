@@ -59,21 +59,21 @@ func parallelCalls(agentIdx, turn, n int) []types.Delta {
 func toolResults(messages []types.Message) (results map[string]string, dup []string) {
 	results = map[string]string{}
 	add := func(c any) {
-		if tr, ok := c.(types.ToolResultContent); ok {
-			if _, seen := results[tr.ToolCallID]; seen {
-				dup = append(dup, tr.ToolCallID)
+		if tr, ok := c.(types.ToolResultPart); ok {
+			if _, seen := results[tr.CallID]; seen {
+				dup = append(dup, tr.CallID)
 			}
-			results[tr.ToolCallID] = tr.Text
+			results[tr.CallID] = tr.Text()
 		}
 	}
 	for _, m := range messages {
 		switch v := m.(type) {
 		case types.SystemMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		case types.UserMessage:
-			for _, c := range v.Content {
+			for _, c := range v.Parts {
 				add(c)
 			}
 		}
@@ -116,7 +116,7 @@ func TestConcurrentAgents(t *testing.T) {
 			began := time.Now()
 			a := agent.NewAgent(agent.AgentConfig{Provider: providers[i], Tools: tools, SystemPrompt: "stress"})
 			for turn := 1; turn <= 2; turn++ {
-				text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage(fmt.Sprintf("agent %d turn %d", i, turn))}))
+				text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(fmt.Sprintf("agent %d turn %d", i, turn)))}))
 				if err == nil && text != fmt.Sprintf("agent %d turn %d done", i, turn) {
 					err = fmt.Errorf("turn %d text = %q", turn, text)
 				}
@@ -179,7 +179,7 @@ type gateProvider struct {
 	inFlight, peak, calls atomic.Int32
 }
 
-func (p *gateProvider) ChatStream(ctx context.Context, _ []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *gateProvider) Stream(ctx context.Context, _ types.Request) (<-chan types.Delta, error) {
 	n := p.inFlight.Add(1)
 	p.calls.Add(1)
 	for {
@@ -236,7 +236,7 @@ func TestSameBranchContention(t *testing.T) {
 			time.Sleep(time.Duration(rand.IntN(50)) * time.Millisecond) //nolint:gosec // jitter only
 			if i%2 == 0 {
 				text := fmt.Sprintf("invoke %d", i)
-				_, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.NewUserMessage(text)}, branch))
+				_, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(text))}, branch))
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
@@ -250,7 +250,7 @@ func TestSameBranchContention(t *testing.T) {
 				return
 			}
 			text := fmt.Sprintf("submit %d", i)
-			s, _, err := a.Submit(ctx, branch, types.NewUserMessage(text), agent.SubmitQueue)
+			s, _, err := a.Submit(ctx, branch, types.UserMsg(types.Text(text)), agent.SubmitQueue)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("%s: %w", text, err))
@@ -298,8 +298,8 @@ func TestSameBranchContention(t *testing.T) {
 	seen := map[string]int{}
 	for _, m := range msgs {
 		if um, ok := m.(types.UserMessage); ok {
-			for _, c := range um.Content {
-				if tc, ok := c.(types.TextContent); ok {
+			for _, c := range um.Parts {
+				if tc, ok := c.(types.TextPart); ok {
 					seen[tc.Text]++
 				}
 			}

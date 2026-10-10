@@ -83,10 +83,10 @@ type BatchRequest struct {
 	Messages []Message
 	Tools    []ToolDef
 	// Schema constrains the answer to JSON matching it, as
-	// ChatStreamWithSchema does. Nil leaves the answer free text.
+	// Stream with a schema does. Nil leaves the answer free text.
 	Schema *ParameterSchema
 	// Options are per-request controls and dials, applied on top of the
-	// adapter's configured ones as ChatStreamWithOptions applies them.
+	// adapter's configured ones as Stream with options applies them.
 	Options RequestOptions
 }
 
@@ -200,8 +200,8 @@ type BatchResult struct {
 // Text returns the concatenated text blocks of the message.
 func (r BatchResult) Text() string {
 	var b strings.Builder
-	for _, c := range r.Message.Content {
-		if t, ok := c.(TextContent); ok {
+	for _, c := range r.Message.Parts {
+		if t, ok := c.(TextPart); ok {
 			b.WriteString(t.Text)
 		}
 	}

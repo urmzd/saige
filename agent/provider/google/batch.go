@@ -89,7 +89,7 @@ func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, opts ty
 }
 
 // batchRequest validates one request and builds its contents and config, as
-// ChatStreamWithOptions and ChatStreamWithSchema do.
+// Stream with options and Stream with a schema do.
 func (a *Adapter) batchRequest(r types.BatchRequest) ([]*genai.Content, *genai.GenerateContentConfig, error) {
 	c, err := a.withRequestOptions(r.Options.Raw())
 	if err != nil {
@@ -112,7 +112,7 @@ func (a *Adapter) batchRequest(r types.BatchRequest) ([]*genai.Content, *genai.G
 		return nil, nil, err
 	}
 	if r.Schema != nil {
-		config.ResponseMIMEType = "application/json"
+		config.ResponseMIMEType = string(types.MediaJSON)
 		config.ResponseSchema = parameterSchemaToGemini(*r.Schema)
 	}
 	return contents, config, nil
@@ -257,12 +257,12 @@ func responseMessage(resp *genai.GenerateContentResponse) (types.AssistantMessag
 					if len(part.ThoughtSignature) > 0 {
 						sig = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
 					}
-					msg.Content = append(msg.Content, types.ThinkingContent{Thinking: part.Text, Signature: sig})
+					msg.Parts = append(msg.Parts, types.ThinkingPart{Text: part.Text, Signature: sig})
 				case part.Text != "":
-					msg.Content = append(msg.Content, types.TextContent{Text: part.Text})
+					msg.Parts = append(msg.Parts, types.TextPart{Text: part.Text})
 				case part.FunctionCall != nil:
 					if len(part.ThoughtSignature) > 0 {
-						msg.Content = append(msg.Content, types.ThinkingContent{Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature)})
+						msg.Parts = append(msg.Parts, types.ThinkingPart{Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature)})
 					}
 					id := part.FunctionCall.ID
 					if id == "" {
@@ -272,7 +272,7 @@ func responseMessage(resp *genai.GenerateContentResponse) (types.AssistantMessag
 					if args == nil {
 						args = map[string]any{}
 					}
-					msg.Content = append(msg.Content, types.ToolUseContent{ID: id, Name: part.FunctionCall.Name, Arguments: args})
+					msg.Parts = append(msg.Parts, types.ToolCallPart{ID: id, Name: part.FunctionCall.Name, Arguments: args})
 				}
 			}
 		}

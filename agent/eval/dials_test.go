@@ -38,7 +38,7 @@ func dialSubject(t *testing.T, vendor, model string, prov *topeval.Provenance, m
 		}
 		focused := types.CreativityFocused
 		a := agent.NewAgent(agent.AgentConfig{Provider: r.Session(), SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
-		stream := a.Invoke(ctx, []types.Message{types.NewUserMessage("hi")})
+		stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("hi"))})
 		run := CollectAgentRun(stream.Deltas())
 		mu.Lock()
 		run.AddProvenance(prov)
@@ -100,7 +100,7 @@ func TestSingleProviderSubjectRecordsDials(t *testing.T) {
 		caps: catalog.MustLookup("anthropic", "claude-haiku-5-5")}
 	focused := types.CreativityFocused
 	a := agent.NewAgent(agent.AgentConfig{Provider: p, SystemPrompt: "s"}, agent.WithDials(types.Dials{Creativity: &focused}))
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("hi")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("hi"))})
 	run := CollectAgentRun(stream.Deltas())
 	if err := stream.Wait(); err != nil {
 		t.Fatal(err)

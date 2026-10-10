@@ -23,7 +23,7 @@ func WithOutcomePolicy(p types.OutcomePolicy) AgentOption {
 
 // observeOutcome asks the OutcomePolicy about o. An accepted switch to a
 // different model, or to dials that change the branch's, is recorded on
-// branch as ConfigContent, so later turns use it, and reported to emit as a
+// branch as ConfigPart, so later turns use it, and reported to emit as a
 // RouteDelta. It returns the switch, or nil when nothing changes.
 func (a *Agent) observeOutcome(ctx context.Context, emit func(types.Delta), tr *tree.Tree, branch types.BranchID, provider types.Provider, o types.Outcome) (*types.Switch, error) {
 	if a.cfg.OutcomePolicy == nil {
@@ -66,7 +66,7 @@ func (a *Agent) observeOutcome(ctx context.Context, emit func(types.Delta), tr *
 	if reason == "" {
 		reason = string(o.Kind)
 	}
-	cfg := types.SystemMessage{Content: []types.SystemContent{types.ConfigContent{Model: model, Dials: dials, Reason: reason}}}
+	cfg := types.SystemMessage{Parts: []types.SystemPart{types.ConfigPart{Model: model, Dials: dials, Reason: reason}}}
 	if err := a.appendToBranch(ctx, tr, branch, cfg); err != nil {
 		return nil, err
 	}

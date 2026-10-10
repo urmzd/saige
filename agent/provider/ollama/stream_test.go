@@ -13,6 +13,7 @@ import (
 
 	"github.com/urmzd/saige/agent/cache/memcache"
 	"github.com/urmzd/saige/agent/provider/cache"
+	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
 	"github.com/urmzd/saige/agent/types"
 )
 
@@ -51,20 +52,23 @@ var doneLine = line(ChatChunk{Done: true, DoneReason: "stop", EvalCount: 3})
 
 func runAdapter(t *testing.T, a *Adapter, schema *types.ParameterSchema) (string, []error) {
 	t.Helper()
-	ch, err := a.ChatStreamWithSchema(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil, schema)
+	ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}, Schema: schema})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var text strings.Builder
 	var errs []error
+	var all []types.Delta
 	for d := range ch {
+		all = append(all, d)
 		switch v := d.(type) {
-		case types.TextContentDelta:
-			text.WriteString(v.Content)
+		case types.PartDelta:
+			text.WriteString(v.Text)
 		case types.ErrorDelta:
 			errs = append(errs, v.Error)
 		}
 	}
+	streamcheck.RunPartConformance(t, all)
 	return text.String(), errs
 }
 
@@ -129,9 +133,9 @@ func TestStreamIntegrity(t *testing.T) {
 func TestTruncatedStreamNotCached(t *testing.T) {
 	server := lineServer(t, 0, true, content("partial"))
 	p := cache.New(NewAdapter(NewClient(server.URL, "test-model", "")), cache.Config{Cache: memcache.New[cache.CachedResponse]()})
-	msgs := []types.Message{types.NewUserMessage("hi")}
+	msgs := []types.Message{types.UserMsg(types.Text("hi"))}
 	for i := range 2 {
-		ch, err := p.ChatStream(context.Background(), msgs, nil)
+		ch, err := p.Stream(context.Background(), types.Request{Messages: msgs})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +176,7 @@ func TestRequestErrorClassification(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			_, err := NewAdapter(NewClient(server.URL, "test-model", "")).ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+			_, err := NewAdapter(NewClient(server.URL, "test-model", "")).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 			var pe *types.ProviderError
 			if !errors.As(err, &pe) || pe.Kind != tc.wantKind || pe.RetryAfter != tc.wantAfter || pe.Code != tc.status {
 				t.Fatalf("err = %#v", err)
@@ -187,7 +191,7 @@ func TestRequestErrorClassification(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	_ = ln.Close()
-	_, err = NewAdapter(NewClient("http://"+addr, "test-model", "")).ChatStream(context.Background(), []types.Message{types.NewUserMessage("hi")}, nil)
+	_, err = NewAdapter(NewClient("http://"+addr, "test-model", "")).Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("hi"))}})
 	if !types.IsTransient(err) {
 		t.Fatalf("refused connection: err = %v, want transient", err)
 	}

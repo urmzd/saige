@@ -41,8 +41,8 @@ type batchRequestBody struct {
 }
 
 // Submit implements types.BatchProvider with the Message Batches API. Each
-// request is validated and encoded as ChatStreamWithOptions (or, with a
-// schema, ChatStreamWithSchema) would encode it, so an option the model
+// request is validated and encoded as Stream with options (or, with a
+// schema, Stream with a schema) would encode it, so an option the model
 // rejects fails here, before anything is sent. Batches have no metadata, so
 // the tag is not sent; FindBatch matches on request IDs instead.
 func (a *Adapter) Submit(ctx context.Context, reqs []types.BatchRequest, _ types.BatchSubmitOptions) (types.BatchHandle, error) {
@@ -274,23 +274,23 @@ func assistantFromMessage(m anthropic.Message) (types.AssistantMessage, error) {
 	for _, b := range m.Content {
 		switch b.Type {
 		case blockText:
-			out.Content = append(out.Content, types.TextContent{Text: b.Text})
+			out.Parts = append(out.Parts, types.TextPart{Text: b.Text})
 		case blockThinking:
-			out.Content = append(out.Content, types.ThinkingContent{Thinking: b.Thinking, Signature: b.Signature})
+			out.Parts = append(out.Parts, types.ThinkingPart{Text: b.Thinking, Signature: b.Signature})
 		case blockToolUse:
 			if b.Name == structuredToolName {
-				out.Content = append(out.Content, types.TextContent{Text: string(b.Input)})
+				out.Parts = append(out.Parts, types.TextPart{Text: string(b.Input)})
 				continue
 			}
 			args, err := streamcheck.DecodeArguments(string(b.Input))
-			tu := types.ToolUseContent{ID: b.ID, Name: b.Name, Arguments: args}
+			tu := types.ToolCallPart{ID: b.ID, Name: b.Name, Arguments: args}
 			if err != nil {
 				tu.ArgumentsError = err.Error()
 			}
-			out.Content = append(out.Content, tu)
+			out.Parts = append(out.Parts, tu)
 		case blockServerToolUse:
 			input, _ := streamcheck.DecodeArguments(string(b.Input))
-			out.Content = append(out.Content, types.ServerToolContent{ID: b.ID, Kind: serverToolKind(b.Name), Name: b.Name, Input: input})
+			out.Parts = append(out.Parts, types.ServerToolCallPart{ID: b.ID, ToolKind: serverToolKind(b.Name), Name: b.Name, Input: input})
 		}
 	}
 	return out, nil

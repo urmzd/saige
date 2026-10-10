@@ -23,7 +23,7 @@ func TestStreamWaitReturnsProviderError(t *testing.T) {
 		SystemPrompt: "sys",
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	deltas := collectDeltas(stream)
 
 	err := stream.Wait()
@@ -55,7 +55,7 @@ func TestStreamWaitReturnsMaxIterationsError(t *testing.T) {
 		MaxIter:      2,
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	collectDeltas(stream)
 
 	if err := stream.Wait(); !errors.Is(err, types.ErrMaxIterations) {
@@ -69,7 +69,7 @@ func TestStreamWaitNilOnCleanFinish(t *testing.T) {
 		SystemPrompt: "sys",
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("Hi")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("Hi"))})
 	collectDeltas(stream)
 
 	if err := stream.Wait(); err != nil {
@@ -111,7 +111,7 @@ func TestSubAgentFailureFailsParentToolResult(t *testing.T) {
 		},
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("delegate")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	deltas := collectDeltas(stream)
 	stream.Wait()
 
@@ -144,8 +144,8 @@ func TestSubAgentFailureFailsParentToolResult(t *testing.T) {
 		if !ok {
 			continue
 		}
-		for _, c := range sm.Content {
-			if trc, ok := c.(types.ToolResultContent); ok && trc.ToolCallID == "call-1" {
+		for _, c := range sm.Parts {
+			if trc, ok := c.(types.ToolResultPart); ok && trc.CallID == "call-1" {
 				found = true
 				if !trc.IsError {
 					t.Error("persisted tool result IsError = false, want true")
@@ -185,7 +185,7 @@ func TestSubAgentInheritsStepRunner(t *testing.T) {
 		},
 	})
 
-	stream := agent.Invoke(context.Background(), []types.Message{types.NewUserMessage("delegate")})
+	stream := agent.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("delegate"))})
 	collectDeltas(stream)
 	if err := stream.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)

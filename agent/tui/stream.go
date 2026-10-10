@@ -355,11 +355,12 @@ func StreamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer) Verbo
 type verboseStreamer struct {
 	w                    io.Writer
 	tmpl                 Template
-	act                  activity          // classifies tool calls as sub-agent delegations
-	toolNames            map[string]string // toolCallID → tool name
-	agentNames           map[string]string // toolCallID → sub-agent name, for delegations only
-	agentNewLine         map[string]bool   // toolCallID → needs prefix on next chunk
-	agentStarted         map[string]bool   // toolCallID → has received any text
+	act                  activity               // classifies tool calls as sub-agent delegations
+	toolNames            map[string]string      // toolCallID → tool name
+	agentNames           map[string]string      // toolCallID → sub-agent name, for delegations only
+	agentNewLine         map[string]bool        // toolCallID → needs prefix on next chunk
+	agentStarted         map[string]bool        // toolCallID → has received any text
+	kinds                map[int]types.PartKind // part index → kind, while open
 	text                 strings.Builder
 	coordinatorStreaming bool
 }
@@ -371,29 +372,72 @@ func (vs *verboseStreamer) ensureNewline() {
 	}
 }
 
-func (vs *verboseStreamer) handleTextContent(d types.TextContentDelta) {
-	vs.text.WriteString(d.Content)
-	_, _ = fmt.Fprint(vs.w, d.Content)
+func (vs *verboseStreamer) handleTextContent(text string) {
+	vs.text.WriteString(text)
+	_, _ = fmt.Fprint(vs.w, text)
 	vs.coordinatorStreaming = true
 }
 
-func (vs *verboseStreamer) handleToolCallStart(d types.ToolCallStartDelta) {
+func (vs *verboseStreamer) handleToolCallStart(id, name string) {
 	vs.ensureNewline()
-	vs.toolNames[d.ID] = d.Name
-	if _, isAgent := vs.act.agentToolName(d.Name); isAgent {
+	vs.toolNames[id] = name
+	if _, isAgent := vs.act.agentToolName(name); isAgent {
 		return // announced as a delegation when it starts executing
 	}
 	if vs.tmpl.ShowToolCalls {
-		fmt.Fprintln(vs.w, FormatToolCall(d.Name))
+		fmt.Fprintln(vs.w, FormatToolCall(name))
 	}
 }
 
-func (vs *verboseStreamer) handleToolCallEnd(d types.ToolCallEndDelta) {
-	if !vs.tmpl.ShowToolArgs || d.Arguments == nil {
+func (vs *verboseStreamer) handleToolCallEnd(args map[string]any) {
+	if !vs.tmpl.ShowToolArgs || args == nil {
 		return
 	}
 	vs.ensureNewline()
-	fmt.Fprintln(vs.w, usageStyle.Render("  "+summarizeArgs(d.Arguments, 200)))
+	fmt.Fprintln(vs.w, usageStyle.Render("  "+summarizeArgs(args, 200)))
+}
+
+// handlePart routes the model's part deltas: text and thinking stream as
+// they arrive, a tool call is announced at its start and its arguments shown
+// at its end, and citations are noted with the routing details.
+func (vs *verboseStreamer) handlePart(d types.Delta) {
+	switch d := d.(type) {
+	case types.PartStart:
+		vs.kinds[d.Index] = d.Kind
+		switch d.Kind {
+		case types.KindText:
+			vs.ensureNewline()
+		case types.KindToolCall:
+			vs.handleToolCallStart(d.ID, d.Name)
+		}
+	case types.PartDelta:
+		switch {
+		case d.Text != "":
+			vs.handleTextContent(d.Text)
+		case d.Thinking != "" && vs.tmpl.ShowThinking:
+			_, _ = fmt.Fprint(vs.w, thinkingStyle.Render(d.Thinking))
+			vs.coordinatorStreaming = true
+		}
+	case types.PartEnd:
+		kind := vs.kinds[d.Index]
+		delete(vs.kinds, d.Index)
+		switch p := d.Part.(type) {
+		case types.ToolCallPart:
+			vs.handleToolCallEnd(p.Arguments)
+			return
+		case types.CitationPart:
+			if vs.tmpl.ShowRouting {
+				var note activity
+				note.apply(d)
+				vs.ensureNewline()
+				fmt.Fprintln(vs.w, usageStyle.Render(note.entries[0].text))
+			}
+			return
+		}
+		if kind == types.KindText || kind == types.KindThinking {
+			vs.ensureNewline()
+		}
+	}
 }
 
 func (vs *verboseStreamer) handleToolExecStart(d types.ToolExecStartDelta) {
@@ -437,10 +481,14 @@ func (vs *verboseStreamer) handleToolExecDelta(d types.ToolExecDelta) {
 		return
 	}
 	switch in := inner.(type) {
-	case types.TextContentDelta:
-		vs.agentText(id, in.Content)
-	case types.ToolCallStartDelta:
-		vs.agentLine(id, iconTool+" "+in.Name)
+	case types.PartDelta:
+		if in.Text != "" {
+			vs.agentText(id, in.Text)
+		}
+	case types.PartStart:
+		if in.Kind == types.KindToolCall {
+			vs.agentLine(id, iconTool+" "+in.Name)
+		}
 	case types.ToolExecEndDelta:
 		if in.Error != "" {
 			vs.agentLine(id, iconError+" "+in.Name+": "+in.Error)
@@ -572,29 +620,13 @@ func streamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl 
 		agentNames:   make(map[string]string),
 		agentNewLine: make(map[string]bool),
 		agentStarted: make(map[string]bool),
+		kinds:        make(map[int]types.PartKind),
 	}
 
 	for delta := range ch {
 		switch d := delta.(type) {
-		case types.TextStartDelta:
-			vs.ensureNewline()
-		case types.TextContentDelta:
-			vs.handleTextContent(d)
-		case types.TextEndDelta:
-			vs.ensureNewline()
-		case types.ThinkingContentDelta:
-			if tmpl.ShowThinking {
-				_, _ = fmt.Fprint(w, thinkingStyle.Render(d.Content))
-				vs.coordinatorStreaming = true
-			}
-		case types.ThinkingEndDelta:
-			vs.ensureNewline()
-		case types.ToolCallStartDelta:
-			vs.handleToolCallStart(d)
-		case types.ToolCallArgumentDelta:
-			// argument JSON fragments: the complete arguments arrive on ToolCallEndDelta
-		case types.ToolCallEndDelta:
-			vs.handleToolCallEnd(d)
+		case types.PartStart, types.PartDelta, types.PartEnd:
+			vs.handlePart(d)
 		case types.ToolExecStartDelta:
 			vs.handleToolExecStart(d)
 		case types.ToolExecDelta:

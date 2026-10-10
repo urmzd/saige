@@ -34,7 +34,7 @@ func TestChatCompletionsToolRule(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
 			a := NewAdapter("k", tc.model, append([]Option{WithBaseURL(server.URL)}, tc.opts...)...)
-			ch, err := a.ChatStream(context.Background(), []types.Message{types.NewUserMessage("go")}, tc.tools)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("go"))}, Tools: tc.tools})
 			if tc.wantErr {
 				if !errors.Is(err, types.ErrInvalidModelConfig) {
 					t.Fatalf("err = %v, want an invalid configuration", err)

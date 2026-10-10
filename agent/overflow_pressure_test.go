@@ -26,7 +26,8 @@ type summarizingProvider struct {
 	turns     []int // size of each non-summary request
 }
 
-func (p *summarizingProvider) ChatStream(_ context.Context, messages []types.Message, _ []types.ToolDef) (<-chan types.Delta, error) {
+func (p *summarizingProvider) Stream(_ context.Context, req types.Request) (<-chan types.Delta, error) {
+	messages := req.Messages
 	p.mu.Lock()
 	text := "done"
 	if strings.Contains(types.MessagesToText(messages[:1]), "Summarize the following conversation") {
@@ -60,10 +61,10 @@ func TestPressureCompactionLoopsUntilUnderLimit(t *testing.T) {
 	var input []types.Message
 	for i := range 6 {
 		long := strings.Repeat(fmt.Sprint(i), 200)
-		input = append(input, types.NewUserMessage(long),
-			types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: long}}})
+		input = append(input, types.UserMsg(types.Text(long)),
+			types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: long}}})
 	}
-	input = append(input, types.NewUserMessage("final question"))
+	input = append(input, types.UserMsg(types.Text("final question")))
 	stream := a.Invoke(context.Background(), input)
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {
@@ -89,9 +90,9 @@ func TestPressureCompactionStopsWithoutProgress(t *testing.T) {
 		CompactCfg:   &types.CompactConfig{Strategy: types.CompactSummarize, MaxInputTokens: 1},
 	})
 	stream := a.Invoke(context.Background(), []types.Message{
-		types.NewUserMessage("a"),
-		types.AssistantMessage{Content: []types.AssistantContent{types.TextContent{Text: "b"}}},
-		types.NewUserMessage("c"),
+		types.UserMsg(types.Text("a")),
+		types.AssistantMessage{Parts: []types.AssistantPart{types.TextPart{Text: "b"}}},
+		types.UserMsg(types.Text("c")),
 	})
 	agenttest.CollectDeltas(stream.Deltas())
 	if err := stream.Wait(); err != nil {

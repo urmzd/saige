@@ -57,12 +57,12 @@ func slowFirstTools(r *orderRecorder, slow time.Duration) []types.Tool {
 func threeCallTurn() [][]types.Delta {
 	return [][]types.Delta{
 		{
-			types.ToolCallStartDelta{ID: "tc-1", Name: "alpha"},
-			types.ToolCallEndDelta{Arguments: map[string]any{}},
-			types.ToolCallStartDelta{ID: "tc-2", Name: "beta"},
-			types.ToolCallEndDelta{Arguments: map[string]any{}},
-			types.ToolCallStartDelta{ID: "tc-3", Name: "gamma"},
-			types.ToolCallEndDelta{Arguments: map[string]any{}},
+			types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "tc-1", Name: "alpha"},
+			types.PartEnd{Index: 0, Part: types.ToolCallPart{ID: "tc-1", Name: "alpha", Arguments: map[string]any{}}},
+			types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "tc-2", Name: "beta"},
+			types.PartEnd{Index: 1, Part: types.ToolCallPart{ID: "tc-2", Name: "beta", Arguments: map[string]any{}}},
+			types.PartStart{Index: 2, Kind: types.KindToolCall, ID: "tc-3", Name: "gamma"},
+			types.PartEnd{Index: 2, Part: types.ToolCallPart{ID: "tc-3", Name: "gamma", Arguments: map[string]any{}}},
 		},
 		agenttest.TextResponse("done"),
 	}
@@ -76,7 +76,7 @@ func runTurn(t *testing.T, tools []types.Tool, opts ...AgentOption) {
 		Tools:    types.NewToolRegistry(tools...),
 	}, append([]AgentOption{WithMaxIter(5)}, opts...)...)
 
-	stream := a.Invoke(context.Background(), []types.Message{types.NewUserMessage("go")})
+	stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
 	agenttest.CollectDeltas(stream.Deltas())
 	stream.Wait()
 }

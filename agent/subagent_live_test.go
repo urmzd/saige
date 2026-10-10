@@ -22,11 +22,12 @@ type recordingProvider struct {
 	sizes []int
 }
 
-func (p *recordingProvider) ChatStream(ctx context.Context, msgs []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
+func (p *recordingProvider) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	msgs, tools := req.Messages, req.Tools
 	p.mu.Lock()
 	p.sizes = append(p.sizes, types.EstimateTokens(msgs))
 	p.mu.Unlock()
-	return p.inner.ChatStream(ctx, msgs, tools)
+	return p.inner.Stream(ctx, types.Request{Messages: msgs, Tools: tools})
 }
 
 // TestSubAgentReadsDocumentByReferenceLive gives a bounded child a large
@@ -82,7 +83,7 @@ func TestSubAgentReadsDocumentByReferenceLive(t *testing.T) {
 	if r.Iterations > r.MaxIter+1 {
 		t.Fatalf("iterations = %d over the budget of %d", r.Iterations, r.MaxIter)
 	}
-	docTokens := types.EstimateTokens([]types.Message{types.NewUserMessage(task)})
+	docTokens := types.EstimateTokens([]types.Message{types.UserMsg(types.Text(task))})
 	for i, n := range provider.sizes {
 		if n > docTokens/4 {
 			t.Fatalf("request %d sent about %d tokens; the document is %d", i, n, docTokens)

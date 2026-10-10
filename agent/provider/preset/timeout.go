@@ -58,31 +58,21 @@ func (t *attemptTimeout) EffectiveOptions() types.RequestOptions {
 	return o
 }
 
-func (t *attemptTimeout) ChatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	return t.bound(ctx, func(ctx context.Context) (<-chan types.Delta, error) {
-		return t.Inner.ChatStream(ctx, messages, tools)
-	})
-}
-
-func (t *attemptTimeout) ChatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
-	sp, ok := t.Inner.(types.StructuredOutputProvider)
-	if !ok {
+func (t *attemptTimeout) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
+	if req.Schema != nil && !types.AcceptsSchema(t.Inner) {
 		return nil, schemacheck.Unsupported(t.Inner, "the inner provider has no structured output")
 	}
-	return t.bound(ctx, func(ctx context.Context) (<-chan types.Delta, error) {
-		return sp.ChatStreamWithSchema(ctx, messages, tools, schema)
-	})
-}
-
-func (t *attemptTimeout) ChatStreamWithOptions(ctx context.Context, messages []types.Message, tools []types.ToolDef, opts types.RequestOptions) (<-chan types.Delta, error) {
-	op, ok := t.Inner.(types.OptionsProvider)
-	if !ok {
+	if req.Options != nil && !types.AcceptsOptions(t.Inner) {
 		return nil, optionscheck.Unsupported(t.Inner)
 	}
 	return t.bound(ctx, func(ctx context.Context) (<-chan types.Delta, error) {
-		return op.ChatStreamWithOptions(ctx, messages, tools, opts)
+		return t.Inner.Stream(ctx, req)
 	})
 }
+
+func (t *attemptTimeout) SupportsSchema() bool { return true }
+
+func (t *attemptTimeout) SupportsOptions() bool { return true }
 
 // bound runs call under the attempt deadline and keeps the deadline until
 // the stream closes. An expired deadline is reported as a transient error so

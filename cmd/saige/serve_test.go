@@ -182,7 +182,7 @@ func TestServeStreamsTurnAsEnvelopes(t *testing.T) {
 	frames := f.events(sid, tid, "", nil)
 
 	got := strings.Join(kinds(frames), ",")
-	if !strings.Contains(got, types.WireTextDelta) || !strings.HasSuffix(got, types.WireDone) {
+	if !strings.Contains(got, types.WirePartDelta) || !strings.HasSuffix(got, types.WireDone) {
 		t.Fatalf("kinds = %s, want text deltas ending in done", got)
 	}
 	for i, fr := range frames {
@@ -196,8 +196,8 @@ func TestServeStreamsTurnAsEnvelopes(t *testing.T) {
 	var text strings.Builder
 	for _, fr := range frames {
 		if d, err := fr.env.Delta(); err == nil {
-			if td, ok := d.(types.TextContentDelta); ok {
-				text.WriteString(td.Content)
+			if td, ok := d.(types.PartDelta); ok {
+				text.WriteString(td.Text)
 			}
 		}
 	}

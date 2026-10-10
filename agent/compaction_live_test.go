@@ -23,9 +23,9 @@ func TestCompactionLive(t *testing.T) {
 	}
 	const fact = "QX-58213"
 	history := []types.Message{
-		types.NewUserMessage("I am planning a conference. I will send notes; acknowledge each one briefly."),
-		types.NewUserMessage("Note: the keynote speaker's hotel confirmation number is " + fact + "."),
-		types.NewAssistantMessage("Noted the keynote speaker's hotel confirmation number."),
+		types.UserMsg(types.Text("I am planning a conference. I will send notes; acknowledge each one briefly.")),
+		types.UserMsg(types.Text("Note: the keynote speaker's hotel confirmation number is " + fact + ".")),
+		types.AssistantMsg(types.Text("Noted the keynote speaker's hotel confirmation number.")),
 	}
 	topics := []string{"catering menu", "badge printing", "projector rental", "parking passes", "wifi vouchers",
 		"stage lighting", "signage", "volunteer shifts", "coffee breaks", "photographer", "name tags",
@@ -33,10 +33,10 @@ func TestCompactionLive(t *testing.T) {
 		"accessibility ramps", "cloakroom", "first aid kit"}
 	for i, topic := range topics {
 		history = append(history,
-			types.NewUserMessage(fmt.Sprintf("Note %d: the %s vendor confirmed for day %d; budget line %d is approved.", i, topic, i%3+1, 100+i)),
-			types.NewAssistantMessage(fmt.Sprintf("Noted the %s confirmation.", topic)))
+			types.UserMsg(types.Text(fmt.Sprintf("Note %d: the %s vendor confirmed for day %d; budget line %d is approved.", i, topic, i%3+1, 100+i))),
+			types.AssistantMsg(types.Text(fmt.Sprintf("Noted the %s confirmation.", topic))))
 	}
-	history = append(history, types.NewUserMessage("What is the keynote speaker's hotel confirmation number? Reply with the number only."))
+	history = append(history, types.UserMsg(types.Text("What is the keynote speaker's hotel confirmation number? Reply with the number only.")))
 
 	tests := []struct {
 		name string
@@ -59,12 +59,12 @@ func TestCompactionLive(t *testing.T) {
 			stream := a.Invoke(ctx, history)
 			var (
 				text strings.Builder
-				recs []types.CompactionContent
+				recs []types.CompactionPart
 			)
 			for d := range stream.Deltas() {
 				switch v := d.(type) {
-				case types.TextContentDelta:
-					text.WriteString(v.Content)
+				case types.PartDelta:
+					text.WriteString(v.Text)
 				case types.CompactionDelta:
 					recs = append(recs, v.Record)
 				}

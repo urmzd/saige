@@ -63,29 +63,29 @@ func FromPath(conversation string, path []*types.Node) (Record, error) {
 		switch m := n.Message.(type) {
 		case types.AssistantMessage:
 			rec.Turns++
-			for _, c := range m.Content {
+			for _, c := range m.Parts {
 				switch v := c.(type) {
-				case types.ToolUseContent:
+				case types.ToolCallPart:
 					byID[v.ID] = len(rec.ToolCalls)
 					rec.ToolCalls = append(rec.ToolCalls, agenteval.ToolCallRecord{
 						ID: v.ID, Name: v.Name, Arguments: v.Arguments, ArgumentsError: v.ArgumentsError,
 						Exec: agenteval.ExecNotRun,
 					})
-				case types.RouteContent:
+				case types.RoutePart:
 					rec.Model, rec.Preset = v.Model, v.Preset
-				case types.TruncationContent:
+				case types.TruncationPart:
 					rec.setError("turn truncated: " + v.Reason)
 				}
 			}
 		case types.SystemMessage:
-			for _, c := range m.Content {
-				if v, ok := c.(types.ToolResultContent); ok {
+			for _, c := range m.Parts {
+				if v, ok := c.(types.ToolResultPart); ok {
 					rec.addResult(byID, v)
 				}
 			}
 		case types.UserMessage:
-			for _, c := range m.Content {
-				if v, ok := c.(types.ToolResultContent); ok {
+			for _, c := range m.Parts {
+				if v, ok := c.(types.ToolResultPart); ok {
 					rec.addResult(byID, v)
 				}
 			}
@@ -101,8 +101,8 @@ func (r *Record) setError(msg string) {
 	}
 }
 
-func (r *Record) addResult(byID map[string]int, res types.ToolResultContent) {
-	idx, ok := byID[res.ToolCallID]
+func (r *Record) addResult(byID map[string]int, res types.ToolResultPart) {
+	idx, ok := byID[res.CallID]
 	if !ok {
 		return
 	}
@@ -110,10 +110,10 @@ func (r *Record) addResult(byID map[string]int, res types.ToolResultContent) {
 	call.Exec = agenteval.ExecFinished
 	call.Version = res.ToolVersion
 	if res.IsError {
-		call.Error = res.Text
-		r.setError(fmt.Sprintf("tool %s: %s", call.Name, res.Text))
+		call.Error = res.Text()
+		r.setError(fmt.Sprintf("tool %s: %s", call.Name, res.Text()))
 	} else {
-		call.Result = res.Text
+		call.Result = res.Text()
 	}
 }
 
@@ -126,8 +126,8 @@ func endsRun(n *types.Node) bool {
 	if !ok {
 		return false
 	}
-	for _, c := range m.Content {
-		if _, isCall := c.(types.ToolUseContent); isCall {
+	for _, c := range m.Parts {
+		if _, isCall := c.(types.ToolCallPart); isCall {
 			return false
 		}
 	}
@@ -145,8 +145,8 @@ func userText(n *types.Node) (string, bool) {
 		return "", false
 	}
 	var parts []string
-	for _, c := range m.Content {
-		if t, ok := c.(types.TextContent); ok {
+	for _, c := range m.Parts {
+		if t, ok := c.(types.TextPart); ok {
 			parts = append(parts, t.Text)
 		}
 	}
@@ -158,8 +158,8 @@ func userText(n *types.Node) (string, bool) {
 
 func assistantText(m types.AssistantMessage) string {
 	var b strings.Builder
-	for _, c := range m.Content {
-		if t, ok := c.(types.TextContent); ok {
+	for _, c := range m.Parts {
+		if t, ok := c.(types.TextPart); ok {
 			b.WriteString(t.Text)
 		}
 	}

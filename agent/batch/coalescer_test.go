@@ -32,7 +32,7 @@ func TestCoalescerOneBatchPerRound(t *testing.T) {
 			defer wg.Done()
 			defer leaves[i]()
 			kctx := WithKey(ctx, fmt.Sprintf("case-%d", i))
-			ch, err := c.ChatStream(kctx, []types.Message{types.NewUserMessage(fmt.Sprintf("q%d", i))}, nil)
+			ch, err := c.Stream(kctx, types.Request{Messages: []types.Message{types.UserMsg(types.Text(fmt.Sprintf("q%d", i)))}})
 			if err != nil {
 				t.Error(err)
 				return
@@ -99,7 +99,7 @@ func TestCoalescerFailedRequest(t *testing.T) {
 	v := newFakeVendor()
 	v.outcome = func(types.BatchRequest) types.BatchOutcome { return types.BatchExpiredOutcome }
 	c := NewCoalescer(fastRunner(v, NewMemoryStore()), WithWindow(time.Millisecond))
-	ch, err := c.ChatStream(context.Background(), []types.Message{types.NewUserMessage("x")}, nil)
+	ch, err := c.Stream(context.Background(), types.Request{Messages: []types.Message{types.UserMsg(types.Text("x"))}})
 	if err != nil {
 		t.Fatal(err)
 	}

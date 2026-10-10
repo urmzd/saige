@@ -10,25 +10,27 @@ import (
 
 func TestToAnthropicParamsPDFIsNativeDocument(t *testing.T) {
 	pdf := []byte("%PDF-1.4 fake")
-	msgs := []types.Message{types.NewUserMessageWithFiles("summarize this",
-		types.FileContent{MediaType: types.MediaPDF, Data: pdf, Filename: "paper.pdf"})}
+	doc := types.Bytes(types.MediaPDF, pdf)
+	doc.Filename = "paper.pdf"
+	msgs := []types.Message{types.UserMsg(types.Text("summarize this"), types.Document(doc))}
 
 	_, out := toAnthropicParams(msgs)
 	if len(out) != 1 || len(out[0].Content) != 2 {
 		t.Fatalf("messages = %+v, want one user message with 2 blocks", out)
 	}
-	doc := out[0].Content[1].OfDocument
-	if doc == nil {
-		t.Fatal("PDF FileContent must map to a native document block, not text")
+	block := out[0].Content[1].OfDocument
+	if block == nil {
+		t.Fatal("a PDF document part must map to a native document block, not text")
 	}
-	if doc.Source.OfBase64 == nil || doc.Source.OfBase64.Data != base64.StdEncoding.EncodeToString(pdf) {
-		t.Errorf("document source = %+v, want base64 PDF bytes", doc.Source)
+	if block.Source.OfBase64 == nil || block.Source.OfBase64.Data != base64.StdEncoding.EncodeToString(pdf) {
+		t.Errorf("document source = %+v, want base64 PDF bytes", block.Source)
 	}
 }
 
 func TestToAnthropicParamsNonNativeFileFallsBackToText(t *testing.T) {
-	msgs := []types.Message{types.NewUserMessageWithFiles("",
-		types.FileContent{MediaType: types.MediaCSV, Data: []byte("a,b"), Filename: "data.csv"})}
+	csv := types.Bytes(types.MediaCSV, []byte("a,b"))
+	csv.Filename = "data.csv"
+	msgs := []types.Message{types.UserMsg(types.Document(csv))}
 
 	_, out := toAnthropicParams(msgs)
 	if len(out) != 1 || len(out[0].Content) != 1 {
@@ -54,7 +56,7 @@ func TestContentSupportClaimsMatchMapping(t *testing.T) {
 
 func TestToToolResultBlockBackCompat(t *testing.T) {
 	// No rich Blocks → take the plain NewToolResultBlock path.
-	got := toToolResultBlock(types.ToolResultContent{ToolCallID: "t1", Text: "plain", IsError: false})
+	got := toToolResultBlock(types.ToolResultPart{CallID: "t1", Parts: []types.ToolOutputPart{types.Text("plain")}, IsError: false})
 	if got.OfToolResult == nil {
 		t.Fatal("expected an OfToolResult union")
 	}
@@ -65,13 +67,9 @@ func TestToToolResultBlockBackCompat(t *testing.T) {
 
 func TestToToolResultBlockTextAndImage(t *testing.T) {
 	data := []byte{0x89, 0x50, 0x4e, 0x47}
-	c := types.ToolResultContent{
-		ToolCallID: "t2",
-		Text:       "see image",
-		Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockText, Text: "see image"},
-			{Kind: types.ToolResultBlockImage, MediaType: types.MediaPNG, Data: data},
-		},
+	c := types.ToolResultPart{
+		CallID: "t2",
+		Parts:  []types.ToolOutputPart{types.Text("see image"), types.Image(types.Bytes(types.MediaPNG, data))},
 	}
 	got := toToolResultBlock(c)
 	if got.OfToolResult == nil {
@@ -94,12 +92,9 @@ func TestToToolResultBlockTextAndImage(t *testing.T) {
 }
 
 func TestToToolResultBlockPDFDocument(t *testing.T) {
-	c := types.ToolResultContent{
-		ToolCallID: "t3",
-		Text:       "report",
-		Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockFile, MediaType: types.MediaPDF, Data: []byte("%PDF-1.4")},
-		},
+	c := types.ToolResultPart{
+		CallID: "t3",
+		Parts:  []types.ToolOutputPart{types.Document(types.Bytes(types.MediaPDF, []byte("%PDF-1.4")))},
 	}
 	content := toToolResultBlock(c).OfToolResult.Content
 	if len(content) != 1 || content[0].OfDocument == nil {
@@ -108,12 +103,9 @@ func TestToToolResultBlockPDFDocument(t *testing.T) {
 }
 
 func TestToToolResultBlockUnsupportedFileFallsBackToText(t *testing.T) {
-	c := types.ToolResultContent{
-		ToolCallID: "t4",
-		Text:       "data",
-		Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockFile, MediaType: types.MediaCSV, Filename: "data.csv", Data: []byte("a,b")},
-		},
+	c := types.ToolResultPart{
+		CallID: "t4",
+		Parts:  []types.ToolOutputPart{types.Document(types.Source{MediaType: types.MediaCSV, Filename: "data.csv", Inline: []byte("a,b")})},
 	}
 	content := toToolResultBlock(c).OfToolResult.Content
 	if len(content) != 1 || content[0].OfText == nil {
@@ -122,12 +114,9 @@ func TestToToolResultBlockUnsupportedFileFallsBackToText(t *testing.T) {
 }
 
 func TestToToolResultBlockJSON(t *testing.T) {
-	c := types.ToolResultContent{
-		ToolCallID: "t5",
-		Text:       "{...}",
-		Blocks: []types.ToolResultBlock{
-			{Kind: types.ToolResultBlockJSON, JSON: []byte(`{"n":1}`)},
-		},
+	c := types.ToolResultPart{
+		CallID: "t5",
+		Parts:  []types.ToolOutputPart{types.JSONPart{JSON: []byte(`{"n":1}`)}},
 	}
 	content := toToolResultBlock(c).OfToolResult.Content
 	if len(content) != 1 || content[0].OfText == nil || content[0].OfText.Text != `{"n":1}` {
@@ -144,15 +133,15 @@ func TestEmptySystemPromptIsOmitted(t *testing.T) {
 		msgs []types.Message
 		want int // system blocks expected; 0 means the field is absent
 	}{
-		{"empty", []types.Message{types.NewSystemMessage(""), types.NewUserMessage("hi")}, 0},
-		{"whitespace", []types.Message{types.NewSystemMessage(" \n\t"), types.NewUserMessage("hi")}, 0},
-		{"blank beside real text", []types.Message{types.NewSystemMessage(""), types.NewSystemMessage("rules"), types.NewUserMessage("hi")}, 1},
-		{"no system message", []types.Message{types.NewUserMessage("hi")}, 0},
+		{"empty", []types.Message{types.SystemMsg(types.Text("")), types.UserMsg(types.Text("hi"))}, 0},
+		{"whitespace", []types.Message{types.SystemMsg(types.Text(" \n\t")), types.UserMsg(types.Text("hi"))}, 0},
+		{"blank beside real text", []types.Message{types.SystemMsg(types.Text("")), types.SystemMsg(types.Text("rules")), types.UserMsg(types.Text("hi"))}, 1},
+		{"no system message", []types.Message{types.UserMsg(types.Text("hi"))}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, bodies := captureServer(t)
 			a := NewAdapter("k", "claude-haiku-5-5", WithBaseURL(server.URL))
-			ch, err := a.ChatStream(context.Background(), tc.msgs, nil)
+			ch, err := a.Stream(context.Background(), types.Request{Messages: tc.msgs})
 			if err != nil {
 				t.Fatal(err)
 			}

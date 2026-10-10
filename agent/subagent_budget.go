@@ -71,7 +71,7 @@ func wrapUpDue(wrapUpAt, used, maxIter int) bool {
 // injectWrapUp appends the wrap-up note at a safe point and reports it as an
 // InjectedDelta with Mode "wrap_up".
 func (a *Agent) injectWrapUp(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, used, maxIter int, out runOutput) error {
-	node, err := a.appendNode(ctx, tr, branch, types.NewSystemMessage(wrapUpNote(a.cfg.WrapUpPrompt, used, maxIter, out)))
+	node, err := a.appendNode(ctx, tr, branch, types.SystemMsg(types.Text(wrapUpNote(a.cfg.WrapUpPrompt, used, maxIter, out))))
 	if err != nil {
 		return err
 	}
