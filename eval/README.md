@@ -359,11 +359,135 @@ cmp := eval.CompareSuites(baseline, suite)
 
 `StatusOf(runErr)` maps a run error to `succeeded`, `canceled` (context ended), or `errored`. The status is separate from the gate outcome: a run can succeed and fail its gates.
 
-The `store.Store` interface has two implementations: `memstore` (in memory) and `filestore` (a directory per run with `run.json` written by temp file and rename, plus `units.jsonl` and `attempts.jsonl` appended and synced line by line). `PutUnit` on an existing key archives the stored unit as a prior attempt before replacing it, so a retried case keeps its history and never appears twice; `Attempts` returns the archive. Stores copy everything they accept and return. `SaveSuite` rejects a suite in which two results share a unit key (a repeated case ID, or variants told apart by a label other than `variant`) with `store.ErrDuplicateUnit` before writing anything. `eval/store/storetest` is the conformance suite for a new implementation.
+The `store.Store` interface has three implementations: `memstore` (in memory), `pgstore` (PostgreSQL, see [Storing Results in Postgres](#storing-results-in-postgres)), and `filestore` (a directory per run with `run.json` written by temp file and rename, plus `units.jsonl` and `attempts.jsonl` appended and synced line by line). `PutUnit` on an existing key archives the stored unit as a prior attempt before replacing it, so a retried case keeps its history and never appears twice; `Attempts` returns the archive. Stores copy everything they accept and return. `SaveSuite` rejects a suite in which two results share a unit key (a repeated case ID, or variants told apart by a label other than `variant`) with `store.ErrDuplicateUnit` before writing anything. `eval/store/storetest` is the conformance suite for a new implementation.
 
 `CaptureProvenance` reads the commit and dirty flag from git when it is available and from the binary's VCS stamp otherwise; a run outside any repository records no commit rather than failing.
 
 `saige eval run --store DIR` records each harness run there (set `harness.Runner.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
+
+## Storing Results in Postgres
+
+`eval/pgstore` keeps runs and units in PostgreSQL 18, so several machines and CI jobs share one history. `postgres.RunMigrations` creates its tables along with the rest of the saige schema, after checking the server version and extensions. `pgstore.New` returns `pgstore.ErrSchemaMissing` when the tables are not there.
+
+```go
+import (
+    "github.com/urmzd/saige/eval/pgstore"
+    "github.com/urmzd/saige/postgres"
+)
+
+pool, _ := postgres.NewPool(ctx, postgres.Config{URL: dsn})
+_ = postgres.RunMigrations(ctx, pool, postgres.MigrationOptions{})
+
+results, err := pgstore.New(ctx, pool, "acme") // tenant scope; "" for a single tenant
+run, err := store.SaveSuite(ctx, results, eval.NewRunID(), suite, runErr, prov)
+```
+
+A store is scoped to one tenant. Every row carries the tenant and every query filters on it, so two tenants can reuse run IDs without seeing each other's runs. The store passes the shared conformance suite in `eval/store/storetest`.
+
+The full run and unit records are stored as JSON, so a read returns exactly what was written. Indexed columns answer the common questions without loading every unit:
+
+| Question | Call | Index |
+|----------|------|-------|
+| Newest runs, by suite and status | `ListRuns` | `(tenant, started_at)`, `(tenant, suite, started_at)` |
+| Baseline for a regression check | `store.LatestSucceeded` or `Baseline` | `(tenant, suite, status, started_at)` |
+| Units of a run, by label | `Units` with `UnitFilter.Where` | `(tenant, run_id, seq)`, GIN on the labels |
+| History of one case across runs | `CaseHistory(ctx, suite, caseID, limit)` | `(tenant, observation_id, recorded_at)` |
+| Score-by-score diff of two runs | `Diff(ctx, base, candidate, DiffFilter{...})` | one `eval_score` row per score, keyed by run and metric |
+
+```go
+base, _ := results.Baseline(ctx, "nightly")
+drops, _ := results.Diff(ctx, base.ID, run.ID, pgstore.DiffFilter{Regressions: true, MinDrop: 0.1})
+for _, d := range drops {
+    delta, ok := d.Delta() // false when a side is missing or errored
+    fmt.Println(d.Key, d.Metric, delta, ok)
+}
+```
+
+`Diff` sorts missing and errored scores first, then the largest drop. With `Regressions` it keeps only baseline scores that dropped by more than `MinDrop`, errored, or went missing in the candidate.
+
+Every eval command that takes `--store` accepts a PostgreSQL URL in place of a directory, and `--tenant` picks the scope:
+
+```bash
+saige eval run --manifest evals/saige.eval.json --store postgres://user:pass@host/db --tenant acme
+saige eval runs --store postgres://user:pass@host/db --tenant acme
+saige eval show <run-id> --store postgres://user:pass@host/db --tenant acme
+```
+
+The CLI runs the migrations when it connects. A manifest's `store` may also be a PostgreSQL URL; keep credentials out of the file and pass `--store` instead.
+
+## Online Evals
+
+`eval/online` scores production runs after they finish, with the same scorers a suite uses, and records the results in any results store. A **run** ends at an assistant turn that calls no tools; it starts after the user message before it. The tool calls, results, route (model and preset), and first error (a tool error or a truncated turn) between the two are read from the conversation.
+
+| Source | Reads |
+|--------|-------|
+| `online.TreeSource{"conv-id": tree}` | conversation trees in memory, every branch |
+| `online.PGSource{Pool: pool, Scope: "acme"}` | conversations stored by `agent/pgstore`, optionally one tenant scope |
+| `online.RecordSource{online.FromAgentRun(ref, input, finished, run)}` | runs collected with `agent/eval.CollectAgentRun`, with their route and trace records |
+
+A `Sampler` filters the records, samples a fraction of them, scores the sample, and writes one run:
+
+```go
+import (
+    "github.com/urmzd/saige/agent/provider/openai"
+    "github.com/urmzd/saige/agent/types"
+    agenteval "github.com/urmzd/saige/agent/eval"
+    "github.com/urmzd/saige/eval/online"
+)
+
+budget := types.NewBudget(types.BudgetPolicy{Limit: types.USD(0.50), MaxRequests: 200})
+judge := eval.NewJudgeScorer(&online.BudgetedGenerator{
+    Provider: openai.NewAdapter(key, "gpt-6-luna"), // a cheap judge model
+    Budget:   budget,
+}, eval.WithJudgeRubric("Score 1 when the answer is correct and complete."))
+
+errored := true
+s := &online.Sampler{
+    Store:   results,
+    Rate:    0.1, // score 10% of matching runs
+    Seed:    42,
+    Filter:  online.Filter{Models: []string{"gpt-6-luna"}, Tools: []string{"search"}, Errored: &errored},
+    Scorers: []eval.Scorer{agenteval.ToolSuccessRateScorer(), eval.TokenBudgetScorer(4000)},
+    Judges:  []eval.Scorer{judge},
+    Budget:  budget,
+}
+rep, err := s.Sweep(ctx, online.PGSource{Pool: pool}, online.Window{From: time.Now().Add(-24 * time.Hour)})
+```
+
+- **Sampling** is deterministic: a record is in the sample by a hash of `Seed`, its conversation, and its node, so the same seed picks the same runs in every sweep and in watch mode, whatever the order. A higher rate keeps every run a lower rate kept. `Rate` zero scores every matching run.
+- **Filters** select by model, preset, tools called, error, and any label (`Filter.Where`), including the labels below.
+- **Judges** are charged to `Budget` through `BudgetedGenerator`, which reserves before each call and settles with the reported usage. Once the budget refuses a call, judges decline the remaining runs, the deterministic scorers still run, and `Report.JudgesSkipped` counts the refusals.
+- **Results** are one `RunRecord` per sweep (suite `online` by default, label `source=online`, the window in `Provenance.Extra`), with one unit per scored run. A unit's observation ID is the node that ended the run, and its labels carry `source`, `conversation`, `node`, `model`, `preset`, and `errored`. A record with a trace ID also sets `Unit.Trace`. An empty window still records an empty run.
+
+**Long-running mode.** `Sampler.Watch` keeps one run open and scores each run a producer announces, until its context ends. Producers call `online.Announce` after storing the run's final node; with `postgres.Notifier` the announcement crosses processes. Notifications are hints, not a queue, so set `WatchOptions.Since` to sweep the runs that finished while no watcher was listening:
+
+```go
+n := postgres.NewNotifier(pool, postgres.NotifierOptions{})
+rep, err := s.Watch(ctx, n, online.PGSource{Pool: pool}, online.WatchOptions{Since: time.Now().Add(-time.Hour)})
+
+// In the serving process, after the run's last node is stored:
+_ = online.Announce(ctx, n, "", online.Ref{Conversation: convID, Node: string(node.ID)})
+```
+
+**Promote to dataset.** `online.Promote` turns failing or flagged units into dataset cases: the input, an expected output when `PromoteOptions.Expected` supplies one, and otherwise a rubric built from the reasons the unit failed. Every string in the input, expected output, rubric, and reasons is run through the `agent/privacy` redactor (the default detector unless `Detector` is set) and replaced irreversibly, so those fields never hold a value the detector finds, such as an email address, phone number, card number, or secret. `online.Failing(threshold, metrics...)` promotes flagged units (label `flagged=true`), failed gates, errored scores, and the listed metrics below the threshold. `WriteCases` writes JSON Lines; `Case.Observation` turns a case back into an `eval.Observation`.
+
+```go
+units, _ := results.Units(ctx, rep.Run.ID, store.UnitFilter{})
+cases, err := online.Promote(ctx, units, online.PromoteOptions{Failing: online.Failing(0.5, "judge_score")})
+_ = online.WriteCases(f, cases)
+```
+
+From the terminal, `saige eval online` sweeps the conversations in a PostgreSQL database (`--source`, by default the `--store` URL):
+
+```bash
+saige eval online --store postgres://user:pass@host/db --since 24h --rate 0.1 --seed 42 \
+  --scorer tool_success_rate --scorer '{"kind": "token_budget", "params": {"max_tokens": 4000}}' \
+  --judge --provider openai --model gpt-6-luna --judge-budget 0.50 \
+  --promote cases.jsonl
+saige eval online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
+```
+
+Filters are `--only-model`, `--only-preset`, `--tool`, `--label key=value`, and `--errored true|false`; `--scope` reads one tenant's conversations and `--tenant` writes to one tenant's results. `--watch` listens on `--channel` (default `saige.eval.online`) until interrupted, after sweeping the last `--since`.
 
 ## On-Disk Format
 
