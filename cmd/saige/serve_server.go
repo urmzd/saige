@@ -30,6 +30,10 @@ const keyTurnID = "turn_id"
 // formatAGUI is the events query value that selects AG-UI events.
 const formatAGUI = "agui"
 
+// defaultMaxUpload caps one artifact upload unless --max-upload says
+// otherwise.
+const defaultMaxUpload = 32 << 20
+
 type serveOptions struct {
 	// newAgent builds the agent for a new session. Each session owns its
 	// agent and conversation tree.
@@ -51,6 +55,14 @@ type serveOptions struct {
 	bufferEvents int
 	// heartbeat is the interval between SSE keep-alive comments.
 	heartbeat time.Duration
+	// maxUpload caps one artifact upload, in bytes.
+	maxUpload int64
+	// artifactBudget caps the bytes each session's artifacts hold.
+	artifactBudget int64
+	// maxInline caps the inline media bytes of one part, in a turn's
+	// request and in the events it streams; larger media goes through the
+	// session's artifacts.
+	maxInline int
 	logger    *slog.Logger
 }
 
@@ -74,9 +86,10 @@ type turns struct {
 
 // turn records one agent run as encoded wire envelopes for SSE replay.
 type turn struct {
-	id     string
-	stream *agentsdk.EventStream
-	limit  int
+	id        string
+	stream    *agentsdk.EventStream
+	limit     int
+	artifacts *agenthost.Artifacts
 
 	mu      sync.Mutex
 	events  []sseEvent // the most recent limit events, in seq order
@@ -89,10 +102,14 @@ type turn struct {
 	finishedAt time.Time
 }
 
+// sseEvent is one recorded delta: the delta itself, flattened with the
+// tool call path it came through, and its wire v2 envelope.
 type sseEvent struct {
-	seq  uint64
-	kind string
-	data []byte
+	seq   uint64
+	path  []string
+	delta types.Delta
+	kind  string
+	data  []byte
 }
 
 func newServer(ctx context.Context, opts serveOptions) *server {
@@ -111,11 +128,17 @@ func newServer(ctx context.Context, opts serveOptions) *server {
 	if opts.heartbeat <= 0 {
 		opts.heartbeat = 15 * time.Second
 	}
+	if opts.maxUpload <= 0 {
+		opts.maxUpload = defaultMaxUpload
+	}
+	if opts.maxInline <= 0 {
+		opts.maxInline = types.DefaultMaxInlineBytes
+	}
 	if opts.logger == nil {
 		opts.logger = slog.Default()
 	}
 	s := &server{opts: opts, ctx: ctx, sessions: agenthost.NewManager[*turns](agenthost.Options{
-		Max: opts.maxSessions, IdleTTL: opts.idleTTL, Prefix: "s_",
+		Max: opts.maxSessions, IdleTTL: opts.idleTTL, Prefix: "s_", ArtifactBudget: opts.artifactBudget,
 	})}
 	go s.sessions.Sweep(ctx)
 	return s
@@ -131,11 +154,13 @@ func (s *server) evictIdle(now time.Time) { s.sessions.Evict(now) }
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wire_version": types.WireVersion})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "wire_version": types.WireVersion, "wire_versions": []int{1, 2}})
 	})
 	mux.HandleFunc("POST /v1/sessions", s.createSession)
 	mux.HandleFunc("DELETE /v1/sessions/{sid}", s.deleteSession)
 	mux.HandleFunc("GET /v1/sessions/{sid}/tree", s.getTree)
+	mux.HandleFunc("POST /v1/sessions/{sid}/artifacts", s.uploadArtifact)
+	mux.HandleFunc("GET /v1/sessions/{sid}/artifacts/{id}", s.getArtifact)
 	mux.HandleFunc("POST /v1/sessions/{sid}/turns", s.createTurn)
 	mux.HandleFunc("GET /v1/sessions/{sid}/turns/{tid}", s.getTurn)
 	mux.HandleFunc("GET /v1/sessions/{sid}/turns/{tid}/events", s.streamEvents)
@@ -161,14 +186,42 @@ func (s *server) guard(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodPost {
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if mt != "application/json" {
+			switch {
+			case isUploadPath(r.URL.Path):
+				// An upload declares the media's own type, but never one a
+				// cross-site form can send without a preflight.
+				if mt == "" || corsSimpleTypes[mt] {
+					writeError(w, http.StatusUnsupportedMediaType, "uploads must declare the media type in Content-Type (use ?media_type= for text/plain)")
+					return
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, s.opts.maxUpload)
+			case mt != "application/json":
 				writeError(w, http.StatusUnsupportedMediaType, "POST requests must use Content-Type: application/json")
 				return
+			default:
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// corsSimpleTypes are the request content types a cross-site page can send
+// without a CORS preflight.
+var corsSimpleTypes = map[string]bool{
+	"application/x-www-form-urlencoded": true,
+	"multipart/form-data":               true,
+	"text/plain":                        true,
+}
+
+// isUploadPath reports whether path is a session's artifact upload route.
+func isUploadPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/v1/sessions/")
+	if !ok {
+		return false
+	}
+	sid, tail, _ := strings.Cut(rest, "/")
+	return sid != "" && tail == "artifacts"
 }
 
 // isLoopbackHost reports whether a Host header names this machine.
@@ -261,17 +314,15 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	var body struct {
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
-		writeError(w, http.StatusBadRequest, `body must be {"message": "<non-empty text>"}`)
+	msg, status, code, err := s.turnMessage(r.Body, sess.Artifacts)
+	if err != nil {
+		writeCodedError(w, status, code, err.Error())
 		return
 	}
 
 	sess.Host.mu.Lock()
 	defer sess.Host.mu.Unlock()
-	stream, err := sess.Start(s.ctx, types.UserMsg(types.Text(body.Message)))
+	stream, err := sess.Start(s.ctx, msg)
 	if err != nil {
 		msg := err.Error()
 		if errors.Is(err, agenthost.ErrBusy) && sess.Host.last != nil {
@@ -282,11 +333,12 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := &turn{
-		id:      "t_" + randomID(),
-		stream:  stream,
-		limit:   s.opts.bufferEvents,
-		changed: make(chan struct{}),
-		timers:  map[string]*time.Timer{},
+		id:        "t_" + randomID(),
+		stream:    stream,
+		limit:     s.opts.bufferEvents,
+		artifacts: sess.Artifacts,
+		changed:   make(chan struct{}),
+		timers:    map[string]*time.Timer{},
 	}
 	sess.Host.byID[t.id] = t
 	sess.Host.last = t
@@ -296,19 +348,23 @@ func (s *server) createTurn(w http.ResponseWriter, r *http.Request) {
 
 // record drains the turn's stream into its event buffer. Each delta is
 // flattened so sub-agent output carries its tool call path in the envelope
-// instead of nested frames.
+// instead of nested frames, and media over the inline limit is moved to the
+// session's artifacts, so every client reads it by ref.
 func (s *server) record(t *turn) {
+	enc, _ := types.NewEncoder(types.EncodeOptions{MaxInlineBytes: s.opts.maxInline})
 	for d := range t.stream.Deltas() {
 		path, inner := types.FlattenDelta(d)
-		env, err := types.NewDeltaEnvelope(inner)
-		if err != nil {
-			s.opts.logger.Warn("serve: encode delta", "turn", t.id, "error", err)
-			continue
-		}
 		if m, ok := inner.(types.MarkerDelta); ok {
 			t.armApprovalTimeout(m.ToolCallID, s.opts.approvalTimeout)
 		}
-		t.append(env, path)
+		for _, x := range agenthost.Externalize(inner, t.artifacts, s.opts.maxInline) {
+			envs, err := enc.Encode(x)
+			if err != nil || len(envs) != 1 {
+				s.opts.logger.Warn("serve: encode delta", "turn", t.id, "error", err)
+				continue
+			}
+			t.append(x, envs[0], path)
+		}
 	}
 	err := t.stream.Wait()
 	t.mu.Lock()
@@ -322,20 +378,13 @@ func (s *server) record(t *turn) {
 	t.mu.Unlock()
 }
 
-// writeAGUIEvent writes one recorded envelope as AG-UI events. A delta from
-// a sub-agent is rewrapped in its tool calls, so the mapper reports it with
+// writeAGUIEvent writes one recorded delta as AG-UI events. A delta from a
+// sub-agent is rewrapped in its tool calls, so the mapper reports it with
 // its path.
 func writeAGUIEvent(w io.Writer, m *agui.Mapper, ev sseEvent) error {
-	env, err := types.UnmarshalEnvelope(ev.data)
-	if err != nil {
-		return err
-	}
-	d, err := env.Delta()
-	if err != nil {
-		return err
-	}
-	for i := len(env.Path) - 1; i >= 0; i-- {
-		d = types.ToolExecDelta{ToolCallID: env.Path[i], Inner: d}
+	d := ev.delta
+	for i := len(ev.path) - 1; i >= 0; i-- {
+		d = types.ToolExecDelta{ToolCallID: ev.path[i], Inner: d}
 	}
 	events, err := m.Map(d)
 	if err != nil {
@@ -369,7 +418,7 @@ func finishAGUI(w io.Writer, m *agui.Mapper, turnErr error) error {
 	return nil
 }
 
-func (t *turn) append(env types.Envelope, path []string) {
+func (t *turn) append(d types.Delta, env types.Envelope, path []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.seq++
@@ -380,7 +429,7 @@ func (t *turn) append(env types.Envelope, path []string) {
 	if err != nil {
 		return
 	}
-	t.events = append(t.events, sseEvent{seq: t.seq, kind: env.Kind, data: data})
+	t.events = append(t.events, sseEvent{seq: t.seq, path: path, delta: d, kind: env.Kind, data: data})
 	if over := len(t.events) - t.limit; over > 0 {
 		t.events = append(t.events[:0:0], t.events[over:]...)
 	}
@@ -447,9 +496,21 @@ func (s *server) getTurn(w http.ResponseWriter, r *http.Request) {
 // needs is no longer kept, the request fails with 410 Gone before the stream
 // starts, or a "gap" event ends a stream that fell behind. Either way the
 // client must refetch the turn and tree, then resume from oldest_seq - 1.
+//
+// The client picks the wire version with ?wire=1|2 or with
+// "Accept: application/vnd.saige.events+json;v=1"; the default is 2. A
+// version 1 stream downgrades part deltas to version 1 kinds, reports
+// output with no version 1 form as an error envelope, and names stored
+// media by its saige-artifact:// URI. One recorded event can become
+// several version 1 envelopes, which share its seq.
 func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	t := s.turn(w, r)
 	if t == nil {
+		return
+	}
+	version, status, err := negotiateWire(r)
+	if err != nil {
+		writeError(w, status, err.Error())
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -480,11 +541,18 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 	// format=agui streams AG-UI events instead of wire envelopes.
 	var mapper *agui.Mapper
+	sid := r.PathValue("sid")
 	if r.URL.Query().Get("format") == formatAGUI {
-		mapper = agui.NewMapper(r.PathValue("sid"), t.id)
+		mapper = agui.NewMapper(sid, t.id, agui.WithMediaLink(func(src types.Source) string {
+			return artifactURL(sid, src)
+		}))
 	}
+	wire := newWireWriter(version, s.opts.maxInline)
 
 	h := w.Header()
+	if mapper == nil {
+		h.Set(headerWireVersion, strconv.Itoa(version))
+	}
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
@@ -501,9 +569,12 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		t.mu.Lock()
 		oldest, gap := t.missingLocked(last)
+		// A version 1 stream feeds every event through its downgrader,
+		// including those the client already has, so a resumed stream
+		// pairs each part's deltas as the first one did.
 		var batch []sseEvent
 		for _, ev := range t.events {
-			if ev.seq > last {
+			if ev.seq > wire.fed(last) {
 				batch = append(batch, ev)
 			}
 		}
@@ -519,15 +590,16 @@ func (s *server) streamEvents(w http.ResponseWriter, r *http.Request) {
 
 		for _, ev := range batch {
 			var err error
-			if mapper != nil {
+			switch {
+			case mapper != nil:
 				err = writeAGUIEvent(w, mapper, ev)
-			} else {
-				_, err = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.seq, ev.kind, ev.data)
+			default:
+				err = wire.write(w, ev, t.id, ev.seq > last)
 			}
 			if err != nil {
 				return
 			}
-			last = ev.seq
+			last = max(last, ev.seq)
 		}
 		if len(batch) > 0 {
 			flusher.Flush()

@@ -38,6 +38,10 @@ const (
 	iconSeparator = "─" // section divider
 	iconStopped   = "■" // run stopped or cut short
 	iconQueued    = "…" // message waiting for the run
+	iconMedia     = "◆" // media placeholder
+	iconRefusal   = "⊘" // the model declined
+	iconCollapsed = "▸" // collapsed reasoning
+	iconExpanded  = "▾" // expanded reasoning
 )
 
 // ── Activity log styles ─────────────────────────────────────────────
@@ -100,6 +104,28 @@ var (
 
 	queuedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8")) // dim
+
+	// Media placeholders, citation footnotes, and refusals
+	mediaStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14")) // cyan
+
+	footnoteStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")) // dim
+
+	refusalStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")). // yellow
+			Bold(true)
+
+	// New entries fade in from faint
+	fadeStyle = lipgloss.NewStyle().Faint(true)
+
+	// Filter and follow indicators
+	filterBadgeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("11")) // yellow
+
+	indicatorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("12")). // blue
+			Bold(true)
 
 	// Prompt (runner input)
 	promptStyle = lipgloss.NewStyle().

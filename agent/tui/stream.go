@@ -10,9 +10,10 @@ import (
 	"os"
 	"os/user"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/urmzd/saige/agent/types"
@@ -30,8 +31,9 @@ type AgentHeader struct {
 	User      string // current username
 }
 
-// renderHeader builds a bordered agent info panel.
-func renderHeader(h AgentHeader, width int) string {
+// renderHeader builds a bordered agent info panel. A badge, such as the
+// filter indicator, is drawn on the title line.
+func renderHeader(h AgentHeader, width int, badge ...string) string {
 	if h.Name == "" && h.Provider == "" && len(h.Tools) == 0 && len(h.SubAgents) == 0 {
 		return ""
 	}
@@ -42,7 +44,11 @@ func renderHeader(h AgentHeader, width int) string {
 	if name == "" {
 		name = "Agent"
 	}
-	lines = append(lines, headerTitle.Render(name))
+	title := headerTitle.Render(name)
+	if len(badge) > 0 && badge[0] != "" {
+		title += "  " + filterBadgeStyle.Render(badge[0])
+	}
+	lines = append(lines, title)
 
 	if h.Provider != "" {
 		lines = append(lines, headerLabel.Render("Provider: ")+headerValue.Render(h.Provider))
@@ -76,6 +82,20 @@ func renderHeader(h AgentHeader, width int) string {
 	return style.Render(content)
 }
 
+// topView is what is drawn above the transcript: the header panel when
+// shown, else just the badge on a line of its own.
+func topView(showHeader bool, h AgentHeader, width int, badge string) string {
+	if showHeader {
+		if out := renderHeader(h, width, badge); out != "" {
+			return out
+		}
+	}
+	if badge == "" {
+		return ""
+	}
+	return filterBadgeStyle.Render(truncateRunes(badge, max(width, 20)))
+}
+
 // PopulateEnv fills the CWD and User fields of an AgentHeader from the environment.
 func PopulateEnv(h *AgentHeader) {
 	if dir, err := os.Getwd(); err == nil {
@@ -107,13 +127,17 @@ type streamDoneMsg struct{ gen int }
 // StreamModel is a bubbletea model that consumes a delta channel from
 // a saige EventStream and displays real-time progress for tool calls
 // and sub-agent executions using a scrollable activity log.
+//
+// The log scrolls with j/k, u/d (half a page), PgUp/PgDn or b/space, g/G
+// or Home/End, and the mouse wheel, and follows new output until scrolled
+// up. "/" filters it by kind and text; "t" expands reasoning.
 type StreamModel struct {
 	header   AgentHeader
 	template Template
 	deltaCh  <-chan types.Delta
 	cancel   func()
 	spinner  spinner.Model
-	viewport viewport.Model
+	scroll   scroller
 	err      error
 	ready    bool // viewport sized
 	width    int
@@ -121,6 +145,13 @@ type StreamModel struct {
 	done     bool
 
 	act activity
+
+	filter         transcriptFilter
+	filterInput    textinput.Model
+	filtering      bool
+	expandThinking bool
+	animate        bool
+	clock          func() time.Time
 }
 
 // NewStreamModel creates a StreamModel that reads deltas from ch and
@@ -132,13 +163,32 @@ func NewStreamModel(header AgentHeader, ch <-chan types.Delta, tmpl ...Template)
 		t = tmpl[0]
 	}
 	return StreamModel{
-		header:   header,
-		template: t,
-		deltaCh:  ch,
-		spinner:  newSpinner(),
-		viewport: viewport.New(80, 20),
-		act:      newActivity(header.SubAgents),
+		header:      header,
+		template:    t,
+		deltaCh:     ch,
+		spinner:     newSpinner(),
+		scroll:      newScroller(false),
+		act:         newActivity(header.SubAgents),
+		filterInput: newFilterInput(),
+		clock:       time.Now,
 	}
+}
+
+// WithMotion returns a copy of m with animation on or off: the spinner,
+// the fade-in of new entries, and smooth scrolling. Pass
+// MotionEnabled(noAnimation) to respect the environment. It is off by
+// default.
+func (m StreamModel) WithMotion(on bool) StreamModel {
+	m.animate = on
+	m.scroll.animate = on
+	return m
+}
+
+func (m StreamModel) spin() string {
+	if !m.animate {
+		return staticSpinner
+	}
+	return m.spinner.View()
 }
 
 // WithCancel returns a copy of m that calls cancel when the user quits before
@@ -169,6 +219,9 @@ func newSpinner() spinner.Model {
 // ── tea.Model implementation ────────────────────────────────────────
 
 func (m StreamModel) Init() tea.Cmd {
+	if !m.animate {
+		return listenForDelta(0, m.deltaCh)
+	}
 	return tea.Batch(
 		listenForDelta(0, m.deltaCh),
 		m.spinner.Tick,
@@ -178,12 +231,14 @@ func (m StreamModel) Init() tea.Cmd {
 func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == keyCtrlC || msg.String() == "q" {
-			if !m.done && m.cancel != nil {
-				m.cancel()
-			}
-			return m, tea.Quit
-		}
+		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		m.scroll.wheel(msg)
+		return m, nil
+
+	case scrollTickMsg:
+		return m, m.scroll.tick()
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -195,6 +250,9 @@ func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		m.refresh()
+		if m.done {
+			return m, nil
+		}
 		return m, cmd
 
 	case streamDoneMsg:
@@ -206,9 +264,67 @@ func (m StreamModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDelta(msg.delta)
 	}
 
-	var cmd tea.Cmd
-	m.viewport, cmd = m.viewport.Update(msg)
-	return m, cmd
+	return m, nil
+}
+
+// streamScrollKeys maps the log's keys to scrolls.
+var streamScrollKeys = map[string]scrollAction{
+	"up": scrollLineUp, "k": scrollLineUp, "down": scrollLineDown, "j": scrollLineDown,
+	"u": scrollHalfUp, "ctrl+u": scrollHalfUp, "d": scrollHalfDown, "ctrl+d": scrollHalfDown,
+	"pgup": scrollPageUp, "b": scrollPageUp, "pgdown": scrollPageDown, " ": scrollPageDown,
+	"home": scrollTop, "g": scrollTop, "end": scrollBottom, "G": scrollBottom,
+}
+
+func (m StreamModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == keyCtrlC || (key == "q" && !m.filtering) {
+		if !m.done && m.cancel != nil {
+			m.cancel()
+		}
+		return m, tea.Quit
+	}
+	if m.filtering {
+		switch key {
+		case keyEnter:
+			m.filtering = false
+			m.filterInput.Blur()
+		case keyEsc:
+			m.filtering = false
+			m.filterInput.Blur()
+			m.filter = transcriptFilter{}
+		default:
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.filter = parseFilter(m.filterInput.Value())
+			m.refresh()
+			return m, cmd
+		}
+		m.refresh()
+		return m, nil
+	}
+	switch key {
+	case "/", keyFilter:
+		m.filtering = true
+		m.filterInput.SetValue(m.filter.raw)
+		m.filterInput.CursorEnd()
+		m.filterInput.Focus()
+		m.refresh()
+		return m, textinput.Blink
+	case "t":
+		m.expandThinking = !m.expandThinking
+		m.refresh()
+		return m, nil
+	case keyEsc:
+		if m.filter.active() {
+			m.filter = transcriptFilter{}
+			m.refresh()
+		}
+		return m, nil
+	}
+	if a, ok := streamScrollKeys[key]; ok {
+		return m, m.scroll.do(a)
+	}
+	return m, nil
 }
 
 func (m StreamModel) handleDelta(d types.Delta) (tea.Model, tea.Cmd) {
@@ -234,26 +350,37 @@ func (m StreamModel) handleDelta(d types.Delta) (tea.Model, tea.Cmd) {
 // unless the user has scrolled up.
 func (m *StreamModel) refresh() {
 	if m.ready {
-		m.viewport.Width = m.width
-		m.viewport.Height = viewportHeight(m.height, m.headerView(), "")
+		m.scroll.resize(m.width, viewportHeight(m.height, m.headerView(), m.footerView()))
 	}
-	follow := m.viewport.AtBottom()
-	m.viewport.SetContent(m.logView())
-	if follow {
-		m.viewport.GotoBottom()
-	}
+	shown := m.filter.apply(m.act.entries)
+	m.scroll.setContent(m.render(shown), len(shown))
 }
 
 func (m StreamModel) logView() string {
-	lr := logRenderer{entries: m.act.entries, spinner: m.spinner, template: m.template, thinking: !m.done && len(m.act.entries) == 0}
+	return m.render(m.filter.apply(m.act.entries))
+}
+
+func (m StreamModel) render(entries []activityEntry) string {
+	lr := logRenderer{entries: entries, spin: m.spin(), template: m.template, thinking: !m.done && len(m.act.entries) == 0,
+		expandThinking: m.expandThinking, animate: m.animate, now: m.clock()}
 	return lr.renderLog()
 }
 
 func (m StreamModel) headerView() string {
-	if !m.template.ShowHeader {
-		return ""
+	badge := m.filter.badge(len(m.filter.apply(m.act.entries)), len(m.act.entries), m.filtering)
+	return topView(m.template.ShowHeader, m.header, m.width, badge)
+}
+
+// footerView is the follow indicator and, while filtering, the filter input.
+func (m StreamModel) footerView() string {
+	var lines []string
+	if ind := m.scroll.indicator("End"); ind != "" {
+		lines = append(lines, indicatorStyle.Render("  "+ind))
 	}
-	return renderHeader(m.header, m.width)
+	if m.filtering {
+		lines = append(lines, m.filterInput.View())
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m StreamModel) View() string {
@@ -263,9 +390,13 @@ func (m StreamModel) View() string {
 		b.WriteString("\n")
 	}
 	if m.ready {
-		b.WriteString(m.viewport.View())
+		b.WriteString(m.scroll.vp.View())
 	} else {
 		b.WriteString(m.logView())
+	}
+	if f := m.footerView(); f != "" {
+		b.WriteString("\n")
+		b.WriteString(f)
 	}
 	return b.String()
 }
@@ -361,6 +492,8 @@ type verboseStreamer struct {
 	agentNewLine         map[string]bool        // toolCallID → needs prefix on next chunk
 	agentStarted         map[string]bool        // toolCallID → has received any text
 	kinds                map[int]types.PartKind // part index → kind, while open
+	footnotes            int                    // citations numbered here
+	refusals             map[int]bool           // refusal parts whose text streamed
 	text                 strings.Builder
 	coordinatorStreaming bool
 }
@@ -399,7 +532,8 @@ func (vs *verboseStreamer) handleToolCallEnd(args map[string]any) {
 
 // handlePart routes the model's part deltas: text and thinking stream as
 // they arrive, a tool call is announced at its start and its arguments shown
-// at its end, and citations are noted with the routing details.
+// at its end, a refusal is labelled, media is shown as a placeholder line,
+// and citations are footnotes.
 func (vs *verboseStreamer) handlePart(d types.Delta) {
 	switch d := d.(type) {
 	case types.PartStart:
@@ -409,6 +543,10 @@ func (vs *verboseStreamer) handlePart(d types.Delta) {
 			vs.ensureNewline()
 		case types.KindToolCall:
 			vs.handleToolCallStart(d.ID, d.Name)
+		case types.KindRefusal:
+			vs.ensureNewline()
+			_, _ = fmt.Fprint(vs.w, refusalStyle.Render(iconRefusal+" declined: "))
+			vs.coordinatorStreaming = true
 		}
 	case types.PartDelta:
 		switch {
@@ -416,6 +554,15 @@ func (vs *verboseStreamer) handlePart(d types.Delta) {
 			vs.handleTextContent(d.Text)
 		case d.Thinking != "" && vs.tmpl.ShowThinking:
 			_, _ = fmt.Fprint(vs.w, thinkingStyle.Render(d.Thinking))
+			vs.coordinatorStreaming = true
+		case d.Refusal != "":
+			if vs.kinds[d.Index] != types.KindRefusal {
+				vs.kinds[d.Index] = types.KindRefusal
+				vs.ensureNewline()
+				_, _ = fmt.Fprint(vs.w, refusalStyle.Render(iconRefusal+" declined: "))
+			}
+			_, _ = fmt.Fprint(vs.w, d.Refusal)
+			vs.refusals[d.Index] = true
 			vs.coordinatorStreaming = true
 		}
 	case types.PartEnd:
@@ -426,18 +573,41 @@ func (vs *verboseStreamer) handlePart(d types.Delta) {
 			vs.handleToolCallEnd(p.Arguments)
 			return
 		case types.CitationPart:
-			if vs.tmpl.ShowRouting {
-				var note activity
-				note.apply(d)
-				vs.ensureNewline()
-				fmt.Fprintln(vs.w, usageStyle.Render(note.entries[0].text))
+			vs.footnote(p.Citation)
+			return
+		case types.RefusalPart:
+			if !vs.refusals[d.Index] {
+				if kind != types.KindRefusal {
+					vs.ensureNewline()
+					_, _ = fmt.Fprint(vs.w, refusalStyle.Render(iconRefusal+" declined: "))
+				}
+				_, _ = fmt.Fprint(vs.w, p.Text)
+				vs.coordinatorStreaming = true
 			}
+			delete(vs.refusals, d.Index)
+			vs.ensureNewline()
 			return
 		}
-		if kind == types.KindText || kind == types.KindThinking {
+		if d.Part != nil && types.IsMedia(d.Part) {
+			vs.ensureNewline()
+			fmt.Fprintln(vs.w, mediaStyle.Render(iconMedia+" "+mediaOf(d.Part).label()))
+			return
+		}
+		if kind == types.KindText || kind == types.KindThinking || kind == types.KindRefusal {
 			vs.ensureNewline()
 		}
 	}
+}
+
+// footnote prints a citation as a numbered footnote line.
+func (vs *verboseStreamer) footnote(c types.Citation) {
+	n := c.Ordinal
+	if n <= 0 {
+		vs.footnotes++
+		n = vs.footnotes
+	}
+	vs.ensureNewline()
+	fmt.Fprintln(vs.w, footnoteStyle.Render(fmt.Sprintf("[%d] %s", n, citationLabel(c))))
 }
 
 func (vs *verboseStreamer) handleToolExecStart(d types.ToolExecStartDelta) {
@@ -559,6 +729,11 @@ func (vs *verboseStreamer) handleToolExecEnd(d types.ToolExecEndDelta) {
 				fmt.Fprintln(vs.w, agentOutputStyle.Render("    "+l))
 			}
 		}
+		for _, p := range d.Parts {
+			if types.IsMedia(p) {
+				fmt.Fprintln(vs.w, mediaStyle.Render("    "+iconMedia+" "+mediaOf(p).label()))
+			}
+		}
 		return
 	}
 	if !vs.tmpl.ShowAgents {
@@ -621,6 +796,7 @@ func streamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl 
 		agentNewLine: make(map[string]bool),
 		agentStarted: make(map[string]bool),
 		kinds:        make(map[int]types.PartKind),
+		refusals:     make(map[int]bool),
 	}
 
 	for delta := range ch {
@@ -643,7 +819,9 @@ func streamVerbose(header AgentHeader, ch <-chan types.Delta, w io.Writer, tmpl 
 				vs.ensureNewline()
 				fmt.Fprintln(w, FormatUsage(d.PromptTokens, d.CompletionTokens, d.Latency.String()))
 			}
-		case types.HandoffDelta, types.RouteDelta, types.CitationDelta, types.InterruptedDelta:
+		case types.CitationDelta:
+			vs.footnote(d.Citation)
+		case types.HandoffDelta, types.RouteDelta, types.InterruptedDelta:
 			if tmpl.ShowRouting {
 				var note activity
 				note.apply(d)

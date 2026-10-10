@@ -72,9 +72,12 @@ func (s *acpServer) workspaceOf(sess *agenthost.Session[*acpSession]) string {
 
 // acpUserMessage maps ACP content blocks to the parts of one user message.
 // An embedded text resource becomes text headed by its URI; a blob becomes
-// a media part by its MIME type; a resource link is named in text, so the
-// agent can read it with its own tools, except an http(s) link to media,
-// which becomes a media part by URL.
+// a media part by its MIME type, named by its URI's base name; a resource
+// link is named in text, so the agent can read it with its own tools,
+// except an https link to media, which becomes a media part by URL. The
+// parts then pass the same client checks as saige serve's turn bodies
+// (agenthost.ClientParts), without its inline limit, since ACP runs over a
+// local pipe.
 func acpUserMessage(blocks []acp.ContentBlock) (types.UserMessage, error) {
 	var parts []types.UserPart
 	for _, b := range blocks {
@@ -110,9 +113,10 @@ func acpUserMessage(blocks []acp.ContentBlock) (types.UserMessage, error) {
 				if r.BlobResourceContents.MimeType != nil {
 					mt = types.MediaType(*r.BlobResourceContents.MimeType)
 				}
+				// The blob's URI names it on the client's side, such as a
+				// file:// path; the bytes are what the provider reads.
 				src := types.Bytes(mt, data)
 				src.Filename = path.Base(r.BlobResourceContents.Uri)
-				src.URI = r.BlobResourceContents.Uri
 				parts = append(parts, types.Media(src))
 			}
 		case b.ResourceLink != nil:
@@ -121,7 +125,7 @@ func acpUserMessage(blocks []acp.ContentBlock) (types.UserMessage, error) {
 			if l.MimeType != nil {
 				mt = *l.MimeType
 			}
-			if (strings.HasPrefix(l.Uri, "https://") || strings.HasPrefix(l.Uri, "http://")) && mt != "" &&
+			if strings.HasPrefix(l.Uri, "https://") && mt != "" &&
 				types.MediaType(mt).Modality() != types.ModalityFile && !strings.HasPrefix(mt, "text/") {
 				parts = append(parts, types.Media(types.URL(l.Uri, types.MediaType(mt))))
 				continue
@@ -136,7 +140,7 @@ func acpUserMessage(blocks []acp.ContentBlock) (types.UserMessage, error) {
 	if len(parts) == 0 {
 		return types.UserMessage{}, errors.New("the prompt has no content")
 	}
-	return types.UserMsg(parts...), nil
+	return agenthost.ClientParts{MaxInline: -1}.UserMessage(parts)
 }
 
 // acpTurn maps one run's deltas to session updates.
@@ -199,6 +203,12 @@ func (t *acpTurn) handle(d types.Delta) {
 		}
 		if call, ok := v.Part.(types.ToolCallPart); ok && call.ID != "" {
 			t.startCall(call.ID, call.Name, call.Arguments)
+		}
+		if v.Part != nil && types.IsMedia(v.Part) {
+			if b, ok := acpMediaBlock(v.Part); ok {
+				t.sawText = true
+				t.update(acp.UpdateAgentMessage(b))
+			}
 		}
 	case types.TruncatedDelta:
 		if !nested && v.Reason == types.FinishReasonMaxTokens {
@@ -276,15 +286,8 @@ func (t *acpTurn) endCall(id string, v types.ToolExecEndDelta) {
 		content = append(content, acp.ToolContent(acp.TextBlock(text)))
 	}
 	for _, p := range v.Parts {
-		switch m := p.(type) {
-		case types.ImagePart:
-			if len(m.Source.Inline) > 0 {
-				content = append(content, acp.ToolContent(acp.ImageBlock(base64.StdEncoding.EncodeToString(m.Source.Inline), string(m.Source.MediaType))))
-			}
-		case types.AudioPart:
-			if len(m.Source.Inline) > 0 {
-				content = append(content, acp.ToolContent(acp.AudioBlock(base64.StdEncoding.EncodeToString(m.Source.Inline), string(m.Source.MediaType))))
-			}
+		if b, ok := acpMediaBlock(p); ok {
+			content = append(content, acp.ToolContent(b))
 		}
 	}
 	opts := []acp.ToolCallUpdateOpt{acp.WithUpdateStatus(status)}
@@ -295,6 +298,46 @@ func (t *acpTurn) endCall(id string, v types.ToolExecEndDelta) {
 		opts = append(opts, acp.WithUpdateRawOutput(map[string]any{"result": v.Result, "error": v.Error}))
 	}
 	t.update(acp.UpdateToolCall(acp.ToolCallId(id), opts...))
+}
+
+// acpMediaBlock maps a media part to ACP content, as saige serve's AG-UI
+// stream does: an image or audio with its bytes inline, media with a URI or
+// artifact ref as a link to it, and other inline media as an embedded blob.
+// Media with no locator is named in text, so its absence is visible.
+func acpMediaBlock(p types.Part) (acp.ContentBlock, bool) {
+	src, ok := types.SourceOf(p)
+	if !ok {
+		return acp.ContentBlock{}, false
+	}
+	if len(src.Inline) > 0 {
+		switch p.Kind() {
+		case types.KindImage, types.KindImageOut:
+			return acp.ImageBlock(base64.StdEncoding.EncodeToString(src.Inline), string(src.MediaType)), true
+		case types.KindAudio, types.KindAudioOut:
+			return acp.AudioBlock(base64.StdEncoding.EncodeToString(src.Inline), string(src.MediaType)), true
+		}
+	}
+	name := firstNonEmpty(src.Filename, string(p.Kind()))
+	if uri := firstNonEmpty(src.URI, src.Ref); uri != "" {
+		b := acp.ResourceLinkBlock(name, uri)
+		if src.MediaType != "" && b.ResourceLink != nil {
+			b.ResourceLink.MimeType = acp.Ptr(string(src.MediaType))
+		}
+		return b, true
+	}
+	if len(src.Inline) > 0 {
+		blob := &acp.BlobResourceContents{Uri: types.ArtifactScheme + types.Bytes(src.MediaType, src.Inline).Digest,
+			Blob: base64.StdEncoding.EncodeToString(src.Inline)}
+		if src.MediaType != "" {
+			blob.MimeType = acp.Ptr(string(src.MediaType))
+		}
+		return acp.ResourceBlock(acp.EmbeddedResourceResource{BlobResourceContents: blob}), true
+	}
+	reason := "its bytes were not kept"
+	if src.Unresolved != "" {
+		reason = src.Unresolved
+	}
+	return acp.TextBlock(fmt.Sprintf("[%s %s: %s]", p.Kind(), src.MediaType, reason)), true
 }
 
 // askPermission turns an approval marker into session/request_permission.
