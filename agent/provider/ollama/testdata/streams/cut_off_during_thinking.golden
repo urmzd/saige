@@ -1,0 +1,5 @@
+# deltas
+start 0 thinking
+delta 0 thinking="Hmm"
+error provider ollama (model qwen3.5:4b): stream ended before the provider finished the response: unexpected EOF
+# parts

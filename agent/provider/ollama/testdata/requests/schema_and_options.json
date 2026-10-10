@@ -1,0 +1,42 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Weather in Paris as JSON."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get weather",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "city"
+          ],
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "stream": true,
+  "format": {
+    "properties": {
+      "temp_c": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "temp_c"
+    ],
+    "type": "object"
+  },
+  "think": false
+}

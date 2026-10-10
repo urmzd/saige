@@ -1,0 +1,13 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "",
+      "images": [
+        "iVBORw0KGgpmYWtl"
+      ]
+    }
+  ],
+  "stream": true
+}

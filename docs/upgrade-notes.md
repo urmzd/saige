@@ -127,3 +127,12 @@ Messages are ordered lists of typed parts, model output streams as part deltas, 
 | Change | What to do |
 | --- | --- |
 | The module requires Go 1.26.9, and `golang.org/x/net` v0.60.0 and `golang.org/x/text` v0.42.0. Go 1.25 has no release with the fixes for the standard-library vulnerabilities govulncheck reports, x/net v0.60.0 requires Go 1.26, and the duraturo dependency requires Go 1.26.4. | Build with Go 1.26.9 or newer. |
+
+## Ollama adapter: typed parts
+
+| Change | What to do |
+| --- | --- |
+| The Ollama adapter streams part deltas natively, numbering parts in the order they start (thinking, text, then each tool call). Tool calls keep the ID the runtime returns, and replayed calls send it back; a tool message carries `tool_call_id` and `tool_name`. A stream that ends without `done` leaves its open parts open instead of closing them, so the aggregator reports them as truncated. | None for consumers of part deltas. |
+| A request may carry a schema and options together: the options (tool choice, dials) apply, and the schema is sent as `format`. | None. |
+| Images are sent only as inline JPEG or PNG bytes, in `images` on user and tool messages. An image reachable only by URL, workspace reference or vendor file, another image format, and audio, video, document and file parts fail before the request with an error matching `types.ErrModalityUnsupported` that names the part path. A source with no locator left, or one marked unavailable, fails with `types.ErrMediaUnavailable`. Before, such parts were dropped silently. Server tool parts and generated media in the history are rejected the same way. | Resolve URLs to bytes before the request, or route the request to a provider that takes the part. |
+| Assistant thinking is replayed in the `thinking` field (text only; signatures and redacted blocks have no meaning to the runtime), refusals are replayed as content, and citations are not sent. | None. |

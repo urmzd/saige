@@ -1,0 +1,19 @@
+{
+  "model": "qwen3.5:4b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "2+2?"
+    },
+    {
+      "role": "assistant",
+      "content": "4",
+      "thinking": "Add the numbers."
+    },
+    {
+      "role": "user",
+      "content": "And 3+3?"
+    }
+  ],
+  "stream": true
+}

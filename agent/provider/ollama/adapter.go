@@ -2,11 +2,9 @@ package ollama
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/internal/streamcheck"
@@ -110,27 +108,14 @@ func (a *Adapter) clientOptions() (types.RequestOptions, error) {
 	return o.Clone(), nil
 }
 
-// Stream implements types.Provider. A request may carry a schema or
-// options, not both.
+// Stream implements types.Provider. A request may carry a schema and
+// options together: the options apply first (tool choice and dials), then
+// the schema is sent as the format constraint.
 func (a *Adapter) Stream(ctx context.Context, req types.Request) (<-chan types.Delta, error) {
-	var (
-		ch  <-chan types.Delta
-		err error
-	)
-	switch {
-	case req.Options != nil && req.Schema != nil:
-		return nil, a.Capabilities().OptionError("structured_output", "a response schema cannot be combined with request options")
-	case req.Options != nil:
-		ch, err = a.chatStreamWithOptions(ctx, req.Messages, req.Tools, *req.Options)
-	case req.Schema != nil:
-		ch, err = a.chatStreamWithSchema(ctx, req.Messages, req.Tools, req.Schema)
-	default:
-		ch, err = a.chatStream(ctx, req.Messages, req.Tools)
+	if req.Options != nil {
+		return a.chatStreamWithOptions(ctx, req.Messages, req.Tools, req.Schema, *req.Options)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return types.UpgradeV1Stream(ch), nil
+	return a.chatStream(ctx, req.Messages, req.Tools, req.Schema)
 }
 
 // SupportsSchema implements types.StructuredOutputProvider.
@@ -139,37 +124,7 @@ func (a *Adapter) SupportsSchema() bool { return true }
 // SupportsOptions implements types.OptionsProvider.
 func (a *Adapter) SupportsOptions() bool { return true }
 
-func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef) (<-chan types.Delta, error) {
-	a, err := a.compileDials(types.RequestOptions{}, tools, false)
-	if err != nil {
-		return nil, err
-	}
-	// The emulated tool choice decides which tools are sent, so the request
-	// is checked against the filtered set.
-	tools, err = a.filterTools(tools)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.Capabilities().ValidateRequest(tools, false); err != nil {
-		return nil, err
-	}
-
-	if err := a.Validate(); err != nil {
-		return nil, err
-	}
-
-	oMsgs := toOllamaMessages(messages)
-	oTools := toOllamaTools(tools)
-
-	rx, err := a.Client.ChatStream(ctx, oMsgs, oTools)
-	if err != nil {
-		return nil, classifyOllamaError(a.Client.Model, err)
-	}
-
-	return a.translateDeltas(ctx, rx, false), nil
-}
-
-func (a *Adapter) chatStreamWithSchema(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
+func (a *Adapter) chatStream(ctx context.Context, messages []types.Message, tools []types.ToolDef, schema *types.ParameterSchema) (<-chan types.Delta, error) {
 	a, err := a.compileDials(types.RequestOptions{}, tools, schema != nil)
 	if err != nil {
 		return nil, err
@@ -188,7 +143,11 @@ func (a *Adapter) chatStreamWithSchema(ctx context.Context, messages []types.Mes
 		return nil, err
 	}
 
-	oMsgs := toOllamaMessages(messages)
+	oMsgs, err := toOllamaMessages(messages)
+	if err != nil {
+		caps := a.Capabilities()
+		return nil, &types.ProviderError{Provider: caps.Provider, Model: caps.Model, Kind: types.ErrorKindPermanent, Err: err}
+	}
 	oTools := toOllamaTools(tools)
 
 	var format any
@@ -204,7 +163,11 @@ func (a *Adapter) chatStreamWithSchema(ctx context.Context, messages []types.Mes
 	return a.translateDeltas(ctx, rx, schema != nil), nil
 }
 
-// translateDeltas converts Ollama ChatChunk stream to types.Delta stream.
+// translateDeltas converts the Ollama ChatChunk stream to part deltas.
+// Ollama has no content-block index, so parts are numbered in the order
+// they start: thinking, text and each tool call open a new index. Thinking
+// closes when text or a tool call begins, text closes when a tool call
+// begins, and both close at the final chunk. Thinking carries no signature.
 //
 // A stream counts as complete only when a chunk with done:true arrives. A
 // server error line, a client read failure, or a channel that closes early
@@ -220,8 +183,27 @@ func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, stru
 	go func() {
 		defer close(out)
 
-		textStarted := false
-		thinkStarted := false
+		next := 0
+		text, think := -1, -1
+		open := func(kind types.PartKind) int {
+			i := next
+			next++
+			out <- types.PartStart{Index: i, Kind: kind}
+			return i
+		}
+		closeThink := func() {
+			if think >= 0 {
+				out <- types.PartEnd{Index: think}
+				think = -1
+			}
+		}
+		closeText := func() {
+			if text >= 0 {
+				out <- types.PartEnd{Index: text}
+				text = -1
+			}
+		}
+
 		emitted := false
 		done := false
 		var failure *types.ProviderError
@@ -239,15 +221,8 @@ func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, stru
 			}
 			if chunk.Done {
 				done = true
-				if thinkStarted {
-					// Ollama has no signature token to round-trip.
-					out <- types.ThinkingEndDelta{}
-					thinkStarted = false
-				}
-				if textStarted {
-					out <- types.TextEndDelta{}
-					textStarted = false
-				}
+				closeThink()
+				closeText()
 				// Emit usage delta from the final chunk.
 				ud := types.UsageDelta{Cumulative: true,
 					PromptTokens:     chunk.PromptEvalCount,
@@ -267,56 +242,48 @@ func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, stru
 				continue
 			}
 
-			// Handle reasoning content from thinking models.
+			// Reasoning from a thinking model (the think field).
 			if chunk.Message.Thinking != "" {
-				if !thinkStarted {
-					out <- types.ThinkingStartDelta{}
-					thinkStarted = true
+				if think < 0 {
+					think = open(types.KindThinking)
 				}
-				out <- types.ThinkingContentDelta{Content: chunk.Message.Thinking}
+				out <- types.PartDelta{Index: think, Thinking: chunk.Message.Thinking}
 			}
 
-			// Handle text content
 			if chunk.Message.Content != "" {
-				if thinkStarted {
-					out <- types.ThinkingEndDelta{}
-					thinkStarted = false
+				closeThink()
+				if text < 0 {
+					text = open(types.KindText)
 				}
-				if !textStarted {
-					out <- types.TextStartDelta{}
-					textStarted = true
-				}
-				out <- types.TextContentDelta{Content: chunk.Message.Content}
+				out <- types.PartDelta{Index: text, Text: chunk.Message.Content}
 			}
 
-			// Handle tool calls
+			// A tool call arrives whole, with decoded arguments.
 			if len(chunk.Message.ToolCalls) > 0 {
-				if thinkStarted {
-					out <- types.ThinkingEndDelta{}
-					thinkStarted = false
-				}
-				if textStarted {
-					out <- types.TextEndDelta{}
-					textStarted = false
-				}
+				closeThink()
+				closeText()
 				for _, tc := range chunk.Message.ToolCalls {
-					id := types.NewID()
+					id := tc.ID
+					if id == "" {
+						id = types.NewID()
+					}
 					args := tc.Function.Arguments
 					if args == nil {
 						args = map[string]any{}
 					}
-					out <- types.ToolCallStartDelta{ID: id, Name: tc.Function.Name}
-					out <- types.ToolCallEndDelta{ID: id, Arguments: args}
+					i := next
+					next++
+					out <- types.PartStart{Index: i, Kind: types.KindToolCall, ID: id, Name: tc.Function.Name}
+					if raw, err := json.Marshal(args); err == nil {
+						out <- types.PartDelta{Index: i, Args: string(raw)}
+					}
+					out <- types.PartEnd{Index: i, Part: types.ToolCallPart{ID: id, Name: tc.Function.Name, Arguments: args}}
 				}
 			}
 		}
 
-		if thinkStarted {
-			out <- types.ThinkingEndDelta{}
-		}
-		if textStarted {
-			out <- types.TextEndDelta{}
-		}
+		// A stream that ends without done leaves its parts open, so the
+		// aggregator sees them as truncated.
 		if failure == nil && !done {
 			cause := streamcheck.ErrIncompleteStream
 			if err := ctx.Err(); err != nil {
@@ -394,84 +361,6 @@ func (a *Adapter) Embed(ctx context.Context, text string) ([]float32, error) {
 }
 
 // ── Conversion helpers ──────────────────────────────────────────────
-
-func toOllamaMessages(msgs []types.Message) []ChatMessage {
-	out := make([]ChatMessage, 0, len(msgs))
-	for _, m := range msgs {
-		switch v := m.(type) {
-		case types.SystemMessage:
-			// Split: text goes to system role, tool results go to tool role.
-			var textParts []string
-			var toolResults []types.ToolResultPart
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					textParts = append(textParts, bc.Text)
-				case types.ToolResultPart:
-					toolResults = append(toolResults, bc)
-				}
-			}
-			if len(textParts) > 0 {
-				out = append(out, ChatMessage{Role: "system", Content: strings.Join(textParts, "")})
-			}
-			for _, tr := range toolResults {
-				text := tr.Text()
-				if tr.IsError {
-					text = "[TOOL ERROR] " + text
-				}
-				out = append(out, ChatMessage{Role: "tool", Content: text})
-			}
-		case types.UserMessage:
-			// Split: text goes to user role, tool results go to tool role.
-			var textParts []string
-			var images []string
-			var toolResults []types.ToolResultPart
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					textParts = append(textParts, bc.Text)
-				case types.ToolResultPart:
-					toolResults = append(toolResults, bc)
-				case types.ImagePart, types.AudioPart, types.VideoPart, types.DocumentPart, types.FilePart:
-					if src, _ := types.SourceOf(bc); src.Inline != nil {
-						images = append(images, base64.StdEncoding.EncodeToString(src.Inline))
-					}
-				}
-			}
-			if len(textParts) > 0 || len(images) > 0 {
-				out = append(out, ChatMessage{
-					Role:    "user",
-					Content: strings.Join(textParts, ""),
-					Images:  images,
-				})
-			}
-			for _, tr := range toolResults {
-				text := tr.Text()
-				if tr.IsError {
-					text = "[TOOL ERROR] " + text
-				}
-				out = append(out, ChatMessage{Role: "tool", Content: text})
-			}
-		case types.AssistantMessage:
-			msg := ChatMessage{Role: "assistant"}
-			for _, c := range v.Parts {
-				switch bc := c.(type) {
-				case types.TextPart:
-					msg.Content += bc.Text
-				case types.ToolCallPart:
-					msg.ToolCalls = append(msg.ToolCalls, ToolCall{
-						Function: ToolCallFunction{
-							Name:      bc.Name,
-							Arguments: bc.Arguments,
-						},
-					})
-				}
-			}
-			out = append(out, msg)
-		}
-	}
-	return out
-}
 
 func toOllamaTools(defs []types.ToolDef) []Tool {
 	out := make([]Tool, len(defs))

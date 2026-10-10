@@ -1,0 +1,11 @@
+# deltas
+start 0 thinking
+delta 0 thinking="Use the weather tool."
+end 0
+start 1 tool_call id=call_jc50o86z name=get_weather
+delta 1 args="{\"city\":\"Paris\"}"
+end 1 {"type":"tool_call","id":"call_jc50o86z","name":"get_weather","arguments":{"city":"Paris"}}
+usage prompt=274 completion=166 finish=[stop]
+# parts
+{"type":"thinking","text":"Use the weather tool."}
+{"type":"tool_call","id":"call_jc50o86z","name":"get_weather","arguments":{"city":"Paris"}}

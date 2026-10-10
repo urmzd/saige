@@ -1,0 +1,13 @@
+# deltas
+start 0 thinking
+delta 0 thinking="The user"
+delta 0 thinking=" greets me."
+end 0
+start 1 text
+delta 1 text="Hi"
+delta 1 text="!"
+end 1
+usage prompt=11 completion=9 finish=[stop]
+# parts
+{"type":"thinking","text":"The user greets me."}
+{"type":"text","text":"Hi!"}
