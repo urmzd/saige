@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +38,7 @@ func newEvalCmd(ctx context.Context) *cobra.Command {
 		newEvalValidateCmd(),
 		newEvalRunsCmd(),
 		newEvalShowCmd(),
+		newEvalCompareCmd(),
 		newEvalScorersCmd(),
 		newEvalOnlineCmd(ctx),
 	)
@@ -51,6 +53,7 @@ type evalRunFlags struct {
 	count, concurrency                                                   int
 	force, continueOnError, dryRun, allowUnknownModel, batch             bool
 	asserts                                                              []string
+	maxInconclusive                                                      float64
 }
 
 // evalPlan is the resolved configuration of one eval run: manifest values
@@ -92,9 +95,16 @@ host's own variable or a $SAIGE_EVAL_* variable. A base_url from the manifest
 receives only --api-key or the host's own variable unless --api-base confirms
 it.
 
-The command fails, with exit status 1, when a script fails or an assertion
-(from the manifest or --assert) is violated, and with exit status 2 when the
-manifest or corpus is invalid.`,
+A script whose requests fail on infrastructure (a rate limit, an outage, a
+timeout, bad credentials, an unreachable endpoint, or cancellation) is
+inconclusive, not failed: the model never answered. An edit turn lost that way
+is recorded as unmeasured instead of as a failed turn.
+
+The command fails with exit status 1 when a script fails for another reason
+or an assertion (from the manifest or --assert) is violated by a measured
+result, with exit status 3 when nothing failed for real but more than
+--max-inconclusive of the scripts are inconclusive (rerun it, for example
+with --resume), and with exit status 2 when the manifest or corpus is invalid.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEval(ctx, cmd, f)
@@ -130,6 +140,8 @@ manifest or corpus is invalid.`,
 		"Send the model calls through the provider's batch API at the batch price (needs a saige provider); results can take hours")
 	fl.StringVar(&f.batchStore, "batch-store", "",
 		"Directory for batch job records with --batch, so a re-run resumes submitted batches instead of submitting them again")
+	fl.Float64Var(&f.maxInconclusive, "max-inconclusive", 0,
+		"Largest share of scripts, from 0 to 1, that may be inconclusive (lost to infrastructure failures) while the run still passes; above it the command exits 3")
 
 	return cmd
 }
@@ -162,7 +174,11 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 	if err != nil {
 		return err
 	}
+	if err := (eval.GatePolicy{MaxInconclusive: f.maxInconclusive}).Validate(); err != nil {
+		return invalidInput(fmt.Errorf("--max-inconclusive: %w", err))
+	}
 	runner := &harness.Runner{
+		MaxInconclusive: f.maxInconclusive,
 		Client:          client,
 		Flows:           flows,
 		Force:           f.force,
@@ -210,12 +226,19 @@ func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 	if len(plan.assert) > 0 {
 		runner.OnGated = func(s *eval.SuiteResult) {
 			fmt.Fprintf(os.Stderr, "gate: %s\n", s.Outcome)
+			if s.Inconclusive > 0 {
+				fmt.Fprintf(os.Stderr, "  %d results inconclusive (infrastructure failed)\n", s.Inconclusive)
+			}
 			for _, v := range s.Violations {
 				fmt.Fprintf(os.Stderr, "  %s\n", v)
 			}
 		}
 	}
-	return runner.Run(ctx, scripts)
+	err = runner.Run(ctx, scripts)
+	if errors.Is(err, harness.ErrInconclusive) {
+		return exitError{code: exitInconclusive, err: err}
+	}
+	return err
 }
 
 // resolveEvalPlan merges the manifest, when there is one, with the flags.

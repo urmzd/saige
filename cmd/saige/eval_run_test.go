@@ -554,3 +554,59 @@ func TestEvalInitThenValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestEvalRunInconclusiveExitCode checks that a script lost to an
+// infrastructure failure (here a rejected key, which is not retried) exits
+// with status 3, a real failure with status 1, and a tolerated share with 0.
+func TestEvalRunInconclusiveExitCode(t *testing.T) {
+	clearEvalKeys(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := req.Messages[len(req.Messages)-1].Content
+		switch {
+		case strings.Contains(last, "AUTH"):
+			http.Error(w, "invalid key", http.StatusUnauthorized)
+			return
+		case strings.Contains(last, "FAIL"):
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "doc"}}},
+			"usage":   map[string]any{"prompt_tokens": 10, "completion_tokens": 5},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	tests := []struct {
+		name     string
+		scripts  map[string][]string
+		args     []string
+		wantCode int
+	}{
+		{"outage", map[string][]string{"001": {"synth"}, "002": {"AUTH synth"}}, nil, exitInconclusive},
+		{"outage tolerated", map[string][]string{"001": {"synth"}, "002": {"AUTH synth"}}, []string{"--max-inconclusive", "0.5"}, 0},
+		{"outage with a real failure", map[string][]string{"001": {"FAIL synth"}, "002": {"AUTH synth"}}, nil, 1},
+		{"edit turn lost under a gate", map[string][]string{"001": {"synth", "AUTH edit"}}, []string{"--assert", "turn_succeeded>=1"}, exitInconclusive},
+		{"edit turn failed under a gate", map[string][]string{"001": {"synth", "FAIL edit"}}, []string{"--assert", "turn_succeeded>=1"}, 1},
+		{"bad tolerance", map[string][]string{"001": {"synth"}}, []string{"--max-inconclusive", "2"}, exitInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			corpus := t.TempDir()
+			for id, turns := range tt.scripts {
+				writeEvalCorpus(t, filepath.Join(corpus, id), turns...)
+			}
+			args := append([]string{"eval", "run", "--experiments-dir", corpus, "--api-base", server.URL, "--api-key", "k",
+				"--model", "mock", "--flows", "base", "--force", "--store", filepath.Join(t.TempDir(), "results")}, tt.args...)
+			var errBuf bytes.Buffer
+			if code := run(context.Background(), args, &errBuf); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d: %s", code, tt.wantCode, errBuf.String())
+			}
+		})
+	}
+}

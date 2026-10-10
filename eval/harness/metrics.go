@@ -23,14 +23,18 @@ type TurnMetrics struct {
 // envelope_parsed without changing the harness schema. Extra keys must not
 // collide with the fixed field names (turn, edit, input_tokens,
 // output_tokens, cached_input_tokens, latency_ms, output_bytes, retried,
-// failed, failure_reason, repair_attempts, validation_error); MarshalJSON
-// returns an error on collision.
+// failed, failure_reason, inconclusive, repair_attempts, validation_error);
+// MarshalJSON returns an error on collision.
 //
 // FailureReason follows the harness failure-reason contract used by
 // [ComputeReliability]: reasons prefixed with "request failed",
 // "envelope parse failed", "validation failed", "invalid envelope", or
 // "apply failed" are classified into the matching Reliability counters. The
 // built-in flows set "request failed: ..." when a chat request fails.
+//
+// Inconclusive marks a failed turn whose request failed on infrastructure
+// (see [eval.IsInfra]), such as a rate limit or an outage: the model never
+// answered, so the turn is recorded as unmeasured rather than as a failure.
 type TurnResult struct {
 	Turn              int
 	Edit              string
@@ -42,6 +46,7 @@ type TurnResult struct {
 	Retried           *bool
 	Failed            bool
 	FailureReason     *string
+	Inconclusive      bool
 	RepairAttempts    int
 	ValidationError   *string
 	Extra             map[string]any
@@ -59,6 +64,7 @@ type turnResultFixed struct {
 	Retried           *bool   `json:"retried,omitempty"`
 	Failed            bool    `json:"failed"`
 	FailureReason     *string `json:"failure_reason,omitempty"`
+	Inconclusive      bool    `json:"inconclusive,omitempty"`
 	RepairAttempts    int     `json:"repair_attempts,omitempty"`
 	ValidationError   *string `json:"validation_error,omitempty"`
 }
@@ -74,6 +80,7 @@ var turnResultFixedKeys = map[string]bool{
 	"retried":             true,
 	"failed":              true,
 	"failure_reason":      true,
+	"inconclusive":        true,
 	"repair_attempts":     true,
 	"validation_error":    true,
 }
@@ -91,6 +98,7 @@ func (t TurnResult) MarshalJSON() ([]byte, error) {
 		Retried:           t.Retried,
 		Failed:            t.Failed,
 		FailureReason:     t.FailureReason,
+		Inconclusive:      t.Inconclusive,
 		RepairAttempts:    t.RepairAttempts,
 		ValidationError:   t.ValidationError,
 	})
@@ -122,6 +130,7 @@ func (t *TurnResult) UnmarshalJSON(data []byte) error {
 		Retried:           fixed.Retried,
 		Failed:            fixed.Failed,
 		FailureReason:     fixed.FailureReason,
+		Inconclusive:      fixed.Inconclusive,
 		RepairAttempts:    fixed.RepairAttempts,
 		ValidationError:   fixed.ValidationError,
 		Extra:             extra,

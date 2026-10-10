@@ -77,7 +77,7 @@ func addPersistentFlags(cmd *cobra.Command) {
 
 // isJSON returns true when the user requested JSON output via --format json.
 func (cf *commonFlags) isJSON() bool {
-	return *cf.format == "json"
+	return *cf.format == formatJSON
 }
 
 // resolvedProvider returns the provider name, falling back to env then auto-detect.

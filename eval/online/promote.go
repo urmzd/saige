@@ -76,7 +76,9 @@ type PromoteOptions struct {
 // unit when it is flagged ([LabelFlagged]), when a gate failed one of its
 // scores, when a scorer errored, or when one of the listed metrics scored
 // below threshold. Only listed metrics are compared with the threshold,
-// since counts, latencies, and costs are not on a 0 to 1 scale.
+// since counts, latencies, and costs are not on a 0 to 1 scale. A score that
+// is inconclusive (see [eval.Score.Inconclusive]), such as a judge whose
+// provider was down, says nothing about the run and never promotes it.
 func Failing(threshold float64, metrics ...string) func(eval.Unit) []string {
 	return func(u eval.Unit) []string {
 		var reasons []string
@@ -85,6 +87,7 @@ func Failing(threshold float64, metrics ...string) func(eval.Unit) []string {
 		}
 		for _, sc := range u.Scores {
 			switch {
+			case sc.Inconclusive:
 			case sc.Error != "":
 				reasons = append(reasons, fmt.Sprintf("%s errored: %s", sc.Name, sc.Error))
 			case sc.Passed != nil && !*sc.Passed:

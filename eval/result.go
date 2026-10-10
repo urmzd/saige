@@ -70,6 +70,10 @@ type RunRecord struct {
 	UnstableScores int                `json:"unstable_scores,omitempty"`
 	SubjectErrors  int                `json:"subject_errors,omitempty"`
 	Incomplete     int                `json:"incomplete,omitempty"`
+	// Inconclusive counts units that could not be measured because
+	// infrastructure failed; see [SuiteResult.Inconclusive]. Runs stored
+	// before it existed read as zero.
+	Inconclusive int `json:"inconclusive,omitempty"`
 	// CostUSD sums the recorded cost of the units; nil when no unit
 	// recorded one.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
@@ -162,6 +166,7 @@ func NewRunRecord(id string, suite *SuiteResult, runErr error, prov Provenance) 
 	run.UnstableScores = suite.UnstableScores
 	run.SubjectErrors = suite.SubjectErrors
 	run.Incomplete = suite.Incomplete
+	run.Inconclusive = suite.Inconclusive
 	if len(suite.Aggregate) > 0 {
 		run.Aggregate = make(map[string]float64, len(suite.Aggregate))
 		for k, v := range suite.Aggregate {
@@ -188,7 +193,7 @@ func (s *SuiteResult) Units(runID string) []Unit {
 }
 
 // SuiteFromUnits rebuilds a [SuiteResult] from a stored run and its units,
-// recomputing the aggregate from the unit scores.
+// recomputing the aggregate and the inconclusive count from the unit scores.
 func SuiteFromUnits(run RunRecord, units []Unit) *SuiteResult {
 	results := make([]ObservationResult, len(units))
 	for i, u := range units {
@@ -204,6 +209,7 @@ func SuiteFromUnits(run RunRecord, units []Unit) *SuiteResult {
 		UnstableScores: run.UnstableScores,
 		SubjectErrors:  run.SubjectErrors,
 		Incomplete:     run.Incomplete,
+		Inconclusive:   countInconclusive(results),
 		Outcome:        run.Outcome,
 		Violations:     append([]Violation(nil), run.Violations...),
 	}

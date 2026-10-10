@@ -48,7 +48,7 @@ saige eval run --manifest evals/saige.eval.json
 
 `saige eval run` works with or without a manifest. Flags: `--manifest`, `--experiments-dir`, `--model`, `--api-base`, `--api-key`, `--flows base,stateless`, `--id` prefix filter, `--count`, `--force` to re-run scripts that already have a `metrics.json`, `--continue-on-error` (default true), `--concurrency N`, `--store DIR` with `--suite NAME` to record the run, `--resume RUN` to continue a stored run, `--assert` to add a gate, `--dry-run` to stop after the checks and print the plan, and `--allow-unknown-model`. With a manifest, only the flags that are set override it. The root `--provider` flag (when set) selects a saige provider instead of the OpenAI-compatible endpoint.
 
-Before any model call the command validates the manifest and corpus, checks that a key is available, and checks the model against the catalog. A model that matches no catalog family is refused for `openai` (including the OpenAI API host), `anthropic`, and `google` unless `--allow-unknown-model` is passed. The command exits with status 1 when a script fails or an assertion is violated.
+Before any model call the command validates the manifest and corpus, checks that a key is available, and checks the model against the catalog. A model that matches no catalog family is refused for `openai` (including the OpenAI API host), `anthropic`, and `google` unless `--allow-unknown-model` is passed. The command exits with status 1 when a script fails or an assertion is violated, and with status 3 when the run is inconclusive (see [Failures](#failures)).
 
 ### API keys
 
@@ -133,6 +133,8 @@ When an edit turn's request still fails, the built-in flows record that turn wit
 
 A failed flow fails its script: the runner writes `<script>/error.json` (`experiment_id`, `flow`, `error`, `timestamp`) and no `metrics.json`, so the next run retries it. With `Runner.ContinueOnError` the remaining scripts still run and all failures are returned together; without it the run stops at the first failure.
 
+A failure on infrastructure is inconclusive, not failed: `eval.IsInfra` reports rate limits, unavailable servers, other retryable statuses, authentication failures, network failures, timeouts, cancellation, and errors marked with `eval.Infra`. An edit turn lost that way is recorded with `inconclusive: true`, and its `turn_succeeded` score carries the error and `Inconclusive` instead of a 0, so a gate leaves it out instead of failing it. A script lost that way is recorded as a subject error marked inconclusive. When no script failed for another reason and no gate failed, `Run` returns an `*InconclusiveError` (`errors.Is(err, harness.ErrInconclusive)`) if more than `Runner.MaxInconclusive` of the scripts are inconclusive (default 0, none tolerated), if the gate was inconclusive, or if the run was cancelled. Within the tolerance it returns nil. `saige eval run` exits with status 3 for an inconclusive run; `--resume` reruns only the scripts that did not complete.
+
 `DefaultMetrics` includes a `reliability` report per flow that has edit turns, built by `ComputeReliability`. Its `provider` field names the client's transport.
 
 ## Concurrency, Resume, and Gates
@@ -141,7 +143,7 @@ A failed flow fails its script: the runner writes `<script>/error.json` (`experi
 
 `Runner.Resume` names a stored run to continue. Scripts that completed there (every flow recorded, no script failure) are not run again: their stored units are copied into the new run. The other scripts run even when a `metrics.json` exists. The new run gets its own ID and is complete on its own.
 
-`Runner.Assert` gates the recorded units with `eval.SuiteResult.Gate`. A violated gate makes `Run` return an `*AssertionError` (`errors.Is(err, harness.ErrAssertionsFailed)`), and a stored run carries the outcome and violations. A failed gate does not mark the run itself as errored. Scripts skipped because their `metrics.json` exists add no units unless `Runner.ReuseMetrics` is set, which rebuilds them from the file when it records the same model. `saige eval run` sets it, so a rerun gates the whole corpus without new calls.
+`Runner.Assert` gates the recorded units with `eval.SuiteResult.GateWith` and a `GatePolicy` of `Runner.MaxInconclusive`. A violated gate makes `Run` return an `*AssertionError` (`errors.Is(err, harness.ErrAssertionsFailed)`), and a stored run carries the outcome and violations. A failed gate does not mark the run itself as errored. Scripts skipped because their `metrics.json` exists add no units unless `Runner.ReuseMetrics` is set, which rebuilds them from the file when it records the same model. `saige eval run` sets it, so a rerun gates the whole corpus without new calls.
 
 `Runner.Plan` reports what `Run` would do with each script (run, skip, or resume) and how many chat calls it would make. `saige eval run --dry-run` prints it.
 

@@ -2,7 +2,10 @@
 //
 // Runs live in eval_run, the current attempt of each unit in eval_unit,
 // archived attempts in eval_unit_attempt, and one row per score of each
-// current unit in eval_score. postgres.RunMigrations creates the tables. The
+// current unit in eval_score. postgres.RunMigrations creates the tables and
+// adds columns introduced later, such as eval_score.inconclusive, to tables
+// an older release created; rows written before a column existed read as its
+// default. The
 // full run and unit records are kept as JSON, so every read returns exactly
 // what was written; the other columns exist to index the queries a results
 // store answers: runs newest first by suite and status, units of a run by
@@ -284,10 +287,10 @@ func insertScores(ctx context.Context, tx pgx.Tx, tenant string, unit eval.Unit)
 			continue
 		}
 		batch.Queue(`
-			INSERT INTO eval_score (tenant, run_id, key, name, value, errored, passed)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO eval_score (tenant, run_id, key, name, value, errored, passed, inconclusive)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			ON CONFLICT DO NOTHING`,
-			tenant, unit.RunID, unit.Key, sc.Name, sc.Value, sc.Error != "", sc.Passed)
+			tenant, unit.RunID, unit.Key, sc.Name, sc.Value, sc.Error != "", sc.Passed, sc.Inconclusive)
 	}
 	if batch.Len() == 0 {
 		return nil

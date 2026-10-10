@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/urmzd/saige/eval"
 )
 
 // Chat message role names.
@@ -262,7 +264,8 @@ const requestFailedPrefix = "request failed"
 
 // NewFailedTurnResult records an edit turn whose chat request failed. Its
 // FailureReason starts with "request failed", which [ComputeReliability]
-// counts as a request failure.
+// counts as a request failure. It is Inconclusive when [eval.IsInfra]
+// reports err.
 func NewFailedTurnResult(turn Turn, start time.Time, err error) TurnResult {
 	reason := requestFailedPrefix + ": " + Truncate(err.Error(), maxErrorBody)
 	return TurnResult{
@@ -271,6 +274,7 @@ func NewFailedTurnResult(turn Turn, start time.Time, err error) TurnResult {
 		LatencyMS:     elapsedMS(start),
 		Failed:        true,
 		FailureReason: &reason,
+		Inconclusive:  eval.IsInfra(err),
 	}
 }
 

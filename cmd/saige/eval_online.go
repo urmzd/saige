@@ -295,6 +295,9 @@ func printOnlineReport(cmd *cobra.Command, rep online.Report, budget *types.Budg
 	fmt.Fprintf(tw, "runs seen\t%d\n", rep.Seen)
 	fmt.Fprintf(tw, "matched\t%d\n", rep.Matched)
 	fmt.Fprintf(tw, "scored\t%d\n", rep.Scored)
+	if rep.Run.Inconclusive > 0 {
+		fmt.Fprintf(tw, "inconclusive\t%d (a scorer failed on infrastructure)\n", rep.Run.Inconclusive)
+	}
 	if budget != nil {
 		fmt.Fprintf(tw, "judge spend\t%s over %d calls (%d skipped)\n", budget.Spent(), budget.Usage().Requests, rep.JudgesSkipped)
 	}

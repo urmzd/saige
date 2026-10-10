@@ -39,6 +39,9 @@ type Config struct {
 	Repeats int
 	// Assertions gate the suite after scoring; see [SuiteResult.Gate].
 	Assertions []Assertion
+	// GatePolicy tunes how the gate treats inconclusive results; see
+	// [WithGatePolicy].
+	GatePolicy GatePolicy
 	// LowerIsBetter names metrics, such as latencies, where a drop is an
 	// improvement when a comparison classifies per-case changes.
 	LowerIsBetter map[string]bool
@@ -118,6 +121,12 @@ func WithRepeats(n int) Option {
 // sets [SuiteResult.Outcome]. A failed gate is a result, not an error.
 func WithAssertions(assertions ...Assertion) Option {
 	return func(c *Config) { c.Assertions = append(c.Assertions, assertions...) }
+}
+
+// WithGatePolicy sets how the gate of [WithAssertions] treats inconclusive
+// results; see [SuiteResult.GateWith].
+func WithGatePolicy(p GatePolicy) Option {
+	return func(c *Config) { c.GatePolicy = p }
 }
 
 // WithLowerIsBetter marks metrics where a lower value is an improvement, so

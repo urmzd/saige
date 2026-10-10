@@ -92,6 +92,7 @@ saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggreg
 saige eval run --manifest evals/saige.eval.json --store eval-results --resume RUN_ID
 saige eval runs --store eval-results           # list recorded runs; show <run-id> for one
 saige eval run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
+saige eval compare RUN_ID --store eval-results # regression gate vs the previous run: exit 1 regressed, 3 inconclusive
 
 # MCP server (separate binary)
 saige-mcp --tools research --searxng-url URL  # research tools over MCP/stdio

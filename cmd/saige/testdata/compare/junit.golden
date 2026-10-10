@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="saige eval compare" tests="2" failures="1" skipped="0">
+  <testsuite name="nightly" tests="2" failures="1" skipped="0">
+    <properties>
+      <property name="baseline" value="base"></property>
+      <property name="candidate" value="regressed"></property>
+      <property name="outcome" value="failed"></property>
+    </properties>
+    <testcase name="correct" classname="saige.eval.compare.nightly">
+      <failure message="dropped by 0.3, interval entirely beyond the 0 tolerated" type="regression"><![CDATA[q00: pass 1 -> pass 0
+q01: pass 1 -> pass 0
+q02: pass 1 -> pass 0
+q03: pass 1 -> pass 0
+q04: pass 1 -> pass 0
+q05: pass 1 -> pass 0
+]]></failure>
+      <system-out>pass rate: baseline 1, candidate 0.7, delta -0.3, 95% interval [-0.5008, -0.09916], 20 cases</system-out>
+    </testcase>
+    <testcase name="latency_ms" classname="saige.eval.compare.nightly">
+      <system-out>mean, lower is better: baseline 109.5, candidate 109.5, delta +0, 95% interval [+0, +0], 20 cases</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>

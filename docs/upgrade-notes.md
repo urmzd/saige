@@ -96,6 +96,17 @@ These behavior changes can affect existing code. Each entry says what changed an
 | `SyncSource` compares the fingerprint of every fetched document that carries bytes, even when its `SourceModifiedAt` is not after `Since`. Before, an edit that kept an old modification time (`cp -p`, `rsync -a`) was counted as unchanged. | None. `Since` now only lets a document without bytes count as unchanged by time. |
 | With `Prune`, `SyncSource` keeps documents whose URI a `types.FilteringSource` reports in `SyncResult.Skipped`. A `Filesystem` reports every file or directory a rule skipped, including files outside `Extensions` and subdirectories of a non-recursive walk, which were pruned before. | Delete documents a narrower filter now skips by UUID. |
 
+## Evals
+
+| Change | What to do |
+| --- | --- |
+| A subject or scorer error that `eval.IsInfra` reports (rate limit, unavailable, other transient kinds, authentication, network failures, timeouts, cancellation, `eval.ErrInfra`) is inconclusive. `Gate` returns the new `eval.OutcomeInconclusive` instead of `failed` when every violation is of that kind and more than `GatePolicy.MaxInconclusive` (default 0) of the cases are affected; within the tolerance it returns `passed`. A real violation still makes the outcome `failed`. | Handle `OutcomeInconclusive` where you switch on the outcome, for example by rerunning. `len(Check(...)) == 0` still requires every gate to be checked and hold. |
+| An inconclusive score gets no `Score.Passed` verdict and is left out of `PassRate`, `GroupPassRate`, `MinPassRate`, McNemar and bootstrap pairing. A case one arm could not measure has the new `CaseInconclusive` status instead of `only_base` or `only_exp`. | Pass rates over a run with outages now cover the measured cases only; read `SuiteResult.Inconclusive` and `Completeness` for the gap. |
+| `Violation` gains `Kind` (`metric`, `scorer`, `subject`, `inconclusive`), and `Violation.String` prefixes inconclusive ones with `inconclusive:` and no longer prints a blank metric for suite-level violations. Stored violations without a kind read as real failures. | Update code that matched violation text. |
+| `harness.Runner.Run` returns an `*InconclusiveError` (`harness.ErrInconclusive`) instead of the joined script errors when every failed script failed on infrastructure, and nil when they stay within `Runner.MaxInconclusive`. An edit turn lost to infrastructure records `inconclusive: true` in `metrics.json`, and its `turn_succeeded` score is an inconclusive error instead of 0. `saige eval run` exits with status 3 for such a run (status 1 before); `--max-inconclusive` sets the tolerance. | Treat exit status 3 as "rerun", not as a failure. A custom flow that adds an `inconclusive` key to `TurnResult.Extra` must rename it. |
+| `RunMigrations` adds `eval_score.inconclusive` (default false). `pgstore.Diff` with `Regressions` leaves out candidate scores that are inconclusive or missing because the candidate's subject failed on infrastructure. Older rows read as conclusive. | Run migrations before the rollout. |
+| `online.Failing` no longer promotes a unit for an inconclusive score, such as a judge call refused by an overloaded provider. | None. |
+
 ## Toolchain
 
 | Change | What to do |

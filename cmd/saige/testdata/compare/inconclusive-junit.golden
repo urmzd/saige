@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="saige eval compare" tests="1" failures="0" skipped="1">
+  <testsuite name="nightly" tests="1" failures="0" skipped="1">
+    <properties>
+      <property name="baseline" value="base"></property>
+      <property name="candidate" value="outage"></property>
+      <property name="outcome" value="inconclusive"></property>
+    </properties>
+    <testcase name="correct" classname="saige.eval.compare.nightly">
+      <skipped message="inconclusive: 2 paired cases, fewer than the 3 required"></skipped>
+      <system-out>pass rate: baseline 1, candidate 1, delta +0, 95% interval [+0, +0], 2 cases</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>

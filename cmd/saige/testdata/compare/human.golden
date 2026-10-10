@@ -1,0 +1,15 @@
+outcome    failed
+baseline   base (nightly, succeeded, gate passed, commit c0ffee010000, 20 units)
+candidate  regressed (nightly, succeeded, gate failed, commit c0ffee020000, 20 units)
+
+METRIC      BASIS                  BASELINE  CANDIDATE  DELTA  95% INTERVAL         N   STATUS
+correct     pass rate              1         0.7        -0.3   [-0.5008, -0.09916]  20  regressed: dropped by 0.3, interval entirely beyond the 0 tolerated
+latency_ms  mean, lower is better  109.5     109.5      +0     [+0, +0]             20  passed
+
+regressed cases (6):
+  q00 correct: pass 1 -> pass 0
+  q01 correct: pass 1 -> pass 0
+  q02 correct: pass 1 -> pass 0
+  q03 correct: pass 1 -> pass 0
+  q04 correct: pass 1 -> pass 0
+  q05 correct: pass 1 -> pass 0

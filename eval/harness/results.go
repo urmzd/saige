@@ -28,7 +28,8 @@ const (
 // the script ID, the turn index, and the flow name as its
 // [eval.LabelVariant], so its [eval.UnitKey] is unique within a run. Its
 // timing holds the turn's latency and tokens, and its scores are
-// turn_succeeded (1, or 0 with the failure reason), latency_ms,
+// turn_succeeded (1, or 0 with the failure reason, or an inconclusive error
+// for a turn whose request failed on infrastructure), latency_ms,
 // input_tokens, output_tokens, and output_bytes. flows gives the order;
 // flows missing from results are skipped.
 func ScriptObservations(script Script, flows []Flow, results map[string]FlowResult) []eval.ObservationResult {
@@ -80,6 +81,13 @@ func turnObservation(script Script, flow string, turn TurnResult) eval.Observati
 			succeeded.Reason = *turn.FailureReason
 		}
 	}
+	if turn.Failed && turn.Inconclusive {
+		// The model never answered: the turn is unmeasured, not failed.
+		succeeded.Error, succeeded.Reason, succeeded.Inconclusive = succeeded.Reason, "", true
+		if succeeded.Error == "" {
+			succeeded.Error = "request failed on infrastructure"
+		}
+	}
 	return eval.ObservationResult{
 		Observation: obs,
 		Scores: []eval.Score{
@@ -94,14 +102,10 @@ func turnObservation(script Script, flow string, turn TurnResult) eval.Observati
 
 // failedScriptObservation records a script whose flow failed as one
 // unscored observation carrying the error, which [eval.SuiteResult] counts
-// as a subject error.
+// as a subject error, and as inconclusive when [eval.IsInfra] reports err.
 func failedScriptObservation(script Script, flow string, err error) eval.ObservationResult {
-	msg, _ := json.Marshal(err.Error())
-	obs := eval.Observation{
-		ID:          script.ID,
-		Labels:      eval.Labels{},
-		Annotations: map[string]json.RawMessage{eval.AnnotationSubjectError: msg},
-	}
+	obs := eval.Observation{ID: script.ID, Labels: eval.Labels{}}
+	eval.MarkSubjectError(&obs, err)
 	if flow != "" {
 		obs.Labels[eval.LabelVariant] = flow
 	}
@@ -125,6 +129,9 @@ func (r *suiteRecorder) add(results ...eval.ObservationResult) {
 	for _, res := range results {
 		if eval.SubjectError(res.Observation) != "" {
 			r.suite.SubjectErrors++
+		}
+		if res.Inconclusive() {
+			r.suite.Inconclusive++
 		}
 		r.suite.Results = append(r.suite.Results, res)
 	}
