@@ -33,7 +33,8 @@ func main() {
 	approval := flag.String("approval", string(approvalElicit), "How marked tools run (every marker kind needs approval): elicit (ask through the MCP client), host (rely on the client's own permission prompt), deny")
 	mcpConfig := flag.String("mcp-config", "", "MCP configuration file (mcpServers) whose servers the mcp pack probes and lists")
 
-	agentRef := flag.String("agent", "", "Expose a saige agent as one MCP tool, running this catalog preset or provider/model")
+	agentRef := flag.String("agent", "", "Expose a saige agent as one MCP tool: an agent definition in --agents-dir (NAME or NAME@RANGE), or a catalog preset or provider/model")
+	agentsDir := flag.String("agents-dir", "", "Directory of agent definitions --agent may name")
 	agentCatalog := flag.String("agent-catalog", "", "Catalog file for --agent (default: the embedded catalog)")
 	agentName := flag.String("agent-tool", defaultAgentTool, "Name of the agent tool")
 	agentDesc := flag.String("agent-description", "", "Description of the agent tool")
@@ -102,12 +103,24 @@ func main() {
 	served := len(defs)
 
 	if *agentRef != "" {
-		at, err := newAgentTool(ctx, agentFlags{
+		af := agentFlags{
 			ref: *agentRef, catalog: *agentCatalog, name: *agentName, description: *agentDesc,
 			system: *agentSystem, schemaFile: *agentSchema, maxIter: *agentMaxIter, timeout: *agentTimeout,
-		}, registry)
-		if err != nil {
-			log.Fatalf("saige-mcp: %v", err)
+		}
+		var at agentTool
+		found := false
+		if *agentsDir != "" {
+			set := map[string]bool{}
+			flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+			at, found, err = newDefinitionTool(ctx, definitionFlags{agentFlags: af, dir: *agentsDir, root: *root, set: set}, registry)
+			if err != nil {
+				log.Fatalf("saige-mcp: %v", err)
+			}
+		}
+		if !found {
+			if at, err = newAgentTool(ctx, af, registry); err != nil {
+				log.Fatalf("saige-mcp: %v", err)
+			}
 		}
 		b.registerAgent(server, at)
 		served++

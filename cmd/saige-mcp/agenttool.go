@@ -36,6 +36,9 @@ type agentTool struct {
 	schema *agenttypes.ParameterSchema
 	// newAgent builds the agent for one call.
 	newAgent func() *agentsdk.Agent
+	// newBound, when set, replaces newAgent: it binds a definition for one
+	// call, and release frees what the binding opened.
+	newBound func(context.Context) (a *agentsdk.Agent, release func(), err error)
 	// gated reports whether any of the agent's tools needs approval, which
 	// publishes the agent tool as destructive.
 	gated   bool
@@ -174,7 +177,17 @@ func (b bridge) registerAgent(server *mcp.Server, at agentTool) {
 // the agent raises is decided as a direct call to the tool would be, so the
 // agent cannot run a tool the client could not run itself.
 func (b bridge) runAgent(ctx context.Context, session *mcp.ServerSession, at agentTool, task string) (string, error) {
-	a := at.newAgent()
+	var a *agentsdk.Agent
+	if at.newBound != nil {
+		var release func()
+		var err error
+		if a, release, err = at.newBound(ctx); err != nil {
+			return "", err
+		}
+		defer release()
+	} else {
+		a = at.newAgent()
+	}
 	stream := a.Invoke(ctx, []agenttypes.Message{agenttypes.UserMsg(agenttypes.Text(task))})
 	transcript, err := agentsdk.Collect(stream, func(d agenttypes.Delta) {
 		m, ok := d.(agenttypes.MarkerDelta)
