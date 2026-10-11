@@ -41,7 +41,7 @@ jobs:
       SAIGE_TEST_POSTGRES_DSN: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go test -tags stress -race -count=1 -v ./integration/stress/
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         if: env.OPENAI_API_KEY != '' || env.ANTHROPIC_API_KEY != ''
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         if: env.OPENAI_API_KEY != '' || env.ANTHROPIC_API_KEY != ''
         with:
           go-version-file: go.mod
