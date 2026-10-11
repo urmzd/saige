@@ -140,7 +140,7 @@ func (r Rule) argMatch() (types.ArgMatch, error) {
 	}
 	for _, c := range field {
 		if c != '_' && c != '-' && c != '.' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
-			return types.ArgMatch{}, fmt.Errorf("argument names use letters, digits, _, - and .")
+			return types.ArgMatch{}, fmt.Errorf("argument name %q: use letters, digits, _, - and dots", field)
 		}
 	}
 	m := types.ArgMatch{Field: field}
