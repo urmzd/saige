@@ -19,7 +19,7 @@ func TestBuildPromptCacheMapping(t *testing.T) {
 		PromptCache: &PromptCache{Mode: catalog.PromptCacheMarkers, TTL: "5m", System: true}}); err != nil {
 		t.Fatalf("anthropic markers: %v", err)
 	}
-	_, err := Build(ctx, Config{Provider: Google, Model: "gemini-2.5-flash", APIKey: "k",
+	_, err := Build(ctx, Config{Provider: Google, Model: "gemini-2.5-flash", APIKey: "k", Getenv: env(nil),
 		PromptCache: &PromptCache{Mode: catalog.PromptCacheMarkers, TTL: "5m", System: true}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
 		t.Fatalf("google markers must be rejected, got %v", err)
@@ -34,7 +34,7 @@ func TestAdaptersReportEffectiveOptions(t *testing.T) {
 	for _, cfg := range []Config{
 		{Provider: OpenAI, Model: "gpt-4.1", APIKey: "k", Options: types.RequestOptions{Temperature: &temp, Seed: &seed}},
 		{Provider: Anthropic, Model: "claude-3-5-haiku", APIKey: "k", Options: types.RequestOptions{Temperature: &temp}},
-		{Provider: Google, Model: "gemini-2.5-flash", APIKey: "k", Options: types.RequestOptions{Temperature: &temp, ReasoningBudget: &budget}},
+		{Provider: Google, Model: "gemini-2.5-flash", APIKey: "k", Getenv: env(nil), Options: types.RequestOptions{Temperature: &temp, ReasoningBudget: &budget}},
 		{Provider: Ollama, Model: "qwen3", Options: types.RequestOptions{Temperature: &temp, Seed: &seed}},
 	} {
 		p, err := Build(context.Background(), cfg)
