@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/urmzd/saige/agent/types"
 )
 
 // Rule is one approval rule in the permission syntax of Claude Code: a tool
@@ -18,10 +20,17 @@ import (
 //	Bash(npm test)         exactly the command "npm test"
 //	Read(src/**)           file tools reading a path under src/
 //	WebFetch(domain:go.dev) fetch_url for go.dev and its subdomains
+//	deploy(env:staging)    calls of deploy whose env argument is "staging"
+//	deploy(branch:fix/*)   calls whose branch argument starts with "fix/"
+//	deploy(dir:/srv/app/**) calls whose dir argument is a path at or below /srv/app
 //
 // The Claude Code names Bash, Read, Write, Edit, Glob, Grep, LS and
 // WebFetch name saige's own tools: bash and execute_code (shell only),
 // read_file, write_file, edit_file, glob, grep, list_dir and fetch_url.
+//
+// Any other tool takes a field:pattern specifier, matched against one
+// argument as a types.ArgMatch is: dots in the field step into nested
+// objects, and a call without the argument never matches.
 type Rule struct {
 	// Tool is the tool name or pattern as written.
 	Tool string
@@ -82,7 +91,9 @@ func ParseRule(s string) (Rule, error) {
 				return Rule{}, fmt.Errorf("rule %q: write WebFetch(domain:example.com)", s)
 			}
 		default:
-			return Rule{}, fmt.Errorf("rule %q: only Bash, execute_code, file and fetch tools take a specifier", s)
+			if _, err := r.argMatch(); err != nil {
+				return Rule{}, fmt.Errorf("rule %q: %w", s, err)
+			}
 		}
 	}
 	return r, nil
@@ -102,6 +113,7 @@ const (
 	specCommand
 	specPath
 	specDomain
+	specArg
 )
 
 // kind says what the specifier is matched against, from the tool name.
@@ -115,7 +127,34 @@ func (r Rule) kind() specKind {
 	case "webfetch", "fetch_url":
 		return specDomain
 	}
-	return specNone
+	return specArg
+}
+
+// argMatch parses a field:pattern specifier. The pattern is an exact value,
+// a text prefix ending in *, or a path prefix ending in /**.
+func (r Rule) argMatch() (types.ArgMatch, error) {
+	field, pattern, ok := strings.Cut(r.Specifier, ":")
+	field, pattern = strings.TrimSpace(field), strings.TrimSpace(pattern)
+	if !ok || field == "" || pattern == "" {
+		return types.ArgMatch{}, fmt.Errorf("the specifier names one argument: write %s(field:value)", r.Tool)
+	}
+	for _, c := range field {
+		if c != '_' && c != '-' && c != '.' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return types.ArgMatch{}, fmt.Errorf("argument names use letters, digits, _, - and .")
+		}
+	}
+	m := types.ArgMatch{Field: field}
+	if root, ok := strings.CutSuffix(pattern, "/**"); ok {
+		m.PathPrefix = root
+	} else if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
+		m.Prefix = prefix
+	} else {
+		m.Equals = pattern
+	}
+	if m.PathPrefix == "" && m.Prefix == "" && m.Equals == "" {
+		return types.ArgMatch{}, fmt.Errorf("the pattern needs text before its wildcard")
+	}
+	return m, nil
 }
 
 // namesTool reports whether the rule's tool part covers tool.
@@ -190,6 +229,9 @@ func (r Rule) Matches(tool string, args map[string]any, strict bool) bool {
 		host := strings.ToLower(u.Hostname())
 		want := strings.ToLower(strings.TrimPrefix(r.Specifier, "domain:"))
 		return host == want || strings.HasSuffix(host, "."+want)
+	case specArg:
+		m, err := r.argMatch()
+		return err == nil && m.Matches(args)
 	}
 	return false
 }
