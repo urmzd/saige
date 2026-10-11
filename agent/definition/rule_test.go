@@ -45,6 +45,24 @@ func TestRuleMatches(t *testing.T) {
 		{"WebFetch(domain:go.dev)", "fetch_url", map[string]any{"url": "https://pkg.go.dev/x"}, true, true},
 		{"WebFetch(domain:go.dev)", "fetch_url", map[string]any{"url": "https://go.dev.evil.com/"}, true, false},
 		{"WebFetch(domain:go.dev)", "fetch_url", map[string]any{"url": "not a url"}, true, false},
+		{"deploy(env:staging)", "deploy", map[string]any{"env": "staging"}, true, true},
+		{"deploy(env:staging)", "deploy", map[string]any{"env": "production"}, true, false},
+		{"deploy(env:staging)", "deploy", map[string]any{}, true, false},
+		{"deploy(env:staging)", "deploy", map[string]any{}, false, false},
+		{"deploy(env:staging)", "release", map[string]any{"env": "staging"}, true, false},
+		{"deploy(replicas:3)", "deploy", map[string]any{"replicas": float64(3)}, true, true},
+		{"deploy(dry_run:true)", "deploy", map[string]any{"dry_run": true}, true, true},
+		{"deploy(target.env:staging)", "deploy", map[string]any{"target": map[string]any{"env": "staging"}}, true, true},
+		{"deploy(branch:fix/*)", "deploy", map[string]any{"branch": "fix/typo"}, true, true},
+		{"deploy(branch:fix/*)", "deploy", map[string]any{"branch": "main"}, true, false},
+		{"deploy(branch:fix/*)", "deploy", map[string]any{"branch": 7}, true, false},
+		{"deploy(dir:/srv/app/**)", "deploy", map[string]any{"dir": "/srv/app/web"}, true, true},
+		{"deploy(dir:/srv/app/**)", "deploy", map[string]any{"dir": "/srv/app"}, true, true},
+		{"deploy(dir:/srv/app/**)", "deploy", map[string]any{"dir": "/srv/app/../etc"}, true, false},
+		{"deploy(dir:/srv/app/**)", "deploy", map[string]any{"dir": "/srv/application"}, true, false},
+		{"mcp_github_*(repo:urmzd/saige)", "mcp_github_create_issue", map[string]any{"repo": "urmzd/saige"}, true, true},
+		{"mcp_github_*(repo:urmzd/saige)", "mcp_github_create_issue", map[string]any{"repo": "other/repo"}, false, false},
+		{"mcp_github_*(repo:urmzd/saige)", "mcp_linear_create_issue", map[string]any{"repo": "urmzd/saige"}, true, false},
 	}
 	for _, tc := range cases {
 		r, err := ParseRule(tc.rule)
@@ -58,7 +76,7 @@ func TestRuleMatches(t *testing.T) {
 }
 
 func TestParseRuleErrors(t *testing.T) {
-	for _, bad := range []string{"", "Bash(", "Bash()", "(x)", "kg_search(x)", "Bash(a:*b:*)", "Read([)", "WebFetch(go.dev)", "a*b", "a b"} {
+	for _, bad := range []string{"", "Bash(", "Bash()", "(x)", "kg_search(x)", "kg_search(:x)", "kg_search(q:)", "kg_search(q:*)", "kg_search(q:/**)", "kg_search(a b:x)", "Bash(a:*b:*)", "Read([)", "WebFetch(go.dev)", "a*b", "a b"} {
 		if _, err := ParseRule(bad); err == nil {
 			t.Errorf("%q: want an error", bad)
 		}

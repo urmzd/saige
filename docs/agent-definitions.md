@@ -146,8 +146,13 @@ Rules use the permission syntax of Claude Code. A rule is a tool name, optionall
 | `Bash(npm test)` | Exactly the command `npm test` |
 | `Read(src/**)` | File tools reading a path under `src/` |
 | `WebFetch(domain:go.dev)` | `fetch_url` for `go.dev` and its subdomains |
+| `deploy(env:staging)` | Calls of `deploy` whose `env` argument is `staging` |
+| `deploy(branch:fix/*)` | Calls whose `branch` argument starts with `fix/` |
+| `deploy(dir:/srv/app/**)` | Calls whose `dir` argument is a path at or below `/srv/app` |
 
 The Claude Code names `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `LS` and `WebFetch` name saige's `bash` and `execute_code`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `list_dir` and `fetch_url`.
+
+Any other tool, including a registry or MCP tool, takes a `field:pattern` specifier that is matched against one argument. The pattern is an exact value (`3` and `true` match a number and a boolean), a text prefix ending in `*`, or a path prefix ending in `/**`. Dots in the field step into nested objects, as in `deploy(target.env:staging)`, and a call without the argument never matches. Use the `/**` form for paths: it cleans the value first, so `/srv/app/../etc` does not match `/srv/app/**`, where a `*` prefix compares the text as written.
 
 A call is decided in this order: a `deny` rule refuses it, an `ask` rule asks, an `allow` rule runs it, a tool that carried an approval marker asks, and anything else falls to its capability class. `capabilities` sets the class defaults; without it reads run and writes, destructive and undeclared tools ask.
 
