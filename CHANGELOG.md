@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.35.0 (2026-10-11)
+
+### Features
+
+- **definition**: match custom tool arguments in approval rules (#111) ([9f756b4](https://github.com/urmzd/saige/commit/9f756b4c8a4a945d78ff40013ba1b6193be493fc))
+
+### Misc
+
+- **agent**: hold the awaited child until await_subagent runs (#110) ([07f2b5f](https://github.com/urmzd/saige/commit/07f2b5fbfd9b33fe2ad952b47028b97fbbd512fb))
+- **deps**: bump actions/checkout from 6 to 7 (#45) ([ba23c00](https://github.com/urmzd/saige/commit/ba23c009bf60ba42cabe8abdf5173dcf600dd86f))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.34.0...v0.35.0)
+
+
 ## 0.34.0 (2026-10-10)
 
 ### Breaking
