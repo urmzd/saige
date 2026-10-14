@@ -36,54 +36,27 @@
 
 ## Features
 
-saige focuses on three things: running **agents**, supplying their **context and memory**, and measuring both with **evals**.
+Build agents, supply their context and memory, and evaluate the results through shared Go interfaces.
 
-### Agents
-
-- **Streaming-first agent loop** with typed delta events, parallel tool execution, sub-agent delegation, and handoffs
-- **Adapters for three model vendors and a local runtime**: Anthropic, OpenAI and Google, plus open-weight models served by Ollama, all behind one `types.Provider` interface, with retry and fallback composition. See [vendors, runtimes and adapters](docs/concepts.md#vendors-runtimes-and-adapters).
-- **Nullable tool properties** with separate presence rules across vendor APIs and MCP. See [tool schemas](docs/tool-schemas.md).
-- **Typed function tools**: `agent.Func` derives the schema from a struct, decodes arguments strictly, and passes typed dependencies; `agent.AIFunc` is a typed function a model computes. Both are versioned by content. See [typed function tools](docs/func-tools.md).
-- **Batch processing** through the vendor batch APIs at half price, with durable jobs, batch budgets, a local fallback for Ollama, and eval runs and judges as batches. See [batch processing](docs/batch.md).
-- **Durable runs** that resume after a crash, on a local engine or on Postgres through [duraturo](https://github.com/urmzd/duraturo), plus response caching
-- **MCP server** exposing any saige tool pack to Claude Code, Codex, Gemini CLI, or any MCP client, with approval enforced for mutating tools
-- **Harness toolset**: `agent.WithHarnessTools` adds `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `execute_code` (shell, Python, Go behind a subprocess or Docker sandbox), `fetch_url`, and scratch tools, read-only unless you enable more, with approvals and automatic spilling of large results. See [harness tools](docs/harness-tools.md).
-- **Opt-in tool packs**: workspace files ([`tools/fs`](tools/fs/README.md)), a sandboxed shell ([`tools/exec`](tools/exec/README.md)), and URL fetch with private-address blocking ([`tools/fetch`](tools/fetch/README.md)). Read-only by default; every mutating tool requires approval
-- **HTTP and SSE server** via `saige serve`: sessions, a resumable turn event stream in the versioned wire format, and approve and cancel endpoints
-- **Run your agent in other harnesses**: `saige export` and `saige launch` set up Claude Code, Codex, Gemini CLI, opencode and the Cursor agent with an agent definition as an MCP tool, its skills and a native agent file. `saige acp` runs it as an Agent Client Protocol agent for Zed, JetBrains and other editors, and `saige approvals` decides approvals for clients that cannot ask you. See [harnesses](docs/harnesses.md).
-- **Agent definitions**: an agent as a versioned Markdown file with YAML frontmatter (model, tools, skills, memory, sub-agents, approval rules in Claude Code syntax, compaction, guardrails, limits), loaded from directories, HTTPS or Postgres, resolved by `name@range` and pinned by digest. Run one with `saige ask --agent`. See [agent definitions](docs/agent-definitions.md).
-- **Model catalog and presets** as data: declared capabilities, layered JSON catalogs loaded from files, HTTPS or any reader, and presets whose failover entries each carry options validated for their own model. See [model catalog and presets](docs/catalog.md).
-- **MCP client** with pooled sessions, safe retries, catalog drift detection, and `.mcp.json` loading. See [MCP client](docs/mcp-client.md).
-- **Run hooks and guardrails**: one typed seam for lifecycle events that observe, change, or abort a run, recorded for durable replay, and input and output guardrails that pass, block, or rewrite. See [run hooks](docs/hooks.md) and [guardrails](docs/guardrails.md).
-
-### Context and memory
-
-- **Conversation tree** with branching, checkpoints, rewind, compaction, and RLHF feedback
-- **Multi-retriever RAG** fusing vector, BM25, and graph retrieval via Reciprocal Rank Fusion, with reranking and citations
-- **Long-term memory** scoped by the host, with approval-gated writes and hybrid recall on Postgres, including recall of past conversations. See [memory](docs/memory.md)
-- **Knowledge graph backend** for RAG: LLM-powered entity extraction, fuzzy dedup, and temporal tracking. It differs from the document stores in ingestion and retrieval logic, not in role
-
-### Evals
-
-- **Composable scorers** for agents, retrieval, and knowledge graphs, with gates, comparisons, experiments and LLM-as-judge
-- **Sampler** to measure how stable scores and subjects are across repeated runs
-- **Live eval harness** via `saige eval`
-
-### Why one SDK?
-
-An agent is only as good as the context it is given, and you only know either works if you measure it. **saige** keeps all three under shared `Provider`, `Embedder`, and `Tool` interfaces, so retrieval plugs into the agent loop as tools and every layer is scored by the same eval framework.
+- **Streaming agents** with typed message parts, parallel tool calls, sub-agents and handoffs. Use [typed Go functions](docs/func-tools.md), [MCP tools](docs/mcp-client.md) or the built-in [harness tools](docs/harness-tools.md).
+- **Model adapters and routing** for Anthropic, OpenAI, Google and local Ollama, with [catalog presets](docs/catalog.md), retry, fallback and model-neutral [dials](docs/dials.md).
+- **Versioned agent definitions** loaded from Markdown, directories, HTTPS or Postgres. Share one definition across the CLI, HTTP server, MCP and [editor harnesses](docs/harnesses.md). See [agent definitions](docs/agent-definitions.md).
+- **Approvals and guardrails** for tool execution and model input/output, with [approval policies](docs/orchestration-policies.md) and [guardrails](docs/guardrails.md).
+- **Context and memory** through branching conversations, hybrid vector/BM25/graph retrieval, citations and approval-gated [long-term memory](docs/memory.md). See [RAG](rag/README.md) and [knowledge graphs](rag/knowledge/README.md).
+- **Durable execution** with resumable local or Postgres-backed runs, response caching and [batch jobs](docs/batch.md). See [durable runs](docs/durable-execution.md).
+- **Evals** with composable scorers, regression gates, comparisons, experiments and LLM judges. Run suites with `saige eval` or use the [Go API](eval/README.md).
 
 ## Installation
 
-### What you need
+### Prerequisites
 
 | Requirement | When |
 | --- | --- |
 | Go 1.26.9 or newer | Library use and `go install` |
-| One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT`) or `GOOGLE_API_KEY`, or a local [Ollama](https://ollama.com) | Always: something has to serve the model |
-| PostgreSQL 18 with pgvector and pg_search | Only for RAG, the knowledge graph, and conversation trees or durable runs kept in Postgres |
+| One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT`) or `GOOGLE_API_KEY`, or a local [Ollama](https://ollama.com) | Model-backed agent calls and live evals |
+| PostgreSQL 18 with pgvector and pg_search | Postgres-backed retrieval, memory, conversation trees and durable runs |
 
-For those features one Postgres holds vectors, BM25 indexes, conversation trees and durable runs, with no Redis or separate search engine. See [deployment](docs/deployment.md) for the single-Postgres architecture.
+Basic agent calls need no database. RAG also supports an in-memory store. For persistent deployments, one Postgres can hold vectors, BM25 indexes, conversation trees and durable runs. See [deployment](docs/deployment.md) for the single-Postgres architecture.
 
 ### CLI and MCP server
 
@@ -118,7 +91,7 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, or Vertex AI credentials
 saige ask "What is retrieval-augmented generation?"
 ```
 
-Without flags, `saige ask` runs the first vendor whose credentials are set, in the order Anthropic, OpenAI, Google, on its cheapest current model (claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite). Run fully local with a model served by Ollama:
+Without flags, `saige ask` uses the default catalog preset and available credentials. See [catalog presets](docs/catalog.md) for model selection and failover. Run fully local with a model served by Ollama:
 
 ```bash
 ollama pull qwen3.5:4b
@@ -131,7 +104,15 @@ saige ask --provider ollama "What is retrieval-augmented generation?"
 
 ### The smallest agent
 
-A catalog preset builds the adapters for you. `default` serves the cheapest model of each vendor whose credentials are set, failing over in order, then a model pulled into a local Ollama, so it also runs with no key at all.
+Run the checked-in example from a clone, using your configured provider credentials or a running Ollama server with a chat model pulled:
+
+```bash
+git clone https://github.com/urmzd/saige.git
+cd saige
+go run ./examples/quickstart/agent
+```
+
+The example builds the `default` catalog preset, invokes one agent turn and prints the answer:
 
 <!-- fsrc src="examples/quickstart/agent/main.go" fence="auto" -->
 ```go
@@ -374,7 +355,7 @@ func main() {
 ```
 <!-- /fsrc -->
 
-Run any of these with `go run ./examples/quickstart/<name>` from a clone.
+Run the other programs from the same clone using the commands below.
 
 ## Concepts in 2 minutes
 
@@ -397,7 +378,15 @@ See [concepts](docs/concepts.md) for the full picture.
 
 ## Examples
 
-See [`examples/`](examples/README.md) for runnable programs covering sub-agents, handoffs, durability, caching, approvals, knowledge graphs and RAG pipelines.
+| Example | Run from the repository root |
+| --- | --- |
+| [Minimal agent](examples/quickstart/agent/main.go) | `go run ./examples/quickstart/agent` |
+| [Typed tool](examples/quickstart/tool/main.go) | `go run ./examples/quickstart/tool` |
+| [Structured output](examples/quickstart/structured/main.go) | `go run ./examples/quickstart/structured` |
+| [Model-neutral dials](examples/quickstart/dials/main.go) | `go run ./examples/quickstart/dials` |
+| [Postgres RAG](examples/quickstart/rag/main.go) | `go run ./examples/quickstart/rag` |
+
+The agent examples require a configured model provider. The RAG example requires the Postgres and Ollama setup above. See the [full example index](examples/README.md) for sub-agents, handoffs, durability, caching, approvals and knowledge graphs.
 
 ## Documentation
 
