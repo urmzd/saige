@@ -1,9 +1,11 @@
 package duraturo
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/urmzd/duraturo/pkg/ledger"
 	"github.com/urmzd/duraturo/pkg/queue"
@@ -36,6 +38,30 @@ func TestLegacyLedgerResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rec := range dump.Records {
+		if rec.Name == interruptPrefix+legacyrun.Interrupt {
+			// Refresh only the captured approval deadline, preserving the
+			// historical wire payload and all recorded step encodings.
+			var fixture struct {
+				Interrupt struct {
+					ExpiresAt string
+				} `json:"interrupt"`
+			}
+			if err := json.Unmarshal(rec.Output, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			if fixture.Interrupt.ExpiresAt == "" {
+				t.Fatal("fixture approval has no expiry")
+			}
+			old, err := json.Marshal(fixture.Interrupt.ExpiresAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := json.Marshal(time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec.Output = bytes.ReplaceAll(rec.Output, old, fresh)
+		}
 		if _, err := lgr.Record(ctx, rec); err != nil {
 			t.Fatal(err)
 		}
