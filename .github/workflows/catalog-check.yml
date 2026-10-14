@@ -43,7 +43,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 

@@ -79,13 +79,22 @@ func TestSuspendDecideResumeAndReplay(t *testing.T) {
 	ctx := testContext(t)
 	e := newEngine()
 	var calls, writes, reads atomic.Int32
+	// Decide wakes the worker. Keep its approved tool running until the
+	// duplicate/conflicting reply assertions finish, so they exercise an open
+	// run instead of racing terminal-state rejection.
+	finishWrite := make(chan struct{})
 	factory := func(string) *agent.Agent {
-		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(_ context.Context, args map[string]any) (string, error) {
+		write := &types.ToolFunc{Def: types.ToolDef{Name: "write"}, Fn: func(ctx context.Context, args map[string]any) (string, error) {
 			writes.Add(1)
 			if args["value"] != "approved" {
 				t.Errorf("wrong args %v", args)
 			}
-			return "written", nil
+			select {
+			case <-finishWrite:
+				return "written", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 		}}
 		read := &types.ToolFunc{Def: types.ToolDef{Name: "read"}, Fn: func(context.Context, map[string]any) (string, error) { reads.Add(1); return "read", nil }}
 		return must.Get(agent.New(agent.Config{Provider: provider{&calls}, SystemPrompt: "rules", Tools: types.NewToolRegistry(types.WithMarkers(write, types.Marker{Kind: "approval"}), read), MaxParallelTools: 1}))
@@ -122,6 +131,7 @@ func TestSuspendDecideResumeAndReplay(t *testing.T) {
 	if err := e.Decide(ctx, "run", "missing", "key", decision); !errors.Is(err, types.ErrInterruptNotFound) {
 		t.Fatalf("unknown interrupt: %v", err)
 	}
+	close(finishWrite)
 
 	result, err := e.Wait(ctx, "run")
 	if err != nil || result == nil {
