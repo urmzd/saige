@@ -1,10 +1,13 @@
 package local
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/durable/internal/legacyrun"
@@ -17,6 +20,39 @@ func TestLegacyJournalResumes(t *testing.T) {
 	dir := t.TempDir()
 	src := "../../internal/testdata/legacy/durable/local"
 	if err := os.CopyFS(dir, os.DirFS(src)); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the historical wire payload intact, but give its approval a fresh
+	// deadline: this test exercises migration, not expiry of the captured run.
+	files, err := filepath.Glob(filepath.Join(dir, "*", "state.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("fixture state files = %v, %v", files, err)
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Interrupts map[string]struct {
+			ExpiresAt string `json:"expires_at"`
+		} `json:"interrupts"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	expires := fixture.Interrupts[legacyrun.Interrupt].ExpiresAt
+	if expires == "" {
+		t.Fatal("fixture approval has no expiry")
+	}
+	old, err := json.Marshal(expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := json.Marshal(time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(files[0], bytes.ReplaceAll(raw, old, fresh), 0600); err != nil {
 		t.Fatal(err)
 	}
 	engine := New(dir)
