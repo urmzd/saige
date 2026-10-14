@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.36.0 (2026-10-14)
+
+### Features
+
+- **agent**: stop a run mid-turn and keep the turn (#115) ([c200ae4](https://github.com/urmzd/saige/commit/c200ae4dec5d45ecb3267a09a0bbee6a95ae8745))
+
+### Misc
+
+- clarify capabilities and runnable quickstarts (#114) ([d60cddf](https://github.com/urmzd/saige/commit/d60cddf13cf6bb9d2d13c49c88c25dfe0116d23a))
+- **durable**: refresh legacy fixture approval deadlines (#113) ([7eedba4](https://github.com/urmzd/saige/commit/7eedba4ee82964e07133e68366724f34a3d1c956))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.35.0...v0.36.0)
+
+
 ## 0.35.0 (2026-10-11)
 
 ### Features
