@@ -30,6 +30,7 @@ Status values: **implemented** (done and covered by tests), **partial** (done wi
 | One-turn forced tool choice, stop-at-tools, `MaxIterForceFinal` | implemented | `agent/forcing.go`, `agent/types/request_options.go` | `forcing_test.go`, `toolchoice_test.go`, `limits_test.go` |
 | Run guards: one run per branch, consecutive errors, repeated calls | implemented | `agent/runguard.go`, `agent/deadline.go` | `run_guard_test.go`, `limits_test.go` |
 | Submissions: queue, steer, interrupt-replace, side, continue | partial | `agent/submit.go`, `agent/stream.go` | `submit_test.go`, `submit_safety_test.go` |
+| Stop: wraps the turn up with its partial text, closed-out tool calls and a recorded reason | partial | `agent/stop.go` | `stop_test.go` |
 | Compaction by input tokens, pair-safe boundary, context-length retry | partial | `agent/overflow.go`, `agent/tree/compact.go`, `agent/types/compact_clear.go` | `overflow_test.go`, `compact_test.go`, `compact_clear_test.go` |
 | Gate composition ranks deny over approval over allow | implemented | `agent/types/gate.go` | `gate_test.go` |
 

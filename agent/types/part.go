@@ -44,6 +44,7 @@ const (
 	KindRoute      PartKind = "route"
 	KindSteer      PartKind = "steer"
 	KindTruncation PartKind = "truncation"
+	KindStop       PartKind = "stop"
 	KindApproval   PartKind = "approval"
 	KindHandoff    PartKind = "handoff"
 	KindFeedback   PartKind = "feedback"
@@ -87,7 +88,7 @@ type ToolOutputPart interface {
 // or records itself and never sends to a provider.
 func IsMetadata(p Part) bool {
 	switch p.(type) {
-	case ConfigPart, RoutePart, SteerPart, TruncationPart, ApprovalPart, HandoffPart, FeedbackPart,
+	case ConfigPart, RoutePart, SteerPart, TruncationPart, StopPart, ApprovalPart, HandoffPart, FeedbackPart,
 		CompactionPart, GuardrailPart:
 		return true
 	default:

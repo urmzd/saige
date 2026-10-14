@@ -343,7 +343,7 @@ func (RouteDelta) isDelta() {}
 // when the output token limit cut the response short.
 type TruncatedDelta struct {
 	NodeID string // tree node holding the partial turn; empty if nothing was committed
-	Reason string // "interrupted", FinishReasonMaxTokens, or a producer-specific value
+	Reason string // "interrupted", "stopped", FinishReasonMaxTokens, or a producer-specific value
 }
 
 func (TruncatedDelta) isDelta() {}
@@ -377,6 +377,19 @@ type InterruptedDelta struct {
 }
 
 func (InterruptedDelta) isDelta() {}
+
+// StoppedDelta reports that the run was stopped on request, through
+// EventStream.Stop, and wrapped up instead of failing. It is sent once,
+// after any TruncatedDelta for the partial turn and before DoneDelta. No
+// ErrorDelta follows it: a stopped run is neither an error nor a normal
+// completion.
+type StoppedDelta struct {
+	Reason string // the caller's reason, as recorded in the conversation
+	By     string // who asked for the stop, when the caller said; never sent to the model
+	NodeID string // tree node holding the stop record
+}
+
+func (StoppedDelta) isDelta() {}
 
 // ── Structured output deltas ─────────────────────────────────────────
 

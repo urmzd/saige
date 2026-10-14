@@ -143,7 +143,7 @@ func knownKind(k PartKind) bool {
 		KindThinking, KindToolCall, KindServerToolCall, KindServerToolResult, KindCitation,
 		KindAudioOut, KindImageOut, KindVideoOut, KindRefusal,
 		KindConfig, KindRoute, KindSteer, KindTruncation, KindApproval, KindHandoff, KindFeedback,
-		KindCompaction, KindGuardrail:
+		KindCompaction, KindGuardrail, KindStop:
 		return true
 	}
 	return false
@@ -194,6 +194,8 @@ func decodePartAs(k PartKind, b []byte) (Part, error) {
 		return decodePart[SteerPart](k, b)
 	case KindTruncation:
 		return decodePart[TruncationPart](k, b)
+	case KindStop:
+		return decodePart[StopPart](k, b)
 	case KindApproval:
 		return decodePart[ApprovalPart](k, b)
 	case KindHandoff:

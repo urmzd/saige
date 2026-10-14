@@ -274,7 +274,11 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if err != nil {
 		return err
 	}
-	msg, usage, err := a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, messages, tools, opts, fmt.Sprintf("llm-%s-final", branch))
+	finalStep := fmt.Sprintf("llm-%s-final", branch)
+	msg, usage, err := a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, messages, tools, opts, finalStep)
+	if stopped, err := a.stopAfterCall(ctx, stream, tr, branch, active.provider, msg, usage, finalStep); stopped {
+		return err
+	}
 	if err != nil {
 		return err
 	}

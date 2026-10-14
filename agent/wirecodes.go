@@ -19,6 +19,7 @@ func init() {
 	agenttypes.RegisterWireSentinel("agent.run_finished", ErrRunFinished)
 	agenttypes.RegisterWireSentinel("agent.schema_invalid", ErrSchemaInvalid)
 	agenttypes.RegisterWireSentinel("agent.spawn_unsupported", ErrSpawnUnsupported)
+	agenttypes.RegisterWireSentinel("agent.stop_unsupported", ErrStopUnsupported)
 	agenttypes.RegisterWireSentinel("agent.submit_unsupported", ErrSubmitUnsupported)
 	agenttypes.RegisterWireSentinel("agent.tool_error_limit", ErrToolErrorLimit)
 	agenttypes.RegisterWireSentinel("agent.unknown_handle", ErrUnknownHandle)

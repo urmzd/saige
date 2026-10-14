@@ -76,6 +76,7 @@ func sentinels() []sentinel {
 		{"agent", "ErrRunFinished", p0.ErrRunFinished},
 		{"agent", "ErrSchemaInvalid", p0.ErrSchemaInvalid},
 		{"agent", "ErrSpawnUnsupported", p0.ErrSpawnUnsupported},
+		{"agent", "ErrStopUnsupported", p0.ErrStopUnsupported},
 		{"agent", "ErrSubmitUnsupported", p0.ErrSubmitUnsupported},
 		{"agent", "ErrToolErrorLimit", p0.ErrToolErrorLimit},
 		{"agent", "ErrUnknownHandle", p0.ErrUnknownHandle},

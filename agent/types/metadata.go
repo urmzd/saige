@@ -111,11 +111,28 @@ func (SteerPart) Kind() PartKind { return KindSteer }
 func (SteerPart) isPart()        {}
 func (SteerPart) isUserPart()    {}
 
+// StopPart tags the user message that records a turn stopped on request
+// through EventStream.Stop. The message's text is the note the model reads
+// on the next turn; the tag carries the same reason as data, with who asked,
+// for a host that renders the conversation. The tag is stripped before the
+// provider call.
+type StopPart struct {
+	Reason string `json:"reason"`
+	// By names who asked for the stop, as the host reported it. It is never
+	// sent to the model.
+	By string `json:"by,omitempty"`
+}
+
+// Kind implements Part.
+func (StopPart) Kind() PartKind { return KindStop }
+func (StopPart) isPart()        {}
+func (StopPart) isUserPart()    {}
+
 // TruncationPart marks an assistant turn that was committed before it
 // finished. Only completed text is kept: open thinking, open tool calls and
 // open media are dropped. It is stripped before the provider call.
 type TruncationPart struct {
-	Reason string `json:"reason"` // "interrupted", "max_tokens", ...
+	Reason string `json:"reason"` // "interrupted", "stopped", "max_tokens", ...
 	// Dropped lists the kinds of the open parts that were not kept.
 	Dropped []PartKind `json:"dropped,omitempty"`
 }

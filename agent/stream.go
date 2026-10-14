@@ -105,6 +105,8 @@ type EventStream struct {
 	// order, so their step names repeat on replay.
 	hookMu  sync.Mutex
 	hookSeq map[HookEvent]int
+	// stop is the run's stop request, if any. See Stop.
+	stop stopState
 }
 
 func newEventStream(ctx context.Context, cancel context.CancelFunc) *EventStream {
@@ -127,7 +129,8 @@ func newEventStream(ctx context.Context, cancel context.CancelFunc) *EventStream
 // success. cancel asks the remote run to stop and may be nil. resolve
 // forwards marker decisions and may be nil, in which case ResolveMarkerErr
 // returns ErrUnknownMarker. As with local streams, a cancelled run's Wait
-// error matches ErrStreamCanceled.
+// error matches ErrStreamCanceled. Stop returns ErrStopUnsupported; a
+// StoppedDelta the remote run sends is reported by Stopped.
 func NewRemoteStream(deltas <-chan types.Delta, wait func() error, cancel func(), resolve RemoteResolver) *EventStream {
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	s := newEventStream(ctx, func() {
@@ -140,6 +143,10 @@ func NewRemoteStream(deltas <-chan types.Delta, wait func() error, cancel func()
 	go func() {
 		defer ctxCancel()
 		for d := range deltas {
+			if sd, ok := d.(types.StoppedDelta); ok {
+				// The remote run wrapped up for a stop request.
+				s.markStopped(StopRequest{Reason: sd.Reason, By: sd.By})
+			}
 			s.send(d)
 		}
 		var err error

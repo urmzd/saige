@@ -82,6 +82,7 @@ const (
 	WireQueued             = "queued"
 	WireInjected           = "injected"
 	WireInterrupted        = "interrupted"
+	WireStopped            = "stopped"
 	WireServerToolCall     = "server_tool.call"
 	WireServerToolResult   = "server_tool.result"
 	WirePartialJSON        = "partial_json"
@@ -824,6 +825,7 @@ type wireRunControl struct {
 	SubmissionID string `json:"submission_id,omitempty"`
 	Mode         string `json:"mode,omitempty"`
 	Position     int    `json:"position,omitempty"`
+	By           string `json:"by,omitempty"`
 }
 
 type wireServerTool struct {
@@ -998,6 +1000,8 @@ func encodeDelta(d Delta, o encodeOpts) (string, int, any, error) {
 		return WireInjected, v, wireRunControl{SubmissionID: x.SubmissionID, Mode: x.Mode, NodeID: x.NodeID}, nil
 	case InterruptedDelta:
 		return WireInterrupted, v, wireRunControl{Reason: x.Reason, SubmissionID: x.SubmissionID}, nil
+	case StoppedDelta:
+		return WireStopped, v, wireRunControl{Reason: x.Reason, By: x.By, NodeID: x.NodeID}, nil
 	case PartialJSONDelta:
 		return WirePartialJSON, v, wirePartialJSON(x), nil
 	case GuardrailDelta:
@@ -1153,6 +1157,9 @@ func decodeDelta(kind string, data json.RawMessage) (Delta, error) {
 	case WireInterrupted:
 		w, err := decodeAs[wireRunControl](kind, data)
 		return InterruptedDelta{Reason: w.Reason, SubmissionID: w.SubmissionID}, err
+	case WireStopped:
+		w, err := decodeAs[wireRunControl](kind, data)
+		return StoppedDelta{Reason: w.Reason, By: w.By, NodeID: w.NodeID}, err
 	case WireServerToolCall:
 		w, err := decodeAs[wireServerTool](kind, data)
 		return v1ServerToolCall{ID: w.ID, Kind: w.Kind, Name: w.Name, Input: w.Input}, err

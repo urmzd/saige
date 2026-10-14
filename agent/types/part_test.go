@@ -43,6 +43,7 @@ var (
 	_ UserPart      = HandoffPart{}
 	_ UserPart      = FeedbackPart{}
 	_ UserPart      = SteerPart{}
+	_ UserPart      = StopPart{}
 	_ AssistantPart = TruncationPart{}
 	_ SystemPart    = RoutePart{}
 	_ AssistantPart = RoutePart{}

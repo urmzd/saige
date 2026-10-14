@@ -9,7 +9,10 @@ import (
 
 // Transcript summarizes one drained EventStream. It covers this agent's own
 // turns: deltas a sub-agent forwards inside ToolExecDelta are passed to the
-// callback but not counted here.
+// callback but not counted here. Text and AllText follow the output
+// guardrails: a rewritten answer is the rewritten text, and a blocked answer
+// is left out. The callback still sees the deltas as they streamed, before
+// the verdict.
 type Transcript struct {
 	// Text is the text of the last model turn, which is the answer of a run
 	// that finished normally.
@@ -30,6 +33,10 @@ type Transcript struct {
 	// Usage sums the token counts and latency of every turn. Response
 	// metadata is taken from the last turn that reported it.
 	Usage types.UsageDelta
+	// Stopped is set when the run was stopped through EventStream.Stop. Text
+	// is then the part of the last turn that was kept: the text an output
+	// guardrail rewrote, or none when the guardrail blocked it.
+	Stopped *types.StoppedDelta
 }
 
 // Collect drains s, calling onDelta (when non-nil) for every delta in order,
@@ -61,6 +68,13 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 		t.Text = text.String()
 		all.WriteString(t.Text)
 	}
+	// replaceLast swaps the last turn's text for text.
+	replaceLast := func(text string) {
+		prefix := strings.TrimSuffix(all.String(), t.Text)
+		all.Reset()
+		all.WriteString(prefix + text)
+		t.Text = text
+	}
 	for d := range s.Deltas() {
 		if onDelta != nil {
 			onDelta(d)
@@ -85,14 +99,27 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 				t.ToolErrors++
 			}
 		case types.GuardrailDelta:
-			// An output guardrail rewrote the answer the turn streamed.
-			if v.Phase == types.GuardrailPhaseOutput && v.Action == types.GuardrailActionRewrite {
-				endTurn()
-				prefix := strings.TrimSuffix(all.String(), t.Text)
-				all.Reset()
-				all.WriteString(prefix + v.Text)
-				t.Text = v.Text
+			// An output guardrail rewrote the answer the turn streamed, or
+			// blocked it. A blocked answer is not part of the transcript.
+			if v.Phase == types.GuardrailPhaseOutput {
+				switch v.Action {
+				case types.GuardrailActionRewrite:
+					endTurn()
+					replaceLast(v.Text)
+				case types.GuardrailActionBlock:
+					endTurn()
+					replaceLast("")
+				}
 			}
+		case types.TruncatedDelta:
+			// A stopped turn whose text was not committed, because it was
+			// blocked, could not be checked, or was blank, has no kept text.
+			if v.Reason == truncationStopped && v.NodeID == "" {
+				endTurn()
+				replaceLast("")
+			}
+		case types.StoppedDelta:
+			t.Stopped = &v
 		case types.ToolExecDelta, types.PartialJSONDelta:
 			// Sub-agent and derived deltas are not this agent's turn.
 		default:

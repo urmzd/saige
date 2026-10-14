@@ -58,6 +58,7 @@ func wireRoundTripCases() []Delta {
 		QueuedDelta{SubmissionID: "s1", Mode: "queue", Position: 2},
 		InjectedDelta{SubmissionID: "s1", Mode: "steer", NodeID: "n3"},
 		InterruptedDelta{Reason: "user", SubmissionID: "s2"},
+		StoppedDelta{Reason: "Stopped by a user", By: "u1", NodeID: "n4"},
 		v1ServerToolCall{ID: "st1", Kind: ServerToolWebSearch, Name: "web_search", Input: map[string]any{"query": "go"}},
 		v1ServerToolResult{ID: "st1", Kind: ServerToolCodeExecution, Text: "42", Result: json.RawMessage(`{"stdout":"42"}`),
 			IsError: true, Files: []wireFile{{URI: "file:///out.csv", MediaType: MediaCSV, Filename: "out.csv", Data: []byte("a,b")}}},

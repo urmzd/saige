@@ -57,6 +57,7 @@ func TestIsMetadataContent(t *testing.T) {
 		{HandoffPart{}, true},
 		{FeedbackPart{}, true},
 		{SteerPart{ID: "s"}, true},
+		{StopPart{Reason: "stopped"}, true},
 		{TruncationPart{Reason: "max_tokens"}, true},
 		{RoutePart{Model: "m"}, true},
 		{TextPart{}, false},
