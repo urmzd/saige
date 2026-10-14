@@ -1702,12 +1702,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				return err
 			}
 		}
-		if stopRequested(ctx) {
-			// Stop cancelled the call, or arrived as it returned. Either way
-			// its text is kept, its tool calls never start, and the run
-			// wraps up.
+		if stopped, err := a.stopAfterCall(ctx, stream, tr, branch, active.provider, msg, usage, stepName); stopped {
 			iterCount++
-			return a.commitStopped(ctx, stream, tr, branch, active.provider, msg, usage, stepName)
+			return err
 		}
 		if errors.Is(llmErr, errInterruptRequested) && ctx.Err() == nil {
 			// The interrupted call counts as a turn, so its step name is
@@ -1788,6 +1785,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// tool calls is replaced by one schema-constrained, tool-free turn.
 		if a.needsSchemaTurn(out, msg, toolDefs) {
 			msg, usage, llmErr = a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, active.messages, nil, nil, stepName+"-schema")
+			if stopped, err := a.stopAfterCall(ctx, stream, tr, branch, active.provider, msg, usage, stepName+"-schema"); stopped {
+				return err
+			}
 			if llmErr != nil {
 				log.Error("structured output call failed", "error", llmErr, "iteration", iterCount)
 				return llmErr

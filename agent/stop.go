@@ -201,12 +201,29 @@ func stopRecord(req StopRequest) types.UserMessage {
 	return types.UserMsg(types.Text(note), types.StopPart{Reason: req.Reason, By: req.By})
 }
 
+// stopAfterCall is the stop handling every getAssistantMessage call site
+// runs on the call's result, before it looks at the call's error: the turn
+// of the loop, the schema-constrained follow-up, and the forced final
+// answer. When Stop cancelled the call, or arrived as it returned, the
+// turn is committed as stopped and stopped is true; err is then the error
+// the caller returns to end the loop. Otherwise it does nothing.
+func (a *Agent) stopAfterCall(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, provider types.Provider, msg *types.AssistantMessage, usage *types.UsageDelta, stepName string) (stopped bool, err error) {
+	if !stopRequested(ctx) {
+		return false, nil
+	}
+	return true, a.commitStopped(ctx, stream, tr, branch, provider, msg, usage, stepName)
+}
+
 // commitStopped records the model turn a stop cut short and returns
 // errStopRequested, which ends the loop. The call's usage is reported like
 // any turn's. Completed text is committed with a TruncationPart marker
 // after it passes the output guardrails; the turn's tool calls are dropped,
 // since none of them ran. A turn without text commits nothing, so the branch
 // never holds an empty assistant message.
+//
+// Text the guardrails block, or could not check, is not committed. The
+// TruncatedDelta then names no node, which tells a consumer that the text
+// it saw streaming was not kept.
 func (a *Agent) commitStopped(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, provider types.Provider, partial *types.AssistantMessage, usage *types.UsageDelta, stepName string) error {
 	// The run's context is cancelled; the wrap-up writes must still land.
 	wctx := context.WithoutCancel(ctx)

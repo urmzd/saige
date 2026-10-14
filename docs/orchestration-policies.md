@@ -662,7 +662,7 @@ next := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("shorter, please"
 
 | At the moment of the stop | What is kept |
 | --- | --- |
-| A provider call is streaming | The call is cancelled. Its completed text passes the output guardrails and is committed with a `TruncationPart` of reason `stopped`. Its tool calls are dropped, so none starts. Text that is empty or only whitespace commits nothing |
+| A provider call is streaming | The call is cancelled. Its completed text passes the output guardrails and is committed with a `TruncationPart` of reason `stopped`. Its tool calls are dropped, so none starts. Text that is empty or only whitespace commits nothing. This holds for every model call of the loop: a turn, the schema-constrained follow-up of native structured output, and the forced final answer of `MaxIterForceFinal` |
 | Tools are running | Their contexts are cancelled. A call that already succeeded keeps its result. A call that had not started does not start. Every call the stop cut short gets an error result that starts with `stopped before this call finished:` and carries the reason |
 | Before the first token | Nothing is committed for the turn. The input message stays |
 
@@ -681,6 +681,18 @@ A stopped run is distinct from an error and from a normal finish:
 
 A stop during a provider call also sends `TruncatedDelta` with reason `stopped` and the node of the partial turn, empty when nothing was committed. The call's usage is reported as a `UsageDelta`, estimated where the provider had not reported it yet.
 
+The output guardrails decide what is kept of the partial text, as they do for a finished answer:
+
+| Verdict on the partial text | History | `Collect` and `CollectText` | Deltas after the verdict |
+| --- | --- | --- | --- |
+| Pass | The text | The text | `TruncatedDelta` with the node |
+| Rewrite | The rewritten text | The rewritten text | `GuardrailDelta` with the rewritten text, then `TruncatedDelta` with the node |
+| Block | No assistant message; a `GuardrailPart` records the block | Empty text | `GuardrailDelta` with action `block`, then `TruncatedDelta` with no node |
+| The guardrail fails | No assistant message | Empty text | `TruncatedDelta` with no node |
+
+In every row the run still ends stopped, with the reason: a stop is the caller's decision, and the verdict governs only the text.
+The text is not sealed from a live consumer. On this path and on the normal one, text deltas stream as the model produces them and the guardrails run afterwards, so a consumer that renders `PartDelta` has shown the raw text before the verdict arrives. A consumer must act on `GuardrailDelta`, or on a `TruncatedDelta` of reason `stopped` with no node, and replace or remove what it rendered. `Collect` does this, also for a blocked answer of a run that was not stopped.
+
 `Stop` never waits for the run and is idempotent. The first request wins and a later call returns `nil` without changing the reason.
 After the run has ended it returns `ErrRunFinished` and changes nothing.
 A request made before the input is on the branch takes effect once it is, so a stop never loses the message that started the turn.
@@ -691,7 +703,8 @@ Limits:
 - A run that finishes its turn before it observes the request ends normally. `Stop` returned `nil`, so read the outcome from `Stopped` or `StoppedDelta`.
 - A tool that ignores its context holds the wrap-up until it returns, or until `WithToolTimeout` expires. Its result is kept as it reported it.
 - A call that fails after the stop took effect is recorded as stopped, whatever its own error was.
-- Input guardrails and `UserInput` hooks finish admitting the input before a stop takes effect. Output guardrails run on the kept text; a blocked text is dropped and the run still ends stopped.
+- Input guardrails and `UserInput` hooks finish admitting the input before a stop takes effect. Output guardrails run on the kept text to their end, so a slow one delays the wrap-up.
+- A stop during the schema-constrained follow-up keeps that call's partial text, which is incomplete JSON. A stop during the compaction summary call keeps no text: it is not an assistant turn.
 - A delegated sub-agent is cancelled, not stopped: its partial output is not kept and the delegation gets the stop result. Background children end with the run.
 - Messages queued with `Submit` and not yet appended are returned by `Undelivered`.
 - Replayed and remote streams and runs under a durable step runner return `ErrStopUnsupported`: the request is not in the recorded input, so a replay would run the turn to its end. A remote stream still reports a `StoppedDelta` it relays through `Stopped`.

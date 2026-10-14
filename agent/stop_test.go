@@ -357,61 +357,284 @@ func TestStopMidStreamKeepsPartialTextAndReportsReason(t *testing.T) {
 	}
 }
 
-func TestStopReportsUsageAndGuardsTheKeptText(t *testing.T) {
-	req := StopRequest{Reason: "Stopped by a user"}
+// schemaProbe is a probeProvider that accepts a response schema.
+type schemaProbe struct{ *probeProvider }
+
+func (schemaProbe) SupportsSchema() bool { return true }
+
+// hasUsage reports whether deltas carry the usage of a stopped call: counts
+// for both the prompt and the partial completion.
+func hasUsage(deltas []types.Delta, turns int) bool {
+	n := 0
+	for _, d := range deltas {
+		if u, ok := d.(types.UsageDelta); ok && u.PromptTokens > 0 && u.CompletionTokens > 0 {
+			n++
+		}
+	}
+	return n >= turns
+}
+
+// TestStopAtEveryModelCallSiteKeepsPartialTextAndUsage covers the three
+// places the loop calls the model. A stop during any of them must keep the
+// call's partial text, report its usage, end the run stopped, and leave a
+// history the next turn accepts.
+func TestStopAtEveryModelCallSiteKeepsPartialTextAndUsage(t *testing.T) {
+	req := StopRequest{Reason: "Stopped by a user", By: "id-7781"}
+	partial := func(text string) []types.Delta {
+		return []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: text}}
+	}
+	// usageOf makes a scripted turn report its usage, as a provider does.
+	usageOf := func(deltas []types.Delta) []types.Delta {
+		return append(deltas, types.UsageDelta{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7})
+	}
 	tests := []struct {
 		name string
-		// verdict is what the output guardrail says about the partial text.
-		verdict  GuardrailVerdict
-		wantText string // committed text; "" means the partial turn is dropped
+		// build returns the agent and its provider; the call at index held
+		// streams wantText and then waits.
+		build    func(t *testing.T) (*Agent, *probeProvider)
+		held     int
+		wantText string
+		// wantTurns is how many model calls report usage, the stopped one
+		// included.
+		wantTurns int
 	}{
-		{name: "passed text is kept", verdict: GuardrailVerdict{}, wantText: "the secret is"},
-		{name: "rewritten text is kept as rewritten", verdict: Rewrite("the [redacted] is", "pii"), wantText: "the [redacted] is"},
-		{name: "blocked text is dropped and the run still ends stopped", verdict: Block("pii")},
+		{
+			name: "the turn of the loop",
+			build: func(t *testing.T) (*Agent, *probeProvider) {
+				p := newProbeProvider(stepCall{before: partial("half an ans"), hold: make(chan struct{})})
+				return must.Get(New(Config{Provider: p})), p
+			},
+			held: 0, wantText: "half an ans", wantTurns: 1,
+		},
+		{
+			name: "the schema-constrained follow-up",
+			build: func(t *testing.T) (*Agent, *probeProvider) {
+				p := newProbeProvider(
+					stepCall{before: usageOf(agenttest.TextResponse("Paris, I think."))},
+					stepCall{before: partial(`{"city": "Par`), hold: make(chan struct{})},
+				)
+				tool := &agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"}
+				return must.Get(New(Config{Provider: schemaProbe{p}, Tools: types.NewToolRegistry(tool)},
+					WithResponseSchema(cityPopulationSchema), WithOutputMode(OutputNative))), p
+			},
+			held: 1, wantText: `{"city": "Par`, wantTurns: 2,
+		},
+		{
+			name: "the forced final answer at the step limit",
+			build: func(t *testing.T) (*Agent, *probeProvider) {
+				p := newProbeProvider(
+					stepCall{before: usageOf(agenttest.ToolCallResponse("c1", "echo", map[string]any{}))},
+					stepCall{before: partial("my best ans"), hold: make(chan struct{})},
+				)
+				tool := &agenttest.MockTool{Def: types.ToolDef{Name: "echo"}, Result: "ok"}
+				return must.Get(New(Config{Provider: p, Tools: types.NewToolRegistry(tool), MaxIter: 1, OnMaxIter: MaxIterForceFinal})), p
+			},
+			held: 1, wantText: "my best ans", wantTurns: 2,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			before := []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: "the secret is"}}
-			provider := newProbeProvider(stepCall{before: before, hold: make(chan struct{})})
-			guard := NewGuardrail("pii", func(context.Context, GuardrailInput) (GuardrailVerdict, error) { return tt.verdict, nil })
-			a := must.Get(New(Config{Provider: provider}, WithOutputGuardrails(OutputGuardrail{Guardrail: guard})))
+			a, provider := tt.build(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
-			var got []types.Delta
-			for d := range stream.Deltas() {
-				got = append(got, d)
-				if len(got) == len(before) {
-					if err := stream.Stop(req); err != nil {
-						t.Fatalf("Stop: %v", err)
-					}
-				}
+			stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("capital of France?"))})
+			go func() {
+				// A started call always delivers what it streamed before it
+				// sees the cancellation, so the partial text is complete.
+				waitStarted(t, provider.stepProvider, tt.held)
+				_ = stream.Stop(req)
+			}()
+			transcript, err := Collect(stream, nil)
+			if err != nil {
+				t.Fatalf("Collect error = %v, want nil for a stopped run", err)
 			}
-			requireStopped(t, stream, got, req)
-
-			usage := indexOf(got, func(d types.Delta) bool {
-				u, ok := d.(types.UsageDelta)
-				return ok && u.PromptTokens > 0 && u.CompletionTokens > 0
-			})
-			if usage < 0 {
-				t.Fatalf("the stopped call reported no usage: %v", got)
+			if transcript.Stopped == nil || transcript.Stopped.Reason != req.Reason || transcript.Stopped.By != req.By {
+				t.Fatalf("Transcript.Stopped = %+v, want the request", transcript.Stopped)
+			}
+			if transcript.Text != tt.wantText {
+				t.Fatalf("Transcript.Text = %q, want %q", transcript.Text, tt.wantText)
+			}
+			if got, ok := stream.Stopped(); !ok || got != req {
+				t.Fatalf("Stopped() = %+v, %v", got, ok)
+			}
+			if err := provider.callCtx(tt.held).Err(); err == nil {
+				t.Fatal("the held provider call was not cancelled")
+			}
+			if transcript.Turns != tt.wantTurns || transcript.Usage.PromptTokens == 0 || transcript.Usage.CompletionTokens == 0 {
+				t.Fatalf("usage: %d turns %+v, want %d turns with the stopped call counted", transcript.Turns, transcript.Usage, tt.wantTurns)
 			}
 
 			msgs := branchMessages(t, a)
 			checkTranscript(t, msgs)
 			rest := requireStopRecord(t, msgs, req)
-			var kept string
-			for _, m := range rest {
-				if am, ok := m.(types.AssistantMessage); ok {
-					kept = textOf(am)
-				}
+			am, ok := rest[len(rest)-1].(types.AssistantMessage)
+			if !ok || textOf(am) != tt.wantText {
+				t.Fatalf("message before the stop record = %#v, want the partial text %q", rest[len(rest)-1], tt.wantText)
 			}
-			if kept != tt.wantText {
-				t.Fatalf("kept text = %q, want %q", kept, tt.wantText)
+
+			// The stopped history is accepted for the next turn.
+			calls := len(provider.requests())
+			if _, err := CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("go on"))})); err != nil {
+				t.Fatalf("follow-up turn: %v", err)
+			}
+			reqs := provider.requests()
+			if len(reqs) <= calls {
+				t.Fatal("the follow-up turn made no provider call")
+			}
+			sent := reqs[calls]
+			if len(sent) > 0 && sent[0].Role() == types.RoleSystem {
+				sent = sent[1:]
+			}
+			checkTranscript(t, sent)
+			var all strings.Builder
+			for _, m := range sent {
+				all.WriteString(textOf(m))
+			}
+			if hasMetadata(sent) || !strings.Contains(all.String(), tt.wantText) || !strings.Contains(all.String(), req.Reason) {
+				t.Fatalf("follow-up request lacks the partial text or the reason, or carries metadata: %q", all.String())
 			}
 		})
 	}
+}
+
+// TestStoppedTurnNeverReturnsTextTheOutputGuardrailDenied checks every
+// place a caller reads the kept text of a stopped turn against the output
+// guardrail's verdict: Collect, CollectText and the history.
+func TestStoppedTurnNeverReturnsTextTheOutputGuardrailDenied(t *testing.T) {
+	req := StopRequest{Reason: "Stopped by a user"}
+	const raw = "the secret is 1234"
+	tests := []struct {
+		name    string
+		verdict GuardrailVerdict
+		// guardErr makes the guardrail fail instead of answering.
+		guardErr error
+		wantText string // what every reader returns; "" means nothing is kept
+	}{
+		{name: "passed text is kept", verdict: GuardrailVerdict{}, wantText: raw},
+		{name: "rewritten text replaces the raw text everywhere", verdict: Rewrite("the secret is [redacted]", "pii"), wantText: "the secret is [redacted]"},
+		{name: "blocked text is returned nowhere and the run still ends stopped", verdict: Block("pii")},
+	}
+	readers := []struct {
+		name string
+		read func(t *testing.T, s *EventStream) (text, allText string, deltas []types.Delta)
+	}{
+		{name: "Collect", read: func(t *testing.T, s *EventStream) (string, string, []types.Delta) {
+			var deltas []types.Delta
+			tr, err := Collect(s, func(d types.Delta) { deltas = append(deltas, d) })
+			if err != nil {
+				t.Fatalf("Collect error = %v, want nil for a stopped run", err)
+			}
+			if tr.Stopped == nil || tr.Stopped.Reason != req.Reason {
+				t.Fatalf("Transcript.Stopped = %+v", tr.Stopped)
+			}
+			return tr.Text, tr.AllText, deltas
+		}},
+		{name: "CollectText", read: func(t *testing.T, s *EventStream) (string, string, []types.Delta) {
+			text, err := CollectText(s)
+			if err != nil {
+				t.Fatalf("CollectText error = %v, want nil for a stopped run", err)
+			}
+			return text, text, nil
+		}},
+	}
+	for _, tt := range tests {
+		for _, reader := range readers {
+			t.Run(tt.name+"/"+reader.name, func(t *testing.T) {
+				before := []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: raw}}
+				provider := newProbeProvider(stepCall{before: before, hold: make(chan struct{})})
+				guard := NewGuardrail("pii", func(context.Context, GuardrailInput) (GuardrailVerdict, error) { return tt.verdict, tt.guardErr })
+				a := must.Get(New(Config{Provider: provider}, WithOutputGuardrails(OutputGuardrail{Guardrail: guard})))
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("start"))})
+				go func() {
+					waitStarted(t, provider.stepProvider, 0)
+					_ = stream.Stop(req)
+				}()
+				text, allText, deltas := reader.read(t, stream)
+				if text != tt.wantText || allText != tt.wantText {
+					t.Fatalf("%s returned text %q and all text %q, want %q", reader.name, text, allText, tt.wantText)
+				}
+				if got, ok := stream.Stopped(); !ok || got != req {
+					t.Fatalf("Stopped() = %+v, %v; want the request", got, ok)
+				}
+				if err := stream.Wait(); err != nil {
+					t.Fatalf("Wait = %v, want nil", err)
+				}
+
+				// History holds the verdict's text, never the raw text it
+				// replaced or denied.
+				msgs := branchMessages(t, a)
+				checkTranscript(t, msgs)
+				rest := requireStopRecord(t, msgs, req)
+				var kept string
+				for _, m := range rest {
+					if am, ok := m.(types.AssistantMessage); ok {
+						kept += textOf(am)
+					}
+				}
+				if kept != tt.wantText {
+					t.Fatalf("history keeps %q, want %q", kept, tt.wantText)
+				}
+
+				if deltas == nil {
+					return
+				}
+				requireStopped(t, stream, deltas, req)
+				if !hasUsage(deltas, 1) {
+					t.Fatalf("the stopped call reported no usage: %v", deltas)
+				}
+				o := outcomeOf(deltas)
+				if len(o.truncated) != 1 || (o.truncated[0].NodeID != "") != (tt.wantText != "") {
+					t.Fatalf("TruncatedDelta = %+v: it must name a node exactly when text was kept", o.truncated)
+				}
+				// The verdict is the last word on the text: nothing after it
+				// carries the raw text again.
+				verdict := indexOf(deltas, func(d types.Delta) bool {
+					g, ok := d.(types.GuardrailDelta)
+					return ok && g.Phase == types.GuardrailPhaseOutput
+				})
+				if tt.verdict.Action != "" && verdict < 0 {
+					t.Fatalf("no output GuardrailDelta for verdict %q: %v", tt.verdict.Action, deltas)
+				}
+				if tt.wantText != raw {
+					for _, d := range deltas[verdict+1:] {
+						if strings.Contains(fmt.Sprintf("%+v", d), "1234") {
+							t.Fatalf("a delta after the verdict carries the raw text: %+v", d)
+						}
+					}
+				}
+			})
+		}
+	}
+
+	t.Run("text the guardrail could not check is returned nowhere", func(t *testing.T) {
+		before := []types.Delta{types.PartStart{Index: 0, Kind: types.KindText}, types.PartDelta{Index: 0, Text: raw}}
+		provider := newProbeProvider(stepCall{before: before, hold: make(chan struct{})})
+		guard := NewGuardrail("pii", func(context.Context, GuardrailInput) (GuardrailVerdict, error) {
+			return GuardrailVerdict{}, errors.New("classifier down")
+		})
+		a := must.Get(New(Config{Provider: provider}, WithOutputGuardrails(OutputGuardrail{Guardrail: guard})))
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("start"))})
+		go func() {
+			waitStarted(t, provider.stepProvider, 0)
+			_ = stream.Stop(req)
+		}()
+		tr, err := Collect(stream, nil)
+		if err != nil || tr.Stopped == nil {
+			t.Fatalf("Collect = %+v, %v; want a stopped run", tr.Stopped, err)
+		}
+		for _, m := range branchMessages(t, a) {
+			if am, ok := m.(types.AssistantMessage); ok && strings.Contains(textOf(am), "1234") {
+				t.Fatalf("history keeps unchecked text: %#v", am)
+			}
+		}
+		if strings.Contains(tr.Text+tr.AllText, "1234") {
+			t.Fatalf("Collect returned unchecked text: %q / %q", tr.Text, tr.AllText)
+		}
+	})
 }
 
 func TestStopDuringToolCallsClosesEveryCallOut(t *testing.T) {
