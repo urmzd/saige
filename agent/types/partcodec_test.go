@@ -45,6 +45,7 @@ func partCases() []Part {
 		ConfigPart{Target: ModelTarget("m"), MaxIter: 3},
 		RoutePart{Profile: "p", Model: "m", Conversions: &ConversionReport{Offering: "o", Hash: "h"}},
 		SteerPart{ID: "s"},
+		StopPart{Reason: "Stopped by a user", By: "u1"},
 		TruncationPart{Reason: "max_tokens", Dropped: []PartKind{KindToolCall}},
 		ApprovalPart{Event: ApprovalEventGranted, Tool: "rm", ToolCallID: "c1"},
 		HandoffPart{To: "b", From: "a"},
@@ -112,7 +113,7 @@ func TestPartCodecRoundTrip(t *testing.T) {
 	for _, k := range []PartKind{KindText, KindImage, KindAudio, KindVideo, KindDocument, KindFile, KindToolResult, KindJSON,
 		KindThinking, KindToolCall, KindServerToolCall, KindServerToolResult, KindCitation, KindAudioOut, KindImageOut,
 		KindVideoOut, KindRefusal, KindConfig, KindRoute, KindSteer, KindTruncation, KindApproval, KindHandoff,
-		KindFeedback, KindCompaction, KindGuardrail} {
+		KindFeedback, KindCompaction, KindGuardrail, KindStop} {
 		if !kinds[k] {
 			t.Errorf("no round-trip case for %s", k)
 		}

@@ -30,6 +30,9 @@ type Transcript struct {
 	// Usage sums the token counts and latency of every turn. Response
 	// metadata is taken from the last turn that reported it.
 	Usage types.UsageDelta
+	// Stopped is set when the run was stopped through EventStream.Stop. Text
+	// is then the part of the last turn that was kept.
+	Stopped *types.StoppedDelta
 }
 
 // Collect drains s, calling onDelta (when non-nil) for every delta in order,
@@ -93,6 +96,8 @@ func Collect(s *EventStream, onDelta func(types.Delta)) (Transcript, error) {
 				all.WriteString(prefix + v.Text)
 				t.Text = v.Text
 			}
+		case types.StoppedDelta:
+			t.Stopped = &v
 		case types.ToolExecDelta, types.PartialJSONDelta:
 			// Sub-agent and derived deltas are not this agent's turn.
 		default:

@@ -32,7 +32,7 @@ Each role accepts its own set of kinds, so a misplaced part is a compile error: 
 | `image_out`, `audio_out`, `video_out` | `ImageOutPart`, `AudioOutPart`, `VideoOutPart` | | | yes | |
 | `refusal` | `RefusalPart` | | | yes | |
 
-Metadata parts (`ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart`, `CompactionPart`) record what the run decided. The tree stores them and the loop strips them before every provider call; `types.IsMetadata` tells them apart.
+Metadata parts (`ConfigPart`, `RoutePart`, `SteerPart`, `TruncationPart`, `StopPart`, `HandoffPart`, `FeedbackPart`, `ApprovalPart`, `GuardrailPart`, `CompactionPart`) record what the run decided. The tree stores them and the loop strips them before every provider call; `types.IsMetadata` tells them apart.
 
 Read a message with `types.PartsOf(m)`, `types.TextOf(m)`, or `types.Each[types.ImagePart](m)` for the parts of one kind. `types.PartModality(p)` classifies a part, and `types.SourceOf(p)` returns the media source of any media part.
 

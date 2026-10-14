@@ -808,6 +808,10 @@ func (a *Agent) startSubmission(ctx context.Context, input []types.Message, bran
 		stream.inbox = &inbox{}
 		stream.released = make(chan struct{})
 		registered = stream
+		// Stop is refused under a durable runner for the reason submissions
+		// are: the request is not in the recorded input, so a replay would
+		// run the turn to its end.
+		stream.stop.supported = true
 	}
 
 	claim, err := newRunClaim(a.cfg.Tree, branch, registered)
@@ -1312,6 +1316,9 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 	}
 	var loopErr error
 	defer func() {
+		// The run has ended one way or another; a stop request can no
+		// longer change how.
+		stream.sealStop()
 		// Background children end with the run, before the stream closes,
 		// so none of their deltas can reach a closed stream.
 		stream.spawns.shutdown()
@@ -1352,7 +1359,13 @@ func (a *Agent) runLoop(ctx context.Context, stream *EventStream, input []types.
 	}()
 
 	stream.branch = branch
-	loopErr = a.runRecovered(ctx, stream, input, branch)
+	// The work runs under its own cancel, so Stop can end it while the
+	// wrap-up, the hooks and the stream above still run. It is not
+	// cancelled when the run ends: like the stream's context, it lives as
+	// long as its parent, so a context a tool kept stays usable.
+	workCtx, cancelWork := context.WithCancelCause(ctx)
+	stream.enableStop(cancelWork)
+	loopErr = a.runRecovered(workCtx, stream, input, branch)
 }
 
 // runRecovered runs the loop and turns a panic in it, such as one raised by
@@ -1371,6 +1384,7 @@ func (a *Agent) runRecovered(ctx context.Context, stream *EventStream, input []t
 		}
 	}()
 	err = a.run(ctx, stream, input, branch)
+	err = a.wrapUpStopped(ctx, stream, err)
 	return a.captureSubAgent(ctx, stream, err)
 }
 
@@ -1460,6 +1474,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	if err := a.reportStarted(stream, tr, branch); err != nil {
 		return err
 	}
+	// The input is on the branch, so a stop keeps it. A request made before
+	// this point takes effect now.
+	stream.armStop()
 	if a.cfg.ApprovalPolicy != nil {
 		// The conversation's grants and counts are rebuilt from the records
 		// on its branch, so a restored or replayed run decides alike.
@@ -1685,6 +1702,13 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 				return err
 			}
 		}
+		if stopRequested(ctx) {
+			// Stop cancelled the call, or arrived as it returned. Either way
+			// its text is kept, its tool calls never start, and the run
+			// wraps up.
+			iterCount++
+			return a.commitStopped(ctx, stream, tr, branch, active.provider, msg, usage, stepName)
+		}
 		if errors.Is(llmErr, errInterruptRequested) && ctx.Err() == nil {
 			// The interrupted call counts as a turn, so its step name is
 			// not reused and a durable runner replays its partial result.
@@ -1866,6 +1890,15 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// Persist results BEFORE any handoff so every tool_use gets a matching
 		// tool_result (provider contract) and rich Blocks are persisted.
 		results := a.executeToolsConcurrently(scoped, stream, toolCalls, active.tools)
+		if stopRequested(ctx) {
+			// Every call has a result: its own when it finished, the stop's
+			// when the stop cut it short. They are recorded before the run
+			// wraps up, so the branch stays a valid transcript.
+			if err := a.persistToolResults(context.WithoutCancel(ctx), tr, branch, results); err != nil {
+				return err
+			}
+			return errStopRequested
+		}
 		if err := stream.runError(); err != nil {
 			// Answer every tool_use before stopping so the branch stays a valid
 			// transcript. A suspended durable run is the exception: its
@@ -2733,8 +2766,16 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	stream.send(types.ToolExecStartDelta{ToolCallID: tc.ID, Name: tc.Name})
 	var ca callApproval
 	// Registered first so it runs last, after a recovered panic set res:
-	// the decisions made before a failure are recorded too.
-	defer func() { res.approvals = ca.records }()
+	// the decisions made before a failure are recorded too. A call that
+	// failed once a stop took effect records the stop as its result.
+	defer func() {
+		res.approvals = ca.records
+		res = stream.stoppedToolResult(res)
+	}()
+	if stopRequested(ctx) {
+		// The stop came before this call started; it does not start.
+		return failedTool(stream, tc.ID, tc.Name, ctx.Err().Error())
+	}
 	defer func() {
 		if p := recover(); p != nil {
 			err := a.toolPanic(ctx, tc, p)
@@ -2786,6 +2827,11 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 	if res, done := a.beforeToolHooks(ctx, stream, &tc, def); done {
 		return res
 	}
+	if stopRequested(ctx) {
+		// The stop came while the call waited for its gate, an approval or
+		// a hook; it does not start.
+		return failedTool(stream, tc.ID, tc.Name, ctx.Err().Error())
+	}
 	ctx = types.WithCallApproval(ctx, ca.approval)
 
 	// A per-tool quota is charged at dispatch, once the call is cleared to
@@ -2834,6 +2880,10 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 			return failedTool(stream, tc.ID, tc.Name, ctx.Err().Error())
 		}
 		defer func() { <-sem }()
+		if stopRequested(ctx) {
+			// The stop came while the call waited for a slot.
+			return failedTool(stream, tc.ID, tc.Name, ctx.Err().Error())
+		}
 	}
 
 	res = a.runToolStep(ctx, stream, tc, tool)
@@ -2848,7 +2898,8 @@ func (a *Agent) executeOneTool(ctx context.Context, stream *EventStream, tc type
 // The tool name is reported on the delta, so a consumer can label a refused
 // or failed call the same way as one that ran.
 func failedTool(stream *EventStream, toolCallID, name, errMsg string) toolResult {
-	res := toolResult{toolCallID: toolCallID, err: errMsg}
+	// Once a stop has taken effect, a call fails because of it.
+	res := stream.stoppedToolResult(toolResult{toolCallID: toolCallID, err: errMsg})
 	stream.send(types.ToolExecEndDelta{ToolCallID: toolCallID, Name: name, Error: res.err})
 	return res
 }
@@ -3085,6 +3136,7 @@ func (a *Agent) delegateToSubAgent(ctx context.Context, stream *EventStream, tc 
 	}
 	res.subAgent = name
 	a.subagentEndHooks(ctx, stream, tc.ID, name, "delegate", res.result, childErr)
+	res = stream.stoppedToolResult(res)
 	stream.send(types.ToolExecEndDelta{ToolCallID: tc.ID, Name: tc.Name, Result: res.result, Error: res.err})
 	return res
 }
@@ -3199,6 +3251,7 @@ func (a *Agent) runToolStep(ctx context.Context, stream *EventStream, tc types.T
 		}
 		a.afterToolHooks(ctx, stream, tc, tool.Definition(), &res)
 	}
+	res = stream.stoppedToolResult(res)
 	var endParts []types.ToolOutputPart
 	if res.parts != nil {
 		endParts = res.output()

@@ -130,7 +130,7 @@ Three roles. Each message is an ordered list of typed parts, and the role seals 
 | Type | Role | Parts |
 |------|------|-------|
 | `SystemMessage` | system | `TextPart`, `ToolResultPart`, metadata parts (`ConfigPart`, `RoutePart`, ...) |
-| `UserMessage` | user | `TextPart`, `ToolResultPart`, media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `FilePart`), `ConfigPart`, `SteerPart`, `FeedbackPart` |
+| `UserMessage` | user | `TextPart`, `ToolResultPart`, media parts (`ImagePart`, `AudioPart`, `VideoPart`, `DocumentPart`, `FilePart`), `ConfigPart`, `SteerPart`, `StopPart`, `FeedbackPart` |
 | `AssistantMessage` | assistant | `TextPart`, `ThinkingPart`, `ToolCallPart`, `ServerToolCallPart`, `ServerToolResultPart`, `CitationPart`, `RefusalPart`, generated media (`ImageOutPart`, `AudioOutPart`, `VideoOutPart`) |
 
 Build messages with `types.SystemMsg`, `types.UserMsg`, `types.AssistantMsg`, `types.ToolResults` and `types.UserToolResults`, for example `types.UserMsg(types.Text("Describe this"), types.Image(types.Bytes(types.MediaPNG, png)))`.
@@ -197,6 +197,13 @@ must therefore be safe for concurrent use, unless the agent uses
 different branches, but one run holds a branch at a time: a second `Invoke` or
 `Continue` on a busy branch fails with `agent.ErrRunActive`. Use
 `Agent.Submit` to queue or steer input into the active run instead.
+
+`stream.Stop(agent.StopRequest{Reason: "Stopped by a user"})` ends a run early
+and wraps the turn up: the text produced so far is kept, open tool calls get a
+result that says they were stopped, and the reason is recorded, so the next
+message continues from there. The run reports `types.StoppedDelta` and `Wait`
+returns nil. `stream.Cancel()` abandons the run instead. See
+[Stop a run and keep the turn](../docs/orchestration-policies.md#stop-a-run-and-keep-the-turn).
 
 Tools that share mutable state, or whose contract depends on call order, need a
 total order instead. `agent.WithSequentialTools()` runs the calls one at a time,
