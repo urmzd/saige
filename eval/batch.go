@@ -62,7 +62,7 @@ func batchKey(arm string, obs Observation) string {
 	return k
 }
 
-func populateTasks(arm string, observations []Observation, subject Subject, errs []error) []task {
+func populateTasks(arm string, observations []Observation, subject Subject, errs []error, measured bool) []task {
 	tasks := make([]task, len(observations))
 	for i := range observations {
 		tasks[i] = func(ctx context.Context) {
@@ -70,7 +70,7 @@ func populateTasks(arm string, observations []Observation, subject Subject, errs
 				errs[i] = ctx.Err()
 				return
 			}
-			errs[i] = subject(batch.WithKey(ctx, batchKey(arm, observations[i])), &observations[i])
+			errs[i] = populateMeasured(batch.WithKey(ctx, batchKey(arm, observations[i])), subject, &observations[i], measured)
 		}
 	}
 	return tasks
@@ -84,11 +84,11 @@ func scoreTasks(arm string, observations []Observation, scorers []Scorer, logger
 				results[i], done[i] = ObservationResult{Observation: obs}, true
 				return
 			}
-			scores, interrupted := scoreKeyed(ctx, arm, obs, scorers, logger)
+			scores, timing, interrupted := scoreKeyed(ctx, arm, obs, scorers, logger)
 			if interrupted {
 				return
 			}
-			results[i], done[i] = ObservationResult{Observation: obs, Scores: scores}, true
+			results[i], done[i] = ObservationResult{Observation: obs, Scores: scores, EvaluationTiming: timing}, true
 		}
 	}
 	return tasks
@@ -96,26 +96,27 @@ func scoreTasks(arm string, observations []Observation, scorers []Scorer, logger
 
 // scoreKeyed is scoreObservation with each scorer's calls keyed by the
 // observation and the scorer.
-func scoreKeyed(ctx context.Context, arm string, obs Observation, scorers []Scorer, logger *slog.Logger) (scores []Score, interrupted bool) {
-	key := batchKey(arm, obs)
+func scoreKeyed(ctx context.Context, arm string, obs Observation, scorers []Scorer, logger *slog.Logger) (scores []Score, timing ObservationTiming, interrupted bool) {
+	key := trialBatchKey(ctx, batchKey(arm, obs))
 	for _, s := range scorers {
 		if ctx.Err() != nil {
-			return nil, true
+			return nil, timing, true
 		}
-		score, err := s.Score(batch.WithKey(ctx, key+"/"+s.Name()), obs)
+		score, err := measureScore(batch.WithKey(ctx, key+"/"+s.Name()), s, obs)
+		accumulateTiming(&timing, score.Timing)
 		if err != nil {
 			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-				return nil, true
+				return nil, timing, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
+			scores = append(scores, Score{Name: s.Name(), Revision: ScorerRevision(s), Timing: score.Timing, Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {
-			scores = append(scores, score)
+			scores = append(scores, stampScore(s, score))
 		}
 	}
-	return scores, false
+	return scores, timing, false
 }
 
 // compareBatched populates and scores both arms of a comparison together,
@@ -125,7 +126,7 @@ func compareBatched(ctx context.Context, cfg *Config, baseObs, expObs []Observat
 		ctx = types.ContextWithDialPolicy(ctx, *cfg.dialPolicy)
 	}
 	baseErrs, expErrs := make([]error, len(baseObs)), make([]error, len(expObs))
-	runTasks(ctx, cfg.batch, append(populateTasks("base", baseObs, base, baseErrs), populateTasks("exp", expObs, exp, expErrs)...))
+	runTasks(ctx, cfg.batch, append(populateTasks("base", baseObs, base, baseErrs, cfg.Measurements), populateTasks("exp", expObs, exp, expErrs, cfg.Measurements)...))
 	_ = finishPopulate(cfg, baseObs, baseErrs)
 	_ = finishPopulate(cfg, expObs, expErrs)
 
@@ -142,5 +143,11 @@ func compareBatched(ctx context.Context, cfg *Config, baseObs, expObs []Observat
 		scoreTasks("exp", expObs, scorers, cfg.Logger, expRes, expDone)...))
 	baseSuite, baseErr := suiteFrom(ctx, cfg.Name+"/base", cfg, baseObs, baseRes, baseDone)
 	expSuite, expErr := suiteFrom(ctx, cfg.Name+"/exp", cfg, expObs, expRes, expDone)
+	revisions := make([]string, len(scorers))
+	for i, s := range scorers {
+		revisions[i] = ScorerRevision(s)
+	}
+	baseSuite.Revision = RevisionTag(baseSuite.Revision, revisions)
+	expSuite.Revision = RevisionTag(expSuite.Revision, revisions)
 	return baseSuite, expSuite, baseErr, expErr
 }

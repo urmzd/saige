@@ -212,3 +212,24 @@ func TestWithBatchExpiredRequestsAreInconclusive(t *testing.T) {
 		}
 	}
 }
+
+func TestExperimentEvaluationSamplesUseFreshBatchRequests(t *testing.T) {
+	c, cb := newBatchedModel()
+	e := Experiment{Name: "trials", Variants: []Variant{{Name: "v", Subject: generatorSubject(c)}}, Scorers: []Scorer{NewJudgeScorer(c)}}
+	result, err := e.Sample(context.Background(), []Observation{{ID: "q", Input: json.RawMessage(`"question"`)}}, 3, WithBatch(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Evaluations) != 3 {
+		t.Fatalf("trials=%d", len(result.Evaluations))
+	}
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	total := 0
+	for _, n := range cb.sizes {
+		total += n
+	}
+	if total != 4 {
+		t.Fatalf("batch requests=%d, want one subject and three fresh evaluations", total)
+	}
+}

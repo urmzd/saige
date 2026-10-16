@@ -6,6 +6,9 @@ You are an impartial evaluator. Score the response based on the given criteria.
 ## Context (if available)
 {{.Context}}
 
+## Desired Answer (if available)
+{{.Desired}}
+
 ## Response
 {{.Response}}
 
@@ -13,7 +16,7 @@ You are an impartial evaluator. Score the response based on the given criteria.
 {{.Rubric}}
 
 ## Instructions
-1. Analyze the response against the criteria above.
+1. Compare the response with the desired answer when provided and analyze it against the criteria above.
 2. Provide your reasoning in 2-3 sentences.
 3. Assign a score from 0.0 to 1.0 where:
    - 0.0 = completely fails the criteria

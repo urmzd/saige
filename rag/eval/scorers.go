@@ -37,9 +37,9 @@ func ContextRecallScorer() topeval.Scorer {
 
 // NDCGScorer wraps [NDCG] as a [topeval.Scorer].
 func NDCGScorer(k int) topeval.Scorer {
-	return topeval.NewScorerFunc("ndcg", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
+	return topeval.Revisioned(topeval.NewScorerFunc("ndcg", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		return retrievalScore(obs, "ndcg", k, func(s RetrievalScores) float64 { return s.NDCG })
-	})
+	}), topeval.RevisionTag("ndcg/v1", k))
 }
 
 // MRRScorer wraps [MRR] as a [topeval.Scorer].
@@ -51,15 +51,15 @@ func MRRScorer() topeval.Scorer {
 
 // HitRateScorer wraps [HitRate] as a [topeval.Scorer].
 func HitRateScorer(k int) topeval.Scorer {
-	return topeval.NewScorerFunc("hit_rate", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
+	return topeval.Revisioned(topeval.NewScorerFunc("hit_rate", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		return retrievalScore(obs, "hit_rate", k, func(s RetrievalScores) float64 { return s.HitRate })
-	})
+	}), topeval.RevisionTag("hit_rate/v1", k))
 }
 
 // FaithfulnessScorer wraps [Faithfulness] as a [topeval.Scorer].
 // It reads the response from Output and context from the AnnotationContextText annotation.
 func FaithfulnessScorer(llm types.LLM) topeval.Scorer {
-	return topeval.NewScorerFunc("faithfulness", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
+	return topeval.Revisioned(topeval.NewScorerFunc("faithfulness", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
 		response, contextText, err := extractResponseAndContext(obs)
 		if err != nil || response == "" {
 			return topeval.Score{}, err
@@ -69,12 +69,12 @@ func FaithfulnessScorer(llm types.LLM) topeval.Scorer {
 			return topeval.Score{}, err
 		}
 		return topeval.Score{Name: "faithfulness", Value: score}, nil
-	})
+	}), topeval.RevisionTag("faithfulness/v1", topeval.GeneratorRevision(llm), faithfulnessDecomposeRaw, faithfulnessVerifyRaw))
 }
 
 // AnswerRelevancyScorer wraps [AnswerRelevancy] as a [topeval.Scorer].
 func AnswerRelevancyScorer(llm types.LLM, embedders types.EmbedderRegistry, sampleCount int) topeval.Scorer {
-	return topeval.NewScorerFunc("answer_relevancy", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
+	return topeval.Revisioned(topeval.NewScorerFunc("answer_relevancy", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
 		var query, response string
 		if obs.Input != nil {
 			if err := json.Unmarshal(obs.Input, &query); err != nil {
@@ -94,12 +94,12 @@ func AnswerRelevancyScorer(llm types.LLM, embedders types.EmbedderRegistry, samp
 			return topeval.Score{}, err
 		}
 		return topeval.Score{Name: "answer_relevancy", Value: score}, nil
-	})
+	}), topeval.RevisionTag("answer_relevancy/v1", topeval.GeneratorRevision(llm), sampleCount, answerRelevancyRaw))
 }
 
 // AnswerCorrectnessScorer wraps [AnswerCorrectness] as a [topeval.Scorer].
 func AnswerCorrectnessScorer(llm types.LLM) topeval.Scorer {
-	return topeval.NewScorerFunc("answer_correctness", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
+	return topeval.Revisioned(topeval.NewScorerFunc("answer_correctness", func(ctx context.Context, obs topeval.Observation) (topeval.Score, error) {
 		var response, groundTruth string
 		if obs.Output != nil {
 			if err := json.Unmarshal(obs.Output, &response); err != nil {
@@ -119,7 +119,7 @@ func AnswerCorrectnessScorer(llm types.LLM) topeval.Scorer {
 			return topeval.Score{}, err
 		}
 		return topeval.Score{Name: "answer_correctness", Value: score}, nil
-	})
+	}), topeval.RevisionTag("answer_correctness/v1", topeval.GeneratorRevision(llm), answerCorrectnessRaw))
 }
 
 // retrievalScore computes one retrieval metric from obs's annotations. It

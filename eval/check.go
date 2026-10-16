@@ -123,7 +123,7 @@ func JSONSchemaScorer(schema json.RawMessage) (Scorer, error) {
 		return nil, err
 	}
 	const name = "json_schema"
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		v, err := OutputJSON(obs)
 		if err != nil {
 			return false, err.Error(), nil
@@ -133,7 +133,7 @@ func JSONSchemaScorer(schema json.RawMessage) (Scorer, error) {
 			return true, "", nil
 		}
 		return false, summarizeProblems(problems, 3), nil
-	}), nil
+	}), RevisionTag("json_schema/v1", json.RawMessage(schema))), nil
 }
 
 func summarizeProblems(problems []string, limit int) string {
@@ -151,9 +151,9 @@ func summarizeProblems(problems []string, limit int) string {
 func JSONFieldScorer(path string, want any) Scorer {
 	name := "json_field:" + path
 	wantJSON := normalizeJSONValue(want)
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		return checkField(obs, path, wantJSON)
-	})
+	}), RevisionTag("json_field/v1", path, wantJSON))
 }
 
 // JSONFieldGroundTruthScorer is [JSONFieldScorer] with the expected value
@@ -264,7 +264,7 @@ func RegexCountScorer(pattern string, op Op, n int) (Scorer, error) {
 // the substrings joined by commas.
 func ContainsScorer(substrings ...string) Scorer {
 	name := "contains:" + strings.Join(substrings, ",")
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		text := OutputText(obs)
 		var missing []string
 		for _, s := range substrings {
@@ -276,7 +276,7 @@ func ContainsScorer(substrings ...string) Scorer {
 			return true, "", nil
 		}
 		return false, "missing " + strings.Join(missing, ", "), nil
-	})
+	}), RevisionTag("contains/v1", substrings))
 }
 
 // ExactMatchScorer checks that the output text equals the ground truth text

@@ -42,8 +42,11 @@ const AnnotationSubjectError = "eval.subject_error"
 // json.RawMessage so the same structure works for RAG queries, agent
 // conversations, KG episodes, or end-to-end flows.
 type Observation struct {
-	ID   string `json:"id"`
-	Turn int    `json:"turn"`
+	// Revision pins a caller-defined dataset/trace revision. When empty, Run
+	// hashes the observation content, excluding timing.
+	Revision string `json:"revision,omitempty"`
+	ID       string `json:"id"`
+	Turn     int    `json:"turn"`
 	// Sample numbers the copies made by [Sampler.Replicate], from 1. Zero
 	// means the observation was not replicated.
 	Sample int `json:"sample,omitempty"`
@@ -75,10 +78,14 @@ type ObservationTiming struct {
 // failed for this observation: Value is meaningless and the score is
 // excluded from [Aggregate].
 type Score struct {
-	Name   string  `json:"name"`
-	Value  float64 `json:"value"`
-	Reason string  `json:"reason,omitempty"`
-	Error  string  `json:"error,omitempty"`
+	// Timing measures evaluating this score, separately from subject timing.
+	Timing ObservationTiming `json:"timing,omitzero"`
+	// Revision identifies the scorer implementation and declared configuration.
+	Revision string  `json:"revision,omitempty"`
+	Name     string  `json:"name"`
+	Value    float64 `json:"value"`
+	Reason   string  `json:"reason,omitempty"`
+	Error    string  `json:"error,omitempty"`
 	// Samples is set when the score came from a [Sampled] scorer: Value is
 	// then the reduced value and Samples describes the spread behind it.
 	Samples *SampleStats `json:"samples,omitempty"`
@@ -96,13 +103,22 @@ type Score struct {
 
 // ObservationResult pairs an observation with its scores.
 type ObservationResult struct {
-	Observation Observation `json:"observation"`
-	Scores      []Score     `json:"scores"`
+	EvaluationTiming ObservationTiming `json:"evaluation_timing,omitzero"`
+	Observation      Observation       `json:"observation"`
+	Scores           []Score           `json:"scores"`
 }
 
 // SuiteResult is the complete output of an evaluation run.
 type SuiteResult struct {
-	Name string `json:"name"`
+	// Setup is the immutable experiment definition that produced this trial.
+	Setup *ExperimentSetup `json:"setup,omitempty"`
+	// Evaluation numbers independently executed trials within Experiment.Sample.
+	Evaluation int `json:"evaluation,omitempty"`
+	// EvaluationTiming records scoring wall time and aggregate evaluator usage.
+	EvaluationTiming ObservationTiming `json:"evaluation_timing,omitzero"`
+	// Revision identifies the evaluated traces, scorers and gate configuration.
+	Revision string `json:"revision,omitempty"`
+	Name     string `json:"name"`
 	// Claim is the hypothesis of the [Experiment] that produced the suite.
 	Claim     string              `json:"claim,omitempty"`
 	CreatedAt time.Time           `json:"created_at"`
@@ -154,6 +170,7 @@ type SuiteResult struct {
 // those whose scorer was cut off by the cancellation, are left out of
 // Results and counted in [SuiteResult.Incomplete].
 func Run(ctx context.Context, name string, observations []Observation, scorers []Scorer, opts ...Option) (*SuiteResult, error) {
+	started := time.Now()
 	cfg := newConfig(opts)
 
 	if cfg.Sampler.N > 1 {
@@ -172,7 +189,18 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	} else {
 		results, done = scoreAll(ctx, cfg, observations, scorers)
 	}
-	return suiteFrom(ctx, name, cfg, observations, results, done)
+	suite, err := suiteFrom(ctx, name, cfg, observations, results, done)
+	revisions := make([]string, len(scorers))
+	for i, s := range scorers {
+		revisions[i] = ScorerRevision(s)
+	}
+	suite.Revision = RevisionTag(suite.Revision, revisions)
+	suite.EvaluationTiming = evaluationUsage(suite.Results)
+	suite.EvaluationTiming.TotalMs = max(1, time.Since(started).Milliseconds())
+	if suite.Incomplete > 0 {
+		suite.EvaluationTiming.CostUSD = nil
+	}
+	return suite, err
 }
 
 // scoreAll scores every observation, up to cfg.Concurrency at once.
@@ -205,11 +233,11 @@ launch:
 				done[idx] = true
 				return
 			}
-			scores, interrupted := scoreObservation(ctx, obs, scorers, cfg.Logger)
+			scores, timing, interrupted := scoreObservation(ctx, obs, scorers, cfg.Logger)
 			if interrupted {
 				return
 			}
-			results[idx] = ObservationResult{Observation: obs, Scores: scores}
+			results[idx] = ObservationResult{Observation: obs, Scores: scores, EvaluationTiming: timing}
 			done[idx] = true
 		}(i, obs)
 	}
@@ -224,6 +252,12 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 	completed := make([]ObservationResult, 0, len(results))
 	for i, r := range results {
 		if done[i] {
+			if cfg.Measurements && SubjectError(r.Observation) == "" {
+				r.Scores = appendMeasurements(r.Observation, r.Scores, r.EvaluationTiming)
+			}
+			if r.Observation.Revision == "" {
+				r.Observation.Revision = observationRevision(r.Observation)
+			}
 			completed = append(completed, r)
 		}
 	}
@@ -244,7 +278,7 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 			}
 			if s.Error != "" {
 				cerr = true
-			} else if s.Name != "" {
+			} else if s.Name != "" && s.Revision != measurementRevision(s.Name) {
 				succeeded++
 			}
 		}
@@ -264,6 +298,15 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 		Incomplete:     len(observations) - len(completed),
 		Inconclusive:   countInconclusive(completed),
 	}
+	tags := make([]any, 0, len(completed))
+	for _, r := range completed {
+		revisions := make([]string, len(r.Scores))
+		for i, s := range r.Scores {
+			revisions[i] = s.Revision
+		}
+		tags = append(tags, []any{r.Observation.Revision, revisions})
+	}
+	suite.Revision = RevisionTag("suite/v1", name, tags, cfg.Assertions, cfg.Sampler.N, cfg.Sampler.Tolerance, cfg.Sampler.Confidence)
 	if len(cfg.Assertions) > 0 {
 		suite.GateWith(cfg.GatePolicy, cfg.Assertions...)
 	}
@@ -289,25 +332,26 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 // error is recorded as an errored [Score] and does not stop the remaining
 // scorers. interrupted reports that ctx ended while scoring, so the scores
 // are incomplete and must not be reported as a finished case.
-func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, logger *slog.Logger) (scores []Score, interrupted bool) {
+func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, logger *slog.Logger) (scores []Score, timing ObservationTiming, interrupted bool) {
 	for _, s := range scorers {
 		if ctx.Err() != nil {
-			return nil, true
+			return nil, timing, true
 		}
-		score, err := s.Score(ctx, obs)
+		score, err := measureScore(ctx, s, obs)
+		accumulateTiming(&timing, score.Timing)
 		if err != nil {
 			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-				return nil, true
+				return nil, timing, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
+			scores = append(scores, Score{Name: s.Name(), Revision: ScorerRevision(s), Timing: score.Timing, Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {
-			scores = append(scores, score)
+			scores = append(scores, stampScore(s, score))
 		}
 	}
-	return scores, false
+	return scores, timing, false
 }
 
 // Populate runs a [Subject] against each observation, populating Output,
@@ -336,7 +380,7 @@ func PopulateAll(ctx context.Context, observations []Observation, subject Subjec
 	}
 	errs := make([]error, len(observations))
 	if cfg.batch != nil {
-		runTasks(ctx, cfg.batch, populateTasks("", observations, subject, errs))
+		runTasks(ctx, cfg.batch, populateTasks("", observations, subject, errs, cfg.Measurements))
 		return finishPopulate(cfg, observations, errs)
 	}
 
@@ -360,7 +404,7 @@ func PopulateAll(ctx context.Context, observations []Observation, subject Subjec
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			errs[i] = subject(ctx, &observations[i])
+			errs[i] = populateMeasured(ctx, subject, &observations[i], cfg.Measurements)
 		}(i)
 	}
 	wg.Wait()

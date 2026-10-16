@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -96,6 +97,13 @@ type whereScorer struct {
 }
 
 func (s *whereScorer) Name() string { return s.inner.Name() }
+func (s *whereScorer) Configuration() json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{"where": s.where, "scorer": ScorerConfiguration(s.inner)})
+	return raw
+}
+func (s *whereScorer) Revision() string {
+	return RevisionTag("where/v1", ScorerRevision(s.inner), s.where)
+}
 
 func (s *whereScorer) Score(ctx context.Context, obs Observation) (Score, error) {
 	if !s.where.Match(obs) {
@@ -115,9 +123,12 @@ func (s *whereScorer) Deterministic() bool {
 // be unique within the experiment and is stamped on results under
 // [LabelVariant].
 type Variant struct {
-	Name    string
-	Labels  Labels
-	Subject Subject
+	// Revision pins subject implementation; Config records model, prompt and other settings.
+	Revision string
+	Config   json.RawMessage
+	Name     string
+	Labels   Labels
+	Subject  Subject
 }
 
 // Axis is one dimension of a [Matrix], such as a "model" axis with one

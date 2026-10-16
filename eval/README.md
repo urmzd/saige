@@ -647,3 +647,188 @@ experiments/bm25-vs-hyde/
 
 - [`eval/harness`](harness/README.md): live eval harness for multi-turn corpora against OpenAI-compatible APIs or saige providers, with a strict suite manifest (`saige eval`)
 - [Root README](../README.md): project overview and installation
+
+### Repeated judging of a fixed trace
+
+`WithSampler` repeats the evaluation of an already populated observation. It
+keeps the output fixed, so the measured variation comes from the judge.
+`WithRepeats` instead reruns the subject and measures output variation.
+
+```go
+judge := eval.NewJudgeScorer(generator,
+    eval.WithJudgeRevision("judge-deployment@2026-10-16"),
+    eval.WithJudgeRubric("Compare the response with the desired answer."))
+
+suite, err := eval.Run(ctx, "trace-correctness", []eval.Observation{fixedTrace},
+    []eval.Scorer{judge},
+    eval.WithSampler(eval.Sampler{N: 20, Confidence: 0.95}))
+if err != nil {
+    return err
+}
+score := suite.Results[0].Scores[0]
+// The known-good trace is expected to pass. Use false for a known-bad trace.
+report, err := score.Samples.Reliability(0.8, true, 1, 5, 10)
+if err != nil {
+    return err
+}
+fmt.Println(report.PassRate, report.AgreementRate, report.PassAtK)
+fmt.Println(score.Samples.Interval)
+```
+
+Set `fixedTrace.GroundTruth` to the desired answer; the judge sees it next to
+the response. Each successful call is thresholded separately. Agreement is
+the fraction of verdicts matching the desired pass/fail label, including
+correct rejection of a known-bad trace. It is distinct from inter-judge
+agreement. Pass and agreement rates carry Wilson intervals, including at
+zero or perfect agreement. Failed and declined calls reduce completeness
+and are excluded from the estimates. With no successful calls, `Run` returns
+an error; a manually constructed empty `SampleStats` reports rates with
+interval `[0, 1]` and completeness zero.
+
+Pass@k means **at least one** passing draw among k draws without replacement,
+using the existing unbiased estimator. Values above the number of successful
+calls are omitted. For intervals across independent questions, use
+`eval.PassAtK` on gated subject repeats. The fixed-trace rate intervals
+measure judge uncertainty on that trace, not uncertainty across a dataset.
+Disable response caching when collecting fresh judge draws. Position-swapped
+pairwise verdicts are correlated; sample the complete pairwise scorer to
+measure repeated grading. `SampleStats.Interval` is the existing normal
+approximation for the mean, independent of the reducer, and is unreliable
+with very few draws or identical draws. Use the Wilson rate intervals for
+thresholded decisions.
+
+### Evaluation revisions
+
+`Run` stamps observations, scores and suites with revision tags. Observation
+hashes cover input, output, desired answer, labels and annotations, excluding
+wall-clock timing; a supplied `Observation.Revision` is preserved. Suite tags
+cover the evaluated traces, scorer revisions and assertion/sampling settings.
+`NewRunRecord`, units, and `SuiteFromUnits` preserve these tags and statistics.
+
+Judge revisions include both prompt templates, the verdict schema, rubric,
+position-swap setting and generator revision. SAIGE's offline and online
+provider generators include the reported model/configuration, system prompt
+and conversion policy. `WithJudgeRevision` pins deployment or model versions
+that the provider cannot report. Registry scorers hash their kind, normalized
+parameters, metric name and optional `ScorerSpec.Revision` implementation tag.
+RAG judge scorers also hash their prompts and generator revision.
+
+Custom scorers receive an implementation identity tag. Captured closure
+settings, custom reducer state, resolver contents and opaque provider settings
+cannot be inferred: pin them with
+`eval.Revisioned(scorer, eval.RevisionTag("my-check@2", configuration))`.
+Revisions identify declared configuration; record code commits separately
+with `CaptureProvenance`. Stored records predating revision tags remain readable.
+
+### Experiment setup and evaluation trials
+
+Declare the experiment and variant configuration next to their revision pins.
+These settings are captured before subjects run. Setup identity does not change
+when the same experiment produces different scores, costs or timings.
+
+```go
+exp := eval.Experiment{
+    Name: "answer-quality",
+    Revision: "experiment@2",
+    Config: json.RawMessage(`{"dataset":"billing@3"}`),
+    Variants: []eval.Variant{{
+        Name: "candidate",
+        Revision: "agent@7",
+        Config: json.RawMessage(`{"model":"small","prompt":"answer@4"}`),
+        Subject: subject,
+    }},
+    Scorers: []eval.Scorer{judge},
+    Sampler: eval.Sampler{N: 3, Confidence: 0.95},
+    Assertions: []eval.Assertion{
+        {Metric: "judge_score", Op: eval.GTE, Threshold: 0.8},
+        {Metric: "latency_ms", Op: eval.LTE, Threshold: 2000},
+        {Metric: "cost_usd", Op: eval.LTE, Threshold: 0.02},
+        {Metric: "evaluation_latency_ms", Op: eval.LTE, Threshold: 5000},
+        {Metric: "evaluation_cost_usd", Op: eval.LTE, Threshold: 0.01},
+    },
+}
+
+// Prepare subject outputs once, then execute the WHOLE evaluation 10 times.
+trials, err := exp.Sample(ctx, dataset, 10)
+if err != nil {
+    return err // trials still contains partial results
+}
+fmt.Println(trials.Setup.Revision)
+fmt.Println(trials.Variants["candidate"]["judge_score"])
+fmt.Println(trials.EvaluationCost, trials.EvaluationLatency)
+for _, trial := range trials.Evaluations {
+    fmt.Println(trial.Evaluation, trial.Outcome, trial.Violations)
+}
+
+// Compare saved experiment runs: changed settings and measured impact.
+comparison := eval.CompareSuites(previous, trials.Evaluations[0])
+fmt.Println(comparison.SetupChanges) // e.g. variants[0].config.model
+fmt.Println(comparison.DeltaStats["cost_usd"])
+fmt.Println(comparison.DeltaStats["latency_ms"])
+```
+
+`Snapshot(dataset, evaluations, options...)` previews the effective setup
+without executing anything. It records dataset identity, experiment and variant
+configuration, evaluator revisions and exposed settings (including judge
+prompts/model configuration), assertions, concurrency, gate and dial policies,
+subject repeats and scorer sampling. `CompareSuites` retains both setup
+snapshots and reports field-level differences alongside its existing paired
+score deltas. Keep secrets out of declarative `Config` and labels.
+
+The three repetition controls are independent:
+
+| Control | What executes again | What stays fixed |
+| --- | --- | --- |
+| `WithRepeats(n)` | Subject, producing n output traces | Dataset input |
+| `WithSampler(Sampler{N:n})` | Individual nondeterministic scorer | One output trace |
+| `Experiment.Sample(..., n)` | All scorers, measurements and assertions | Prepared output traces |
+
+Evaluation trials execute even deterministic scorers again. Batch requests get
+trial-specific keys, so completed verdicts from a previous trial are not reused.
+Response caching must also be disabled for fresh model draws. Each trial is a
+complete `SuiteResult`, with its own evaluation number, outcome and usage.
+`Experiment.Run` is one evaluation trial. Use separate run IDs when persisting
+each trial with `NewRunRecord` and the results store; setup, trial identity and
+usage survive storage round trips.
+
+Trial summaries calculate means and normal-approximation confidence intervals
+over independently executed evaluation aggregates, including per-variant
+metrics. They do not bootstrap stored scores or treat repeated judgments as
+new subject outputs. Their `N` counts measured trials; each trial still carries
+its per-case error and completeness information. These intervals measure
+evaluator variation conditional on the prepared traces. Subject cost and
+latency uncertainty requires subject repeats or separate experiment runs.
+
+Experiments automatically expose recorded metadata as assertion metrics. Plain
+`Run` enables the same behavior with `WithMeasurements()`:
+
+| Metrics | Source |
+| --- | --- |
+| `latency_ms`, `ttft_ms`, `ttlt_ms`, `median_itl_ms` | Subject timing |
+| `cost_usd`, `input_tokens`, `output_tokens`, `total_tokens` | Subject usage |
+| `evaluation_latency_ms` | Sum of scorer wall times for the observation |
+| `evaluation_cost_usd`, `evaluation_tokens` | Actual evaluator calls |
+
+Recorded subject timings are preserved. When a subject leaves total latency
+unset, experiments measure it. Cost and latency remain separate: unknown cost
+is omitted rather than reported as free. Missing metadata never satisfies a
+cost assertion. SAIGE's offline and online judge generators record provider
+usage and pricing automatically, including failed calls that reported usage.
+Custom generators can call `RecordEvaluationUsage` on the supplied context.
+If any evaluator call lacks known USD pricing or usage, its observation and
+trial cost stay unknown; available token counts and timing remain recorded.
+`Score.Timing` retains evaluator usage separately from `Observation.Timing`.
+`SuiteResult.EvaluationTiming.TotalMs` is whole-suite scoring wall time, which
+can be lower than the summed scorer times under concurrency. Durations are
+recorded with a minimum of one millisecond. Existing user-supplied metrics win
+when a measurement has the same name. Comparisons treat cost and latency
+metrics as lower-is-better by default.
+
+For an existing trace, use `exp.Evaluate(ctx, traces, n)` instead of `Sample`.
+It repeats the complete evaluation without invoking any subject and preserves
+the trace's recorded output, cost and latency. Variant subjects may be nil in
+this mode. A single variant is assigned automatically; with multiple variants,
+each trace must carry its declared `variant` label. Setup records
+`mode="fixed_traces"` and zero subject repeats. `WithRepeats` is rejected here
+because it regenerates outputs. Reported subject cost is attributed from the
+stored trace, not newly incurred during evaluation.
