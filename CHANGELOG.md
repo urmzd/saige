@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.37.0 (2026-10-16)
+
+### Features
+
+- **eval**: version experiment setups and sample evaluations (#116) ([5a421d1](https://github.com/urmzd/saige/commit/5a421d180c46bafb2af686e32a2fd96b878918fd))
+
+### Misc
+
+- **deps**: bump actions/setup-go from 6 to 7 (#112) ([09bb801](https://github.com/urmzd/saige/commit/09bb80158e3005b27db964e9f566c7cf4ef4a2e0))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.36.0...v0.37.0)
+
+
 ## 0.35.0 (2026-10-11)
 
 ### Features
