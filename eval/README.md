@@ -647,3 +647,75 @@ experiments/bm25-vs-hyde/
 
 - [`eval/harness`](harness/README.md): live eval harness for multi-turn corpora against OpenAI-compatible APIs or saige providers, with a strict suite manifest (`saige eval`)
 - [Root README](../README.md): project overview and installation
+
+### Repeated judging of a fixed trace
+
+`WithSampler` repeats the evaluation of an already populated observation. It
+keeps the output fixed, so the measured variation comes from the judge.
+`WithRepeats` instead reruns the subject and measures output variation.
+
+```go
+judge := eval.NewJudgeScorer(generator,
+    eval.WithJudgeRevision("judge-deployment@2026-10-16"),
+    eval.WithJudgeRubric("Compare the response with the desired answer."))
+
+suite, err := eval.Run(ctx, "trace-correctness", []eval.Observation{fixedTrace},
+    []eval.Scorer{judge},
+    eval.WithSampler(eval.Sampler{N: 20, Confidence: 0.95}))
+if err != nil {
+    return err
+}
+score := suite.Results[0].Scores[0]
+// The known-good trace is expected to pass. Use false for a known-bad trace.
+report, err := score.Samples.Reliability(0.8, true, 1, 5, 10)
+if err != nil {
+    return err
+}
+fmt.Println(report.PassRate, report.AgreementRate, report.PassAtK)
+fmt.Println(score.Samples.Interval)
+```
+
+Set `fixedTrace.GroundTruth` to the desired answer; the judge sees it next to
+the response. Each successful call is thresholded separately. Agreement is
+the fraction of verdicts matching the desired pass/fail label, including
+correct rejection of a known-bad trace. It is distinct from inter-judge
+agreement. Pass and agreement rates carry Wilson intervals, including at
+zero or perfect agreement. Failed and declined calls reduce completeness
+and are excluded from the estimates. With no successful calls, `Run` returns
+an error; a manually constructed empty `SampleStats` reports rates with
+interval `[0, 1]` and completeness zero.
+
+Pass@k means **at least one** passing draw among k draws without replacement,
+using the existing unbiased estimator. Values above the number of successful
+calls are omitted. For intervals across independent questions, use
+`eval.PassAtK` on gated subject repeats. The fixed-trace rate intervals
+measure judge uncertainty on that trace, not uncertainty across a dataset.
+Disable response caching when collecting fresh judge draws. Position-swapped
+pairwise verdicts are correlated; sample the complete pairwise scorer to
+measure repeated grading. `SampleStats.Interval` is the existing normal
+approximation for the mean, independent of the reducer, and is unreliable
+with very few draws or identical draws. Use the Wilson rate intervals for
+thresholded decisions.
+
+### Evaluation revisions
+
+`Run` stamps observations, scores and suites with revision tags. Observation
+hashes cover input, output, desired answer, labels and annotations, excluding
+wall-clock timing; a supplied `Observation.Revision` is preserved. Suite tags
+cover the evaluated traces, scorer revisions and assertion/sampling settings.
+`NewRunRecord`, units, and `SuiteFromUnits` preserve these tags and statistics.
+
+Judge revisions include both prompt templates, the verdict schema, rubric,
+position-swap setting and generator revision. SAIGE's offline and online
+provider generators include the reported model/configuration, system prompt
+and conversion policy. `WithJudgeRevision` pins deployment or model versions
+that the provider cannot report. Registry scorers hash their kind, normalized
+parameters, metric name and optional `ScorerSpec.Revision` implementation tag.
+RAG judge scorers also hash their prompts and generator revision.
+
+Custom scorers receive an implementation identity tag. Captured closure
+settings, custom reducer state, resolver contents and opaque provider settings
+cannot be inferred: pin them with
+`eval.Revisioned(scorer, eval.RevisionTag("my-check@2", configuration))`.
+Revisions identify declared configuration; record code commits separately
+with `CaptureProvenance`. Stored records predating revision tags remain readable.

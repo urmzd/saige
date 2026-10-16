@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/urmzd/saige/agent/convert"
+	"github.com/urmzd/saige/agent/provider/wrapper"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/eval"
 )
@@ -39,6 +40,20 @@ var (
 	_ eval.StructuredGenerator = (*BudgetedGenerator)(nil)
 	_ eval.PartsGenerator      = (*BudgetedGenerator)(nil)
 )
+
+// Revision identifies the configured online judge without credentials or budget state.
+func (g *BudgetedGenerator) Revision() string {
+	converters := make([]string, 0, len(g.Conversion.Converters))
+	for _, c := range g.Conversion.Converters {
+		converters = append(converters, c.Name()+"@"+c.Version())
+	}
+	info := wrapper.Describe(g.Provider)
+	if info.Offering == nil {
+		info.Offering = info.Capabilities.Offering
+	}
+	return eval.RevisionTag("online-generator/v1", info, g.System,
+		g.Conversion.Dial, converters, g.Conversion.MaxCost, g.Conversion.Scope, g.Conversion.Thinking)
+}
 
 // Generate implements [eval.Generator].
 func (g *BudgetedGenerator) Generate(ctx context.Context, prompt string) (string, error) {

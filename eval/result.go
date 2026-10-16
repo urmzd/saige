@@ -157,6 +157,7 @@ func NewRunRecord(id string, suite *SuiteResult, runErr error, prov Provenance) 
 		return run
 	}
 	run.Suite = suite.Name
+	run.Revision = suite.Revision
 	run.Claim = suite.Claim
 	run.StartedAt = suite.CreatedAt.UTC()
 	run.Outcome = suite.Outcome
@@ -201,6 +202,7 @@ func SuiteFromUnits(run RunRecord, units []Unit) *SuiteResult {
 	}
 	return &SuiteResult{
 		Name:           run.Suite,
+		Revision:       run.Revision,
 		Claim:          run.Claim,
 		CreatedAt:      run.StartedAt,
 		Results:        results,

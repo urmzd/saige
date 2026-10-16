@@ -1,6 +1,10 @@
 package eval
 
-import "context"
+import (
+	"context"
+	"reflect"
+	"runtime"
+)
 
 // Scorer computes a named metric from an [Observation].
 // Implementations must be safe for concurrent use.
@@ -31,13 +35,19 @@ func NewScorerFunc(name string, fn func(ctx context.Context, obs Observation) (S
 // Name implements Scorer.
 func (s *ScorerFunc) Name() string { return s.name }
 
+// Revision identifies the scorer function and metric. Pin captured
+// configuration with Revisioned when it is not encoded in the metric name.
+func (s *ScorerFunc) Revision() string {
+	return RevisionTag("function/v1", s.name, runtime.FuncForPC(reflect.ValueOf(s.fn).Pointer()).Name())
+}
+
 // Score calls f.
 func (s *ScorerFunc) Score(ctx context.Context, obs Observation) (Score, error) {
 	score, err := s.fn(ctx, obs)
 	if s.renamed && score.Name != "" {
 		score.Name = s.name
 	}
-	return score, err
+	return stampScore(s, score), err
 }
 
 // WithName returns a copy of the scorer that reports its metric under name,
@@ -61,12 +71,14 @@ type namedScorer struct {
 
 func (n *namedScorer) Name() string { return n.name }
 
+func (n *namedScorer) Revision() string { return ScorerRevision(n.inner) }
+
 func (n *namedScorer) Score(ctx context.Context, obs Observation) (Score, error) {
 	score, err := n.inner.Score(ctx, obs)
 	if score.Name != "" {
 		score.Name = n.name
 	}
-	return score, err
+	return stampScore(n, score), err
 }
 
 func (n *namedScorer) Deterministic() bool {

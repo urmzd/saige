@@ -42,8 +42,11 @@ const AnnotationSubjectError = "eval.subject_error"
 // json.RawMessage so the same structure works for RAG queries, agent
 // conversations, KG episodes, or end-to-end flows.
 type Observation struct {
-	ID   string `json:"id"`
-	Turn int    `json:"turn"`
+	// Revision pins a caller-defined dataset/trace revision. When empty, Run
+	// hashes the observation content, excluding timing.
+	Revision string `json:"revision,omitempty"`
+	ID       string `json:"id"`
+	Turn     int    `json:"turn"`
 	// Sample numbers the copies made by [Sampler.Replicate], from 1. Zero
 	// means the observation was not replicated.
 	Sample int `json:"sample,omitempty"`
@@ -75,10 +78,12 @@ type ObservationTiming struct {
 // failed for this observation: Value is meaningless and the score is
 // excluded from [Aggregate].
 type Score struct {
-	Name   string  `json:"name"`
-	Value  float64 `json:"value"`
-	Reason string  `json:"reason,omitempty"`
-	Error  string  `json:"error,omitempty"`
+	// Revision identifies the scorer implementation and declared configuration.
+	Revision string  `json:"revision,omitempty"`
+	Name     string  `json:"name"`
+	Value    float64 `json:"value"`
+	Reason   string  `json:"reason,omitempty"`
+	Error    string  `json:"error,omitempty"`
 	// Samples is set when the score came from a [Sampled] scorer: Value is
 	// then the reduced value and Samples describes the spread behind it.
 	Samples *SampleStats `json:"samples,omitempty"`
@@ -102,7 +107,9 @@ type ObservationResult struct {
 
 // SuiteResult is the complete output of an evaluation run.
 type SuiteResult struct {
-	Name string `json:"name"`
+	// Revision identifies the evaluated traces, scorers and gate configuration.
+	Revision string `json:"revision,omitempty"`
+	Name     string `json:"name"`
 	// Claim is the hypothesis of the [Experiment] that produced the suite.
 	Claim     string              `json:"claim,omitempty"`
 	CreatedAt time.Time           `json:"created_at"`
@@ -172,7 +179,13 @@ func Run(ctx context.Context, name string, observations []Observation, scorers [
 	} else {
 		results, done = scoreAll(ctx, cfg, observations, scorers)
 	}
-	return suiteFrom(ctx, name, cfg, observations, results, done)
+	suite, err := suiteFrom(ctx, name, cfg, observations, results, done)
+	revisions := make([]string, len(scorers))
+	for i, s := range scorers {
+		revisions[i] = ScorerRevision(s)
+	}
+	suite.Revision = RevisionTag(suite.Revision, revisions)
+	return suite, err
 }
 
 // scoreAll scores every observation, up to cfg.Concurrency at once.
@@ -224,6 +237,9 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 	completed := make([]ObservationResult, 0, len(results))
 	for i, r := range results {
 		if done[i] {
+			if r.Observation.Revision == "" {
+				r.Observation.Revision = observationRevision(r.Observation)
+			}
 			completed = append(completed, r)
 		}
 	}
@@ -264,6 +280,15 @@ func suiteFrom(ctx context.Context, name string, cfg *Config, observations []Obs
 		Incomplete:     len(observations) - len(completed),
 		Inconclusive:   countInconclusive(completed),
 	}
+	tags := make([]any, 0, len(completed))
+	for _, r := range completed {
+		revisions := make([]string, len(r.Scores))
+		for i, s := range r.Scores {
+			revisions[i] = s.Revision
+		}
+		tags = append(tags, []any{r.Observation.Revision, revisions})
+	}
+	suite.Revision = RevisionTag("suite/v1", name, tags, cfg.Assertions, cfg.Sampler.N, cfg.Sampler.Tolerance, cfg.Sampler.Confidence)
 	if len(cfg.Assertions) > 0 {
 		suite.GateWith(cfg.GatePolicy, cfg.Assertions...)
 	}
@@ -300,11 +325,11 @@ func scoreObservation(ctx context.Context, obs Observation, scorers []Scorer, lo
 				return nil, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
+			scores = append(scores, Score{Name: s.Name(), Revision: ScorerRevision(s), Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {
-			scores = append(scores, score)
+			scores = append(scores, stampScore(s, score))
 		}
 	}
 	return scores, false

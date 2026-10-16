@@ -17,13 +17,13 @@ import (
 // "token_budget".
 func TokenBudgetScorer(maxTokens int) Scorer {
 	const name = "token_budget"
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		used, ok := obs.Timing.TotalTokens()
 		if !ok {
 			return false, "", ErrNotApplicable
 		}
 		return used <= maxTokens, fmt.Sprintf("used %d tokens, budget %d", used, maxTokens), nil
-	})
+	}), RevisionTag("budget/v1", name, maxTokens))
 }
 
 // CostBudgetScorer checks that the observation's cost stays at or below
@@ -31,13 +31,13 @@ func TokenBudgetScorer(maxTokens int) Scorer {
 // ([ObservationTiming.CostUSD] is nil). The metric is "cost_budget".
 func CostBudgetScorer(maxUSD float64) Scorer {
 	const name = "cost_budget"
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		if obs.Timing.CostUSD == nil {
 			return false, "", ErrNotApplicable
 		}
 		cost := *obs.Timing.CostUSD
 		return cost <= maxUSD, fmt.Sprintf("cost $%.6f, budget $%.6f", cost, maxUSD), nil
-	})
+	}), RevisionTag("budget/v1", name, maxUSD))
 }
 
 // RespondsWithinScorer checks that the observation's total time stays at or
@@ -45,13 +45,13 @@ func CostBudgetScorer(maxUSD float64) Scorer {
 // zero). The metric is "responds_within".
 func RespondsWithinScorer(limit time.Duration) Scorer {
 	const name = "responds_within"
-	return NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
+	return Revisioned(NewCheckScorer(name, func(_ context.Context, obs Observation) (bool, string, error) {
 		if obs.Timing.TotalMs <= 0 {
 			return false, "", ErrNotApplicable
 		}
 		took := time.Duration(obs.Timing.TotalMs) * time.Millisecond
 		return took <= limit, fmt.Sprintf("took %s, limit %s", took, limit), nil
-	})
+	}), RevisionTag("budget/v1", name, limit))
 }
 
 // CostScorer reports the observation's cost in USD as the metric

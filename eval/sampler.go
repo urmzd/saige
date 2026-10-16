@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
+	"runtime"
 	"sort"
 	"sync"
+
+	"github.com/urmzd/saige/eval/analysis"
 )
 
 // Sampler configures repeated sampling of the non-deterministic parts of an
@@ -29,6 +33,8 @@ type Sampler struct {
 	// N is the number of samples. Values below 2 sample once, which leaves
 	// scoring exactly as it is without a Sampler.
 	N int
+	// Confidence is the interval confidence level; zero uses 95%.
+	Confidence float64
 	// Concurrency is how many samples run at once. Values below 2 run them
 	// one after another, the safe default against provider rate limits.
 	Concurrency int
@@ -41,6 +47,14 @@ type Sampler struct {
 
 // SampleStats describes how a score behaved across samples.
 type SampleStats struct {
+	Revision string `json:"revision,omitempty"`
+	// Interval estimates the mean of successful repeated evaluations.
+	// It is independent of the configured reducer. N excludes errors.
+	Interval analysis.Stat `json:"interval"`
+	// Confidence records the level used by Interval.
+	Confidence float64 `json:"confidence"`
+	// Expected includes failed and declined attempts.
+	Expected int `json:"expected,omitempty"`
 	// Values holds each successful sample, in sample order.
 	Values []float64 `json:"values"`
 	// Reasons holds each successful sample's reason, in sample order, so a
@@ -124,6 +138,7 @@ type deterministic interface{ Deterministic() bool }
 type deterministicScorer struct{ Scorer }
 
 func (deterministicScorer) Deterministic() bool { return true }
+func (s deterministicScorer) Revision() string  { return ScorerRevision(s.Scorer) }
 
 // Deterministic marks a scorer as returning the same score for the same
 // observation every time, so [WithSampler] scores it once.
@@ -150,6 +165,13 @@ func Sampled(inner Scorer, sampler Sampler) Scorer {
 }
 
 func (s *sampledScorer) Name() string { return s.inner.Name() }
+func (s *sampledScorer) Revision() string {
+	reducer := "mean"
+	if s.sampler.Reduce != nil {
+		reducer = runtime.FuncForPC(reflect.ValueOf(s.sampler.Reduce).Pointer()).Name()
+	}
+	return RevisionTag("sampled/v1", ScorerRevision(s.inner), s.sampler.N, s.sampler.Tolerance, s.sampler.Confidence, reducer)
+}
 
 func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, error) {
 	n := s.sampler.N
@@ -177,7 +199,7 @@ func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, erro
 	}
 	wg.Wait()
 
-	stats := &SampleStats{}
+	stats := &SampleStats{Revision: s.Revision(), Expected: n, Confidence: s.sampler.Confidence}
 	name := ""
 	innerUnstable := 0
 	var lastErr error
@@ -219,10 +241,18 @@ func (s *sampledScorer) Score(ctx context.Context, obs Observation) (Score, erro
 	if !stats.Stable {
 		reason += " (unstable)"
 	}
-	return Score{Name: name, Value: reduce(stats.Values), Reason: reason, Samples: stats}, nil
+	return Score{Name: name, Revision: s.Revision(), Value: reduce(stats.Values), Reason: reason, Samples: stats}, nil
 }
 
 func (st *SampleStats) summarize(tolerance float64) {
+	if st.Confidence <= 0 || st.Confidence >= 1 || math.IsNaN(st.Confidence) {
+		st.Confidence = analysis.DefaultConfidence
+	}
+	expected := st.Expected
+	if expected == 0 {
+		expected = len(st.Values) + st.Errors
+	}
+	st.Interval = analysis.MeanStat(st.Values, expected, st.Confidence)
 	st.Mean = Mean(st.Values)
 	st.Min, st.Max = st.Values[0], st.Values[0]
 	variance := 0.0

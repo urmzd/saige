@@ -17,9 +17,11 @@ import (
 //
 // Name, when set, renames the metric as with [Named].
 type ScorerSpec struct {
-	Kind   string          `json:"kind"`
-	Name   string          `json:"name,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
+	// Revision pins implementation or external configuration not captured by Params.
+	Revision string          `json:"revision,omitempty"`
+	Kind     string          `json:"kind"`
+	Name     string          `json:"name,omitempty"`
+	Params   json.RawMessage `json:"params,omitempty"`
 }
 
 // ScorerFactory builds a scorer from a spec's parameters. params is nil when
@@ -86,7 +88,15 @@ func (r *Registry) Build(spec ScorerSpec) (Scorer, error) {
 	if spec.Name != "" {
 		s = Named(s, spec.Name)
 	}
-	return s, nil
+	var config any
+	if params != nil {
+		decoder := json.NewDecoder(bytes.NewReader(params))
+		decoder.UseNumber()
+		if err := decoder.Decode(&config); err != nil {
+			return nil, err
+		}
+	}
+	return Revisioned(s, RevisionTag("registry/v1", spec.Kind, spec.Name, spec.Revision, config, ScorerRevision(s))), nil
 }
 
 // BuildAll constructs every spec, stopping at the first error.

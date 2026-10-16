@@ -784,6 +784,7 @@ func copyObservations(obs []Observation) []Observation {
 	out := make([]Observation, len(obs))
 	for i, o := range obs {
 		out[i] = Observation{
+			Revision:    o.Revision,
 			ID:          o.ID,
 			Turn:        o.Turn,
 			Sample:      o.Sample,

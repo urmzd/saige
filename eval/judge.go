@@ -107,8 +107,10 @@ var ErrNoJudgeScore = errors.New("judge reply has no parseable SCORE")
 
 // JudgeConfig configures a judge scorer.
 type JudgeConfig struct {
-	Name   string
-	Rubric string
+	Name string
+	// Revision pins the judge model/deployment and external configuration.
+	Revision string
+	Rubric   string
 	// PositionSwap asks the pairwise judge twice, once with the responses
 	// in each order, and reports the mean. It is on by default for
 	// [NewPairwiseJudgeScorer] and ignored by [NewJudgeScorer].
@@ -120,6 +122,11 @@ type JudgeConfig struct {
 
 // JudgeOption configures a judge scorer.
 type JudgeOption func(*JudgeConfig)
+
+// WithJudgeRevision pins model/deployment or custom generator configuration.
+func WithJudgeRevision(revision string) JudgeOption {
+	return func(c *JudgeConfig) { c.Revision = revision }
+}
 
 // WithJudgeName sets the metric name (default: "judge_score").
 func WithJudgeName(name string) JudgeOption {
@@ -164,7 +171,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		o(cfg)
 	}
 
-	return NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
+	return Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
 		contextText := ""
 		if raw, ok := obs.Annotations["context"]; ok {
 			contextText = string(raw)
@@ -177,6 +184,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		prompt, err := renderPrompt(judgeTmpl, map[string]string{
 			"Input":    input,
 			"Context":  contextText,
+			"Desired":  string(obs.GroundTruth),
 			"Response": string(obs.Output),
 			"Rubric":   cfg.Rubric,
 		})
@@ -194,7 +202,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			return Score{}, err
 		}
 		return Score{Name: cfg.Name, Value: score, Reason: reason}, nil
-	})
+	}), judgeRevision(gen, cfg))
 }
 
 // NewPairwiseJudgeScorer creates a [Scorer] for comparing two outputs.
@@ -237,7 +245,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		return parseJudgeOutput(result)
 	}
 
-	return NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
+	return Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
 		input, media, err := judgeInput(ctx, obs.Input, cfg.Resolvers)
 		if err != nil {
 			return Score{}, err
@@ -271,7 +279,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			reason = fmt.Sprintf("position-inconsistent: %.3g with base first, %.3g with base second", forward, mirrored)
 		}
 		return Score{Name: cfg.Name, Value: stats.Mean, Reason: reason, Samples: stats}, nil
-	})
+	}), judgeRevision(gen, cfg))
 }
 
 // parseJudgeOutput extracts the score and reasoning from a judge reply. The

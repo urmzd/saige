@@ -108,11 +108,11 @@ func scoreKeyed(ctx context.Context, arm string, obs Observation, scorers []Scor
 				return nil, true
 			}
 			logger.Error("scorer failed", "observation", obs.ID, "scorer", s.Name(), "error", err)
-			scores = append(scores, Score{Name: s.Name(), Error: err.Error(), Inconclusive: IsInfra(err)})
+			scores = append(scores, Score{Name: s.Name(), Revision: ScorerRevision(s), Error: err.Error(), Inconclusive: IsInfra(err)})
 			continue
 		}
 		if score.Name != "" {
-			scores = append(scores, score)
+			scores = append(scores, stampScore(s, score))
 		}
 	}
 	return scores, false
@@ -142,5 +142,11 @@ func compareBatched(ctx context.Context, cfg *Config, baseObs, expObs []Observat
 		scoreTasks("exp", expObs, scorers, cfg.Logger, expRes, expDone)...))
 	baseSuite, baseErr := suiteFrom(ctx, cfg.Name+"/base", cfg, baseObs, baseRes, baseDone)
 	expSuite, expErr := suiteFrom(ctx, cfg.Name+"/exp", cfg, expObs, expRes, expDone)
+	revisions := make([]string, len(scorers))
+	for i, s := range scorers {
+		revisions[i] = ScorerRevision(s)
+	}
+	baseSuite.Revision = RevisionTag(baseSuite.Revision, revisions)
+	expSuite.Revision = RevisionTag(expSuite.Revision, revisions)
 	return baseSuite, expSuite, baseErr, expErr
 }
