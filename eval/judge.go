@@ -171,7 +171,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		o(cfg)
 	}
 
-	return Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
+	return withScorerConfiguration(Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
 		contextText := ""
 		if raw, ok := obs.Annotations["context"]; ok {
 			contextText = string(raw)
@@ -202,7 +202,7 @@ func NewJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			return Score{}, err
 		}
 		return Score{Name: cfg.Name, Value: score, Reason: reason}, nil
-	}), judgeRevision(gen, cfg))
+	}), judgeRevision(gen, cfg)), judgeConfiguration(gen, cfg))
 }
 
 // NewPairwiseJudgeScorer creates a [Scorer] for comparing two outputs.
@@ -245,7 +245,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 		return parseJudgeOutput(result)
 	}
 
-	return Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
+	return withScorerConfiguration(Revisioned(NewScorerFunc(cfg.Name, func(ctx context.Context, obs Observation) (Score, error) {
 		input, media, err := judgeInput(ctx, obs.Input, cfg.Resolvers)
 		if err != nil {
 			return Score{}, err
@@ -279,7 +279,7 @@ func NewPairwiseJudgeScorer(gen Generator, opts ...JudgeOption) Scorer {
 			reason = fmt.Sprintf("position-inconsistent: %.3g with base first, %.3g with base second", forward, mirrored)
 		}
 		return Score{Name: cfg.Name, Value: stats.Mean, Reason: reason, Samples: stats}, nil
-	}), judgeRevision(gen, cfg))
+	}), judgeRevision(gen, cfg)), judgeConfiguration(gen, cfg))
 }
 
 // parseJudgeOutput extracts the score and reasoning from a judge reply. The

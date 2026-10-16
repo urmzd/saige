@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -137,8 +138,9 @@ type deterministic interface{ Deterministic() bool }
 
 type deterministicScorer struct{ Scorer }
 
-func (deterministicScorer) Deterministic() bool { return true }
-func (s deterministicScorer) Revision() string  { return ScorerRevision(s.Scorer) }
+func (deterministicScorer) Deterministic() bool              { return true }
+func (s deterministicScorer) Revision() string               { return ScorerRevision(s.Scorer) }
+func (s deterministicScorer) Configuration() json.RawMessage { return ScorerConfiguration(s.Scorer) }
 
 // Deterministic marks a scorer as returning the same score for the same
 // observation every time, so [WithSampler] scores it once.
@@ -165,6 +167,14 @@ func Sampled(inner Scorer, sampler Sampler) Scorer {
 }
 
 func (s *sampledScorer) Name() string { return s.inner.Name() }
+func (s *sampledScorer) Configuration() json.RawMessage {
+	reducer := "mean"
+	if s.sampler.Reduce != nil {
+		reducer = runtime.FuncForPC(reflect.ValueOf(s.sampler.Reduce).Pointer()).Name()
+	}
+	raw, _ := json.Marshal(map[string]any{"n": s.sampler.N, "concurrency": s.sampler.Concurrency, "tolerance": s.sampler.Tolerance, "confidence": s.sampler.Confidence, "reducer": reducer, "scorer": ScorerConfiguration(s.inner)})
+	return raw
+}
 func (s *sampledScorer) Revision() string {
 	reducer := "mean"
 	if s.sampler.Reduce != nil {

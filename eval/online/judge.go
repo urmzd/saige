@@ -43,6 +43,11 @@ var (
 
 // Revision identifies the configured online judge without credentials or budget state.
 func (g *BudgetedGenerator) Revision() string {
+	return eval.RevisionTag("online-generator/v2", g.Configuration())
+}
+
+// Configuration exposes declared model and prompt settings without budget state.
+func (g *BudgetedGenerator) Configuration() json.RawMessage {
 	converters := make([]string, 0, len(g.Conversion.Converters))
 	for _, c := range g.Conversion.Converters {
 		converters = append(converters, c.Name()+"@"+c.Version())
@@ -51,8 +56,8 @@ func (g *BudgetedGenerator) Revision() string {
 	if info.Offering == nil {
 		info.Offering = info.Capabilities.Offering
 	}
-	return eval.RevisionTag("online-generator/v1", info, g.System,
-		g.Conversion.Dial, converters, g.Conversion.MaxCost, g.Conversion.Scope, g.Conversion.Thinking)
+	raw, _ := json.Marshal(map[string]any{"provider": info, "system": g.System, "modality": g.Conversion.Dial, "converters": converters, "max_cost": g.Conversion.MaxCost, "scope": g.Conversion.Scope, "thinking": g.Conversion.Thinking})
+	return raw
 }
 
 // Generate implements [eval.Generator].
@@ -99,6 +104,7 @@ func (g *BudgetedGenerator) call(ctx context.Context, parts []types.UserPart, sc
 	}
 	ch, err := g.Provider.Stream(ctx, types.Request{Messages: msgs, Schema: schema})
 	if err != nil {
+		eval.RecordEvaluationUsage(ctx, types.UsageDelta{}, caps.Pricing, false)
 		_ = g.settle(id, caps.Pricing, types.UsageDelta{}, false)
 		return "", err
 	}
@@ -122,6 +128,7 @@ func (g *BudgetedGenerator) call(ctx context.Context, parts []types.UserPart, sc
 			}
 		}
 	}
+	eval.RecordEvaluationUsage(ctx, usage, caps.Pricing, gotUsage)
 	if err := g.settle(id, caps.Pricing, usage, gotUsage); err != nil {
 		errs = append(errs, err)
 	}

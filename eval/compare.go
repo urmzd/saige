@@ -107,8 +107,11 @@ type CaseDiff struct {
 // Comparison is the result of comparing a candidate arm (exp) against a
 // base arm on the same cases.
 type Comparison struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	BaseSetup    *ExperimentSetup `json:"base_setup,omitempty"`
+	ExpSetup     *ExperimentSetup `json:"exp_setup,omitempty"`
+	SetupChanges []SetupChange    `json:"setup_changes,omitempty"`
+	Name         string           `json:"name"`
+	CreatedAt    time.Time        `json:"created_at"`
 	// Base and Exp name the compared arms when they are known, such as
 	// the variant names given to [CompareVariants].
 	Base          string              `json:"base,omitempty"`
@@ -328,6 +331,9 @@ func compareSuites(cfg *Config, baseSuite, expSuite *SuiteResult) *Comparison {
 
 	result := &Comparison{
 		Name:              cfg.Name,
+		BaseSetup:         cloneSetup(baseSuite.Setup),
+		ExpSetup:          cloneSetup(expSuite.Setup),
+		SetupChanges:      DiffSetups(baseSuite.Setup, expSuite.Setup),
 		CreatedAt:         time.Now(),
 		BaseResults:       baseSuite.Results,
 		ExpResults:        expSuite.Results,

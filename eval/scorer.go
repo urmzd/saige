@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"runtime"
 )
@@ -71,7 +72,8 @@ type namedScorer struct {
 
 func (n *namedScorer) Name() string { return n.name }
 
-func (n *namedScorer) Revision() string { return ScorerRevision(n.inner) }
+func (n *namedScorer) Revision() string               { return ScorerRevision(n.inner) }
+func (n *namedScorer) Configuration() json.RawMessage { return ScorerConfiguration(n.inner) }
 
 func (n *namedScorer) Score(ctx context.Context, obs Observation) (Score, error) {
 	score, err := n.inner.Score(ctx, obs)

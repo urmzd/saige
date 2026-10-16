@@ -72,7 +72,12 @@ func (g *Generator) stream(ctx context.Context, req types.Request) (<-chan types
 	if !g.conversion.IsZero() {
 		ctx = convert.WithRuntime(ctx, convert.Runtime{Policy: g.conversion})
 	}
-	return g.provider.Stream(ctx, req)
+	ch, err := g.provider.Stream(ctx, req)
+	if err != nil {
+		caps, _ := types.ProviderCapabilities(g.provider)
+		topeval.RecordEvaluationUsage(ctx, types.UsageDelta{}, caps.Pricing, false)
+	}
+	return ch, err
 }
 
 // GenerateParts sends parts as one user message, with schema as the
@@ -96,7 +101,7 @@ func (g *Generator) GenerateParts(ctx context.Context, parts []types.UserPart, s
 	if err != nil {
 		return "", err
 	}
-	return collectReply(ch)
+	return collectReply(ctx, ch, g.provider)
 }
 
 // Generate sends prompt as a single user message and returns the reply text.
@@ -105,7 +110,7 @@ func (g *Generator) Generate(ctx context.Context, prompt string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return collectReply(ch)
+	return collectReply(ctx, ch, g.provider)
 }
 
 // GenerateStructured sends prompt with schema as the response schema when
@@ -124,7 +129,7 @@ func (g *Generator) GenerateStructured(ctx context.Context, prompt string, schem
 	if err != nil {
 		return "", err
 	}
-	return collectReply(ch)
+	return collectReply(ctx, ch, g.provider)
 }
 
 func (g *Generator) messages(prompt string) []types.Message {
@@ -137,11 +142,13 @@ func (g *Generator) messages(prompt string) []types.Message {
 
 // collectReply drains a provider stream into its text, returning the first
 // ErrorDelta as an error.
-func collectReply(ch <-chan types.Delta) (string, error) {
+func collectReply(ctx context.Context, ch <-chan types.Delta, p types.Provider) (string, error) {
 	var (
-		text    strings.Builder
-		errs    []error
-		gotText bool
+		text     strings.Builder
+		errs     []error
+		gotText  bool
+		usage    types.UsageDelta
+		gotUsage bool
 	)
 	for d := range ch {
 		switch v := d.(type) {
@@ -150,6 +157,8 @@ func collectReply(ch <-chan types.Delta) (string, error) {
 				text.WriteString(v.Text)
 				gotText = true
 			}
+		case types.UsageDelta:
+			usage, gotUsage = usage.Merge(v), true
 		case types.ErrorDelta:
 			if v.Error != nil {
 				errs = append(errs, v.Error)
@@ -158,6 +167,8 @@ func collectReply(ch <-chan types.Delta) (string, error) {
 			}
 		}
 	}
+	caps, _ := types.ProviderCapabilities(p)
+	topeval.RecordEvaluationUsage(ctx, usage, caps.Pricing, gotUsage)
 	if len(errs) > 0 {
 		return text.String(), errors.Join(errs...)
 	}

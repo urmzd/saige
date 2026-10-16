@@ -719,3 +719,116 @@ cannot be inferred: pin them with
 `eval.Revisioned(scorer, eval.RevisionTag("my-check@2", configuration))`.
 Revisions identify declared configuration; record code commits separately
 with `CaptureProvenance`. Stored records predating revision tags remain readable.
+
+### Experiment setup and evaluation trials
+
+Declare the experiment and variant configuration next to their revision pins.
+These settings are captured before subjects run. Setup identity does not change
+when the same experiment produces different scores, costs or timings.
+
+```go
+exp := eval.Experiment{
+    Name: "answer-quality",
+    Revision: "experiment@2",
+    Config: json.RawMessage(`{"dataset":"billing@3"}`),
+    Variants: []eval.Variant{{
+        Name: "candidate",
+        Revision: "agent@7",
+        Config: json.RawMessage(`{"model":"small","prompt":"answer@4"}`),
+        Subject: subject,
+    }},
+    Scorers: []eval.Scorer{judge},
+    Sampler: eval.Sampler{N: 3, Confidence: 0.95},
+    Assertions: []eval.Assertion{
+        {Metric: "judge_score", Op: eval.GTE, Threshold: 0.8},
+        {Metric: "latency_ms", Op: eval.LTE, Threshold: 2000},
+        {Metric: "cost_usd", Op: eval.LTE, Threshold: 0.02},
+        {Metric: "evaluation_latency_ms", Op: eval.LTE, Threshold: 5000},
+        {Metric: "evaluation_cost_usd", Op: eval.LTE, Threshold: 0.01},
+    },
+}
+
+// Prepare subject outputs once, then execute the WHOLE evaluation 10 times.
+trials, err := exp.Sample(ctx, dataset, 10)
+if err != nil {
+    return err // trials still contains partial results
+}
+fmt.Println(trials.Setup.Revision)
+fmt.Println(trials.Variants["candidate"]["judge_score"])
+fmt.Println(trials.EvaluationCost, trials.EvaluationLatency)
+for _, trial := range trials.Evaluations {
+    fmt.Println(trial.Evaluation, trial.Outcome, trial.Violations)
+}
+
+// Compare saved experiment runs: changed settings and measured impact.
+comparison := eval.CompareSuites(previous, trials.Evaluations[0])
+fmt.Println(comparison.SetupChanges) // e.g. variants[0].config.model
+fmt.Println(comparison.DeltaStats["cost_usd"])
+fmt.Println(comparison.DeltaStats["latency_ms"])
+```
+
+`Snapshot(dataset, evaluations, options...)` previews the effective setup
+without executing anything. It records dataset identity, experiment and variant
+configuration, evaluator revisions and exposed settings (including judge
+prompts/model configuration), assertions, concurrency, gate and dial policies,
+subject repeats and scorer sampling. `CompareSuites` retains both setup
+snapshots and reports field-level differences alongside its existing paired
+score deltas. Keep secrets out of declarative `Config` and labels.
+
+The three repetition controls are independent:
+
+| Control | What executes again | What stays fixed |
+| --- | --- | --- |
+| `WithRepeats(n)` | Subject, producing n output traces | Dataset input |
+| `WithSampler(Sampler{N:n})` | Individual nondeterministic scorer | One output trace |
+| `Experiment.Sample(..., n)` | All scorers, measurements and assertions | Prepared output traces |
+
+Evaluation trials execute even deterministic scorers again. Batch requests get
+trial-specific keys, so completed verdicts from a previous trial are not reused.
+Response caching must also be disabled for fresh model draws. Each trial is a
+complete `SuiteResult`, with its own evaluation number, outcome and usage.
+`Experiment.Run` is one evaluation trial. Use separate run IDs when persisting
+each trial with `NewRunRecord` and the results store; setup, trial identity and
+usage survive storage round trips.
+
+Trial summaries calculate means and normal-approximation confidence intervals
+over independently executed evaluation aggregates, including per-variant
+metrics. They do not bootstrap stored scores or treat repeated judgments as
+new subject outputs. Their `N` counts measured trials; each trial still carries
+its per-case error and completeness information. These intervals measure
+evaluator variation conditional on the prepared traces. Subject cost and
+latency uncertainty requires subject repeats or separate experiment runs.
+
+Experiments automatically expose recorded metadata as assertion metrics. Plain
+`Run` enables the same behavior with `WithMeasurements()`:
+
+| Metrics | Source |
+| --- | --- |
+| `latency_ms`, `ttft_ms`, `ttlt_ms`, `median_itl_ms` | Subject timing |
+| `cost_usd`, `input_tokens`, `output_tokens`, `total_tokens` | Subject usage |
+| `evaluation_latency_ms` | Sum of scorer wall times for the observation |
+| `evaluation_cost_usd`, `evaluation_tokens` | Actual evaluator calls |
+
+Recorded subject timings are preserved. When a subject leaves total latency
+unset, experiments measure it. Cost and latency remain separate: unknown cost
+is omitted rather than reported as free. Missing metadata never satisfies a
+cost assertion. SAIGE's offline and online judge generators record provider
+usage and pricing automatically, including failed calls that reported usage.
+Custom generators can call `RecordEvaluationUsage` on the supplied context.
+If any evaluator call lacks known USD pricing or usage, its observation and
+trial cost stay unknown; available token counts and timing remain recorded.
+`Score.Timing` retains evaluator usage separately from `Observation.Timing`.
+`SuiteResult.EvaluationTiming.TotalMs` is whole-suite scoring wall time, which
+can be lower than the summed scorer times under concurrency. Durations are
+recorded with a minimum of one millisecond. Existing user-supplied metrics win
+when a measurement has the same name. Comparisons treat cost and latency
+metrics as lower-is-better by default.
+
+For an existing trace, use `exp.Evaluate(ctx, traces, n)` instead of `Sample`.
+It repeats the complete evaluation without invoking any subject and preserves
+the trace's recorded output, cost and latency. Variant subjects may be nil in
+this mode. A single variant is assigned automatically; with multiple variants,
+each trace must carry its declared `variant` label. Setup records
+`mode="fixed_traces"` and zero subject repeats. `WithRepeats` is rejected here
+because it regenerates outputs. Reported subject cost is attributed from the
+stored trace, not newly incurred during evaluation.

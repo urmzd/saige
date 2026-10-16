@@ -43,8 +43,11 @@ func (s RunStatus) Finished() bool {
 
 // RunRecord is one stored evaluation run.
 type RunRecord struct {
-	ID    string `json:"id"`
-	Suite string `json:"suite"`
+	Setup            *ExperimentSetup  `json:"setup,omitempty"`
+	Evaluation       int               `json:"evaluation,omitempty"`
+	EvaluationTiming ObservationTiming `json:"evaluation_timing,omitzero"`
+	ID               string            `json:"id"`
+	Suite            string            `json:"suite"`
 	// Claim is the hypothesis of the experiment behind the run, if any.
 	Claim string `json:"claim,omitempty"`
 	// Revision identifies the configuration that ran, such as a content
@@ -87,7 +90,8 @@ type TraceRef struct {
 
 // Unit is one stored, scored observation of a [RunRecord].
 type Unit struct {
-	RunID string `json:"run_id"`
+	EvaluationTiming ObservationTiming `json:"evaluation_timing,omitzero"`
+	RunID            string            `json:"run_id"`
 	// Key identifies the unit within the run; see [UnitKey].
 	Key string `json:"key"`
 	// Attempt numbers reruns of the same key from 1. A store assigns it.
@@ -100,7 +104,7 @@ type Unit struct {
 
 // Result returns the unit as an [ObservationResult].
 func (u Unit) Result() ObservationResult {
-	return ObservationResult{Observation: u.Observation, Scores: u.Scores}
+	return ObservationResult{Observation: u.Observation, Scores: u.Scores, EvaluationTiming: cloneTiming(u.EvaluationTiming)}
 }
 
 // UnitKey is the stable identity of an observation within a run: its ID and
@@ -158,6 +162,9 @@ func NewRunRecord(id string, suite *SuiteResult, runErr error, prov Provenance) 
 	}
 	run.Suite = suite.Name
 	run.Revision = suite.Revision
+	run.Setup = cloneSetup(suite.Setup)
+	run.Evaluation = suite.Evaluation
+	run.EvaluationTiming = cloneTiming(suite.EvaluationTiming)
 	run.Claim = suite.Claim
 	run.StartedAt = suite.CreatedAt.UTC()
 	run.Outcome = suite.Outcome
@@ -184,10 +191,11 @@ func (s *SuiteResult) Units(runID string) []Unit {
 	units := make([]Unit, len(s.Results))
 	for i, r := range s.Results {
 		units[i] = Unit{
-			RunID:       runID,
-			Key:         UnitKey(r.Observation),
-			Observation: r.Observation,
-			Scores:      r.Scores,
+			RunID:            runID,
+			Key:              UnitKey(r.Observation),
+			Observation:      r.Observation,
+			EvaluationTiming: cloneTiming(r.EvaluationTiming),
+			Scores:           r.Scores,
 		}
 	}
 	return units
@@ -201,19 +209,22 @@ func SuiteFromUnits(run RunRecord, units []Unit) *SuiteResult {
 		results[i] = u.Result()
 	}
 	return &SuiteResult{
-		Name:           run.Suite,
-		Revision:       run.Revision,
-		Claim:          run.Claim,
-		CreatedAt:      run.StartedAt,
-		Results:        results,
-		Aggregate:      Aggregate(results),
-		ErroredCases:   run.ErroredCases,
-		UnstableScores: run.UnstableScores,
-		SubjectErrors:  run.SubjectErrors,
-		Incomplete:     run.Incomplete,
-		Inconclusive:   countInconclusive(results),
-		Outcome:        run.Outcome,
-		Violations:     append([]Violation(nil), run.Violations...),
+		Name:             run.Suite,
+		Revision:         run.Revision,
+		Setup:            cloneSetup(run.Setup),
+		Evaluation:       run.Evaluation,
+		EvaluationTiming: cloneTiming(run.EvaluationTiming),
+		Claim:            run.Claim,
+		CreatedAt:        run.StartedAt,
+		Results:          results,
+		Aggregate:        Aggregate(results),
+		ErroredCases:     run.ErroredCases,
+		UnstableScores:   run.UnstableScores,
+		SubjectErrors:    run.SubjectErrors,
+		Incomplete:       run.Incomplete,
+		Inconclusive:     countInconclusive(results),
+		Outcome:          run.Outcome,
+		Violations:       append([]Violation(nil), run.Violations...),
 	}
 }
 

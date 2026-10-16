@@ -658,8 +658,14 @@ func TestCompareSuitesMultiVariant(t *testing.T) {
 	if p := c.PassStats["correct"].Pairs; p.N() != 4 || p.Both != 3 || p.OnlyA != 1 {
 		t.Errorf("pass pairs = %+v, want 4 pairs, both=3 only_base=1", p)
 	}
-	if len(c.Cases) != 4 {
-		t.Fatalf("cases = %d, want one per variant and question", len(c.Cases))
+	correctCases := 0
+	for _, d := range c.Cases {
+		if d.Metric == "correct" {
+			correctCases++
+		}
+	}
+	if correctCases != 4 {
+		t.Fatalf("correctness cases=%d, want one per variant and question", correctCases)
 	}
 	tests := []struct {
 		variant, id string
@@ -673,7 +679,7 @@ func TestCompareSuitesMultiVariant(t *testing.T) {
 	for _, tt := range tests {
 		var found bool
 		for _, d := range c.Cases {
-			if d.Variant == tt.variant && d.ID == tt.id {
+			if d.Metric == "correct" && d.Variant == tt.variant && d.ID == tt.id {
 				found = true
 				if d.Status != tt.want {
 					t.Errorf("%s/%s status = %q, want %q", tt.variant, tt.id, d.Status, tt.want)

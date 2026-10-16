@@ -96,7 +96,7 @@ func (r *Registry) Build(spec ScorerSpec) (Scorer, error) {
 			return nil, err
 		}
 	}
-	return Revisioned(s, RevisionTag("registry/v1", spec.Kind, spec.Name, spec.Revision, config, ScorerRevision(s))), nil
+	return withScorerConfiguration(Revisioned(s, RevisionTag("registry/v1", spec.Kind, spec.Name, spec.Revision, config, ScorerRevision(s))), map[string]any{"kind": spec.Kind, "name": spec.Name, "revision": spec.Revision, "params": config}), nil
 }
 
 // BuildAll constructs every spec, stopping at the first error.

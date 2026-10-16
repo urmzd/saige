@@ -32,7 +32,8 @@ func Revisioned(s Scorer, revision string) Scorer {
 
 type revisionScorer struct {
 	Scorer
-	revision string
+	revision      string
+	configuration json.RawMessage
 }
 
 func (s *revisionScorer) Revision() string { return s.revision }
@@ -80,4 +81,26 @@ func observationRevision(obs Observation) string {
 	}
 	return RevisionTag("observation/v1", obs.ID, obs.Turn, obs.Sample, obs.Labels,
 		string(obs.Input), string(obs.Output), string(obs.GroundTruth), annotations)
+}
+
+// ScorerConfiguration returns declared settings when a scorer exposes them.
+// Opaque closures require Config on the experiment or variant and a revision pin.
+func ScorerConfiguration(s Scorer) json.RawMessage {
+	if c, ok := s.(interface{ Configuration() json.RawMessage }); ok {
+		return append(json.RawMessage(nil), c.Configuration()...)
+	}
+	return nil
+}
+func (s *revisionScorer) Configuration() json.RawMessage {
+	if len(s.configuration) > 0 {
+		return append(json.RawMessage(nil), s.configuration...)
+	}
+	return ScorerConfiguration(s.Scorer)
+}
+func withScorerConfiguration(s Scorer, config any) Scorer {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		panic(fmt.Sprintf("eval scorer configuration: %v", err))
+	}
+	return &revisionScorer{Scorer: s, revision: ScorerRevision(s), configuration: raw}
 }

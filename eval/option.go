@@ -21,6 +21,8 @@ type Config struct {
 	Concurrency int
 	Logger      *slog.Logger
 	Sampler     Sampler
+	// Measurements exposes recorded subject and evaluator metadata as assertable metrics.
+	Measurements bool
 
 	// Name names a comparison; [Run] and [Experiment.Run] take their name
 	// explicitly and ignore it.
@@ -49,8 +51,9 @@ type Config struct {
 
 func newConfig(opts []Option) *Config {
 	cfg := &Config{
-		Concurrency: 1,
-		Logger:      slog.Default(),
+		Concurrency:   1,
+		LowerIsBetter: map[string]bool{"cost_usd": true, "latency_ms": true, "ttft_ms": true, "ttlt_ms": true, "median_itl_ms": true, "evaluation_cost_usd": true, "evaluation_latency_ms": true},
+		Logger:        slog.Default(),
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -86,6 +89,10 @@ func WithLogger(l *slog.Logger) Option {
 func WithSampler(s Sampler) Option {
 	return func(c *Config) { c.Sampler = s }
 }
+
+// WithMeasurements exposes recorded cost, latency and token metadata as metrics.
+// Experiments enable it automatically. Unknown measurements remain absent.
+func WithMeasurements() Option { return func(c *Config) { c.Measurements = true } }
 
 // WithName names a comparison.
 func WithName(name string) Option {
