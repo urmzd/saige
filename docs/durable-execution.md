@@ -1,7 +1,7 @@
 # Durable execution
 
 Two engines make a run durable. `agent/durable/local` keeps runs on one machine's filesystem.
-`agent/durable/duraturo` runs them on a duraturo ledger and queue, such as Postgres tables; see [the duraturo engine](#the-duraturo-engine).
+`agent/durable/anchor` runs them on a anchor ledger and queue, such as Postgres tables; see [the anchor engine](#the-anchor-engine).
 Most of this page describes the local engine. The contracts for approvals, uncertain steps and budget receipts are the same in both.
 
 ## The local engine
@@ -183,16 +183,16 @@ The engine does not provide encryption, a retention service, or a portable expor
 Each update rewrites the snapshot. Large or long-running workloads need a different storage backend.
 `Engine.List` reads every run's snapshot, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
 
-## The duraturo engine
+## The anchor engine
 
-`agent/durable/duraturo` runs an agent as a [duraturo](https://github.com/urmzd/duraturo) workflow.
-duraturo keeps runs and their step records in a ledger and delivers run IDs to workers through a queue.
+`agent/durable/anchor` runs an agent as a [anchor](https://github.com/urmzd/anchor) workflow.
+anchor keeps runs and their step records in a ledger and delivers run IDs to workers through a queue.
 `ledger.NewMemory` and `queue.NewMemory` form a complete single-process system.
-`github.com/urmzd/duraturo/adapters/postgres` maps both onto Postgres tables the host owns, so Postgres is the only infrastructure.
+`github.com/urmzd/anchor/adapters/postgres` maps both onto Postgres tables the host owns, so Postgres is the only infrastructure.
 The adapter validates the tables and never migrates them; `pgledger.RecommendedDDL` and `pgqueue.RecommendedDDL` return suggested DDL.
 
 ```go
-engine := duraturo.New(lgr, q) // any duraturo ledger and queue
+engine := anchor.New(lgr, q) // any anchor ledger and queue
 wf := engine.Register("reviewer.v3", func(runID string) *agent.Agent {
     a, err := agent.New(agent.Config{Provider: configuredProvider, Tools: tools})
     if err != nil {
@@ -216,12 +216,12 @@ if errors.Is(err, types.ErrSuspended) {
 
 The run ID is the idempotency key. Starting an existing run with the same workflow and input is a no-op; a different input returns `ErrConflict`.
 The workflow name is the compatibility contract for recorded runs. Give a workflow a new name when its recorded steps would no longer replay.
-Every worker must come from `Engine.Worker`, so it resolves the registered workflows. Keep duraturo's default JSON codec.
+Every worker must come from `Engine.Worker`, so it resolves the registered workflows. Keep anchor's default JSON codec.
 
-Each provider call and tool call is a duraturo step, keyed by its stable step name.
+Each provider call and tool call is a anchor step, keyed by its stable step name.
 On every claim the workflow runs from the top: recorded steps return their results, and the first unrecorded step executes.
-Steps run one at a time, because duraturo derives record keys from call order. Durable tool calls are therefore sequential.
-A tool step's context carries duraturo's idempotency key under `types.ToolContextIdempotencyKey`; pass it to an external service that drops duplicate requests.
+Steps run one at a time, because anchor derives record keys from call order. Durable tool calls are therefore sequential.
+A tool step's context carries anchor's idempotency key under `types.ToolContextIdempotencyKey`; pass it to an external service that drops duplicate requests.
 
 An approval or interrupt is a durable event. The run records the request and parks: it leaves the queue, stays pending and holds no worker.
 `Decide` and `Router().Reply` record the reply once and enqueue the run, which replays to the waiting call and continues.
@@ -233,9 +233,9 @@ The run parks with `ErrIndeterminate` and does not call the step again.
 `Inspect` lists the step with its saved budget reservation. `Reconcile(ctx, runID, step, &result)` records the verified result; a nil result permits one more attempt and keeps the uncertain charge.
 A tool that returns an error is a recorded result, not an uncertain step. A panic is uncertain.
 
-| Feature | `agent/durable/local` | `agent/durable/duraturo` |
+| Feature | `agent/durable/local` | `agent/durable/anchor` |
 | --- | --- | --- |
-| Storage | Private directory, one file per run | Any duraturo ledger and queue; Postgres tables in production |
+| Storage | Private directory, one file per run | Any anchor ledger and queue; Postgres tables in production |
 | Workers | One process lock per run | Any number of workers; fenced, time-bounded leases |
 | Agent per run | Factory passed to `Run` | Factory passed to `Register`, called with the run ID |
 | Approvals and interrupts | `Decide`, `Router`, `Inspect` | `Decide`, `Router`, `Inspect`; the run parks off the queue |
@@ -257,4 +257,4 @@ A tool that returns an error is a recorded result, not an uncertain step. A pani
 
 Kubernetes can place and restart workers. It does not replace these contracts.
 Do not use this local lock as a distributed lease on a shared network filesystem.
-The duraturo engine supplies the shared lease, fencing, queue and transactional record store. Account-level limits across runs remain host accounting.
+The anchor engine supplies the shared lease, fencing, queue and transactional record store. Account-level limits across runs remain host accounting.

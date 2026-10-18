@@ -520,7 +520,7 @@ Independent calls can run. The parent still waits for the complete tool batch be
 `MaxParallelTools: 1` preserves strict ordering for streaming calls.
 The consumer must drain events. A full event buffer applies backpressure to producers.
 
-Use `agent/durable/local` or `agent/durable/duraturo` for persisted decisions and process recovery.
+Use `agent/durable/local` or `agent/durable/anchor` for persisted decisions and process recovery.
 Pending approvals return `ErrSuspended` without holding a goroutine for the human decision.
 The worker releases its run lock after active siblings finish and their results are saved.
 A new worker uses the same run ID, revision, input, and fresh agent factory to resume.

@@ -38,7 +38,7 @@ just integration-down
 
 Postgres only, no Ollama: `just test-postgres` runs the tests that need just a
 database (this package's Postgres-only tests, the `pgstore` packages, the
-duraturo durable engine, and the CLI's RAG round trip). CI runs the same set on every pull request against a
+anchor durable engine, and the CLI's RAG round trip). CI runs the same set on every pull request against a
 ParadeDB (PostgreSQL 18, pgvector, pg_search) service container; tests that also need Ollama skip there.
 
 No native Ollama? Use the containerized one:

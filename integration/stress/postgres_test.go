@@ -17,14 +17,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/duraturo/adapters/postgres/pgledger"
-	"github.com/urmzd/duraturo/adapters/postgres/pgqueue"
-	"github.com/urmzd/duraturo/pkg/worker"
+	"github.com/urmzd/anchor/adapters/postgres/pgledger"
+	"github.com/urmzd/anchor/adapters/postgres/pgqueue"
+	"github.com/urmzd/anchor/pkg/worker"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/cache/memcache"
-	"github.com/urmzd/saige/agent/durable/duraturo"
+	"github.com/urmzd/saige/agent/durable/anchor"
 	"github.com/urmzd/saige/agent/notify"
 	"github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/internal/must"
@@ -503,7 +503,7 @@ func TestDurableWorkersCompete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := duraturo.New(lgr, q)
+	e := anchor.New(lgr, q)
 
 	var modelCalls, toolRuns sync.Map
 	wf := e.Register("stress", func(runID string) *agent.Agent {

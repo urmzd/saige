@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import agenttypes "github.com/urmzd/saige/agent/types"
 

@@ -221,7 +221,7 @@ execution without ordering it. Approval waits do not hold those execution slots.
 Delegated children apply their own inherited limits; the parent cap is not a global worker limit.
 Durable runners execute serially unless they implement `ConcurrentStepRunner`.
 
-For saved approvals and process recovery, use [durable execution](../docs/durable-execution.md): the local engine on one machine, or the duraturo engine on Postgres.
+For saved approvals and process recovery, use [durable execution](../docs/durable-execution.md): the local engine on one machine, or the anchor engine on Postgres.
 Both engines save requests before suspension and preserve completed results during replay.
 
 ## Sub-Agents

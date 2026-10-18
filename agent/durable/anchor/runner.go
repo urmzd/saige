@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"sync"
 
-	dt "github.com/urmzd/duraturo"
+	dt "github.com/urmzd/anchor"
 
 	"github.com/urmzd/saige/agent/types"
 )
 
-// Record names. A step's records sit under keys duraturo derives from these
+// Record names. A step's records sit under keys anchor derives from these
 // names and their occurrence in the run, so they must never change.
 const (
 	stepPrefix      = "step:"      // a step's recorded result
@@ -27,7 +27,7 @@ const (
 var errUnrecorded = errors.New("no recorded outcome")
 
 // runner is the types.StepRunner one workflow attempt hands to the agent. It
-// lives for one attempt; everything durable is a duraturo record.
+// lives for one attempt; everything durable is a anchor record.
 type runner struct {
 	e      *Engine
 	runID  string
@@ -58,7 +58,7 @@ func (r *runner) SharedBudgetOnly() bool { return true }
 // uncertain: the run parks with ErrIndeterminate until Reconcile resolves it,
 // and fn does not run again unless the host permits a retry.
 //
-// While fn runs, the tool context carries the step's duraturo idempotency key
+// While fn runs, the tool context carries the step's anchor idempotency key
 // under types.ToolContextIdempotencyKey.
 func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Context) (types.StepResult, error)) (types.StepResult, error) {
 	if !dt.InRun(ctx) {
@@ -202,7 +202,7 @@ func (r *runner) RecordReservation(ctx context.Context, _ string, receipt types.
 	return err
 }
 
-// withIdempotencyKey adds the step's duraturo idempotency key to the tool
+// withIdempotencyKey adds the step's anchor idempotency key to the tool
 // context.
 func withIdempotencyKey(ctx context.Context) context.Context {
 	key := dt.IdempotencyKey(ctx)

@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"bytes"
@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	dt "github.com/urmzd/duraturo"
-	"github.com/urmzd/duraturo/pkg/run"
+	dt "github.com/urmzd/anchor"
+	"github.com/urmzd/anchor/pkg/run"
 
 	"github.com/urmzd/saige/agent/types"
 )

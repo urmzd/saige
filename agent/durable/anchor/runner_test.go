@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/duraturo/pkg/replay"
-	"github.com/urmzd/duraturo/pkg/run"
+	"github.com/urmzd/anchor/pkg/replay"
+	"github.com/urmzd/anchor/pkg/run"
 
 	"github.com/urmzd/saige/agent/types"
 )

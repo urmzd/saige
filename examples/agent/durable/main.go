@@ -9,13 +9,13 @@
 //
 //	go run ./examples/agent/durable/
 //
-// With -backend=duraturo the same agent runs as a duraturo workflow on
+// With -backend=anchor the same agent runs as a anchor workflow on
 // Postgres, the production backend: the ledger and the queue are tables in
 // your database, and any number of worker processes can execute runs.
 //
-//	DATABASE_URL=postgres://localhost:5432/saige go run ./examples/agent/durable/ -backend=duraturo
+//	DATABASE_URL=postgres://localhost:5432/saige go run ./examples/agent/durable/ -backend=anchor
 //
-// duraturo never creates tables. When the schema is missing, the example
+// anchor never creates tables. When the schema is missing, the example
 // prints the suggested DDL for you to apply.
 package main
 
@@ -28,11 +28,11 @@ import (
 	"path/filepath"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/duraturo/adapters/postgres/pgledger"
-	"github.com/urmzd/duraturo/adapters/postgres/pgqueue"
+	"github.com/urmzd/anchor/adapters/postgres/pgledger"
+	"github.com/urmzd/anchor/adapters/postgres/pgqueue"
 
 	agentsdk "github.com/urmzd/saige/agent"
-	durableduraturo "github.com/urmzd/saige/agent/durable/duraturo"
+	durableanchor "github.com/urmzd/saige/agent/durable/anchor"
 	"github.com/urmzd/saige/agent/durable/local"
 	"github.com/urmzd/saige/agent/provider/ollama"
 	"github.com/urmzd/saige/agent/types"
@@ -57,7 +57,7 @@ func newAgent() *agentsdk.Agent {
 }
 
 func main() {
-	backend := flag.String("backend", "local", "durable backend: local or duraturo")
+	backend := flag.String("backend", "local", "durable backend: local or anchor")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -70,10 +70,10 @@ func main() {
 	switch *backend {
 	case "local":
 		final, err = runLocal(ctx, input)
-	case "duraturo":
-		final, err = runDuraturo(ctx, input)
+	case "anchor":
+		final, err = runAnchor(ctx, input)
 	default:
-		log.Fatalf("unknown backend %q: use local or duraturo", *backend)
+		log.Fatalf("unknown backend %q: use local or anchor", *backend)
 	}
 	if errors.Is(err, types.ErrSuspended) {
 		log.Fatal("run is waiting for an approval; decide it and run again")
@@ -98,10 +98,10 @@ func runLocal(ctx context.Context, input []types.Message) (*types.AssistantMessa
 	return engine.Run(ctx, "demo-turn-1", "researcher-v1", newAgent, input)
 }
 
-// runDuraturo runs the agent on Postgres tables through duraturo. The worker
+// runAnchor runs the agent on Postgres tables through anchor. The worker
 // runs in this process here; a deployment can run it in separate processes
 // that register the same workflow.
-func runDuraturo(ctx context.Context, input []types.Message) (*types.AssistantMessage, error) {
+func runAnchor(ctx context.Context, input []types.Message) (*types.AssistantMessage, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://localhost:5432/saige?sslmode=disable"
@@ -126,7 +126,7 @@ func runDuraturo(ctx context.Context, input []types.Message) (*types.AssistantMe
 		return nil, err
 	}
 
-	engine := durableduraturo.New(lgr, q)
+	engine := durableanchor.New(lgr, q)
 	wf := engine.Register("researcher.v1", func(string) *agentsdk.Agent { return newAgent() })
 
 	workerCtx, stop := context.WithCancel(ctx)

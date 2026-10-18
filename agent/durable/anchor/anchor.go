@@ -1,11 +1,11 @@
-// Package duraturo runs SAIGE agents as durable workflows on
-// github.com/urmzd/duraturo. Each LLM call and tool execution becomes a
-// memoized duraturo step: a crashed or restarted worker replays the run to
+// Package anchor runs SAIGE agents as durable workflows on
+// github.com/urmzd/anchor. Each LLM call and tool execution becomes a
+// memoized anchor step: a crashed or restarted worker replays the run to
 // its first unrecorded step instead of repeating (and re-billing) the work.
 //
-// The engine composes any duraturo ledger and queue. The in-memory pair
+// The engine composes any anchor ledger and queue. The in-memory pair
 // (ledger.NewMemory, queue.NewMemory) is a complete single-process system;
-// github.com/urmzd/duraturo/adapters/postgres runs both on Postgres tables the
+// github.com/urmzd/anchor/adapters/postgres runs both on Postgres tables the
 // host owns. The core agent package never imports this package: it depends
 // only on the types.StepRunner seam.
 //
@@ -16,10 +16,10 @@
 // after a crash parks the same way until Reconcile supplies its result or
 // permits a retry (ErrIndeterminate).
 //
-// Durable runs execute tool calls sequentially. duraturo derives record keys
+// Durable runs execute tool calls sequentially. anchor derives record keys
 // from call order inside one workflow, so steps run one at a time in a stable
 // order. The cost is latency on turns with many tool calls.
-package duraturo
+package anchor
 
 import (
 	"context"
@@ -29,11 +29,11 @@ import (
 	"reflect"
 	"time"
 
-	dt "github.com/urmzd/duraturo"
-	"github.com/urmzd/duraturo/pkg/ledger"
-	"github.com/urmzd/duraturo/pkg/queue"
-	"github.com/urmzd/duraturo/pkg/run"
-	"github.com/urmzd/duraturo/pkg/worker"
+	dt "github.com/urmzd/anchor"
+	"github.com/urmzd/anchor/pkg/ledger"
+	"github.com/urmzd/anchor/pkg/queue"
+	"github.com/urmzd/anchor/pkg/run"
+	"github.com/urmzd/anchor/pkg/worker"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/internal/durablecodec"
@@ -77,7 +77,7 @@ type Engine struct {
 	registry *run.Registry
 }
 
-// New composes an engine from a duraturo ledger and queue. Nothing is
+// New composes an engine from a anchor ledger and queue. Nothing is
 // created or migrated: the implementations own storage.
 func New(lgr ledger.Ledger, q queue.Queue) *Engine {
 	return &Engine{
@@ -89,7 +89,7 @@ func New(lgr ledger.Ledger, q queue.Queue) *Engine {
 	}
 }
 
-// Worker returns a duraturo worker over the engine's ledger, queue and
+// Worker returns a anchor worker over the engine's ledger, queue and
 // workflows. Run it on a goroutine; it stops when its context is done. Keep
 // the default codec: the engine writes reply records as JSON.
 //
