@@ -1,0 +1,8 @@
+create           .agents/skills/review/SKILL.md
+create           .agents/skills/review/scripts/check.sh
+create           .agents/skills/lint/SKILL.md
+create           .agents/skills/web-components/SKILL.md
+create           .agents/skills/cursorrules/SKILL.md
+note: skipped: skill source $PROJECT/.claude/skills: Bad: skills: invalid skill: name must be lowercase letters, digits, and single hyphens, not starting or ending with a hyphen
+note: kept .agents/skills/hand: saige import did not write it; pass --force to replace it with .claude/skills/hand
+note: review: .codex/skills/review is shadowed by .claude/skills/review

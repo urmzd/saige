@@ -37,7 +37,7 @@ saige acp --agent reviewer
 | Cursor agent CLI | writes `.cursor/mcp.json`; skills to `.agents/skills/` | `.cursor/mcp.json`, `.agents/skills/`, `.cursor/agents/NAME.md` | MCP elicitation (per Cursor's docs) | Unverified |
 | ACP editors (Zed, JetBrains, Neovim, Emacs) | `saige acp --agent NAME` | none | `session/request_permission` | Conformance-tested against the ACP Go SDK client and live against a real model; not run inside an editor |
 
-`saige export skills --agent NAME` writes only the skills, to `.agents/skills/`, `.claude/skills/` and `.kiro/skills/`, which together cover every harness above and Kiro.
+`saige export skills --agent NAME` writes only the skills, to `.agents/skills/`, `.claude/skills/` and `.kiro/skills/`, which together cover every harness above and Kiro. [`saige import`](#saige-import) goes the other way: Claude Code and Codex skills and Cursor rules into `.agents/skills/`.
 
 ## saige export
 
@@ -68,6 +68,28 @@ Notes per harness:
 - **Claude Code** asks before it uses a project's `.mcp.json` servers in an interactive session. In print mode, pass `--mcp-config .mcp.json` or use `saige launch claude`.
 - **Codex** reads a project's `.codex/config.toml` only once you trust the project. `saige launch codex` needs no trust, since it passes the server with `-c`.
 - **opencode** searches for `opencode.json` up to the git root. A `.jsonc` file with comments cannot be merged; add the entry by hand or rename the file.
+
+## saige import
+
+```bash
+saige import [claude] [codex] [cursor] [--dir .] [--dry-run] [--diff] [--user] [--force]
+```
+
+Import is the inverse of `saige export skills`: it converts skills and rules written for other tools into `.agents/skills/NAME/SKILL.md`. With no format it reads all three.
+
+| Format | Reads | Becomes |
+| --- | --- | --- |
+| `claude` | `.claude/skills/NAME/` | the same package, with its resource files |
+| `codex` | `.codex/skills/NAME/` | the same package, with its resource files |
+| `cursor` | `.cursor/rules/**/*.mdc` and `.cursorrules` | one skill per rule, named after its path (`web/components.mdc` is `web-components`) |
+
+A Cursor rule's description gains when Cursor applies it, and its `globs` and `alwaysApply` are kept in the skill's metadata (`cursor-globs`, `cursor-always-apply`, `cursor-rule`). Only the agentskills.io frontmatter fields are written, so keys another harness added, such as Claude Code's `disable-model-invocation`, are dropped. The originals stay in place.
+
+When two formats define the same name, the first in the order above wins and the other is reported. A package that does not validate is skipped and reported. Import marks what it writes with `generated-by: saige import`, so running it again changes nothing until a source changes. A skill already in `.agents/skills` that import did not write is kept, with a note, unless you pass `--force`. A `.claude/skills` that links to `.agents/skills` is left alone.
+
+`--dry-run` prints each file as `would create` or `would update` with its diff and writes nothing. `--user` reads `~/.claude/skills` and `$CODEX_HOME/skills` (default `~/.codex/skills`) into `~/.agents/skills`. Cursor keeps user rules in its settings, so `cursor` reads nothing with `--user`.
+
+saige also reads `.claude/skills`, Cursor rules and `~/.claude/skills` directly, so import is for making the canonical layout the one source, not a prerequisite for using them.
 
 ## saige launch
 
