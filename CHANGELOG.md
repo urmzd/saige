@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.38.0 (2026-10-18)
+
+### Breaking
+
+- move the durable backend to anchor (#117) ([827a48b](https://github.com/urmzd/saige/commit/827a48ba78d940077c5ed6c1956b44b6c70e7bac))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.37.0...v0.38.0)
+
+
 ## 0.37.0 (2026-10-16)
 
 ### Features
