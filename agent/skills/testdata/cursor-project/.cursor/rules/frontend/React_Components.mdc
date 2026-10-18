@@ -1,0 +1,7 @@
+---
+description: "React component conventions."
+globs:
+  - "web/**/*.tsx"
+  - web/**/*.ts
+---
+Prefer function components.
