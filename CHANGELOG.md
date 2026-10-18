@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.39.0 (2026-10-18)
+
+### Features
+
+- **skills**: read Cursor rules and ~/.claude/skills as skill sources (#122) ([0500e3f](https://github.com/urmzd/saige/commit/0500e3fc75e4105e957be23a09b8253ae8f2bb5f))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.38.0...v0.39.0)
+
+
 ## 0.38.0 (2026-10-18)
 
 ### Breaking
