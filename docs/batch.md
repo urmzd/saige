@@ -107,7 +107,7 @@ Request IDs are rewritten on the wire as `<job prefix>-<index>`, which fits ever
 
 ### In a durable workflow
 
-`duraturo.Engine.AwaitBatch` submits a job from a workflow body and parks the run until the job ends, so a batch that takes hours holds no worker. Run `WatchBatches` next to the workers: it polls open jobs and signals the run that owns each one.
+`anchor.Engine.AwaitBatch` submits a job from a workflow body and parks the run until the job ends, so a batch that takes hours holds no worker. Run `WatchBatches` next to the workers: it polls open jobs and signals the run that owns each one.
 
 ```go
 results, err := engine.AwaitBatch(ctx, jobs, "extract-"+runID, requests)

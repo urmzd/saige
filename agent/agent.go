@@ -49,7 +49,7 @@ type Config struct {
 	// StepRunner durably memoizes LLM and tool calls so a crashed process can
 	// resume without repeating them. Defaults to types.NoopStepRunner (inline,
 	// today's streaming behavior). Durable runners live in agent/durable/local
-	// and agent/durable/duraturo.
+	// and agent/durable/anchor.
 	StepRunner types.StepRunner
 
 	// Store persists the conversation tree. Defaults to nil, which keeps the
@@ -378,7 +378,7 @@ func WithMaxIter(n int) Option {
 
 // WithStepRunner sets a durable step runner. The default NoopStepRunner runs
 // steps inline (today's streaming behavior). A durable runner (see
-// agent/durable/local and agent/durable/duraturo) memoizes LLM and tool calls
+// agent/durable/local and agent/durable/anchor) memoizes LLM and tool calls
 // so a crashed process resumes without repeating them.
 func WithStepRunner(r types.StepRunner) Option {
 	return func(c *Config) { c.StepRunner = r }

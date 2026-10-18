@@ -1,5 +1,11 @@
 # Upgrading to this release
 
+## Anchor backend rename
+
+The durable backend package moves from `agent/durable/duraturo` to `agent/durable/anchor`, backed by `github.com/urmzd/anchor` and its Postgres adapter. Update imports; the shared `SAIGE_TEST_POSTGRES_DSN` test setting is unchanged. The legacy replay fixtures and `durable.duraturo.*` wire error codes keep their original identities so recorded work and decoded errors remain compatible.
+
+## Existing upgrade guidance
+
 This release changes how messages, model output and media are represented, and unifies the constructors. Code that builds messages, reads the stream, writes a provider or decorator, or constructs adapters and stores needs edits; the compiler finds most of them. Data written by earlier releases (conversation trees, durable journals, caches, wire version 1 streams and version 1 catalogs) still reads.
 
 - [Breaking changes](#breaking-changes)
@@ -437,7 +443,7 @@ These changes shipped in the releases before this one, up to 0.32.0. Names are g
 | `postgres.NewPool` with individual fields no longer forces `sslmode=disable`. pgx `prefer` encrypts without verifying the certificate and falls back to plaintext. | Set `sslmode` explicitly. |
 | `RunMigrations` stops at the first failing statement and checks the embedding dimension when one is set explicitly. New migrations add `kg_episode.document_id`, `kg_relation_episode`, a relation fact search index, and `rag_document.scope` and `source_modified_at`. | Run migrations before starting the new release. |
 | pgstore node reads are scoped to the conversation. `SaveNode` returns `ErrVersionConflict` for a stale version and `ErrConversationMismatch` for a node of another conversation. memstore also rejects stale versions. | Handle the errors instead of relying on silent skips. |
-| The DBOS backend is removed. | Use the local engine or the duraturo adapter. |
+| The DBOS backend is removed. | Use the local engine or the anchor adapter. |
 
 ### RAG sources
 
@@ -462,4 +468,4 @@ These changes shipped in the releases before this one, up to 0.32.0. Names are g
 
 | Change | What to do |
 | --- | --- |
-| The module requires Go 1.26.9, and `golang.org/x/net` v0.60.0 and `golang.org/x/text` v0.42.0. Go 1.25 has no release with the fixes for the standard-library vulnerabilities govulncheck reports, x/net v0.60.0 requires Go 1.26, and the duraturo dependency requires Go 1.26.4. | Build with Go 1.26.9 or newer. |
+| The module requires Go 1.26.9, and `golang.org/x/net` v0.60.0 and `golang.org/x/text` v0.42.0. Go 1.25 has no release with the fixes for the standard-library vulnerabilities govulncheck reports, x/net v0.60.0 requires Go 1.26, and the anchor dependency requires Go 1.26.4. | Build with Go 1.26.9 or newer. |

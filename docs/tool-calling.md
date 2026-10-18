@@ -62,7 +62,7 @@ Only tool execution holds a slot. Approval waits and delegated sub-agents do not
 | --- | --- |
 | None (`types.NoopStepRunner`) | Parallel, as above |
 | Local engine (`agent/durable/local`) | Parallel. Its runner reports `ConcurrentSteps() == true`, so `MaxParallelTools` applies. |
-| duraturo engine (`agent/durable/duraturo`) | Always sequential, in request order. duraturo derives each step's record key from call order inside one workflow, so steps must run one at a time for a replay to find the same keys. Its runner reports `ConcurrentSteps() == false`. The cost is latency on turns with many calls. |
+| anchor engine (`agent/durable/anchor`) | Always sequential, in request order. anchor derives each step's record key from call order inside one workflow, so steps must run one at a time for a replay to find the same keys. Its runner reports `ConcurrentSteps() == false`. The cost is latency on turns with many calls. |
 | Any other durable runner | Sequential, unless it implements `types.ConcurrentStepRunner` and returns true |
 
 **Approvals with parallel calls.** With parallel execution, two marked calls in one turn each emit a `MarkerDelta` and wait at the same time, and each is decided on its own. A consumer answers them in any order; the CLI chat UI queues them and asks in arrival order, showing how many more are waiting (`TestRunnerParallelMarkersAreAnsweredInOrder`, `agent/tui/runner_test.go`). Approving one and denying the other runs only the approved call. With sequential execution, the next call's approval is not requested until the previous call finished. See [approval policy](approval-policy.md).

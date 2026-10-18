@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"context"

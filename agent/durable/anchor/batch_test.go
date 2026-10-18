@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	dt "github.com/urmzd/duraturo"
+	dt "github.com/urmzd/anchor"
 
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/batch"

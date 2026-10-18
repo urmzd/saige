@@ -16,7 +16,7 @@ import (
 	p1 "github.com/urmzd/saige/agent/batch"
 	p2 "github.com/urmzd/saige/agent/definition"
 	p3 "github.com/urmzd/saige/agent/definition/bind"
-	p4 "github.com/urmzd/saige/agent/durable/duraturo"
+	p4 "github.com/urmzd/saige/agent/durable/anchor"
 	p5 "github.com/urmzd/saige/agent/durable/local"
 	p6 "github.com/urmzd/saige/agent/mcp"
 	p7 "github.com/urmzd/saige/agent/memory"
@@ -94,10 +94,10 @@ func sentinels() []sentinel {
 		{"agent/definition", "ErrInvalid", p2.ErrInvalid},
 		{"agent/definition", "ErrNotFound", p2.ErrNotFound},
 		{"agent/definition/bind", "ErrUnsupported", p3.ErrUnsupported},
-		{"agent/durable/duraturo", "ErrClosed", p4.ErrClosed},
-		{"agent/durable/duraturo", "ErrConflict", p4.ErrConflict},
-		{"agent/durable/duraturo", "ErrFailed", p4.ErrFailed},
-		{"agent/durable/duraturo", "ErrIndeterminate", p4.ErrIndeterminate},
+		{"agent/durable/anchor", "ErrClosed", p4.ErrClosed},
+		{"agent/durable/anchor", "ErrConflict", p4.ErrConflict},
+		{"agent/durable/anchor", "ErrFailed", p4.ErrFailed},
+		{"agent/durable/anchor", "ErrIndeterminate", p4.ErrIndeterminate},
 		{"agent/durable/local", "ErrBusy", p5.ErrBusy},
 		{"agent/durable/local", "ErrClosed", p5.ErrClosed},
 		{"agent/durable/local", "ErrConflict", p5.ErrConflict},

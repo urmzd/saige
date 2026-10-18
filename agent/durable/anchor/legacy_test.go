@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"bytes"
@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/duraturo/pkg/ledger"
-	"github.com/urmzd/duraturo/pkg/queue"
-	"github.com/urmzd/duraturo/pkg/run"
+	"github.com/urmzd/anchor/pkg/ledger"
+	"github.com/urmzd/anchor/pkg/queue"
+	"github.com/urmzd/anchor/pkg/run"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/durable/internal/legacyrun"

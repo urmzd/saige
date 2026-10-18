@@ -23,7 +23,7 @@ flowchart LR
     durable --> pg
 ```
 
-An **agent** runs the loop: call the model, run the tools it asks for, send the results back, repeat until it answers. The **catalog** says what each model accepts and names **presets**, ordered chains of complete configurations. `preset.Build` turns a preset into **adapters** behind one router, so a failover moves to another configuration someone wrote. **Dials** state intents such as "focused" or "think hard" and are compiled for whichever model serves each attempt. **RAG** and the knowledge graph plug in as tools. A **durable engine** journals each model and tool step so a crashed run resumes. **Evals** score agents, retrieval and graphs with the same interfaces. Postgres 18 holds the durable state: conversation trees, RAG documents, the knowledge graph and duraturo runs.
+An **agent** runs the loop: call the model, run the tools it asks for, send the results back, repeat until it answers. The **catalog** says what each model accepts and names **presets**, ordered chains of complete configurations. `preset.Build` turns a preset into **adapters** behind one router, so a failover moves to another configuration someone wrote. **Dials** state intents such as "focused" or "think hard" and are compiled for whichever model serves each attempt. **RAG** and the knowledge graph plug in as tools. A **durable engine** journals each model and tool step so a crashed run resumes. **Evals** score agents, retrieval and graphs with the same interfaces. Postgres 18 holds the durable state: conversation trees, RAG documents, the knowledge graph and anchor runs.
 
 ## Vendors, runtimes and adapters
 

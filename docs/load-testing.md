@@ -28,7 +28,7 @@ Each test reports p50, p99, and throughput with `t.Log`, so run with `-v` to see
 | `TestNotifierFanOut` | Postgres | 100 subscribers over 4 notifiers get each of 1,000 publishes exactly once, and again after every listening connection is killed and replaced. |
 | `TestCacheCoherence` | Postgres | Four two-level caches over one `postgres.CacheStore` under concurrent get, set, and invalidate. Once writers stop, every process reads what the store holds. |
 | `TestPgstoreIngestAndHybridSearch` | Postgres | Concurrent ingest while readers fuse vector and keyword searches. Afterwards each document ranks first for its own vector and keyword. |
-| `TestDurableWorkersCompete` | Postgres | Four duraturo workers share one queue. Each run's tool and model steps execute once, and approval runs resume after `Decide`. |
+| `TestDurableWorkersCompete` | Postgres | Four anchor workers share one queue. Each run's tool and model steps execute once, and approval runs resume after `Decide`. |
 | `TestLiveBurst` | `SAIGE_LIVE=1`, keys | 20 parallel calls each to `gpt-6-luna` and `claude-haiku-5-5` through `retry.Provider`. Reports 429s, retries, whether `Retry-After` was honored, and successes. |
 
 Tunables:

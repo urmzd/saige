@@ -38,7 +38,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/notify/` | In-memory `types.Notifier`, subscriber fan-out, `Listen` triggers, and `Cache`, a local level kept coherent through a notifier |
 | `agent/batch/` | Batch jobs over `types.BatchProvider`: durable runner and job stores, local fallback, coalescer for evals |
 | `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
-| `agent/durable/duraturo/` | duraturo-backed durable engine: runs on any duraturo ledger and queue, such as Postgres tables |
+| `agent/durable/anchor/` | anchor-backed durable engine: runs on any anchor ledger and queue, such as Postgres tables |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
 | `rag/knowledge/` | Knowledge graph public API (`knowledge.New`, query helpers) |

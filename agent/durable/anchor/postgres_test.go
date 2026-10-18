@@ -1,4 +1,4 @@
-package duraturo
+package anchor
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/duraturo/adapters/postgres/pgledger"
-	"github.com/urmzd/duraturo/adapters/postgres/pgqueue"
+	"github.com/urmzd/anchor/adapters/postgres/pgledger"
+	"github.com/urmzd/anchor/adapters/postgres/pgqueue"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/types"
@@ -35,7 +35,7 @@ func postgresEngine(t *testing.T) *Engine {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(admin.Close)
-	name := "saige_duraturo_" + strings.ToLower(rand.Text()[:12])
+	name := "saige_anchor_" + strings.ToLower(rand.Text()[:12])
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}
