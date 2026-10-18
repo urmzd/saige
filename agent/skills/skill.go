@@ -249,6 +249,12 @@ func Snapshot(fsys fs.FS, dir string, opts SnapshotOptions) (Skill, error) {
 		return Skill{}, fmt.Errorf("%w: name %q does not match directory %q", ErrInvalidSkill, meta.Name, base)
 	}
 
+	return sealSkill(meta, body, files, opts), nil
+}
+
+// sealSkill hashes a package's files into an immutable Skill. files must
+// hold SKILL.md, or the source file standing in for it, under SkillFile.
+func sealSkill(meta SkillMeta, body string, files map[string][]byte, opts SnapshotOptions) Skill {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
@@ -267,7 +273,7 @@ func Snapshot(fsys fs.FS, dir string, opts SnapshotOptions) (Skill, error) {
 	meta.Source, meta.Trusted = opts.Source, opts.Trusted
 	meta.Hash = "sha256:" + hex.EncodeToString(pkg.Sum(nil))
 	delete(files, SkillFile)
-	return Skill{SkillMeta: meta, Body: body, Resources: resources, files: files}, nil
+	return Skill{SkillMeta: meta, Body: body, Resources: resources, files: files}
 }
 
 // readBounded reads at most limit bytes and fails if the file is longer,
@@ -313,6 +319,15 @@ func ParseSkill(data []byte) (SkillMeta, string, error) {
 	if err != nil {
 		return SkillMeta{}, "", err
 	}
+	meta, err := metaFromFrontmatter(fm)
+	if err != nil {
+		return SkillMeta{}, "", err
+	}
+	return meta, body, nil
+}
+
+// metaFromFrontmatter validates a parsed header and returns its fields.
+func metaFromFrontmatter(fm Frontmatter) (SkillMeta, error) {
 	var problems []string
 	str := func(key string) string {
 		v, ok := fm[key]
@@ -369,9 +384,9 @@ func ParseSkill(data []byte) (SkillMeta, string, error) {
 		problems = append(problems, "allowed-tools must be a string or a list")
 	}
 	if len(problems) > 0 {
-		return SkillMeta{}, "", fmt.Errorf("%w: %s", ErrInvalidSkill, strings.Join(problems, "; "))
+		return SkillMeta{}, fmt.Errorf("%w: %s", ErrInvalidSkill, strings.Join(problems, "; "))
 	}
-	return meta, body, nil
+	return meta, nil
 }
 
 // EffectiveTools returns the agent's tools that a skill's allowed-tools

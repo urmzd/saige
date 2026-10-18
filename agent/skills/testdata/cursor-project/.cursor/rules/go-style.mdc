@@ -1,0 +1,9 @@
+---
+description: Go style for this repository
+globs: *.go, cmd/**/*.go
+alwaysApply: false
+---
+
+# Go style
+
+Use table tests.

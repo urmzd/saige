@@ -134,7 +134,8 @@ func agentSource(layers []agentLayer, extra ...definition.Source) definition.Sou
 }
 
 // skillCatalog loads the conventional skill locations: the project's
-// .agents/skills and .claude/skills, then ~/.agents/skills.
+// .agents/skills, .claude/skills and Cursor rules, then ~/.agents/skills
+// and ~/.claude/skills.
 func skillCatalog(ctx context.Context) (*skills.Catalog, error) {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()

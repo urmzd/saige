@@ -373,6 +373,21 @@ if err != nil {
 }
 ```
 
+`StandardSources` reads, in order:
+
+| Source | Location |
+| --- | --- |
+| Project skills | `.agents/skills/NAME/SKILL.md` (also where Codex, Gemini CLI, opencode and Cursor read them) |
+| Project Claude Code skills | `.claude/skills/NAME/SKILL.md` |
+| Project Cursor rules | `.cursor/rules/**/*.mdc` and the legacy `.cursorrules`, through `NewCursorRulesSource` |
+| User skills | `~/.agents/skills/NAME/SKILL.md` |
+| User Claude Code skills | `~/.claude/skills/NAME/SKILL.md` |
+
+A Cursor rule becomes a skill that loads on demand. Its name is its path under `.cursor/rules` without `.mdc`, directories joined by hyphens (`frontend/react.mdc` is `frontend-react`), and `.cursorrules` is `cursorrules`.
+Its description is the rule's `description`, then when Cursor applies it: to every request (`alwaysApply`, and always for `.cursorrules`) or to files matching its `globs`. A rule with no description is described by its path.
+The globs and `alwaysApply` stay in the skill's metadata as `cursor-globs` and `cursor-always-apply`. Saige has no always-on channel for skills, so an always-applied rule is listed with an instruction to load it first.
+Instruction files such as `AGENTS.md` and `CLAUDE.md` are not skills: harnesses already read them on every request, and a skill would only offer them on demand.
+
 | Tier | Delivery |
 | --- | --- |
 | Name and description | The system prompt, up to 50 skills, then a pointer to `search_skills` |

@@ -160,19 +160,25 @@ func listPackages(ctx context.Context, fsys fs.FS, root string, cfg sourceConfig
 }
 
 // StandardSources returns the conventional locations in precedence order:
-// the project's .agents/skills and .claude/skills, then the user's
-// ~/.agents/skills. Either directory may be empty to skip it. Pass
-// Untrusted in projectOpts when the project checkout is not trusted.
+// the project's .agents/skills, .claude/skills and Cursor rules
+// (.cursor/rules and .cursorrules, see CursorRulesSource), then the user's
+// ~/.agents/skills and ~/.claude/skills. Either directory may be empty to
+// skip it. Pass Untrusted in projectOpts when the project checkout is not
+// trusted.
 func StandardSources(projectDir, homeDir string, projectOpts ...SourceOption) []SkillSource {
 	var out []SkillSource
 	if projectDir != "" {
 		out = append(out,
 			NewDirSource(filepath.Join(projectDir, ".agents", "skills"), projectOpts...),
 			NewDirSource(filepath.Join(projectDir, ".claude", "skills"), projectOpts...),
+			NewCursorRulesSource(projectDir, projectOpts...),
 		)
 	}
 	if homeDir != "" {
-		out = append(out, NewDirSource(filepath.Join(homeDir, ".agents", "skills")))
+		out = append(out,
+			NewDirSource(filepath.Join(homeDir, ".agents", "skills")),
+			NewDirSource(filepath.Join(homeDir, ".claude", "skills")),
+		)
 	}
 	return out
 }
