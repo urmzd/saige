@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.40.0 (2026-10-20)
+
+### Features
+
+- **cli**: add saige import for Claude, Codex and Cursor skills (#123) ([617e0fa](https://github.com/urmzd/saige/commit/617e0fa4507533a55fa25be575119bc8c5e656e7))
+
+### Misc
+
+- **deps**: bump github.com/bmatcuk/doublestar/v4 from 4.10.2 to 4.10.3 (#121) ([a336b15](https://github.com/urmzd/saige/commit/a336b15aa91958910e411786ea5a2fdcbd0a0569))
+- **deps**: bump google.golang.org/genai from 1.73.0 to 1.75.0 (#120) ([dcf2734](https://github.com/urmzd/saige/commit/dcf27349f91443e5232ffb73e38da36c4d09df31))
+- **deps**: bump github.com/anthropics/anthropic-sdk-go (#119) ([67988e5](https://github.com/urmzd/saige/commit/67988e577328506cba3876b3fa40ea5f3623ced8))
+- **deps**: bump github.com/openai/openai-go/v3 from 3.76.0 to 3.78.0 (#118) ([6cf52f4](https://github.com/urmzd/saige/commit/6cf52f4ac5ae36acc7d7736cf25a6b52109d357f))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.39.0...v0.40.0)
+
+
 ## 0.38.0 (2026-10-18)
 
 ### Breaking
