@@ -6,7 +6,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 
 | Package | Role |
 |---------|------|
-| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
+| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `import` (skills and rules from other tools), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
 | `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) and an agent definition as a tool, holding approvals for clients without elicitation |
 | `cmd/internal/agenthost/` | Session layer shared by serve, acp and saige-mcp: pinned binding, one turn at a time, grant checks |
 | `cmd/internal/approvals/` | File store of held approvals that `saige approvals` decides |
@@ -97,6 +97,7 @@ saige agent validate examples/agents           # offline checks; exit 2 when inv
 saige ask --agents-dir examples/agents --agent assistant "question"   # also chat and serve
 saige acp --agents-dir examples/agents --agent assistant             # ACP agent over stdio for editors
 saige export claude --agents-dir examples/agents --agent assistant --dry-run   # also codex, gemini, opencode, cursor, skills
+saige import --dry-run                       # .claude/skills, .codex/skills, .cursor/rules and .cursorrules into .agents/skills
 saige launch claude --agents-dir examples/agents --agent assistant -- -p "question"
 saige approvals list                          # held approvals; approve or deny TOKEN
 

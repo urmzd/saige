@@ -369,13 +369,14 @@ type skillFrontmatter struct {
 	AllowedTools  string            `yaml:"allowed-tools,omitempty"`
 }
 
-// skillFile renders a skill's SKILL.md with only the spec's fields.
-func skillFile(s skills.Skill) ([]byte, error) {
+// skillFile renders a skill's SKILL.md with only the spec's fields, and
+// generatedBy recorded in its metadata.
+func skillFile(s skills.Skill, generatedBy string) ([]byte, error) {
 	meta := map[string]string{}
 	for k, v := range s.Metadata {
 		meta[k] = v
 	}
-	meta[exportedByKey] = exportedByValue
+	meta[exportedByKey] = generatedBy
 	fm := skillFrontmatter{Name: s.Name, Description: s.Description, License: s.License, Compatibility: s.Compatibility,
 		Metadata: meta, AllowedTools: strings.Join(s.AllowedTools, " ")}
 	var buf bytes.Buffer
@@ -400,40 +401,50 @@ func (s *exportSource) planSkills(plan *exportPlan, dir string, force bool) erro
 		if err != nil {
 			return err
 		}
-		if existing != nil && !force && !exportedSkill(existing) {
+		if existing != nil && !force && skillWriter(existing) != exportedByValue {
 			return invalidInput(fmt.Errorf("%s holds a skill saige export did not write; remove it or pass --force", target))
 		}
-		md, err := skillFile(sk)
-		if err != nil {
+		if err := planSkillPackage(plan, target, sk, exportedByValue); err != nil {
 			return err
-		}
-		if err := plan.set(filepath.Join(target, "SKILL.md"), md); err != nil {
-			return err
-		}
-		for _, r := range sk.Resources {
-			raw, _, err := sk.ReadResource(r.Path, 0)
-			if err != nil {
-				return err
-			}
-			path := filepath.Join(target, filepath.FromSlash(r.Path))
-			if err := plan.set(path, raw); err != nil {
-				return err
-			}
-			if bytes.HasPrefix(raw, []byte("#!")) {
-				plan.executable(path)
-			}
 		}
 	}
 	return nil
 }
 
-func exportedSkill(raw []byte) bool {
+// planSkillPackage plans a skill's SKILL.md and resources under target.
+func planSkillPackage(plan *exportPlan, target string, sk skills.Skill, generatedBy string) error {
+	md, err := skillFile(sk, generatedBy)
+	if err != nil {
+		return err
+	}
+	if err := plan.set(filepath.Join(target, skills.SkillFile), md); err != nil {
+		return err
+	}
+	for _, r := range sk.Resources {
+		raw, _, err := sk.ReadResource(r.Path, 0)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(target, filepath.FromSlash(r.Path))
+		if err := plan.set(path, raw); err != nil {
+			return err
+		}
+		if bytes.HasPrefix(raw, []byte("#!")) {
+			plan.executable(path)
+		}
+	}
+	return nil
+}
+
+// skillWriter is the generated-by metadata of a SKILL.md: which saige
+// command wrote it, or "" for a skill someone else wrote.
+func skillWriter(raw []byte) string {
 	fm, _, err := skills.ParseSkillFile(raw)
 	if err != nil {
-		return false
+		return ""
 	}
 	meta, _ := fm["metadata"].(map[string]string)
-	return meta[exportedByKey] == exportedByValue
+	return meta[exportedByKey]
 }
 
 // ── agent definitions ───────────────────────────────────────────────

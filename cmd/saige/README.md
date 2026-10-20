@@ -285,6 +285,7 @@ Run a definition inside another harness or editor. See [harnesses](../../docs/ha
 
 ```bash
 saige export claude --agent reviewer --dry-run   # also codex, gemini, opencode, cursor, skills; --user for user-level files
+saige import --dry-run                           # Claude Code and Codex skills and Cursor rules into .agents/skills
 saige launch codex --agent reviewer -- exec "review the last commit"
 saige acp --agent reviewer --sessions-dir ~/.local/state/saige/acp   # ACP agent over stdio for Zed, JetBrains, Neovim, Emacs
 saige approvals list                             # approvals held for MCP clients without elicitation
