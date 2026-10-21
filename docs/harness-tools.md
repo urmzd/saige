@@ -53,7 +53,7 @@ The command policy (`exec.Policy.Commands`) checks shell code, and checks the in
 | Default | Detail |
 |---|---|
 | Read-only | Without `Groups`, only the `read` group is enabled. |
-| Root confinement | `../` traversal, absolute paths outside the root, and symlinks that leave it are refused by every file tool and by `cwd`. |
+| Root confinement | `../` traversal, absolute paths outside the root, and symlinks that leave it are refused by every file tool and by `cwd`. The file tools work through an `os.Root`, which checks each path when it is used, so a symlink swapped in between calls cannot lead out. |
 | Approval | `write_file`, `edit_file`, and `execute_code` carry a `human_approval` marker. There is no option to remove it. |
 | No network for code | `Network` defaults to `exec.NetworkDeny`. On the subprocess sandbox that needs `sandbox-exec` (macOS) or `unshare` (Linux); without them, building the exec group fails with `exec.ErrNetworkIsolationUnavailable` rather than running code with the network open. |
 | Clean environment | Code runs with only `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, and `TZ` from the parent. API keys in your environment do not reach it. |

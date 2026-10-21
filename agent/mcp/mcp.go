@@ -885,13 +885,18 @@ func (h *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // ── Schema conversion ───────────────────────────────────────────────
 
 // schemaFromMCP converts an MCP input schema (free-form JSON) into a
-// ParameterSchema. Unknown constructs are dropped rather than rejected: an
-// approximate schema still lets the model call the tool, while a hard failure
-// would make one odd tool break the whole server import.
+// ParameterSchema. Local $defs references are inlined first (see
+// InlineDefs). Unknown constructs, and references InlineDefs refuses, are
+// dropped rather than rejected: an approximate schema still lets the model
+// call the tool, while a hard failure would make one odd tool break the
+// whole server import.
 func schemaFromMCP(raw any) types.ParameterSchema {
 	m, ok := asMap(raw)
 	if !ok {
 		return types.ParameterSchema{Type: types.SchemaObject}
+	}
+	if inlined, _, err := InlineDefs(m); err == nil {
+		m = inlined
 	}
 	out := types.ParameterSchema{Type: types.SchemaObject, Properties: map[string]types.PropertyDef{}}
 	if s, ok := m["type"].(string); ok && s != "" {
@@ -912,6 +917,7 @@ func schemaFromMCP(raw any) types.ParameterSchema {
 }
 
 func propertyFromMCP(m map[string]any) types.PropertyDef {
+	m = collapseNullable(m)
 	p := types.PropertyDef{Type: types.SchemaString}
 	p.Nullable, _ = m["nullable"].(bool)
 	if s, ok := m["type"].(string); ok && s != "" {
@@ -954,6 +960,50 @@ func propertyFromMCP(m map[string]any) types.PropertyDef {
 		}
 	}
 	return p
+}
+
+// collapseNullable reads a property written as anyOf or oneOf of one schema
+// and {"type": "null"}, the way pydantic writes Optional, as that schema with
+// nullable set. Keywords written beside the union win over the schema's.
+// Any other union is returned unchanged.
+func collapseNullable(m map[string]any) map[string]any {
+	for _, key := range []string{"anyOf", "oneOf"} {
+		alts, ok := m[key].([]any)
+		if !ok {
+			continue
+		}
+		var only map[string]any
+		nulls := 0
+		for _, a := range alts {
+			am, ok := a.(map[string]any)
+			if !ok {
+				return m
+			}
+			if t, _ := am["type"].(string); t == types.SchemaNull && len(am) == 1 {
+				nulls++
+				continue
+			}
+			if only != nil {
+				return m
+			}
+			only = am
+		}
+		if only == nil || nulls != 1 {
+			return m
+		}
+		out := make(map[string]any, len(m)+len(only))
+		for k, v := range only {
+			out[k] = v
+		}
+		for k, v := range m {
+			if k != key {
+				out[k] = v
+			}
+		}
+		out["nullable"] = true
+		return out
+	}
+	return m
 }
 
 // asMap normalises the shapes an MCP schema can arrive in: a map, or raw JSON

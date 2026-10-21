@@ -75,6 +75,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `tools/fs/` | Workspace file tools: read (paging), list, glob, grep, write, edit; root-confined, read-only by default |
 | `tools/exec/` | Sandboxed bash and execute_code tools: Sandbox interface, subprocess and Docker backends, command/env/network policy, always approval-marked |
 | `tools/fetch/` | URL fetch tool and SafeHTTPClient, which blocks private and metadata IPs |
+| `netguard/` | The SSRF guard: address policies (`PublicOnly`, `NoMetadata`, `Except`, `Tag`) checked after DNS in a dialer, transport and HTTP client |
 | `eval/` | Evaluation suites: gates, comparisons and experiments, results store |
 
 ## CLI

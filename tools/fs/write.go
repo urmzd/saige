@@ -2,8 +2,11 @@ package fs
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,26 +37,29 @@ func (t *writeTool) Execute(ctx context.Context, args map[string]any) (string, e
 	if !ok {
 		return "", fmt.Errorf("write: content is required")
 	}
-	path, err := t.cfg.resolve(stringArg(args, argPath), false)
+	root, path, err := t.cfg.open(stringArg(args, argPath))
 	if err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
+	defer func() { _ = root.Close() }()
 	if int64(len(content)) > t.cfg.maxFileBytes {
 		return "", fmt.Errorf("write: content is %d bytes, the limit is %d", len(content), t.cfg.maxFileBytes)
 	}
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		return "", fmt.Errorf("write: %s is a directory", t.cfg.rel(path))
+	if info, err := root.Stat(path); err == nil && info.IsDir() {
+		return "", fmt.Errorf("write: %s is a directory", show(path))
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := root.MkdirAll(dir, 0o750); err != nil {
+			return "", fmt.Errorf("write: %w", err)
+		}
+	}
+	if err := writeAtomic(root, path, content); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
-	if err := writeAtomic(path, content); err != nil {
-		return "", fmt.Errorf("write: %w", err)
-	}
-	return fmt.Sprintf("Wrote %d bytes to %s", len(content), t.cfg.rel(path)), nil
+	return fmt.Sprintf("Wrote %d bytes to %s", len(content), show(path)), nil
 }
 
 type editTool struct{ cfg *config }
@@ -86,11 +92,12 @@ func (t *editTool) Execute(ctx context.Context, args map[string]any) (string, er
 	if oldStr == newStr {
 		return "", fmt.Errorf("edit: old_string and new_string are identical")
 	}
-	path, err := t.cfg.resolve(stringArg(args, argPath), true)
+	root, path, err := t.cfg.open(stringArg(args, argPath))
 	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
-	f, err := openText(path, t.cfg.maxFileBytes)
+	defer func() { _ = root.Close() }()
+	f, err := openText(root, path, t.cfg.maxFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
@@ -105,9 +112,9 @@ func (t *editTool) Execute(ctx context.Context, args map[string]any) (string, er
 	replaceAll := boolArg(args, "replace_all")
 	switch {
 	case count == 0:
-		return "", fmt.Errorf("edit: old_string not found in %s", t.cfg.rel(path))
+		return "", fmt.Errorf("edit: old_string not found in %s", show(path))
 	case count > 1 && !replaceAll:
-		return "", fmt.Errorf("edit: old_string occurs %d times in %s; add surrounding context to make it unique or set replace_all", count, t.cfg.rel(path))
+		return "", fmt.Errorf("edit: old_string occurs %d times in %s; add surrounding context to make it unique or set replace_all", count, show(path))
 	}
 	n := 1
 	if replaceAll {
@@ -120,39 +127,48 @@ func (t *editTool) Execute(ctx context.Context, args map[string]any) (string, er
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := writeAtomic(path, updated); err != nil {
+	if err := writeAtomic(root, path, updated); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 	if !replaceAll {
 		count = 1
 	}
-	return fmt.Sprintf("Replaced %d occurrence(s) in %s", count, t.cfg.rel(path)), nil
+	return fmt.Sprintf("Replaced %d occurrence(s) in %s", count, show(path)), nil
 }
 
-// writeAtomic replaces path with content through a temporary file in the
-// same directory, so a reader never sees a partial file. An existing file
-// keeps its permission bits.
-func writeAtomic(path, content string) error {
+// writeAtomic replaces name, relative to root, with content through a
+// temporary file in the same directory, so a reader never sees a partial
+// file. An existing file keeps its permission bits.
+func writeAtomic(root *os.Root, name, content string) error {
 	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
+	if info, err := root.Stat(name); err == nil {
 		mode = info.Mode().Perm()
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
-	if err != nil {
+	dir, base := filepath.Split(name)
+	var tmp string
+	var f *os.File
+	for attempt := 0; ; attempt++ {
+		tmp = filepath.Join(dir, "."+base+".tmp"+rand.Text())
+		var err error
+		f, err = root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, iofs.ErrExist) || attempt >= 100 {
+			return err
+		}
+	}
+	defer func() { _ = root.Remove(tmp) }()
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
 		return err
 	}
-	name := tmp.Name()
-	defer func() { _ = os.Remove(name) }()
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
 		return err
 	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
+	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return root.Rename(tmp, name)
 }

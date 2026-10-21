@@ -413,3 +413,89 @@ func TestList(t *testing.T) {
 		t.Fatalf("capped list = %q, %v", out, err)
 	}
 }
+
+// Every tool reaches files through an os.Root, so a symlink that leaves the
+// workspace is refused when it is used, and one that stays inside works.
+func TestSymlinksAreConfinedWhenUsed(t *testing.T) {
+	root := workspace(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("TODO secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"out":       outside,
+		"out.txt":   filepath.Join(outside, "secret.txt"),
+		"inside":    "docs",
+		"guide.txt": filepath.Join("docs", "guide.md"),
+	} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tools := toolsByName(t, root, AllowWrites())
+	ctx := context.Background()
+
+	for _, call := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"read", map[string]any{"path": "out.txt"}},
+		{"read", map[string]any{"path": "out/secret.txt"}},
+		{"list", map[string]any{"path": "out"}},
+		{"grep", map[string]any{"pattern": "TODO", "path": "out"}},
+		{"glob", map[string]any{"pattern": "*", "path": "out"}},
+		{"edit", map[string]any{"path": "out.txt", "old_string": "TODO", "new_string": "DONE"}},
+		{"write", map[string]any{"path": "out.txt", "content": "x"}},
+	} {
+		got, err := tools[call.tool].Execute(ctx, call.args)
+		if call.tool == "write" {
+			// Writing replaces the link itself, inside the workspace.
+			if err != nil {
+				t.Errorf("write over a link: %v", err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s %v followed a link out of the workspace: %q", call.tool, call.args, got)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(outside, "secret.txt")); string(b) != "TODO secret\n" {
+		t.Errorf("a file outside the workspace changed: %q", b)
+	}
+
+	if got, err := tools["read"].Execute(ctx, map[string]any{"path": "guide.txt"}); err != nil || !strings.Contains(got, "# Guide") {
+		t.Errorf("read through an inside link = %q, %v", got, err)
+	}
+	if got, err := tools["list"].Execute(ctx, map[string]any{"path": "inside"}); err != nil || !strings.Contains(got, "guide.md") {
+		t.Errorf("list through an inside link = %q, %v", got, err)
+	}
+	if got, err := tools["list"].Execute(ctx, map[string]any{}); err != nil || !strings.Contains(got, "out -> "+outside) {
+		t.Errorf("list shows link targets as written: %q, %v", got, err)
+	}
+	if got, err := tools["grep"].Execute(ctx, map[string]any{"pattern": "TODO"}); err != nil || strings.Contains(got, "secret") {
+		t.Errorf("a walk followed a link out of the workspace: %q, %v", got, err)
+	}
+}
+
+func TestWriteLeavesNoTemporaryFile(t *testing.T) {
+	root := workspace(t)
+	tools := toolsByName(t, root, AllowWrites())
+	ctx := context.Background()
+	if _, err := tools["write"].Execute(ctx, map[string]any{"path": "a/b.txt", "content": "one\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tools["edit"].Execute(ctx, map[string]any{"path": "a/b.txt", "old_string": "one", "new_string": "two"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "b.txt" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("directory holds %v, want only b.txt", names)
+	}
+}

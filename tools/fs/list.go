@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -28,18 +29,24 @@ func (t *listTool) Definition() types.ToolDef {
 }
 
 func (t *listTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	dir, err := t.cfg.resolve(dirArg(args), true)
+	root, dir, err := t.cfg.open(dirArg(args))
 	if err != nil {
 		return "", fmt.Errorf("list: %w", err)
 	}
-	info, err := os.Stat(dir)
+	defer func() { _ = root.Close() }()
+	info, err := root.Stat(dir)
 	if err != nil {
 		return "", fmt.Errorf("list: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("list: %s is not a directory", t.cfg.rel(dir))
+		return "", fmt.Errorf("list: %s is not a directory", show(dir))
 	}
-	entries, err := os.ReadDir(dir)
+	f, err := root.Open(dir)
+	if err != nil {
+		return "", fmt.Errorf("list: %w", err)
+	}
+	entries, err := f.ReadDir(-1)
+	_ = f.Close()
 	if err != nil {
 		return "", fmt.Errorf("list: %w", err)
 	}
@@ -68,7 +75,7 @@ func (t *listTool) Execute(ctx context.Context, args map[string]any) (string, er
 		case e.Type()&os.ModeSymlink != 0:
 			// The target is shown as written; reading through it is still
 			// confined by the other tools.
-			target, _ := os.Readlink(dir + string(os.PathSeparator) + e.Name())
+			target, _ := root.Readlink(filepath.Join(dir, e.Name()))
 			fmt.Fprintf(&b, "%s -> %s\n", e.Name(), target)
 		default:
 			size := int64(-1)

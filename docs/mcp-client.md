@@ -36,7 +36,7 @@ agent.WithToolGate(types.Gates(pool.Gate(), mcp.CapabilityGate(mcp.DefaultCapabi
 
 `${VAR}` and `${VAR:-default}` expand from the environment, so secrets stay out of the file.
 An unset variable with no default is an error.
-Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which refuses cloud metadata and link-local addresses at dial time.
+Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which refuses cloud metadata and link-local addresses at dial time (a `netguard` client under `netguard.NoMetadata`).
 `WithConfigRegistry` records each load as a revision that can be pinned or rolled back.
 
 ## Connections
@@ -49,7 +49,7 @@ Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which 
 | Bound calls to one server | `ServerSpec.MaxConcurrent` |
 | Rotating bearer token | `ServerSpec.TokenFunc` |
 | OAuth authorization code, PKCE, dynamic registration | `ServerSpec.OAuthHandler` (go-sdk `auth` package) |
-| Block internal addresses | `SafeHTTPClient(blockPrivate)` |
+| Block internal addresses | `SafeHTTPClient(blockPrivate)`, or `netguard.Client` with a policy of your own |
 | Test a connection | `Probe`, `Pool.Health`, `Pool.Preflight` |
 
 The identity covers the transport, header names with a hash of their values, the allowlist, and the prefix.
@@ -92,6 +92,14 @@ if err := drift.Within(0, "search", "fetch"); err != nil {
     return err // a required tool disappeared or changed
 }
 ```
+
+## Input schemas
+
+A tool's input schema is converted to a `ParameterSchema` when the tool is imported.
+Local `#/$defs/<name>` references, which pydantic and similar generators emit for shared shapes, are inlined first with `InlineDefs`, keeping keywords written beside a `$ref`.
+A property written as `anyOf` or `oneOf` of one schema and `{"type": "null"}` becomes that schema, nullable.
+A schema `InlineDefs` refuses (a remote or recursive reference, one that names no definition, more than `MaxInlinedRefs` expansions) still imports approximately, with the reference read as a string, so one odd tool never breaks a server's import.
+A host that would rather refuse such a tool calls `InlineDefs` itself: every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
 
 ## Names and trust
 

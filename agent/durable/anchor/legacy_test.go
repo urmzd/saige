@@ -22,7 +22,7 @@ const legacyDir = "../../internal/testdata/legacy/durable/"
 // typed parts recorded and left parked on an approval, and resumes it.
 func TestLegacyLedgerResumes(t *testing.T) {
 	ctx := testContext(t)
-	raw, err := os.ReadFile(legacyDir + "duraturo/v1_ledger.json")
+	raw, err := os.ReadFile(legacyDir + "anchor/v1_ledger.json")
 	if err != nil {
 		t.Fatal(err)
 	}

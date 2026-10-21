@@ -41,6 +41,7 @@ import (
 	p26 "github.com/urmzd/saige/eval/online"
 	p27 "github.com/urmzd/saige/eval/pgstore"
 	p28 "github.com/urmzd/saige/eval/store"
+	p40 "github.com/urmzd/saige/netguard"
 	p29 "github.com/urmzd/saige/postgres"
 	p30 "github.com/urmzd/saige/rag/bm25retriever"
 	p31 "github.com/urmzd/saige/rag/eval"
@@ -105,6 +106,7 @@ func sentinels() []sentinel {
 		{"agent/durable/local", "ErrNoNotifier", p5.ErrNoNotifier},
 		{"agent/durable/local", "ErrSignal", p5.ErrSignal},
 		{"agent/mcp", "ErrBlockedAddress", p6.ErrBlockedAddress},
+		{"agent/mcp", "ErrUnsupportedSchema", p6.ErrUnsupportedSchema},
 		{"agent/memory", "ErrKindNotAllowed", p7.ErrKindNotAllowed},
 		{"agent/memory", "ErrNoScope", p7.ErrNoScope},
 		{"agent/memory", "ErrNotFound", p7.ErrNotFound},
@@ -220,6 +222,7 @@ func sentinels() []sentinel {
 		{"eval/store", "ErrInvalidID", p28.ErrInvalidID},
 		{"eval/store", "ErrNotFound", p28.ErrNotFound},
 		{"eval/store", "ErrRunExists", p28.ErrRunExists},
+		{"netguard", "ErrBlocked", p40.ErrBlocked},
 		{"postgres", "ErrEmbeddingDimMismatch", p29.ErrEmbeddingDimMismatch},
 		{"postgres", "ErrExtensionUnavailable", p29.ErrExtensionUnavailable},
 		{"postgres", "ErrUnsupportedServer", p29.ErrUnsupportedServer},
