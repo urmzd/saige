@@ -413,6 +413,16 @@ API reference for every package: [pkg.go.dev/github.com/urmzd/saige](https://pkg
 
 This repo's conventions are available as portable agent skills in [`skills/`](skills/).
 
+## Where this sits
+
+saige is the middle of five layers (warp, fiber, saige, playscape, anchor):
+the agent itself. Model providers, the loop, tools, MCP, retrieval, memory and
+evals are built once here, and fiber and warp wrap them rather than keep their
+own. It builds on anchor and playscape. Below warp nothing is a service, so
+its commands are becoming library packages that warp hosts. [The
+ecosystem](https://github.com/urmzd/warp/blob/main/docs/ecosystem.md) lists who owns what, the remaining duplication and the stack's
+limitations in one place.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
