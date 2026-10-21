@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.41.0 (2026-10-21)
+
+### Breaking
+
+- netguard, MCP $defs inlining and exported fallback conditions; durable wire codes are durable.anchor.* (#124) ([9524993](https://github.com/urmzd/saige/commit/9524993e046cfd21046f7428e2bf78cf1d630b56))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.40.0...v0.41.0)
+
+
 ## 0.40.0 (2026-10-20)
 
 ### Features
