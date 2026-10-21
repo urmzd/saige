@@ -340,6 +340,10 @@ if err != nil {
 }
 ```
 
+To fall back only on some failures, name them: `fallback.Rule(fallback.OnRateLimit, fallback.OnUnavailable)` returns the predicate for `fallback.WithFallbackOn`.
+The names (`any`, `auth`, `content_filter`, `context_length`, `rate_limit`, `transient`, `unavailable`, listed by `fallback.Conditions`) are the ones a configuration writes.
+A named class narrows `DefaultFallbackOn` and never widens it, and an unknown name is an error wrapping `types.ErrInvalidConfig`.
+
 ## Compaction
 
 Data-driven context management:
