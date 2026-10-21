@@ -67,7 +67,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 - RAG: rag/config.go, rag/types/types.go, rag/types/parts.go, rag/internal/pipeline/pipeline.go, rag/extractor/parts.go, rag/tool/tools.go
 - Eval: eval/eval.go, eval/input.go, eval/experiment.go, eval/compare.go, eval/scorer.go, eval/judge.go, eval/textquality.go, agent/eval/scorers.go, agent/eval/partscorers.go, rag/knowledge/eval/scorers.go, rag/eval/scorers.go
 - Research: tools/research/tools.go, tools/research/web_search.go, tools/research/file_search.go, tools/research/read_file.go, tools/research/search_knowledge.go, tools/research/store_knowledge.go, tools/research/get_graph.go
-- Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go
+- Tool packs: tools/fs/fs.go, tools/fs/read.go, tools/fs/glob.go, tools/fs/grep.go, tools/fs/write.go, tools/exec/sandbox.go, tools/exec/policy.go, tools/exec/tool.go, tools/fetch/fetch.go, tools/fetch/safehttp.go, netguard/netguard.go, netguard/http.go
 - SearXNG: rag/source/searxng/searxng.go
 - Durable: agent/durable/local/local.go, agent/durable/local/router.go, agent/durable/anchor/anchor.go, agent/durable/anchor/runner.go, agent/durable/anchor/interrupt.go
 - Shared: postgres/pool.go, postgres/migrate.go

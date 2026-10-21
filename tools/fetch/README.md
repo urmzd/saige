@@ -18,7 +18,7 @@ local := fetch.NewTool(fetch.AllowPrivateNetworks())   // reach the local networ
 
 ## SafeHTTPClient
 
-`SafeHTTPClient(blockPrivate)` checks the resolved IP at connect time, after DNS, so redirects and re-resolution cannot reach a forbidden address. Link-local and cloud metadata ranges (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`, `100.100.100.200`) are always refused. With `blockPrivate`, loopback, RFC 1918, IPv6 unique local, carrier-grade NAT, unspecified, and multicast addresses are refused too. Proxy variables are ignored and at most five redirects are followed. Use it for any client that dials model-chosen URLs.
+`SafeHTTPClient(blockPrivate)` is a [`netguard`](../../netguard) client: it checks the resolved IP at connect time, after DNS, so redirects and re-resolution cannot reach a forbidden address. Link-local and cloud metadata ranges (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`, `100.100.100.200`) are always refused (`netguard.NoMetadata`). With `blockPrivate`, every address that is not public unicast is refused too (`netguard.PublicOnly`): loopback, RFC 1918, IPv6 unique local, carrier-grade NAT, unspecified, multicast, documentation and reserved ranges, and the IPv6 prefixes that embed an IPv4 address. Proxy variables are ignored and at most five redirects are followed. Refusals match both `ErrBlockedAddress` and `netguard.ErrBlocked`. For a client of your own, use `netguard.Client` directly.
 
 ## Related
 

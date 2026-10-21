@@ -36,7 +36,7 @@ agent.WithToolGate(types.Gates(pool.Gate(), mcp.CapabilityGate(mcp.DefaultCapabi
 
 `${VAR}` and `${VAR:-default}` expand from the environment, so secrets stay out of the file.
 An unset variable with no default is an error.
-Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which refuses cloud metadata and link-local addresses at dial time.
+Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which refuses cloud metadata and link-local addresses at dial time (a `netguard` client under `netguard.NoMetadata`).
 `WithConfigRegistry` records each load as a revision that can be pinned or rolled back.
 
 ## Connections
@@ -49,7 +49,7 @@ Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which 
 | Bound calls to one server | `ServerSpec.MaxConcurrent` |
 | Rotating bearer token | `ServerSpec.TokenFunc` |
 | OAuth authorization code, PKCE, dynamic registration | `ServerSpec.OAuthHandler` (go-sdk `auth` package) |
-| Block internal addresses | `SafeHTTPClient(blockPrivate)` |
+| Block internal addresses | `SafeHTTPClient(blockPrivate)`, or `netguard.Client` with a policy of your own |
 | Test a connection | `Probe`, `Pool.Health`, `Pool.Preflight` |
 
 The identity covers the transport, header names with a hash of their values, the allowlist, and the prefix.

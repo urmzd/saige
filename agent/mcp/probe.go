@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/urmzd/saige/netguard"
 )
 
 // ProbeKind classifies a probe outcome.
@@ -24,7 +26,8 @@ const (
 	ProbeUnreachable ProbeKind = "unreachable"
 	// ProbeAuthRejected means the server answered 401 or 403.
 	ProbeAuthRejected ProbeKind = "auth_rejected"
-	// ProbeBlocked means SafeHTTPClient refused the destination address.
+	// ProbeBlocked means an address guard (SafeHTTPClient, or any
+	// netguard client) refused the destination address.
 	ProbeBlocked ProbeKind = "blocked"
 	// ProbeTimeout means the handshake or listing ran out of time.
 	ProbeTimeout ProbeKind = "timeout"
@@ -112,7 +115,8 @@ func classifyProbe(ctx context.Context, err error, status int) ProbeKind {
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
 	switch {
-	case errors.Is(err, ErrBlockedAddress) || strings.Contains(err.Error(), ErrBlockedAddress.Error()):
+	case errors.Is(err, ErrBlockedAddress) || errors.Is(err, netguard.ErrBlocked) ||
+		strings.Contains(err.Error(), ErrBlockedAddress.Error()) || strings.Contains(err.Error(), netguard.ErrBlocked.Error()):
 		return ProbeBlocked
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return ProbeAuthRejected

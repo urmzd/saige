@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/urmzd/saige/agent/registry"
 	"github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/netguard"
 )
 
 // flakyFront answers the first n requests matching a JSON-RPC method with a
@@ -310,7 +312,7 @@ func TestCoerceScalarsToArrays(t *testing.T) {
 	}
 }
 
-func TestCheckAddress(t *testing.T) {
+func TestAddressPolicy(t *testing.T) {
 	tests := []struct {
 		addr         string
 		blockPrivate bool
@@ -329,12 +331,15 @@ func TestCheckAddress(t *testing.T) {
 		{"93.184.216.34:443", true, false},
 	}
 	for _, tt := range tests {
-		err := checkAddress(tt.addr, tt.blockPrivate)
+		err := addressPolicy(tt.blockPrivate)(netip.MustParseAddrPort(tt.addr).Addr())
 		if (err != nil) != tt.blocked {
-			t.Errorf("checkAddress(%s, %v) = %v, want blocked=%v", tt.addr, tt.blockPrivate, err, tt.blocked)
+			t.Errorf("addressPolicy(%v)(%s) = %v, want blocked=%v", tt.blockPrivate, tt.addr, err, tt.blocked)
 		}
-		if err != nil && !errors.Is(err, ErrBlockedAddress) {
-			t.Errorf("%s: error does not match ErrBlockedAddress", tt.addr)
+		if err != nil && (!errors.Is(err, ErrBlockedAddress) || !errors.Is(err, netguard.ErrBlocked)) {
+			t.Errorf("%s: error %v does not match ErrBlockedAddress and netguard.ErrBlocked", tt.addr, err)
+		}
+		if err != nil && !strings.HasPrefix(err.Error(), ErrBlockedAddress.Error()+": ") {
+			t.Errorf("%s: error %q does not read as ErrBlockedAddress", tt.addr, err)
 		}
 	}
 }
@@ -342,7 +347,7 @@ func TestCheckAddress(t *testing.T) {
 func TestSafeHTTPClientBlocksAtDialTime(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
-	if _, err := SafeHTTPClient(true).Get(srv.URL); !errors.Is(err, ErrBlockedAddress) {
+	if _, err := SafeHTTPClient(true).Get(srv.URL); !errors.Is(err, ErrBlockedAddress) || !errors.Is(err, netguard.ErrBlocked) {
 		t.Errorf("loopback with blockPrivate: %v", err)
 	}
 	resp, err := SafeHTTPClient(false).Get(srv.URL)
