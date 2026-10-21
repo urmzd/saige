@@ -93,6 +93,14 @@ if err := drift.Within(0, "search", "fetch"); err != nil {
 }
 ```
 
+## Input schemas
+
+A tool's input schema is converted to a `ParameterSchema` when the tool is imported.
+Local `#/$defs/<name>` references, which pydantic and similar generators emit for shared shapes, are inlined first with `InlineDefs`, keeping keywords written beside a `$ref`.
+A property written as `anyOf` or `oneOf` of one schema and `{"type": "null"}` becomes that schema, nullable.
+A schema `InlineDefs` refuses (a remote or recursive reference, one that names no definition, more than `MaxInlinedRefs` expansions) still imports approximately, with the reference read as a string, so one odd tool never breaks a server's import.
+A host that would rather refuse such a tool calls `InlineDefs` itself: every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
+
 ## Names and trust
 
 Tool names get the prefix `Name + "_"` by default.

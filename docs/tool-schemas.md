@@ -46,7 +46,7 @@ This change supports one base type plus null, not arbitrary unions of non-null t
 | OpenAI, Anthropic, Ollama | `"type": ["string", "null"]` |
 | Google Gemini | `"type": "STRING", "nullable": true` |
 | MCP export | Standard JSON Schema type union |
-| MCP import | Preserve null in a type array, regardless of its position |
+| MCP import | Preserve null in a type array, regardless of its position; `anyOf`/`oneOf` of one schema and null becomes that schema, nullable; local `$defs` references are inlined (`mcp.InlineDefs`) |
 | Response cache | Include nullability in the request identity |
 
 Nested properties, nullable objects, and nullable array elements follow the same rule.

@@ -8,4 +8,5 @@ import agenttypes "github.com/urmzd/saige/agent/types"
 // rename one.
 func init() {
 	agenttypes.RegisterWireSentinel("mcp.blocked_address", ErrBlockedAddress)
+	agenttypes.RegisterWireSentinel("mcp.unsupported_schema", ErrUnsupportedSchema)
 }

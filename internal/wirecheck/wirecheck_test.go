@@ -106,6 +106,7 @@ func sentinels() []sentinel {
 		{"agent/durable/local", "ErrNoNotifier", p5.ErrNoNotifier},
 		{"agent/durable/local", "ErrSignal", p5.ErrSignal},
 		{"agent/mcp", "ErrBlockedAddress", p6.ErrBlockedAddress},
+		{"agent/mcp", "ErrUnsupportedSchema", p6.ErrUnsupportedSchema},
 		{"agent/memory", "ErrKindNotAllowed", p7.ErrKindNotAllowed},
 		{"agent/memory", "ErrNoScope", p7.ErrNoScope},
 		{"agent/memory", "ErrNotFound", p7.ErrNotFound},
