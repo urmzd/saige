@@ -2,14 +2,13 @@ package fs
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	iofs "io/fs"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/urmzd/saige/agent/types"
@@ -149,7 +148,7 @@ func writeAtomic(root *os.Root, name, content string) error {
 	var tmp string
 	var f *os.File
 	for attempt := 0; ; attempt++ {
-		tmp = filepath.Join(dir, "."+base+".tmp"+strconv.FormatUint(rand.Uint64(), 36))
+		tmp = filepath.Join(dir, "."+base+".tmp"+rand.Text())
 		var err error
 		f, err = root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
