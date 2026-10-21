@@ -1,11 +1,64 @@
 // Package safepath confines tool paths to a workspace root.
+//
+// Open is the race-free form: it returns an os.Root, which checks every
+// path inside the root at the moment of use. Resolve checks a path once and
+// returns it, so a symlink swapped in between the check and the use can
+// still lead out; it remains for callers that hand a path to another
+// process, such as a subprocess's working directory.
 package safepath
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
+
+// Open opens root as an os.Root and returns it with requested as a path
+// relative to it (see Rel). Every operation through the Root resolves its
+// path inside root when the operation is made, following a symlink only
+// while it stays inside root, so there is no window between a check and a
+// use in which a swapped symlink could lead out. An absolute symlink is
+// refused even when it points inside root. The caller closes the Root.
+func Open(root, requested string) (*os.Root, string, error) {
+	rel, err := Rel(root, requested)
+	if err != nil {
+		return nil, "", err
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("open root: %w", err)
+	}
+	return r, rel, nil
+}
+
+// Rel returns requested as a clean path relative to root ("." for root
+// itself), refusing a path that escapes root lexically: "../" traversal or
+// an absolute path outside root. It reads nothing from disk, so it says
+// nothing about symlinks; use the result with an os.Root (see Open).
+func Rel(root, requested string) (string, error) {
+	if requested == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve root: %w", err)
+	}
+	absRoot = filepath.Clean(absRoot)
+	target := requested
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(absRoot, target)
+	}
+	target = filepath.Clean(target)
+	if !Within(absRoot, target) {
+		return "", fmt.Errorf("path escapes root %q: %q", root, requested)
+	}
+	rel, err := filepath.Rel(absRoot, target)
+	if err != nil {
+		return "", fmt.Errorf("path escapes root %q: %q", root, requested)
+	}
+	return rel, nil
+}
 
 // Resolve confines a requested path to root. It rejects any path that
 // escapes root via "../" traversal, an absolute path outside root, or a symlink

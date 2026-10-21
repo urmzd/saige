@@ -22,7 +22,7 @@ all, err := fs.NewTools("/path/to/workspace", fs.AllowWrites())      // adds wri
 
 ## Safety
 
-- **Root confinement**: `../` traversal, absolute paths outside the root, and symlinks whose target leaves the root are rejected. Walks do not follow symlinks and skip `.git`, `.hg`, `.svn`, and `node_modules`.
+- **Root confinement**: `../` traversal, absolute paths outside the root, and symlinks whose target leaves the root are rejected. Every file operation goes through an `os.Root`, so the check is made when a file is used and a symlink swapped in after a check cannot lead out. A symlink with an absolute target is refused even when it points inside the root; write relative links. Walks do not follow symlinks and skip `.git`, `.hg`, `.svn`, and `node_modules`.
 - **Read-only by default**: `write` and `edit` exist only with `AllowWrites()`, and each is wrapped in a `human_approval` marker, so the agent loop pauses for a decision before a file changes.
 - **Limits**: files over 10 MB are not read or written; list, glob, and grep stop at 200 results. Change them with `WithMaxFileBytes`, `WithMaxLineChars`, `WithReadLimit`, and `WithMaxResults`.
 

@@ -151,18 +151,16 @@ func approval(t types.Tool) types.Tool {
 	})
 }
 
-// resolve confines a requested path to the root.
-func (c *config) resolve(requested string, requireExist bool) (string, error) {
-	return safepath.Resolve(c.root, requested, requireExist)
+// open opens the workspace root and returns it with requested as a path
+// relative to it. Every file operation goes through the returned Root, which
+// confines it to the workspace when it is made (see safepath.Open). The
+// caller closes the Root.
+func (c *config) open(requested string) (*os.Root, string, error) {
+	return safepath.Open(c.root, requested)
 }
 
-// rel renders p relative to the root for tool output.
-func (c *config) rel(p string) string {
-	if r, err := filepath.Rel(c.root, p); err == nil {
-		return filepath.ToSlash(r)
-	}
-	return p
-}
+// show renders a root-relative path for tool output.
+func show(rel string) string { return filepath.ToSlash(rel) }
 
 // stringArg returns a string argument, or "" when absent or not a string.
 func stringArg(args map[string]any, key string) string {

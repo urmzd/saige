@@ -46,10 +46,12 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]any) (string, er
 		return "", fmt.Errorf("grep: invalid pattern: %w", err)
 	}
 	glob := stringArg(args, "glob")
-	base, err := t.cfg.resolve(dirArg(args), true)
+	root, rel, err := t.cfg.open(dirArg(args))
 	if err != nil {
 		return "", fmt.Errorf("grep: %w", err)
 	}
+	defer func() { _ = root.Close() }()
+	base := filepath.ToSlash(rel)
 
 	var b strings.Builder
 	matches, skipped := 0, 0
@@ -57,7 +59,7 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]any) (string, er
 		if glob != "" && !globSelects(glob, base, p) {
 			return nil
 		}
-		n, ok, err := t.searchFile(ctx, re, p, &b, t.cfg.maxResults-matches)
+		n, ok, err := t.searchFile(ctx, root, re, p, &b, t.cfg.maxResults-matches)
 		if err != nil {
 			return err
 		}
@@ -71,12 +73,12 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]any) (string, er
 		return nil
 	}
 
-	info, err := os.Stat(base)
+	info, err := root.Stat(rel)
 	if err != nil {
 		return "", fmt.Errorf("grep: %w", err)
 	}
 	if info.IsDir() {
-		err = walkFiles(ctx, base, search)
+		err = walkFiles(ctx, root.FS(), base, search)
 	} else if err = search(base); err == errStopWalk {
 		err = nil
 	}
@@ -96,26 +98,26 @@ func (t *grepTool) Execute(ctx context.Context, args map[string]any) (string, er
 	return b.String(), nil
 }
 
-// searchFile writes up to budget matching lines of p to b. It returns the
-// number written and false when the file was skipped.
-func (t *grepTool) searchFile(ctx context.Context, re *regexp.Regexp, p string, b *strings.Builder, budget int) (int, bool, error) {
+// searchFile writes up to budget matching lines of p, a slash-separated
+// path relative to root, to b. It returns the number written and false when
+// the file was skipped.
+func (t *grepTool) searchFile(ctx context.Context, root *os.Root, re *regexp.Regexp, p string, b *strings.Builder, budget int) (int, bool, error) {
 	if ctx.Err() != nil {
 		return 0, true, ctx.Err()
 	}
-	f, err := openText(p, t.cfg.maxFileBytes)
+	f, err := openText(root, filepath.FromSlash(p), t.cfg.maxFileBytes)
 	if err != nil {
 		return 0, false, nil
 	}
 	defer func() { _ = f.Close() }()
 
-	rel := t.cfg.rel(p)
 	sc := newScanner(f, t.cfg.maxFileBytes)
 	n, line := 0, 0
 	for sc.Scan() && n < budget {
 		line++
 		text := sc.Text()
 		if re.MatchString(text) {
-			fmt.Fprintf(b, "%s:%d: %s\n", rel, line, truncateLine(text, t.cfg.maxLineChars))
+			fmt.Fprintf(b, "%s:%d: %s\n", p, line, truncateLine(text, t.cfg.maxLineChars))
 			n++
 		}
 	}
@@ -125,16 +127,13 @@ func (t *grepTool) searchFile(ctx context.Context, re *regexp.Regexp, p string, 
 	return n, true, nil
 }
 
-// globSelects reports whether file p under base matches glob. A pattern
-// with no slash is matched against the file name alone.
+// globSelects reports whether file p under base, both slash-separated,
+// matches glob. A pattern with no slash is matched against the file name
+// alone.
 func globSelects(glob, base, p string) bool {
 	if !strings.Contains(glob, "/") {
-		ok, _ := path.Match(glob, filepath.Base(p))
+		ok, _ := path.Match(glob, path.Base(p))
 		return ok
 	}
-	rel, err := filepath.Rel(base, p)
-	if err != nil {
-		return false
-	}
-	return matchGlob(glob, filepath.ToSlash(rel))
+	return matchGlob(glob, relTo(base, p))
 }

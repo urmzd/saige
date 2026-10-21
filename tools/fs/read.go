@@ -36,14 +36,15 @@ func (t *readTool) Definition() types.ToolDef {
 }
 
 func (t *readTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	path, err := t.cfg.resolve(stringArg(args, argPath), true)
+	root, rel, err := t.cfg.open(stringArg(args, argPath))
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
+	defer func() { _ = root.Close() }()
 	offset := intArg(args, "offset", 1)
 	limit := intArg(args, "limit", t.cfg.readLimit)
 
-	f, err := openText(path, t.cfg.maxFileBytes)
+	f, err := openText(root, rel, t.cfg.maxFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
@@ -80,22 +81,35 @@ func (t *readTool) Execute(ctx context.Context, args map[string]any) (string, er
 	return b.String(), nil
 }
 
-// openText opens path for reading after checking that it is a regular file
-// within the size cap and does not look binary.
-func openText(path string, maxBytes int64) (*os.File, error) {
-	info, err := os.Stat(path)
+// openText opens name, relative to root, for reading after checking that it
+// is a regular file within the size cap and does not look binary. The type
+// is checked before opening, so a FIFO or device is never opened, and the
+// size again on the open file, which is the one read.
+func openText(root *os.Root, name string, maxBytes int64) (*os.File, error) {
+	info, err := root.Stat(name)
 	if err != nil {
 		return nil, err
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a directory", path)
+		return nil, fmt.Errorf("%s is a directory", show(name))
 	}
-	if info.Size() > maxBytes {
-		return nil, fmt.Errorf("file is %d bytes, the limit is %d", info.Size(), maxBytes)
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", show(name))
 	}
-	f, err := os.Open(path) //nolint:gosec // the path is confined to the workspace root
+	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
+	}
+	if info, err = f.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		if err == nil {
+			err = fmt.Errorf("%s is not a regular file", show(name))
+		}
+		return nil, err
+	}
+	if info.Size() > maxBytes {
+		_ = f.Close()
+		return nil, fmt.Errorf("file is %d bytes, the limit is %d", info.Size(), maxBytes)
 	}
 	head := make([]byte, sniffBytes)
 	n, err := io.ReadFull(f, head)
@@ -105,7 +119,7 @@ func openText(path string, maxBytes int64) (*os.File, error) {
 	}
 	if isBinary(head[:n]) {
 		_ = f.Close()
-		return nil, fmt.Errorf("%s looks like a binary file", path)
+		return nil, fmt.Errorf("%s looks like a binary file", show(name))
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		_ = f.Close()
