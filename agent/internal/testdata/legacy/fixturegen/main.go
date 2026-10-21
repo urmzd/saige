@@ -447,7 +447,7 @@ func writeDuraturo(ctx context.Context, out string) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(out, "durable", "duraturo", "v1_ledger.json"), raw)
+	return writeFile(filepath.Join(out, "durable", "anchor", "v1_ledger.json"), raw)
 }
 
 func writeFile(path string, data []byte) error {

@@ -2,7 +2,7 @@
 
 ## Anchor backend rename
 
-The durable backend package moves from `agent/durable/duraturo` to `agent/durable/anchor`, backed by `github.com/urmzd/anchor` and its Postgres adapter. Update imports; the shared `SAIGE_TEST_POSTGRES_DSN` test setting is unchanged. The legacy replay fixtures and `durable.duraturo.*` wire error codes keep their original identities so recorded work and decoded errors remain compatible.
+The durable backend package moves from `agent/durable/duraturo` to `agent/durable/anchor`, backed by `github.com/urmzd/anchor` and its Postgres adapter. Update imports; the shared `SAIGE_TEST_POSTGRES_DSN` test setting is unchanged. The wire error codes are `durable.anchor.*` (they were `durable.duraturo.*`): upgrade every process that exchanges errors together. Recorded runs still replay: the replay fixtures under `agent/internal/testdata/legacy` hold no backend name. Their generator, `fixturegen`, imports the release it records, which predates the rename.
 
 ## Existing upgrade guidance
 
