@@ -415,13 +415,17 @@ This repo's conventions are available as portable agent skills in [`skills/`](sk
 
 ## Where this sits
 
-saige is the middle of five layers (warp, fiber, saige, playscape, anchor):
+saige is the middle of five layers (Humagen, fiber, saige, playscape, anchor):
 the agent itself. Model providers, the loop, tools, MCP, retrieval, memory and
-evals are built once here, and fiber and warp wrap them rather than keep their
-own. It builds on anchor and playscape. Below warp nothing is a service, so
-its commands are becoming library packages that warp hosts. [The
-ecosystem](https://github.com/urmzd/warp/blob/main/docs/ecosystem.md) lists who owns what, the remaining duplication and the stack's
+evals are built once here, and fiber and Humagen wrap them rather than keep their
+own. It builds on anchor and playscape. Below Humagen nothing is a service, so
+its commands are becoming library packages that Humagen hosts. [The
+ecosystem](https://github.com/urmzd/humagen/blob/main/docs/ecosystem.md) lists who owns what, the remaining duplication and the stack's
 limitations in one place.
+
+For existing Warp deployments of [Humagen](https://github.com/urmzd/humagen),
+see the [upgrade guide](https://github.com/urmzd/humagen/blob/main/docs/upgrading-from-warp.md).
+
 
 ## License
 
