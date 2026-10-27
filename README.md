@@ -5,7 +5,7 @@
     <br />
     A Go SDK for building AI agents, giving them context and memory, and evaluating them.
     <br /><br />
-    <a href="https://pkg.go.dev/github.com/urmzd/saige">Install</a>
+    <a href="#installation">Install</a>
     &middot;
     <a href="https://github.com/urmzd/saige/issues">Report Bug</a>
     &middot;
@@ -28,8 +28,9 @@
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Concepts in 2 minutes](#concepts-in-2-minutes)
 - [Examples](#examples)
+- [Usage](#usage)
+- [Development](#development)
 - [Documentation](#documentation)
 - [Agent Skill](#agent-skill)
 - [License](#license)
@@ -56,7 +57,7 @@ Build agents, supply their context and memory, and evaluate the results through 
 | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT`) or `GOOGLE_API_KEY`, or a local [Ollama](https://ollama.com) | Model-backed agent calls and live evals |
 | PostgreSQL 18 with pgvector and pg_search | Postgres-backed retrieval, memory, conversation trees and durable runs |
 
-Basic agent calls need no database. RAG also supports an in-memory store. For persistent deployments, one Postgres can hold vectors, BM25 indexes, conversation trees and durable runs. See [deployment](docs/deployment.md) for the single-Postgres architecture.
+Basic agent calls need no database. RAG also supports an in-memory store. For persistent deployments, one Postgres can hold vectors, BM25 indexes, conversation trees and durable runs. See [deployment](docs/deployment.md).
 
 ### CLI and MCP server
 
@@ -84,35 +85,21 @@ go get github.com/urmzd/saige
 
 ## Quick Start
 
-### CLI
+Ask a question from the CLI:
 
 ```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, or Vertex AI credentials
 saige ask "What is retrieval-augmented generation?"
 ```
 
-Without flags, `saige ask` uses the default catalog preset and available credentials. See [catalog presets](docs/catalog.md) for model selection and failover. Run fully local with a model served by Ollama:
+Or run fully local with Ollama:
 
 ```bash
 ollama pull qwen3.5:4b
 saige ask --provider ollama "What is retrieval-augmented generation?"
 ```
 
-`--provider ollama` serves `qwen3.5:4b`, or any other chat model you have pulled.
-
-`saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands.
-
-### The smallest agent
-
-Run the checked-in example from a clone, using your configured provider credentials or a running Ollama server with a chat model pulled:
-
-```bash
-git clone https://github.com/urmzd/saige.git
-cd saige
-go run ./examples/quickstart/agent
-```
-
-The example builds the `default` catalog preset, invokes one agent turn and prints the answer:
+Build the smallest agent in Go. From a clone, run `go run ./examples/quickstart/agent`:
 
 <!-- fsrc src="examples/quickstart/agent/main.go" fence="auto" -->
 ```go
@@ -153,6 +140,45 @@ func main() {
 }
 ```
 <!-- /fsrc -->
+
+## Examples
+
+| Example | Run from the repository root |
+| --- | --- |
+| [Minimal agent](examples/quickstart/agent/main.go) | `go run ./examples/quickstart/agent` |
+| [Typed tool](examples/quickstart/tool/main.go) | `go run ./examples/quickstart/tool` |
+| [Structured output](examples/quickstart/structured/main.go) | `go run ./examples/quickstart/structured` |
+| [Model-neutral dials](examples/quickstart/dials/main.go) | `go run ./examples/quickstart/dials` |
+| [Postgres RAG](examples/quickstart/rag/main.go) | `go run ./examples/quickstart/rag` |
+
+The agent examples require a configured model provider. The RAG example requires the Postgres and Ollama setup in [RAG on Postgres](#rag-on-postgres). See the [full example index](examples/README.md) for sub-agents, handoffs, durability, caching, approvals and knowledge graphs.
+
+## Usage
+
+### Concepts
+
+| Piece | What it is | Guide |
+| --- | --- | --- |
+| **Agent** | The loop: model turn, tool calls, results, repeat | [agent](agent/README.md) |
+| **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/concepts.md#vendors-runtimes-and-adapters) |
+| **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/catalog.md) |
+| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/parts.md) |
+| **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
+| **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
+| **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |
+| **Agent definitions** | One agent as a versioned Markdown file the CLI, server and MCP server all load | [agent definitions](docs/agent-definitions.md) |
+| **RAG** | Ingest, chunk, embed, hybrid search on Postgres, citations | [rag](rag/README.md) |
+| **Evals** | Scorers, gates and experiments for agents, retrieval and graphs | [eval](eval/README.md) |
+| **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/batch.md) |
+| **Durable runs** | Journaled steps that resume after a crash, on a local engine or Postgres | [durable execution](docs/durable-execution.md) |
+
+See [concepts](docs/concepts.md) for the full picture.
+
+### CLI
+
+Without flags, `saige ask` uses the default catalog preset and available credentials. `--provider ollama` serves `qwen3.5:4b` or any other chat model you have pulled. `saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands, and [catalog presets](docs/catalog.md) for model selection and failover.
+
+To use saige from an editor harness, run `saige-mcp`. See the [MCP server setup](cmd/saige-mcp/README.md).
 
 ### A typed tool
 
@@ -355,77 +381,34 @@ func main() {
 ```
 <!-- /fsrc -->
 
-Run the other programs from the same clone using the commands below.
+## Development
 
-## Concepts in 2 minutes
+```bash
+git clone https://github.com/urmzd/saige.git
+cd saige
+just check          # lint, vet and test
+just test-postgres  # tests against Postgres
+fsrc run README.md  # re-embed examples into this README (CI fails on drift)
+```
 
-| Piece | What it is | Guide |
-| --- | --- | --- |
-| **Agent** | The loop: model turn, tool calls, results, repeat | [agent](agent/README.md) |
-| **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/concepts.md#vendors-runtimes-and-adapters) |
-| **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/catalog.md) |
-| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/parts.md) |
-| **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
-| **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
-| **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |
-| **Agent definitions** | One agent as a versioned Markdown file the CLI, server and MCP server all load | [agent definitions](docs/agent-definitions.md) |
-| **RAG** | Ingest, chunk, embed, hybrid search on Postgres, citations | [rag](rag/README.md) |
-| **Evals** | Scorers, gates and experiments for agents, retrieval and graphs | [eval](eval/README.md) |
-| **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/batch.md) |
-| **Durable runs** | Journaled steps that resume after a crash, on a local engine or Postgres | [durable execution](docs/durable-execution.md) |
-
-See [concepts](docs/concepts.md) for the full picture.
-
-## Examples
-
-| Example | Run from the repository root |
-| --- | --- |
-| [Minimal agent](examples/quickstart/agent/main.go) | `go run ./examples/quickstart/agent` |
-| [Typed tool](examples/quickstart/tool/main.go) | `go run ./examples/quickstart/tool` |
-| [Structured output](examples/quickstart/structured/main.go) | `go run ./examples/quickstart/structured` |
-| [Model-neutral dials](examples/quickstart/dials/main.go) | `go run ./examples/quickstart/dials` |
-| [Postgres RAG](examples/quickstart/rag/main.go) | `go run ./examples/quickstart/rag` |
-
-The agent examples require a configured model provider. The RAG example requires the Postgres and Ollama setup above. See the [full example index](examples/README.md) for sub-agents, handoffs, durability, caching, approvals and knowledge graphs.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-Every guide is listed in the [docs index](docs/README.md). Each package also has its own README:
-
-| Package | Documentation | Covers |
-|---------|---------------|--------|
-| `agent` | [agent/README.md](agent/README.md) | Adapters, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing |
-| `rag` | [rag/README.md](rag/README.md) | Data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings |
-| `rag/knowledge` | [rag/knowledge/README.md](rag/knowledge/README.md) | Knowledge graph backend: graph interface, hybrid search, deduplication, PostgreSQL backend, formatting |
-| `eval` | [eval/README.md](eval/README.md) | Scorers, gates, comparisons, experiments, LLM-as-judge, stream timing, live eval harness (`saige eval`) |
-| `cmd/saige` | [cmd/saige/README.md](cmd/saige/README.md) | CLI reference: chat, ask, serve, rag, kg, eval |
-| `cmd/saige-mcp` | [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md) | MCP server setup for Claude Code, Codex, Gemini CLI |
-| `tools/research` | [tools/research/README.md](tools/research/README.md) | Web search, file, and knowledge graph tools |
-| `tools` | [docs/harness-tools.md](docs/harness-tools.md) | Harness toolset: groups, sandboxes, approvals, spill, CLI `--tools` |
-| `tools/fs` | [tools/fs/README.md](tools/fs/README.md) | Workspace read, list, glob, grep, write, edit with root confinement |
-| `tools/exec` | [tools/exec/README.md](tools/exec/README.md) | Sandboxed bash and execute_code with command, environment, and network policy; subprocess and Docker sandboxes |
-| `tools/fetch` | [tools/fetch/README.md](tools/fetch/README.md) | URL fetch through a client that blocks private and metadata addresses |
-| `examples` | [examples/README.md](examples/README.md) | Runnable example index |
-
-API reference for every package: [pkg.go.dev/github.com/urmzd/saige](https://pkg.go.dev/github.com/urmzd/saige)
+- [Docs index](docs/README.md)
+- [Go API reference](https://pkg.go.dev/github.com/urmzd/saige)
+- [agent](agent/README.md): adapters, deltas, tools, sub-agents, conversation tree, testing
+- [rag](rag/README.md): chunking, retrieval, reranking, HyDE, tool bindings
+- [rag/knowledge](rag/knowledge/README.md): knowledge graph backend
+- [eval](eval/README.md): scorers, gates, experiments, LLM judges, `saige eval`
+- [CLI reference](cmd/saige/README.md)
+- [MCP server](cmd/saige-mcp/README.md)
+- [Harness tools](docs/harness-tools.md), [fs](tools/fs/README.md), [exec](tools/exec/README.md), [fetch](tools/fetch/README.md), [research](tools/research/README.md)
+- [Examples index](examples/README.md)
 
 ## Agent Skill
 
 This repo's conventions are available as portable agent skills in [`skills/`](skills/).
-
-## Where this sits
-
-saige is the middle of five layers (Humagen, fiber, saige, playscape, anchor):
-the agent itself. Model providers, the loop, tools, MCP, retrieval, memory and
-evals are built once here, and fiber and Humagen wrap them rather than keep their
-own. It builds on anchor and playscape. Below Humagen nothing is a service, so
-its commands are becoming library packages that Humagen hosts. [The
-ecosystem](https://github.com/urmzd/humagen/blob/main/docs/ecosystem.md) lists who owns what, the remaining duplication and the stack's
-limitations in one place.
-
-For existing Warp deployments of [Humagen](https://github.com/urmzd/humagen),
-see the [upgrade guide](https://github.com/urmzd/humagen/blob/main/docs/upgrading-from-warp.md).
-
 
 ## License
 
