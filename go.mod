@@ -21,7 +21,7 @@ require (
 	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/spf13/cobra v1.10.2
-	github.com/urmzd/anchor v0.4.0
+	github.com/urmzd/anchor v0.5.1
 	github.com/urmzd/anchor/adapters/postgres v0.1.2-0.20261021192137-078fd82554ea
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
