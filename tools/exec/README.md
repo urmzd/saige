@@ -39,7 +39,7 @@ It reports `Isolation{Network: true, Filesystem: true}`. Variables in the comman
 
 `NewCodeTool` runs a snippet of `shell`, `python`, or `go`, offering only the languages it finds in the sandbox. Code reaches the interpreter through a quoted heredoc; Go is built in a private module and run in the requested directory. The command policy checks shell code and the interpreter or compiler of the other languages.
 
-Its capability class follows the sandbox: `write` when the sandbox confines file changes (`Isolation.Filesystem`) and the network is denied, so an approval grant can cover it; `destructive` otherwise. See [harness tools](../../docs/harness-tools.md).
+Its capability class follows the sandbox: `write` when the sandbox confines file changes (`Isolation.Filesystem`) and the network is denied, so an approval grant can cover it; `destructive` otherwise. See [harness tools](../../docs/guides/harness-tools.md).
 
 ## Tool
 
@@ -53,6 +53,6 @@ A non-zero exit is reported in the result text with stdout and stderr, each capp
 
 ## Related
 
-- [Harness tools](../../docs/harness-tools.md): one curated toolset over these packs
+- [Harness tools](../../docs/guides/harness-tools.md): one curated toolset over these packs
 - [`tools/fs`](../fs/README.md): workspace file tools
 - [Root README](../../README.md)

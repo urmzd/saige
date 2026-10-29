@@ -31,7 +31,7 @@ go test -tags stress -race -count=1 -v ./integration/stress/
 go test -run '^$' -bench . -cpu 1,4,8 ./...
 ```
 
-See [docs/load-testing.md](docs/load-testing.md) for the Postgres and live provider options.
+See [docs/guides/load-testing.md](docs/guides/load-testing.md) for the Postgres and live provider options.
 
 ## Commit Convention
 

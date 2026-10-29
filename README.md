@@ -39,12 +39,12 @@
 
 Build agents, supply their context and memory, and evaluate the results through shared Go interfaces.
 
-- **Streaming agents** with typed message parts, parallel tool calls, sub-agents and handoffs. Use [typed Go functions](docs/func-tools.md), [MCP tools](docs/mcp-client.md) or the built-in [harness tools](docs/harness-tools.md).
-- **Model adapters and routing** for Anthropic, OpenAI, Google and local Ollama, with [catalog presets](docs/catalog.md), retry, fallback and model-neutral [dials](docs/dials.md).
-- **Versioned agent definitions** loaded from Markdown, directories, HTTPS or Postgres. Share one definition across the CLI, HTTP server, MCP and [editor harnesses](docs/harnesses.md). See [agent definitions](docs/agent-definitions.md).
-- **Approvals and guardrails** for tool execution and model input/output, with [approval policies](docs/orchestration-policies.md) and [guardrails](docs/guardrails.md).
-- **Context and memory** through branching conversations, hybrid vector/BM25/graph retrieval, citations and approval-gated [long-term memory](docs/memory.md). See [RAG](rag/README.md) and [knowledge graphs](rag/knowledge/README.md).
-- **Durable execution** with resumable local or Postgres-backed runs, response caching and [batch jobs](docs/batch.md). See [durable runs](docs/durable-execution.md).
+- **Streaming agents** with typed message parts, parallel tool calls, sub-agents and handoffs. Use [typed Go functions](docs/guides/func-tools.md), [MCP tools](docs/guides/mcp-client.md) or the built-in [harness tools](docs/guides/harness-tools.md).
+- **Model adapters and routing** for Anthropic, OpenAI, Google and local Ollama, with [catalog presets](docs/reference/catalog.md), retry, fallback and model-neutral [dials](docs/guides/dials.md).
+- **Versioned agent definitions** loaded from Markdown, directories, HTTPS or Postgres. Share one definition across the CLI, HTTP server, MCP and [editor harnesses](docs/guides/harnesses.md). See [agent definitions](docs/guides/agent-definitions.md).
+- **Approvals and guardrails** for tool execution and model input/output, with [approval policies](docs/architecture/orchestration-policies.md) and [guardrails](docs/guides/guardrails.md).
+- **Context and memory** through branching conversations, hybrid vector/BM25/graph retrieval, citations and approval-gated [long-term memory](docs/guides/memory.md). See [RAG](rag/README.md) and [knowledge graphs](rag/knowledge/README.md).
+- **Durable execution** with resumable local or Postgres-backed runs, response caching and [batch jobs](docs/guides/batch.md). See [durable runs](docs/architecture/durable-execution.md).
 - **Evals** with composable scorers, regression gates, comparisons, experiments and LLM judges. Run suites with `saige eval` or use the [Go API](eval/README.md).
 
 ## Installation
@@ -57,7 +57,7 @@ Build agents, supply their context and memory, and evaluate the results through 
 | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT`) or `GOOGLE_API_KEY`, or a local [Ollama](https://ollama.com) | Model-backed agent calls and live evals |
 | PostgreSQL 18 with pgvector and pg_search | Postgres-backed retrieval, memory, conversation trees and durable runs |
 
-Basic agent calls need no database. RAG also supports an in-memory store. For persistent deployments, one Postgres can hold vectors, BM25 indexes, conversation trees and durable runs. See [deployment](docs/deployment.md).
+Basic agent calls need no database. RAG also supports an in-memory store. For persistent deployments, one Postgres can hold vectors, BM25 indexes, conversation trees and durable runs. See [deployment](docs/guides/deployment.md).
 
 ### CLI and MCP server
 
@@ -160,23 +160,23 @@ The agent examples require a configured model provider. The RAG example requires
 | Piece | What it is | Guide |
 | --- | --- | --- |
 | **Agent** | The loop: model turn, tool calls, results, repeat | [agent](agent/README.md) |
-| **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/concepts.md#vendors-runtimes-and-adapters) |
-| **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/catalog.md) |
-| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/parts.md) |
-| **Dials** | Model-neutral settings compiled per attempt | [dials](docs/dials.md) |
-| **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/tool-calling.md), [typed tools](docs/func-tools.md) |
-| **Delegation** | Handoffs and sub-agents | [delegation](docs/delegation.md) |
-| **Agent definitions** | One agent as a versioned Markdown file the CLI, server and MCP server all load | [agent definitions](docs/agent-definitions.md) |
+| **Adapter** | A `types.Provider` for one serving API: a vendor (Anthropic, OpenAI, Google) or a runtime (Ollama) | [concepts](docs/architecture/concepts.md#vendors-runtimes-and-adapters) |
+| **Catalog and presets** | What each model accepts, and named chains of complete configurations | [catalog](docs/reference/catalog.md) |
+| **Parts** | Messages and model output as ordered typed parts: text, media, tool calls, citations | [parts](docs/guides/parts.md) |
+| **Dials** | Model-neutral settings compiled per attempt | [dials](docs/guides/dials.md) |
+| **Tools** | Typed Go functions, MCP imports and tool packs; parallelism and tool choice | [tool calling](docs/architecture/tool-calling.md), [typed tools](docs/guides/func-tools.md) |
+| **Delegation** | Handoffs and sub-agents | [delegation](docs/guides/delegation.md) |
+| **Agent definitions** | One agent as a versioned Markdown file the CLI, server and MCP server all load | [agent definitions](docs/guides/agent-definitions.md) |
 | **RAG** | Ingest, chunk, embed, hybrid search on Postgres, citations | [rag](rag/README.md) |
 | **Evals** | Scorers, gates and experiments for agents, retrieval and graphs | [eval](eval/README.md) |
-| **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/batch.md) |
-| **Durable runs** | Journaled steps that resume after a crash, on a local engine or Postgres | [durable execution](docs/durable-execution.md) |
+| **Batches** | Many single-turn calls as one vendor batch job, resumable by job ID | [batch processing](docs/guides/batch.md) |
+| **Durable runs** | Journaled steps that resume after a crash, on a local engine or Postgres | [durable execution](docs/architecture/durable-execution.md) |
 
-See [concepts](docs/concepts.md) for the full picture.
+See [concepts](docs/architecture/concepts.md) for the full picture.
 
 ### CLI
 
-Without flags, `saige ask` uses the default catalog preset and available credentials. `--provider ollama` serves `qwen3.5:4b` or any other chat model you have pulled. `saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands, and [catalog presets](docs/catalog.md) for model selection and failover.
+Without flags, `saige ask` uses the default catalog preset and available credentials. `--provider ollama` serves `qwen3.5:4b` or any other chat model you have pulled. `saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands, and [catalog presets](docs/reference/catalog.md) for model selection and failover.
 
 To use saige from an editor harness, run `saige-mcp`. See the [MCP server setup](cmd/saige-mcp/README.md).
 
@@ -288,7 +288,7 @@ A message is an ordered list of typed parts. Media is a part whose `Source` hold
 msg := types.UserMsg(types.Text("What is in this image?"), types.Image(types.Bytes(types.MediaPNG, data)))
 ```
 
-A part the serving model cannot take is rejected unless you permit a conversion, such as extracting a PDF's text. Full programs: [`examples/parts`](examples/parts/). See [message parts](docs/parts.md) and [modality conversion](docs/modality-conversion.md).
+A part the serving model cannot take is rejected unless you permit a conversion, such as extracting a PDF's text. Full programs: [`examples/parts`](examples/parts/). See [message parts](docs/guides/parts.md) and [modality conversion](docs/guides/modality-conversion.md).
 
 ### Dials
 
@@ -298,7 +298,7 @@ Dials name an intent instead of a vendor parameter, and are compiled for whichev
 agent.WithDials(types.Dials{Creativity: new(types.CreativityFocused), Reasoning: &types.ReasoningDial{Depth: types.DepthHigh}})
 ```
 
-A dial a model cannot honor is mapped to the nearest value or dropped, and reasoning outranks creativity when a model rules out sampling while it thinks. Full program: [`examples/quickstart/dials`](examples/quickstart/dials/main.go). See [dials](docs/dials.md).
+A dial a model cannot honor is mapped to the nearest value or dropped, and reasoning outranks creativity when a model rules out sampling while it thinks. Full program: [`examples/quickstart/dials`](examples/quickstart/dials/main.go). See [dials](docs/guides/dials.md).
 
 ### RAG on Postgres
 
@@ -403,7 +403,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 - [eval](eval/README.md): scorers, gates, experiments, LLM judges, `saige eval`
 - [CLI reference](cmd/saige/README.md)
 - [MCP server](cmd/saige-mcp/README.md)
-- [Harness tools](docs/harness-tools.md), [fs](tools/fs/README.md), [exec](tools/exec/README.md), [fetch](tools/fetch/README.md), [research](tools/research/README.md)
+- [Harness tools](docs/guides/harness-tools.md), [fs](tools/fs/README.md), [exec](tools/exec/README.md), [fetch](tools/fetch/README.md), [research](tools/research/README.md)
 - [Examples index](examples/README.md)
 
 ## Agent Skill

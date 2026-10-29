@@ -2,7 +2,7 @@ name: Stress
 
 # Load and concurrency tests behind the stress build tag. They take longer
 # than the pull request checks, so they run nightly and on demand, never on
-# pull requests. See docs/load-testing.md.
+# pull requests. See docs/guides/load-testing.md.
 on:
   schedule:
     - cron: '17 6 * * *'

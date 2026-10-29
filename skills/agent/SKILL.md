@@ -72,7 +72,7 @@ The other adapters: `anthropic.New(anthropic.Config{APIKey: key, Model: "claude-
 | **Tools** | `agent.Func` derives a schema from a struct; `types.ToolFunc` for an inline tool; register them in `types.NewToolRegistry` |
 | **Conversion** | Media the serving model cannot take is rejected unless a modality action is permitted (`extract`, `describe`, `transcribe`, `omit`) |
 | **Targets** | Typed IDs (`types.ModelID`, `ProfileID`, `PresetName`, `ProviderName`); switch with `types.ConfigPart{Target: types.PresetTarget("fast")}` or `p.WithTarget(types.ModelTarget(m))` |
-| **Compaction** | `CompactCfg: &types.CompactConfig{Strategy: types.CompactSummarize}`; see the strategies in `docs/context-management.md` |
+| **Compaction** | `CompactCfg: &types.CompactConfig{Strategy: types.CompactSummarize}`; see the strategies in `docs/guides/context-management.md` |
 | **Sub-agents** | `SubAgents: []agent.SubAgentDef{...}` gives the model `delegate_to_<name>` tools; handoffs with `agent.WithHandoffs` |
 | **Embeddings** | `types.Embedder`; `ollama.NewEmbedder(client)` for Ollama-backed vectors |
 | **Feedback** | `a.Feedback(ctx, nodeID, types.RatingPositive, "comment")` attaches an RLHF rating as a leaf node |
@@ -180,4 +180,4 @@ for _, entry := range a.FeedbackSummary() {
 
 ## Further reading
 
-`docs/parts.md` (parts, sources, part deltas, wire versions), `docs/modality-conversion.md`, `docs/catalog.md`, `docs/dials.md`, `docs/tool-calling.md`, `docs/delegation.md` and `docs/upgrade-notes.md` in the saige repository.
+`docs/guides/parts.md` (parts, sources, part deltas, wire versions), `docs/guides/modality-conversion.md`, `docs/reference/catalog.md`, `docs/guides/dials.md`, `docs/architecture/tool-calling.md`, `docs/guides/delegation.md` and `docs/guides/upgrading.md` in the saige repository.

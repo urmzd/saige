@@ -1,0 +1,12 @@
+# 0048. Host an agent in other harnesses through one session layer
+
+- **Status:** Accepted
+- **Date:** 2026-10-10
+- **Source:** PR #96 (commit 65a288a), recorded as D-48 in `DESIGN_DECISIONS.md`
+
+## Decision
+
+`saige serve`, `saige acp` and saige-mcp's agent tool host an agent for another program, and they share one session layer rather than three: a session binds the definition when it starts and keeps the pinned version, runs one turn at a time, checks every grant against the definition's cap before delivering it, and releases what binding opened when it ends. A session bound from a definition with no approval block still gets an empty approval policy, so a grant a host accepts takes effect instead of being dropped.
+ACP is the protocol for editors. saige speaks version 1 through the official Go SDK and keeps a thin mapping between saige deltas and ACP updates, because version 2 changes tool-call updates and drops modes and client file and terminal methods. The agent and the model are config options, not modes, and saige uses its own harness tools rather than the client's file and terminal methods. A client's MCP servers connect only when the definition names them, the same narrowing the host's own servers get.
+Coding harnesses reach the agent as an MCP tool. `saige export` writes the server entry, the skills with only the agentskills.io fields, and the definition in each harness's own agent format, with a note for every field the format cannot hold; the agent behind the tool keeps all of them. Export merges into existing files by key and touches only its own entries, so it is idempotent and never rewrites someone else's configuration. User-level files change only with `--user`, and then always with a printed diff. `saige launch` prefers flags and environment, and writes project files only for what a harness reads from files alone.
+An approval must reach a person even when the client cannot ask one. A client without MCP elicitation does not get a refusal for a call the agent makes; saige-mcp holds the run, records the call under an unguessable token in a private store, and returns a result that tells the model to have the user decide. The person decides with `saige approvals`, out of the model's channel, and the model only resumes. The first decision wins, a grant stays within the definition's cap, and an undecided call ends its run after a timeout: an unanswered approval is never a yes.

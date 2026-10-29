@@ -28,7 +28,7 @@ all, err := fs.NewTools("/path/to/workspace", fs.AllowWrites())      // adds wri
 
 ## Related
 
-- [Harness tools](../../docs/harness-tools.md): this pack, `execute_code`, and fetch as one curated toolset
+- [Harness tools](../../docs/guides/harness-tools.md): this pack, `execute_code`, and fetch as one curated toolset
 - [`tools/exec`](../exec/README.md): the sandboxed bash tool
 - [`tools/fetch`](../fetch/README.md): the URL fetch tool
 - [Root README](../../README.md)

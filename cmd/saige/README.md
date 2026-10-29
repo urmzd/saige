@@ -22,7 +22,7 @@ saige chat --tools harness --workspace ./repo  # add write_file, edit_file, exec
 saige ask "What is retrieval-augmented generation?"
 echo "Explain transformers" | saige ask --template minimal
 
-# Run an agent definition (see docs/agent-definitions.md)
+# Run an agent definition (see docs/guides/agent-definitions.md)
 saige ask --agents-dir examples/agents --agent assistant "What does go.mod declare?"
 saige chat --agent repo-steward@^1 --workspace .
 
@@ -71,7 +71,7 @@ saige ask --format json "Summarize RFC 9110" | jq -j 'select(.kind=="text.delta"
 
 ### Built-in tools
 
-`--tools` picks the [harness toolset](../../docs/harness-tools.md), confined to `--workspace` (default `.`):
+`--tools` picks the [harness toolset](../../docs/guides/harness-tools.md), confined to `--workspace` (default `.`):
 
 | Value | Tools |
 |---|---|
@@ -147,7 +147,7 @@ Safety rules:
 - **Localhost by default.** Binding to a non-loopback address requires `--token` or `SAIGE_SERVE_TOKEN`, sent as `Authorization: Bearer <token>`. Without a token, requests whose `Host` is not a loopback name are refused.
 - **JSON-only POSTs.** Every POST must send `Content-Type: application/json`, which a cross-site form cannot do without a CORS preflight the server never grants. An upload sends its media type instead, which may not be one a form can send (`text/plain`, `multipart/form-data`, `application/x-www-form-urlencoded`).
 - **Client media is checked.** Vendor file IDs and non-`https` URIs are refused, and a `ref` resolves only within its session. Downloads are attachments with `nosniff` and a sandbox CSP, never rendered in the server's origin.
-- **Grants are explicit.** Only a client's approval creates a grant, it never covers a destructive tool, and `--deny-after N` stops asking about a tool after N denials in a session. See [approval policy and grants](../../docs/approval-policy.md).
+- **Grants are explicit.** Only a client's approval creates a grant, it never covers a destructive tool, and `--deny-after N` stops asking about a tool after N denials in a session. See [approval policy and grants](../../docs/guides/approval-policy.md).
 - **No silent approvals.** `approved` must be present. A pending approval that gets no decision within `--approval-timeout` (default 10m) is denied, including when the client disconnected.
 
 ### Tool packs
@@ -247,7 +247,7 @@ saige catalog schema                  # the JSON Schema of the file format
 saige catalog migrate my-catalog.json --write   # convert a version 1 layer to version 2 in place
 ```
 
-A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/catalog.md).
+A project catalog is checked against an allowlist: it may not set `base_url`, `api_key_env`, a server tool's `mcp_server`, `routing.failover_on_content_filter`, `routing.failover_on_auth`, `inherit_default` or `dials` unless `SAIGE_TRUST_PROJECT_CATALOG=1` is set or the file is also named with `--catalog` (then it is loaded once, as that flag's layer). See [model catalog and presets](../../docs/reference/catalog.md).
 
 ## Stored Trees
 
@@ -277,11 +277,11 @@ saige ask --agent assistant "question"  # also chat, and serve (one pinned agent
 | `--mcp-config` | MCP configuration file whose servers a definition's `tools.mcp` may name. |
 | `--agents-reload` | On `serve --agent`: reload the definitions this often, so new sessions see edits. |
 
-A project's `.saige/agents` is untrusted unless `SAIGE_TRUST_PROJECT_AGENTS=1` or it is named with `--agents-dir`: it may not connect to MCP servers, use memory, loosen approvals, or use the `exec` and `web` harness groups. See [agent definitions](../../docs/agent-definitions.md).
+A project's `.saige/agents` is untrusted unless `SAIGE_TRUST_PROJECT_AGENTS=1` or it is named with `--agents-dir`: it may not connect to MCP servers, use memory, loosen approvals, or use the `exec` and `web` harness groups. See [agent definitions](../../docs/guides/agent-definitions.md).
 
 ## Harnesses and ACP
 
-Run a definition inside another harness or editor. See [harnesses](../../docs/harnesses.md).
+Run a definition inside another harness or editor. See [harnesses](../../docs/guides/harnesses.md).
 
 ```bash
 saige export claude --agent reviewer --dry-run   # also codex, gemini, opencode, cursor, skills; --user for user-level files
@@ -294,7 +294,7 @@ saige approvals approve TOKEN --grant tool
 
 ## Provider Auto-Detection
 
-`--provider` names a saige adapter, not always a model vendor: `ollama` is a local runtime that serves open-weight models such as qwen3.5:4b. See [vendors, runtimes and adapters](../../docs/concepts.md#vendors-runtimes-and-adapters).
+`--provider` names a saige adapter, not always a model vendor: `ollama` is a local runtime that serves open-weight models such as qwen3.5:4b. See [vendors, runtimes and adapters](../../docs/architecture/concepts.md#vendors-runtimes-and-adapters).
 
 Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the first entry of the catalog's `default_preset` that can serve. The shipped order is Anthropic, OpenAI, Google (whichever key is set first), then a local Ollama server: it runs `qwen3.5:4b` when that is pulled, else another pulled chat model. With none available, it tells you to set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a Google key), to start Ollama, or, when Ollama runs with no chat model, to run `ollama pull qwen3.5:4b`. `--provider ollama` uses the same rule; `--model` names the model exactly. Cross-vendor failover is opt-in: pass `--preset default`. Each vendor's preset runs its cheapest current model (claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite); `--preset anthropic-quality`, `openai-quality` or `google-quality` runs the mid tier. For Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), or pass `--provider vertex`; it authenticates with Application Default Credentials. `--base-url` applies to the selected adapter's entries; on a multi-vendor preset add `--provider`.
 

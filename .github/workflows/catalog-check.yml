@@ -2,7 +2,7 @@ name: Catalog Check
 
 # Monthly check that the embedded model catalog still matches what the
 # providers serve. New models become stub rows in a pull request that a
-# human completes before merging; see docs/catalog.md.
+# human completes before merging; see docs/reference/catalog.md.
 
 on:
   schedule:
