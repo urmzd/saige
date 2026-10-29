@@ -124,7 +124,7 @@ saige-mcp --tools kg --db DSN --agents-dir agents --agent researcher   # a defin
 Marked tools ask for approval through the MCP client by default (`--approval elicit`); `host` relies on the client's own permission prompt.
 Eval credentials are chosen by the host the request goes to, never by the first variable that happens to be set.
 
-Default model selection: the first entry of the catalog's `default_preset` with credentials: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → Google (Vertex AI env or `GOOGLE_API_KEY`) → a local Ollama server. `--provider` names an adapter; `ollama` is a local runtime, not a vendor (see docs/concepts.md).
+Default model selection: the first entry of the catalog's `default_preset` with credentials: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → Google (Vertex AI env or `GOOGLE_API_KEY`) → a local Ollama server. `--provider` names an adapter; `ollama` is a local runtime, not a vendor (see docs/architecture/concepts.md).
 
 ## Commands
 
@@ -134,8 +134,8 @@ go vet ./...        # static analysis
 go build ./...      # compile all packages
 gofmt -w .          # format
 fsrc run README.md  # re-embed examples/quickstart into the README (CI fails on drift)
-fsrc run docs/agent-definitions.md  # re-embed examples/agents (a test fails on drift)
-fsrc run docs/parts.md              # re-embed examples/parts
+fsrc run docs/guides/agent-definitions.md  # re-embed examples/agents (a test fails on drift)
+fsrc run docs/guides/parts.md              # re-embed examples/parts
 ```
 
 ## Commit Convention

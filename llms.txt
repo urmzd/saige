@@ -8,47 +8,47 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 
 - [README](README.md): Overview, requirements, installation, quick start (CLI, smallest agent, typed tool, structured output, dials, RAG on Postgres), concepts
 - [docs/README.md](docs/README.md): Index of every guide
-- [docs/concepts.md](docs/concepts.md): How the pieces fit; vendors, runtimes, serving APIs, models and saige adapters
+- [docs/architecture/concepts.md](docs/architecture/concepts.md): How the pieces fit; vendors, runtimes, serving APIs, models and saige adapters
 - [agent/README.md](agent/README.md): Agent framework: adapters, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing
 - [rag/knowledge/README.md](rag/knowledge/README.md): Knowledge graph SDK: graph interface, hybrid search, deduplication, PostgreSQL backend
 - [rag/README.md](rag/README.md): RAG pipelines: data model, chunking, retrieval, reranking, HyDE, metrics, tool bindings
 - [eval/README.md](eval/README.md): Evaluation framework: scorers, A/B experiments, LLM-as-judge, stream timing
 - [cmd/saige/README.md](cmd/saige/README.md): CLI reference: chat, ask, serve, rag, kg
 - [cmd/saige-mcp/README.md](cmd/saige-mcp/README.md): MCP server setup for Claude Code, Codex, Gemini CLI
-- [docs/harnesses.md](docs/harnesses.md): Running a saige agent in other harnesses: saige export and saige launch for Claude Code, Codex, Gemini CLI, opencode and Cursor (MCP entry, skills, native agent files, merge rules, dry run, user scope), saige import (Claude Code and Codex skills and Cursor rules into .agents/skills), saige acp (ACP v1 for Zed, JetBrains and other editors: config options, permission requests, cancel, load), held approvals with saige approvals for clients without elicitation, verified vs unverified matrix
-- [docs/agent-definitions.md](docs/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
-- [docs/catalog.md](docs/catalog.md): Model catalog and presets: JSON schema (version 2: models, endpoints, offerings), sources and layers, merge rules, precedence, validation, preset building, CLI
-- [docs/dials.md](docs/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
-- [docs/parts.md](docs/parts.md): Parts: message parts, sources, part deltas, wire versions, sending each modality
-- [docs/modality-conversion.md](docs/modality-conversion.md): Modality conversion policy: media a model cannot take is rejected by default or converted, transcribed, described, extracted or omitted per attempt; scopes, router and fallback planning, memoization, durable steps, budget, reports
-- [docs/tool-calling.md](docs/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
-- [docs/delegation.md](docs/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration budgets and wrap-up, private scratch, passing tasks and results by reference
-- [docs/func-tools.md](docs/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
-- [docs/harness-tools.md](docs/harness-tools.md): Harness toolset: read_file, list_dir, glob, grep, write_file, edit_file, execute_code, fetch_url, scratch tools; sandboxes, approvals, spill, CLI --tools
-- [docs/approval-policy.md](docs/approval-policy.md): Approval policy: grants by scope and expiry, denial limits, capability defaults, replay
-- [docs/memory.md](docs/memory.md): Memory: host scope, approval-gated writes, recall modes, Postgres hybrid recall, conversation recall, retention, post-run extraction
-- [docs/hooks.md](docs/hooks.md): Run hooks: lifecycle events, change and abort rules, ordering, timeouts, durable replay, inheritance, memory extraction after a run
-- [docs/guardrails.md](docs/guardrails.md): Input and output guardrails: pass, block, rewrite, parallel mode, tripwires, built-ins, budget, replay, relation to gates and redaction
-- [docs/mcp-client.md](docs/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
-- [docs/batch.md](docs/batch.md): Batch processing: vendor batch APIs behind types.BatchProvider, local fallback, durable job store, batch pricing and budget, eval.WithBatch, agent.RunBatch
-- [docs/durable-execution.md](docs/durable-execution.md): Durable runs: local engine and anchor engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
-- [docs/observability.md](docs/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
-- [docs/deployment.md](docs/deployment.md): Single PostgreSQL 18 deployment with pgvector and pg_search, migrations, hybrid search
-- [docs/model-capabilities.md](docs/model-capabilities.md): Capability declarations per vendor and the gaps still open
-- [docs/orchestration-policies.md](docs/orchestration-policies.md): Conversation ownership, subagent results, handoff return links, sticky routing, approval limits
-- [docs/cache-contracts.md](docs/cache-contracts.md): Cache identity, provider cache modes, known limits
-- [docs/tool-schemas.md](docs/tool-schemas.md): Nullable tool properties across vendor APIs and MCP
-- [docs/tree-traces.md](docs/tree-traces.md): Printing a conversation tree as JSON
-- [docs/upgrade-notes.md](docs/upgrade-notes.md): Upgrading to this release: breaking changes, ordered migration steps (renames, stored data, wire clients, catalogs, behavior changes), per-area detail
-- [docs/system-hardening.md](docs/system-hardening.md): What the hardening release changed and how each fix was verified
-- [docs/load-testing.md](docs/load-testing.md): Load and concurrency testing: the stress build tag, Postgres and live burst tests, -cpu benchmarks, nightly workflow
+- [docs/guides/harnesses.md](docs/guides/harnesses.md): Running a saige agent in other harnesses: saige export and saige launch for Claude Code, Codex, Gemini CLI, opencode and Cursor (MCP entry, skills, native agent files, merge rules, dry run, user scope), saige import (Claude Code and Codex skills and Cursor rules into .agents/skills), saige acp (ACP v1 for Zed, JetBrains and other editors: config options, permission requests, cancel, load), held approvals with saige approvals for clients without elicitation, verified vs unverified matrix
+- [docs/guides/agent-definitions.md](docs/guides/agent-definitions.md): Agent definitions: Markdown with YAML frontmatter, strict decoding, sources (directory, fs.FS, reader, HTTPS, Postgres with NOTIFY, layered with project trust), name@range resolution, digests and pinning, binding to agent options, approval rules in Claude Code syntax, skill modes, CLI and saige-mcp
+- [docs/reference/catalog.md](docs/reference/catalog.md): Model catalog and presets: JSON schema (version 2: models, endpoints, offerings), sources and layers, merge rules, precedence, validation, preset building, CLI
+- [docs/guides/dials.md](docs/guides/dials.md): Model-neutral dials: creativity, reasoning depth, max output, tools, seed and cache compiled per model, policy, precedence, reports, scenarios
+- [docs/guides/parts.md](docs/guides/parts.md): Parts: message parts, sources, part deltas, wire versions, sending each modality
+- [docs/guides/modality-conversion.md](docs/guides/modality-conversion.md): Modality conversion policy: media a model cannot take is rejected by default or converted, transcribed, described, extracted or omitted per attempt; scopes, router and fallback planning, memoization, durable steps, budget, reports
+- [docs/architecture/tool-calling.md](docs/architecture/tool-calling.md): Tool calling: lifecycle, client vs server tools, parallel vs sequential execution, model-side vs saige-side parallelism, tool choice and vendor limits, where each knob lives
+- [docs/guides/delegation.md](docs/guides/delegation.md): Handoffs vs subagents (delegate, spawn): context in, data out, transcripts, size limits, iteration budgets and wrap-up, private scratch, passing tasks and results by reference
+- [docs/guides/func-tools.md](docs/guides/func-tools.md): Typed function tools: agent.Func, RunContext, schema-hash versions, agent.AIFunc
+- [docs/guides/harness-tools.md](docs/guides/harness-tools.md): Harness toolset: read_file, list_dir, glob, grep, write_file, edit_file, execute_code, fetch_url, scratch tools; sandboxes, approvals, spill, CLI --tools
+- [docs/guides/approval-policy.md](docs/guides/approval-policy.md): Approval policy: grants by scope and expiry, denial limits, capability defaults, replay
+- [docs/guides/memory.md](docs/guides/memory.md): Memory: host scope, approval-gated writes, recall modes, Postgres hybrid recall, conversation recall, retention, post-run extraction
+- [docs/guides/hooks.md](docs/guides/hooks.md): Run hooks: lifecycle events, change and abort rules, ordering, timeouts, durable replay, inheritance, memory extraction after a run
+- [docs/guides/guardrails.md](docs/guides/guardrails.md): Input and output guardrails: pass, block, rewrite, parallel mode, tripwires, built-ins, budget, replay, relation to gates and redaction
+- [docs/guides/mcp-client.md](docs/guides/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
+- [docs/guides/batch.md](docs/guides/batch.md): Batch processing: vendor batch APIs behind types.BatchProvider, local fallback, durable job store, batch pricing and budget, eval.WithBatch, agent.RunBatch
+- [docs/architecture/durable-execution.md](docs/architecture/durable-execution.md): Durable runs: local engine and anchor engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
+- [docs/guides/observability.md](docs/guides/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
+- [docs/guides/deployment.md](docs/guides/deployment.md): Single PostgreSQL 18 deployment with pgvector and pg_search, migrations, hybrid search
+- [docs/architecture/model-capabilities.md](docs/architecture/model-capabilities.md): Capability declarations per vendor and the gaps still open
+- [docs/architecture/orchestration-policies.md](docs/architecture/orchestration-policies.md): Conversation ownership, subagent results, handoff return links, sticky routing, approval limits
+- [docs/architecture/cache-contracts.md](docs/architecture/cache-contracts.md): Cache identity, provider cache modes, known limits
+- [docs/guides/tool-schemas.md](docs/guides/tool-schemas.md): Nullable tool properties across vendor APIs and MCP
+- [docs/guides/tree-traces.md](docs/guides/tree-traces.md): Printing a conversation tree as JSON
+- [docs/guides/upgrading.md](docs/guides/upgrading.md): Upgrading to this release: breaking changes, ordered migration steps (renames, stored data, wire clients, catalogs, behavior changes), per-area detail
+- [docs/reference/system-hardening.md](docs/reference/system-hardening.md): What the hardening release changed and how each fix was verified
+- [docs/guides/load-testing.md](docs/guides/load-testing.md): Load and concurrency testing: the stress build tag, Postgres and live burst tests, -cpu benchmarks, nightly workflow
 - [tools/research/README.md](tools/research/README.md): Research tools: web search, file ops, knowledge graph CRUD
 - [tools/fs/README.md](tools/fs/README.md): Workspace file tools: read with paging, glob, grep, write, edit; read-only by default
 - [tools/exec/README.md](tools/exec/README.md): Sandboxed bash tool: Sandbox interface, subprocess backend, command/env/network policy
 - [tools/fetch/README.md](tools/fetch/README.md): URL fetch tool and SafeHTTPClient
 - [examples/README.md](examples/README.md): Runnable example index
 - [examples/quickstart/](examples/quickstart/): The README quick start programs, embedded with fsrc
-- [examples/parts/](examples/parts/): Parts programs embedded in docs/parts.md: building parts, an image, a PDF via extract, part deltas
+- [examples/parts/](examples/parts/): Parts programs embedded in docs/guides/parts.md: building parts, an image, a PDF via extract, part deltas
 - [AGENTS.md](AGENTS.md): Architecture, packages, CLI, commands, code style
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development setup, commit conventions
 

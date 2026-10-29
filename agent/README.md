@@ -82,7 +82,7 @@ type Provider interface {
 | Anthropic (vendor) | Messages | `agent/provider/anthropic` | yes | JPEG, PNG, GIF, WebP, PDF, plain text | no |
 | Google (vendor) | Gemini API, Vertex AI | `agent/provider/google` | yes | Images, audio, video, PDF, text | yes |
 
-What a given model takes, with its limits and locators, is declared per offering in the [catalog](../docs/catalog.md); media it cannot take is rejected or converted by the [conversion policy](../docs/modality-conversion.md). See [parts](../docs/parts.md) for how to send each modality.
+What a given model takes, with its limits and locators, is declared per offering in the [catalog](../docs/reference/catalog.md); media it cannot take is rejected or converted by the [conversion policy](../docs/guides/modality-conversion.md). See [parts](../docs/guides/parts.md) for how to send each modality.
 
 The OpenAI package has two adapters. `openai.New` uses Chat Completions, and `openai.NewResponses` uses the Responses API. The Responses adapter takes the same options, sends each request statelessly (`store: false`), and rejects seed, stop sequences, and the frequency and presence penalties, which that API does not have.
 
@@ -125,7 +125,7 @@ opens.
 
 ## Messages
 
-Three roles. Each message is an ordered list of typed parts, and the role seals which part kinds it may hold. Tool results are parts, not a separate role. See [parts](../docs/parts.md) for every kind, media sources, part deltas and the wire format.
+Three roles. Each message is an ordered list of typed parts, and the role seals which part kinds it may hold. Tool results are parts, not a separate role. See [parts](../docs/guides/parts.md) for every kind, media sources, part deltas and the wire format.
 
 | Type | Role | Parts |
 |------|------|-------|
@@ -179,7 +179,7 @@ tool := &types.ToolFunc{
 `agent.Func` builds the same kind of tool from a typed function. The schema
 comes from the input struct, arguments are decoded strictly, and the function
 receives typed dependencies in a `RunContext`. See
-[typed function tools](../docs/func-tools.md).
+[typed function tools](../docs/guides/func-tools.md).
 
 ```go
 greet := agent.Func("greet", "Greet a person",
@@ -203,7 +203,7 @@ and wraps the turn up: the text produced so far is kept, open tool calls get a
 result that says they were stopped, and the reason is recorded, so the next
 message continues from there. The run reports `types.StoppedDelta` and `Wait`
 returns nil. `stream.Cancel()` abandons the run instead. See
-[Stop a run and keep the turn](../docs/orchestration-policies.md#stop-a-run-and-keep-the-turn).
+[Stop a run and keep the turn](../docs/architecture/orchestration-policies.md#stop-a-run-and-keep-the-turn).
 
 Tools that share mutable state, or whose contract depends on call order, need a
 total order instead. `agent.WithSequentialTools()` runs the calls one at a time,
@@ -221,7 +221,7 @@ execution without ordering it. Approval waits do not hold those execution slots.
 Delegated children apply their own inherited limits; the parent cap is not a global worker limit.
 Durable runners execute serially unless they implement `ConcurrentStepRunner`.
 
-For saved approvals and process recovery, use [durable execution](../docs/durable-execution.md): the local engine on one machine, or the anchor engine on Postgres.
+For saved approvals and process recovery, use [durable execution](../docs/architecture/durable-execution.md): the local engine on one machine, or the anchor engine on Postgres.
 Both engines save requests before suspension and preserve completed results during replay.
 
 ## Sub-Agents
@@ -359,7 +359,7 @@ Data-driven context management:
 | `CompactRelevantPlusSummary` | Also keep the K older spans most relevant to the latest user turn (BM25) |
 | `CompactChain` | Apply strategies in order until the history fits `TargetTokens` |
 
-Every compaction streams a `CompactionDelta` and records a `CompactionPart` on its new branch. See [context management](../docs/context-management.md).
+Every compaction streams a `CompactionDelta` and records a `CompactionPart` on its new branch. See [context management](../docs/guides/context-management.md).
 
 ## Conversation Tree
 
@@ -395,7 +395,7 @@ Feedback nodes have `NodeFeedback` state. They cannot have children added, formi
 
 ## Media and conversion
 
-Resolvers fetch media bytes by URI scheme. A part the serving model cannot take natively is rejected unless the conversion policy permits an action for its modality (see [Modality conversion](../docs/modality-conversion.md)):
+Resolvers fetch media bytes by URI scheme. A part the serving model cannot take natively is rejected unless the conversion policy permits an action for its modality (see [Modality conversion](../docs/guides/modality-conversion.md)):
 
 ```go
 a, err := agent.New(agent.Config{

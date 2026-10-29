@@ -62,7 +62,7 @@ docker compose -f integration/docker-compose.yml exec ollama ollama pull nomic-e
 
 The suite runs against AlloyDB only when the instance offers PostgreSQL 18
 and both the `vector` and `pg_search` extensions; migrations refuse a server
-without them (see [deployment](../docs/deployment.md)). Point the DSN at your
+without them (see [deployment](../docs/guides/deployment.md)). Point the DSN at your
 instance (via the AlloyDB Auth Proxy or a private IP):
 
 ```sh

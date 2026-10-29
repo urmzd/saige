@@ -83,7 +83,7 @@ type Pipeline interface {
 }
 ```
 
-Stores: [`rag/pgstore`](pgstore/) (PostgreSQL 18 + pgvector HNSW + pg_search BM25; see [deployment](../docs/deployment.md)) and [`rag/memstore`](memstore/) (in-memory, no external deps).
+Stores: [`rag/pgstore`](pgstore/) (PostgreSQL 18 + pgvector HNSW + pg_search BM25; see [deployment](../docs/guides/deployment.md)) and [`rag/memstore`](memstore/) (in-memory, no external deps).
 
 Ingest behavior:
 

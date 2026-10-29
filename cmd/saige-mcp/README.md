@@ -138,7 +138,7 @@ saige-mcp --transport http --tools research --root ~/notes \
   --agent-schema answer.schema.json
 ```
 
-With `--agents-dir`, `--agent` may name an [agent definition](../../docs/agent-definitions.md). The tool is then named after the definition (unless `--agent-tool` is set) and described by it, the definition's harness tools work under `--root`, and its `registry` tools are the packs this server exposes. `--agent-system` cannot be combined with a definition, which carries its own prompt. Each call binds the definition afresh, so calls share no scratch workspace or budget.
+With `--agents-dir`, `--agent` may name an [agent definition](../../docs/guides/agent-definitions.md). The tool is then named after the definition (unless `--agent-tool` is set) and described by it, the definition's harness tools work under `--root`, and its `registry` tools are the packs this server exposes. `--agent-system` cannot be combined with a definition, which carries its own prompt. Each call binds the definition afresh, so calls share no scratch workspace or budget.
 
 ```bash
 saige-mcp --tools kg --db "$SAIGE_DB" --agents-dir ./agents --agent researcher@^1
@@ -157,9 +157,9 @@ The agent's provider credentials come from the environment, as for the `saige` C
 
 A marked tool the agent calls is decided as a direct call would be: `elicit` asks the client, and `deny` refuses. `host` cannot apply, because the client's permission prompt covered the agent tool and not the calls the agent makes, so those calls are refused with a message naming `--approval=elicit`. The model sees each refusal and can answer without the tool. The agent tool carries `destructiveHint` when any of its tools needs approval.
 
-With `elicit` and a client that has no elicitation (opencode, Zed), the call is held instead of refused: the agent tool returns an approval-required result with a token, you decide with `saige approvals approve TOKEN` or `saige approvals deny TOKEN`, and the model continues the run with the `NAME_resume` tool, published when the agent may need approval. See [approvals in harnesses without elicitation](../../docs/harnesses.md#approvals-in-harnesses-without-elicitation).
+With `elicit` and a client that has no elicitation (opencode, Zed), the call is held instead of refused: the agent tool returns an approval-required result with a token, you decide with `saige approvals approve TOKEN` or `saige approvals deny TOKEN`, and the model continues the run with the `NAME_resume` tool, published when the agent may need approval. See [approvals in harnesses without elicitation](../../docs/guides/harnesses.md#approvals-in-harnesses-without-elicitation).
 
-`saige export` writes this server's entry, the definition's skills and a native agent file for Claude Code, Codex, Gemini CLI, opencode and Cursor; `saige launch` starts those harnesses with it. See [harnesses](../../docs/harnesses.md).
+`saige export` writes this server's entry, the definition's skills and a native agent file for Claude Code, Codex, Gemini CLI, opencode and Cursor; `saige launch` starts those harnesses with it. See [harnesses](../../docs/guides/harnesses.md).
 
 ## Client Setup
 
@@ -215,6 +215,6 @@ Add to `~/.gemini/settings.json`:
 
 ## Related
 
-- [MCP client](../../docs/mcp-client.md): connecting a saige agent to other MCP servers
+- [MCP client](../../docs/guides/mcp-client.md): connecting a saige agent to other MCP servers
 - [`saige` CLI](../saige/README.md): interactive chat and standalone RAG/KG operations
 - [Root README](../../README.md): project overview and installation

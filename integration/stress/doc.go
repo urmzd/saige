@@ -11,5 +11,5 @@
 //	SAIGE_STRESS_AGENTS  concurrent agents in TestConcurrentAgents (default 200)
 //	SAIGE_STRESS_BURST   parallel calls per model in TestLiveBurst (default 20)
 //
-// See docs/load-testing.md.
+// See docs/guides/load-testing.md.
 package stress

@@ -320,13 +320,13 @@ func TestExamples(t *testing.T) {
 		t.Fatalf("got %+v", res.Subagents)
 	}
 	// The guide embeds each example with fsrc; keep it current.
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "agent-definitions.md"))
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", "agent-definitions.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range r.List() {
 		if !strings.Contains(string(doc), string(d.Raw())) {
-			t.Errorf("docs/agent-definitions.md does not embed %s as it is; run fsrc run docs/agent-definitions.md", d.Path)
+			t.Errorf("docs/guides/agent-definitions.md does not embed %s as it is; run fsrc run docs/guides/agent-definitions.md", d.Path)
 		}
 	}
 }
