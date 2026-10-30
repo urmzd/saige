@@ -1,0 +1,70 @@
+{
+  "model": "claude-haiku-5-5",
+  "system_prompt": "You are a concise assistant. Use the tools when they help. Keep answers short.",
+  "max_tokens": 1024,
+  "tools": {
+    "get_weather": {
+      "description": "Current temperature in Celsius for a city.",
+      "data": {"Lisbon": 18, "Oslo": 4, "Tokyo": 22}
+    },
+    "get_population": {
+      "description": "Population of a city.",
+      "data": {"Lisbon": 545000, "Oslo": 709000}
+    },
+    "multiply": {
+      "description": "Multiply two numbers and return the product."
+    },
+    "get_stock": {
+      "description": "Latest stock price for a ticker symbol.",
+      "error": "upstream quote service unavailable"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "plain",
+      "prompt": "In one sentence, what is the capital of France?",
+      "tools": [],
+      "expect": {"contains": "Paris"}
+    },
+    {
+      "id": "single_tool",
+      "prompt": "What is the weather in Lisbon right now?",
+      "tools": ["get_weather"],
+      "expect": {"contains": "18", "tool_calls_min": 1}
+    },
+    {
+      "id": "parallel_tools",
+      "prompt": "Get the weather for Lisbon, Oslo and Tokyo, then name the warmest city.",
+      "tools": ["get_weather"],
+      "expect": {"contains": "Tokyo", "tool_calls_min": 3}
+    },
+    {
+      "id": "chained_tools",
+      "prompt": "Look up the populations of Lisbon and Oslo, then use the multiply tool to multiply them. Reply with only the product as digits.",
+      "tools": ["get_population", "multiply"],
+      "expect": {"digits": "386405000000", "tool_calls_min": 3}
+    },
+    {
+      "id": "structured",
+      "prompt": "Extract the person from this text: 'Maria Silva, 34, moved to Porto last spring.'",
+      "tools": [],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "age": {"type": "integer"},
+          "city": {"type": "string"}
+        },
+        "required": ["name", "age", "city"],
+        "additionalProperties": false
+      },
+      "expect": {"json": {"name": "Maria Silva", "age": 34, "city": "Porto"}}
+    },
+    {
+      "id": "tool_error",
+      "prompt": "What is the stock price of ACME? If the tool fails, reply with the word UNAVAILABLE.",
+      "tools": ["get_stock"],
+      "expect": {"contains": "UNAVAILABLE", "tool_calls_min": 1}
+    }
+  ]
+}

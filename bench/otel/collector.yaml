@@ -1,0 +1,21 @@
+# Local OpenTelemetry collector: every framework exports OTLP here and the
+# collector writes traces, logs and metrics to bench/results/otel/.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+exporters:
+  file/traces:
+    path: /out/traces.jsonl
+  file/logs:
+    path: /out/logs.jsonl
+  file/metrics:
+    path: /out/metrics.jsonl
+service:
+  pipelines:
+    traces: {receivers: [otlp], exporters: [file/traces]}
+    logs: {receivers: [otlp], exporters: [file/logs]}
+    metrics: {receivers: [otlp], exporters: [file/metrics]}
