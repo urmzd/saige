@@ -396,3 +396,48 @@ func TestWithTracingToolChoiceNoneWithoutOptions(t *testing.T) {
 		t.Errorf("options sent = %+v, want none", call.Options)
 	}
 }
+
+// TestWithTracingCapturesToolContent runs a real agent loop: the option must
+// reach every tool span, and each step must sit under the run's span.
+func TestWithTracingCapturesToolContent(t *testing.T) {
+	for _, capture := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "capture"}[capture], func(t *testing.T) {
+			cfg, rec := spyConfig()
+			cfg.CaptureToolContent = capture
+			prov := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+				agenttest.ToolCallResponse("c1", "weather", map[string]any{"city": "Oslo"}),
+				agenttest.TextResponse("4C in Oslo"),
+			}}
+			a := must.Get(agent.New(agent.Config{
+				Name:     "traced",
+				Provider: prov,
+				Tools:    types.NewToolRegistry(plainTool{name: "weather"}),
+			}, WithTracing(cfg)))
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := agent.Collect(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("weather?"))}), nil); err != nil {
+				t.Fatal(err)
+			}
+
+			run := rec.named("invoke_agent traced")
+			tools := rec.named("execute_tool weather")
+			chats := rec.named("chat")
+			if len(run) != 1 || len(tools) != 1 || len(chats) != 2 {
+				t.Fatalf("spans: invoke_agent %d, execute_tool %d, chat %d; want 1, 1, 2", len(run), len(tools), len(chats))
+			}
+			for _, s := range append(chats, tools...) {
+				if s.parent != run[0] {
+					t.Errorf("%s is not a child of the run span", s.name)
+				}
+			}
+			args, hasArgs := tools[0].attr("gen_ai.tool.call.arguments")
+			result, hasResult := tools[0].attr("gen_ai.tool.call.result")
+			if hasArgs != capture || hasResult != capture {
+				t.Fatalf("content recorded: arguments %v, result %v; want %v", hasArgs, hasResult, capture)
+			}
+			if capture && (args.AsString() != `{"city":"Oslo"}` || result.AsString() != "weather ran") {
+				t.Errorf("arguments = %q, result = %q", args.AsString(), result.AsString())
+			}
+		})
+	}
+}

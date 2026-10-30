@@ -24,10 +24,17 @@ type Config struct {
 	// ServiceName used for the tracer and meter. Defaults to "saige".
 	ServiceName string
 	// Redactor, when set, rewrites every error message before it is written to
-	// a span status or exception event. Provider and tool errors can embed
-	// request bodies or user data; use this to mask them before they reach the
-	// telemetry backend.
+	// a span status or exception event, and every value CaptureToolContent
+	// records. Provider and tool errors can embed request bodies or user data;
+	// use this to mask them before they reach the telemetry backend.
 	Redactor func(string) string
+	// CaptureToolContent records each tool call's arguments as
+	// gen_ai.tool.call.arguments (JSON) and its result text as
+	// gen_ai.tool.call.result on the execute_tool span. Off by default:
+	// arguments and results often hold user data, so turn it on only where the
+	// telemetry backend may store it. Redactor applies first, and each value is
+	// capped at MaxToolContentBytes.
+	CaptureToolContent bool
 }
 
 func (c Config) tracer() trace.Tracer {
@@ -86,6 +93,9 @@ func WithTracing(cfg Config) agent.Option {
 			popts = append(popts, WithProviderMetrics(m))
 		}
 		topts := []ToolOption{WithToolRedactor(cfg.Redactor)}
+		if cfg.CaptureToolContent {
+			topts = append(topts, WithToolContent())
+		}
 
 		c.Provider = traceProvider(c.Provider, tracer, popts)
 		if c.Tools != nil {
