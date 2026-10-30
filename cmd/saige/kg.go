@@ -11,22 +11,6 @@ import (
 	kgtypes "github.com/urmzd/saige/rag/knowledge/types"
 )
 
-func newKgCmd(ctx context.Context) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "kg",
-		Short: "Knowledge graph operations (search, ingest, graph, node)",
-	}
-
-	cmd.AddCommand(
-		newKgSearchCmd(ctx),
-		newKgIngestCmd(ctx),
-		newKgGraphCmd(ctx),
-		newKgNodeCmd(ctx),
-	)
-
-	return cmd
-}
-
 // openKnowledgeGraph connects to the knowledge graph database (--db, then
 // SAIGE_KG_DB) and builds the shared graph. The returned cleanup closes the
 // graph and the pool. withEmbedder is set only for commands that embed (search,
@@ -65,7 +49,7 @@ func newKgSearchCmd(ctx context.Context) *cobra.Command {
 		Short: "Search knowledge graph facts",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "kg search"})
+			out.Header(tui.OutputHeader{Operation: "knowledge search"})
 
 			if query == "" {
 				return reported(out, fmt.Errorf("--query is required"))
@@ -109,7 +93,7 @@ func newKgIngestCmd(ctx context.Context) *cobra.Command {
 		Short: "Ingest text into the graph",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "kg ingest"})
+			out.Header(tui.OutputHeader{Operation: "knowledge ingest"})
 
 			if name == "" || text == "" {
 				return reported(out, fmt.Errorf("--name and --text are required"))
@@ -160,7 +144,7 @@ func newKgGraphCmd(ctx context.Context) *cobra.Command {
 		Short: "Export full graph data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "kg graph"})
+			out.Header(tui.OutputHeader{Operation: "knowledge graph export"})
 
 			graph, cleanup, err := openKnowledgeGraph(ctx, db, false)
 			if err != nil {
@@ -196,7 +180,7 @@ func newKgNodeCmd(ctx context.Context) *cobra.Command {
 		Short: "Explore a node's neighborhood",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "kg node"})
+			out.Header(tui.OutputHeader{Operation: "knowledge graph neighbors"})
 
 			if id == "" {
 				return reported(out, fmt.Errorf("--id is required"))

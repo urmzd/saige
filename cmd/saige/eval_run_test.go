@@ -331,7 +331,7 @@ func TestEvalRunManifestRejectsUnknownKeys(t *testing.T) {
 	}
 	// Invalid input exits 2, apart from a failed run's 1.
 	var errW strings.Builder
-	if code := run(context.Background(), []string{"eval", "run", "--manifest", path}, &errW); code != exitInvalid {
+	if code := run(context.Background(), []string{"evals", "run", "--manifest", path}, &errW); code != exitInvalid {
 		t.Fatalf("exit code = %d, want %d (stderr %q)", code, exitInvalid, errW.String())
 	}
 }
@@ -601,7 +601,7 @@ func TestEvalRunInconclusiveExitCode(t *testing.T) {
 			for id, turns := range tt.scripts {
 				writeEvalCorpus(t, filepath.Join(corpus, id), turns...)
 			}
-			args := append([]string{"eval", "run", "--experiments-dir", corpus, "--api-base", server.URL, "--api-key", "k",
+			args := append([]string{"evals", "run", "--experiments-dir", corpus, "--api-base", server.URL, "--api-key", "k",
 				"--model", "mock", "--flows", "base", "--force", "--store", filepath.Join(t.TempDir(), "results")}, tt.args...)
 			var errBuf bytes.Buffer
 			if code := run(context.Background(), args, &errBuf); code != tt.wantCode {

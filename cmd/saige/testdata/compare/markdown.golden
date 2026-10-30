@@ -1,4 +1,4 @@
-### saige eval compare: failed
+### saige evals compare: failed
 
 **failed**: 1 of 2 metrics regressed. Candidate `regressed` against baseline `base` (commit `c0ffee020000` against `c0ffee010000`), suite `nightly`.
 

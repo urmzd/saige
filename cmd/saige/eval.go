@@ -28,7 +28,7 @@ func resolveStoreSpec(m *harness.Manifest) string {
 
 func newEvalCmd(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "eval",
+		Use:   "evals",
 		Short: "Run live eval corpora against an OpenAI-compatible API or a saige provider",
 	}
 
@@ -46,7 +46,7 @@ func newEvalCmd(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-// evalRunFlags holds the flags of saige eval run.
+// evalRunFlags holds the flags of saige evals run.
 type evalRunFlags struct {
 	manifest, experimentsDir, idFilter, flowSpec, model, apiBase, apiKey string
 	storeDir, tenant, suite, resume, batchStore                          string
@@ -127,7 +127,7 @@ with --resume), and with exit status 2 when the manifest or corpus is invalid.`,
 		"Keep running remaining experiments after one fails; failures are written to <experiment>/error.json")
 	fl.IntVar(&f.concurrency, "concurrency", 1, "Experiments to run at once")
 	fl.StringVar(&f.storeDir, "store", "",
-		"Results store, a directory or a PostgreSQL URL (postgres://...); when set, the run and one unit per flow turn are recorded there for saige eval runs and saige eval show")
+		"Results store, a directory or a PostgreSQL URL (postgres://...); when set, the run and one unit per flow turn are recorded there for saige evals list and saige evals show")
 	fl.StringVar(&f.tenant, "tenant", "", tenantFlagUsage)
 	fl.StringVar(&f.suite, "suite", harness.DefaultSuite, "Suite name for the run recorded with --store")
 	fl.StringVar(&f.resume, "resume", "",
@@ -146,7 +146,7 @@ with --resume), and with exit status 2 when the manifest or corpus is invalid.`,
 	return cmd
 }
 
-// runEval executes saige eval run.
+// runEval executes saige evals run.
 func runEval(ctx context.Context, cmd *cobra.Command, f evalRunFlags) error {
 	plan, err := resolveEvalPlan(cmd, f)
 	if err != nil {
@@ -472,7 +472,7 @@ func printEvalPlan(w io.Writer, tr evalTransport, plan evalPlan, scripts []harne
 	return err
 }
 
-// evalInitManifest is the suite manifest saige eval init writes next to the
+// evalInitManifest is the suite manifest saige evals init writes next to the
 // sample corpus. Its corpus is the manifest's own directory.
 const evalInitManifest = `{
   "version": 1,
@@ -525,7 +525,7 @@ func newEvalInitCmd() *cobra.Command {
 				}
 				fmt.Fprintf(os.Stderr, "created %s\n", manifestPath)
 			}
-			fmt.Fprintf(os.Stderr, "corpus ready; next:\n  saige eval validate %s\n  saige eval run --manifest %s --dry-run\n  saige eval run --manifest %s\n", dir, manifestPath, manifestPath)
+			fmt.Fprintf(os.Stderr, "corpus ready; next:\n  saige evals validate %s\n  saige evals run --manifest %s --dry-run\n  saige evals run --manifest %s\n", dir, manifestPath, manifestPath)
 			return nil
 		},
 	}

@@ -68,10 +68,10 @@ func TestEvalResultCommands(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{"runs table", []string{"eval", "runs", "--store", dir}, []string{"RUN", "run-1", "smoke", "succeeded", "failed", "$0.0125", "0123456789ab+dirty"}},
-		{"runs filtered out", []string{"eval", "runs", "--store", dir, "--suite", "other"}, []string{"RUN"}},
-		{"show", []string{"eval", "show", "run-1", "--store", dir}, []string{"suite", "smoke", "exact_match", "0.5", "m-1", "violations:", "case q2"}},
-		{"scorers", []string{"eval", "scorers"}, []string{"json_schema", "regex_count", "calls_in_order", "tool_responds_within"}},
+		{"runs table", []string{"evals", "list", "--store", dir}, []string{"RUN", "run-1", "smoke", "succeeded", "failed", "$0.0125", "0123456789ab+dirty"}},
+		{"runs filtered out", []string{"evals", "list", "--store", dir, "--suite", "other"}, []string{"RUN"}},
+		{"show", []string{"evals", "show", "run-1", "--store", dir}, []string{"suite", "smoke", "exact_match", "0.5", "m-1", "violations:", "case q2"}},
+		{"scorers", []string{"evals", "scorers"}, []string{"json_schema", "regex_count", "calls_in_order", "tool_responds_within"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,7 +95,7 @@ func TestEvalShowJSONAndErrors(t *testing.T) {
 	var errBuf bytes.Buffer
 	var code int
 	got := captureStdout(t, func() {
-		code = run(context.Background(), []string{"--format", "json", "eval", "show", "run-1", "--store", dir}, &errBuf)
+		code = run(context.Background(), []string{"--format", "json", "evals", "show", "run-1", "--store", dir}, &errBuf)
 	})
 	*persistentFlagVars.format = "human"
 	if code != 0 {
@@ -114,14 +114,14 @@ func TestEvalShowJSONAndErrors(t *testing.T) {
 
 	errBuf.Reset()
 	_ = captureStdout(t, func() {
-		code = run(context.Background(), []string{"eval", "show", "missing", "--store", dir}, &errBuf)
+		code = run(context.Background(), []string{"evals", "show", "missing", "--store", dir}, &errBuf)
 	})
 	if code == 0 || !strings.Contains(errBuf.String(), "not found") {
 		t.Fatalf("missing run: exit %d, stderr %q", code, errBuf.String())
 	}
 	errBuf.Reset()
 	_ = captureStdout(t, func() {
-		code = run(context.Background(), []string{"eval", "runs", "--store", dir + "/nope"}, &errBuf)
+		code = run(context.Background(), []string{"evals", "list", "--store", dir + "/nope"}, &errBuf)
 	})
 	if code == 0 {
 		t.Fatal("a missing store directory was accepted")

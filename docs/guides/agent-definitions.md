@@ -43,7 +43,7 @@ instead of guessing, and name the files you relied on.
 Run it:
 
 ```bash
-saige ask --agents-dir examples/agents --agent assistant "What module path does go.mod declare?"
+saige agent run --agents-dir examples/agents --agent assistant "What module path does go.mod declare?"
 ```
 
 A definition with a sub-agent and approval rules:
@@ -244,10 +244,10 @@ saige agent show repo-steward@^1                  # source, digests, sub-agents,
 saige agent validate [PATH...]                    # offline checks; exits 2 when anything is invalid
 saige agent schema                                # JSON Schema of the frontmatter
 
-saige ask --agent assistant "question"            # also chat and serve
-saige ask --agent repo-steward --model claude-haiku-5-5 --provider anthropic "question"
+saige agent run --agent assistant "question"            # also serve
+saige agent run --agent repo-steward --model claude-haiku-5-5 --provider anthropic "question"
 saige serve --agent repo-steward --workspace . --agents-reload 10s
-saige ask --agent researcher --mcp-config .mcp.json "question"
+saige agent run --agent researcher --mcp-config .mcp.json "question"
 ```
 
 With `--agent`, the harness tools work under `--workspace` with the CLI's sandbox flags, `registry` tools come from `--rag-db` and `--kg-db`, MCP servers from `--mcp-config`, and skills from `.agents/skills`, `.claude/skills`, Cursor rules (`.cursor/rules/*.mdc` and `.cursorrules`), `~/.agents/skills` and `~/.claude/skills`. `--preset`, `--model` and `--provider` override the definition's model; `--tools` and `--system` cannot be combined with `--agent`. The CLI provides no memory store, so a definition with a `memory` block runs only in a host that provides one. `saige serve --agent` binds a fresh agent for each session from the definition the registry resolves when the session starts; `--agents-reload` lets new sessions see edits while running sessions keep their pin.

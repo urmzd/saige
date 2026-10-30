@@ -73,10 +73,10 @@ func TestRunReturnsErrorsInsteadOfExiting(t *testing.T) {
 		code    int
 		wantErr string
 	}{
-		{name: "rag search without query", args: []string{"rag", "search"}, code: 1},
-		{name: "kg ingest without text", args: []string{"kg", "ingest", "--name", "x"}, code: 1},
-		{name: "bad approve value", args: []string{"ask", "--approve", "maybe", "hi"}, code: 1, wantErr: "--approve"},
-		{name: "unknown flag", args: []string{"ask", "--raw", "hi"}, code: 1, wantErr: "unknown flag"},
+		{name: "rag search without query", args: []string{"knowledge", "search"}, code: 1},
+		{name: "kg ingest without text", args: []string{"knowledge", "ingest", "--backend", "kg", "--name", "x"}, code: 1},
+		{name: "bad approve value", args: []string{"agent", "run", "-", "--approve", "maybe", "hi"}, code: 1, wantErr: "--approve"},
+		{name: "unknown flag", args: []string{"agent", "run", "-", "--raw", "hi"}, code: 1, wantErr: "unknown flag"},
 		{name: "version", args: []string{"version"}, code: 0},
 	}
 	for _, tt := range tests {

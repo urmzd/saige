@@ -76,8 +76,8 @@ func ragTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestRAGKeywordSearchSurvivesProcessBoundary mirrors `saige rag ingest`
-// followed by `saige rag search` in a new process: the BM25 arm of the fresh
+// TestRAGKeywordSearchSurvivesProcessBoundary mirrors `saige knowledge ingest`
+// followed by `saige knowledge search` in a new process: the BM25 arm of the fresh
 // pipeline must find the document, because its index lives in Postgres
 // rather than in the ingesting process's memory.
 func TestRAGKeywordSearchSurvivesProcessBoundary(t *testing.T) {
@@ -127,7 +127,7 @@ func TestRAGKeywordSearchSurvivesProcessBoundary(t *testing.T) {
 }
 
 // TestRAGSearchFindsDocumentsIngestedByAnotherPipeline mirrors running
-// `saige rag ingest` and `saige rag search` as two separate processes: the
+// `saige knowledge ingest` and `saige knowledge search` as two separate processes: the
 // search pipeline is built fresh and must still find the ingested document.
 func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	pool := ragTestPool(t)
@@ -170,7 +170,7 @@ func TestRAGSearchFindsDocumentsIngestedByAnotherPipeline(t *testing.T) {
 	}
 }
 
-// TestRAGImageIngestReturnsTheImage mirrors `saige rag ingest
+// TestRAGImageIngestReturnsTheImage mirrors `saige knowledge ingest
 // --describe-images` on a PNG followed by an agent's rag_search: the image
 // is stored with its description, found by it, and returned as an image
 // part with a citation to its source.

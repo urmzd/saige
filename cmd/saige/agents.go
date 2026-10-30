@@ -164,7 +164,7 @@ func loadAgents(ctx context.Context, cf *commonFlags, extra ...definition.Source
 	return reg, layers, nil
 }
 
-// agentRun is a definition bound for ask or chat.
+// agentRun is a definition bound for agent run.
 type agentRun struct {
 	bound   *bind.Bound
 	cleanup func()
@@ -271,7 +271,7 @@ func (h *agentHost) bindWith(ctx context.Context, ref string, edit func(*bind.En
 	return b, nil
 }
 
-// bindCLIAgent resolves and binds one definition for ask or chat.
+// bindCLIAgent resolves and binds one definition for agent run.
 func bindCLIAgent(ctx context.Context, cmd *cobra.Command, cf *commonFlags, ref string, harness tools.HarnessOptions, verbose bool) (*agentRun, error) {
 	h, err := newAgentHost(ctx, cmd, cf, harness, verbose)
 	if err != nil {
@@ -285,7 +285,7 @@ func bindCLIAgent(ctx context.Context, cmd *cobra.Command, cf *commonFlags, ref 
 	return &agentRun{bound: b, cleanup: func() { _ = b.Close(ctx); h.cleanup() }}, nil
 }
 
-// cliHarness is the harness configuration of ask and chat.
+// cliHarness is the harness configuration of agent run.
 func (h harnessFlags) options() tools.HarnessOptions {
 	return tools.HarnessOptions{Root: h.workspace, SandboxKind: tools.SandboxKind(h.sandbox), Network: exec.NetworkPolicy(h.network)}
 }
@@ -293,14 +293,14 @@ func (h harnessFlags) options() tools.HarnessOptions {
 func newAgentCmd(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
-		Short: "List, inspect and validate agent definitions",
+		Short: "Run agents and manage their definitions",
 		Long: "An agent definition is a Markdown file with YAML frontmatter: *.agent.md, or\n" +
 			"any .md file in a directory named agents. Directories are searched lowest\n" +
 			"precedence first: ~/.config/saige/agents, the project's .saige/agents\n" +
 			"(untrusted unless " + envTrustProjectAgents + "=1), then each --agents-dir.\n" +
-			"Run one with saige ask --agent NAME[@RANGE] or saige chat --agent NAME.",
+			"Run one with saige agent run NAME[@RANGE] \"question\".",
 	}
-	cmd.AddCommand(newAgentListCmd(ctx), newAgentShowCmd(ctx), newAgentValidateCmd(ctx), newAgentSchemaCmd())
+	cmd.AddCommand(newAgentRunCmd(ctx), newAgentListCmd(ctx), newAgentShowCmd(ctx), newAgentValidateCmd(ctx), newAgentSchemaCmd())
 	return cmd
 }
 

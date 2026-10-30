@@ -75,8 +75,8 @@ In a RAG pipeline, `rag.WithGraphNamespace(tenantID)` sets the group documents a
 ## CLI
 
 ```bash
-saige kg search --db "$SAIGE_KG_DB" --query "Who presented?"
-saige kg ingest --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the roadmap."
-saige kg graph  --db "$SAIGE_KG_DB"
-saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
+saige knowledge search --backend kg --db "$SAIGE_KG_DB" --query "Who presented?"
+saige knowledge ingest --backend kg --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the roadmap."
+saige knowledge graph export  --db "$SAIGE_KG_DB"
+saige knowledge graph neighbors   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
 ```

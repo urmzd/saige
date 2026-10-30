@@ -16,11 +16,13 @@ import (
 )
 
 // newEvalRunsCmd lists stored runs in a results directory.
+const evalListCommand = "list"
+
 func newEvalRunsCmd() *cobra.Command {
 	var dir, suite, tenant string
 	var limit int
 	cmd := &cobra.Command{
-		Use:          "runs",
+		Use:          evalListCommand,
 		Short:        "List evaluation runs in a results store, newest first",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,

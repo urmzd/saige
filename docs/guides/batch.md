@@ -163,7 +163,7 @@ Outside an eval, `batch.Coalescer` gathers any concurrent calls: callers that `J
 From the CLI:
 
 ```bash
-saige eval run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
+saige evals run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
 ```
 
 `--batch` needs a saige provider (`--provider` or the manifest's subject provider). Every script runs at once, so each turn's calls share a batch. With `--batch-store`, re-running the same command after an interruption resumes the submitted batches.

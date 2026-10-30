@@ -116,7 +116,7 @@ specs := []eval.ScorerSpec{
 scorers, err := eval.DefaultRegistry.BuildAll(specs)
 ```
 
-`eval.DefaultRegistry` holds the text, check, and budget scorers. Importing `agent/eval` adds the agent scorers (`calls_in_order`, `calls_with`, `does_not_call`, `only_calls`, `tool_responds_within`, and the timing and tool counts). `Name` renames the metric. Unknown parameters are rejected, so a typo fails instead of falling back to a default. `RegisterScorer` adds a kind; registering a kind twice is an error. LLM judges need a `Generator` and are built in code. `saige eval scorers` lists the registered kinds.
+`eval.DefaultRegistry` holds the text, check, and budget scorers. Importing `agent/eval` adds the agent scorers (`calls_in_order`, `calls_with`, `does_not_call`, `only_calls`, `tool_responds_within`, and the timing and tool counts). `Name` renames the metric. Unknown parameters are rejected, so a typo fails instead of falling back to a default. `RegisterScorer` adds a kind; registering a kind twice is an error. LLM judges need a `Generator` and are built in code. `saige evals scorers` lists the registered kinds.
 
 ## Evaluate a Single System
 
@@ -186,7 +186,7 @@ A result is a real failure only when the subject answered and the answer was jud
 | `types.ErrorKindRateLimit`, `ErrorKindUnavailable`, `ErrorKindTransient`, `ErrorKindAuth` | `ErrorKindInvalidRequest`, `ErrorKindContextLength`, `ErrorKindContentFilter`, `ErrorKindTruncated` |
 | `context.Canceled`, `context.DeadlineExceeded` | `ErrorKindPermanent` and any unclassified error |
 | network failures `types.ClassifyTransportError` recognizes (refused or reset connections, dial errors, timeouts) | a score below its threshold |
-| batch requests (`types.BatchRequestError`, with `WithBatch` or `saige eval run --batch`) that expired, were canceled, or errored without a classified cause | a batch request that errored with a classified real cause, such as an invalid request |
+| batch requests (`types.BatchRequestError`, with `WithBatch` or `saige evals run --batch`) that expired, were canceled, or errored without a classified cause | a batch request that errored with a classified real cause, such as an invalid request |
 | errors wrapped with `eval.Infra(err)` or matching `eval.ErrInfra`, such as an unreachable connector | |
 
 `PopulateAll` marks an inconclusive subject failure with the `eval.subject_inconclusive` annotation next to `eval.subject_error` (`eval.MarkSubjectError` does the same for code that records failures itself), and `Run` sets `Score.Inconclusive` on a scorer error `IsInfra` reports, such as a judge whose provider was down. `SuiteResult.Inconclusive` counts the results that could not be measured; they are left out of aggregates, `PassRate`, `GroupPassRate`, `MinPassRate`, and the paired statistics, so a Wilson interval covers only measured cases and `Completeness` shows the gap.
@@ -290,7 +290,7 @@ rep := eval.CompareSuites(baseline, current, eval.WithBootstrap(eval.DefaultResa
 // that got worse.
 ```
 
-Without `Metrics` it checks the metrics either arm gated, or every shared metric plus those the candidate lost when nothing was gated. `saige eval compare` runs the same gate over two stored runs; see [Regression Gate in CI](#regression-gate-in-ci).
+Without `Metrics` it checks the metrics either arm gated, or every shared metric plus those the candidate lost when nothing was gated. `saige evals compare` runs the same gate over two stored runs; see [Regression Gate in CI](#regression-gate-in-ci).
 
 Cases pair by ID, Turn, Sample, and the `variant` label, so two suites from `Experiment.Run` compare each variant with itself and `CaseDiff.Variant` names it. When each arm holds one variant and they differ, as in `CompareVariants`, cases pair without the variant.
 
@@ -410,7 +410,7 @@ The `store.Store` interface has three implementations: `memstore` (in memory), `
 
 `CaptureProvenance` reads the commit and dirty flag from git when it is available and from the binary's VCS stamp otherwise; a run outside any repository records no commit rather than failing.
 
-`saige eval run --store DIR` records each harness run there (set `harness.Config.Results` to do the same from code). `saige eval runs --store DIR` lists stored runs and `saige eval show RUN --store DIR` prints one, both with `--format json`.
+`saige evals run --store DIR` records each harness run there (set `harness.Config.Results` to do the same from code). `saige evals list --store DIR` lists stored runs and `saige evals show RUN --store DIR` prints one, both with `--format json`.
 
 ## Storing Results in Postgres
 
@@ -455,9 +455,9 @@ for _, d := range drops {
 Every eval command that takes `--store` accepts a PostgreSQL URL in place of a directory, and `--tenant` picks the scope:
 
 ```bash
-saige eval run --manifest evals/saige.eval.json --store postgres://user:pass@host/db --tenant acme
-saige eval runs --store postgres://user:pass@host/db --tenant acme
-saige eval show <run-id> --store postgres://user:pass@host/db --tenant acme
+saige evals run --manifest evals/saige.eval.json --store postgres://user:pass@host/db --tenant acme
+saige evals list --store postgres://user:pass@host/db --tenant acme
+saige evals show <run-id> --store postgres://user:pass@host/db --tenant acme
 ```
 
 The CLI runs the migrations when it connects. A manifest's `store` may also be a PostgreSQL URL; keep credentials out of the file and pass `--store` instead.
@@ -529,30 +529,30 @@ cases, err := online.Promote(ctx, units, online.PromoteOptions{Failing: online.F
 _ = online.WriteCases(f, cases)
 ```
 
-From the terminal, `saige eval online` sweeps the conversations in a PostgreSQL database (`--source`, by default the `--store` URL):
+From the terminal, `saige evals online` sweeps the conversations in a PostgreSQL database (`--source`, by default the `--store` URL):
 
 ```bash
-saige eval online --store postgres://user:pass@host/db --since 24h --rate 0.1 --seed 42 \
+saige evals online --store postgres://user:pass@host/db --since 24h --rate 0.1 --seed 42 \
   --scorer tool_success_rate --scorer '{"kind": "token_budget", "params": {"max_tokens": 4000}}' \
   --judge --provider openai --model gpt-6-luna --judge-budget 0.50 \
   --promote cases.jsonl
-saige eval online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
+saige evals online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
 ```
 
 Filters are `--only-model`, `--only-preset`, `--tool`, `--label key=value`, and `--errored true|false`; `--scope` reads one tenant's conversations and `--tenant` writes to one tenant's results. `--watch` listens on `--channel` (default `saige.eval.online`) until interrupted, after sweeping the last `--since`.
 
 ## Regression Gate in CI
 
-`saige eval compare` gates a stored run against a baseline run from the same results store, using `Comparison.Gate`:
+`saige evals compare` gates a stored run against a baseline run from the same results store, using `Comparison.Gate`:
 
 ```bash
-saige eval compare RUN_ID --store eval-results                     # against the newest earlier succeeded run of its suite
-saige eval compare --suite pr-42 --baseline-suite main --store "$DSN" # the newest pr-42 run against the newest earlier main run
-saige eval compare RUN_ID --baseline BASE_ID --store eval-results \
+saige evals compare RUN_ID --store eval-results                     # against the newest earlier succeeded run of its suite
+saige evals compare --suite pr-42 --baseline-suite main --store "$DSN" # the newest pr-42 run against the newest earlier main run
+saige evals compare RUN_ID --baseline BASE_ID --store eval-results \
   --max-regression 0.02 --threshold faithfulness=0 --significance 0.05 --min-cases 10 \
   --lower-is-better latency_ms --assert 'turn_succeeded>=1'
-saige eval compare RUN_ID --store eval-results --format markdown --output compare.md
-saige eval compare RUN_ID --store eval-results --format junit --output compare.xml
+saige evals compare RUN_ID --store eval-results --format markdown --output compare.md
+saige evals compare RUN_ID --store eval-results --format junit --output compare.xml
 ```
 
 | Flag | Meaning |
@@ -567,7 +567,7 @@ saige eval compare RUN_ID --store eval-results --format junit --output compare.x
 | `--format` | `human` (default), `markdown` (a pull request comment), `junit` (one test case per metric; a regression is a failure, an inconclusive metric is skipped), `json` |
 | `--output` | Write the report to a file; a one-line summary always goes to stderr |
 
-Exit status: 0 no regression, 1 a metric regressed or the candidate failed its gate, 3 inconclusive, 2 invalid input. `saige eval run` uses 3 the same way, for a run lost to infrastructure failures, so CI can rerun on 3 and fail on 1.
+Exit status: 0 no regression, 1 a metric regressed or the candidate failed its gate, 3 inconclusive, 2 invalid input. `saige evals run` uses 3 the same way, for a run lost to infrastructure failures, so CI can rerun on 3 and fail on 1.
 
 A GitHub Actions job that records every main branch run as the baseline, gates each pull request against it, comments the result, and reruns once when the run is inconclusive:
 
@@ -602,7 +602,7 @@ jobs:
         run: |
           for attempt in 1 2; do
             code=0
-            saige eval run --manifest evals/saige.eval.json --force \
+            saige evals run --manifest evals/saige.eval.json --force \
               --store "$SAIGE_EVAL_STORE" --suite "$SUITE" --assert 'turn_succeeded>=1' || code=$?
             [ "$code" -eq 3 ] || break
           done
@@ -612,9 +612,9 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           code=0
-          saige eval compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
+          saige evals compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
             --format markdown --output compare.md || code=$?
-          saige eval compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
+          saige evals compare --suite "$SUITE" --baseline-suite main --store "$SAIGE_EVAL_STORE" \
             --format junit --output compare.xml || true
           gh pr comment "${{ github.event.pull_request.number }}" --body-file compare.md --edit-last \
             || gh pr comment "${{ github.event.pull_request.number }}" --body-file compare.md
@@ -645,7 +645,7 @@ experiments/bm25-vs-hyde/
 
 ## Related
 
-- [`eval/harness`](harness/README.md): live eval harness for multi-turn corpora against OpenAI-compatible APIs or saige providers, with a strict suite manifest (`saige eval`)
+- [`eval/harness`](harness/README.md): live eval harness for multi-turn corpora against OpenAI-compatible APIs or saige providers, with a strict suite manifest (`saige evals`)
 - [Root README](../README.md): project overview and installation
 
 ### Repeated judging of a fixed trace

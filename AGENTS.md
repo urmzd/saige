@@ -6,7 +6,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 
 | Package | Role |
 |---------|------|
-| `cmd/saige/` | CLI: `chat` (interactive TUI), `ask` (single-shot), `rag`/`kg` (standalone ops), `eval`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `import` (skills and rules from other tools), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
+| `cmd/saige/` | CLI: `agent run` (one turn, optional persistent session and trace), `knowledge` (RAG/KG operations), `evals`, `serve`, `acp` (ACP agent over stdio), `export`/`launch` (harness setup), `import` (skills and rules from other tools), `approvals` (held approvals), `agent` (definitions), `models`, `update`, `version` |
 | `cmd/saige-mcp/` | MCP server binary: exposes tool packs (research, kg) and an agent definition as a tool, holding approvals for clients without elicitation |
 | `cmd/internal/agenthost/` | Session layer shared by serve, acp and saige-mcp: pinned binding, one turn at a time, grant checks |
 | `cmd/internal/approvals/` | File store of held approvals that `saige approvals` decides |
@@ -81,21 +81,19 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 ## CLI
 
 ```bash
-saige chat                          # interactive multi-turn TUI
-saige chat --provider anthropic     # use Anthropic (needs ANTHROPIC_API_KEY)
-saige chat --tools harness          # built-in tools (default readonly); write and exec ask first
-saige chat --verbose                # plain-text mode
-saige ask "question"                # single-shot query
-echo "question" | saige ask --template minimal   # pipe-friendly output
-saige rag search --db DSN --query Q # standalone RAG search
-saige kg search --db DSN --query Q  # standalone KG search
+saige agent run - "question"        # one streamed turn, no TUI
+saige agent run assistant --session review "question"  # create or continue a session
+saige agent run assistant --session review --trace "follow-up"  # trace loads and execution to stderr
+echo "question" | saige agent run - # pipe-friendly output
+saige knowledge search --db DSN --query Q # standalone RAG search
+saige knowledge search --backend kg --db DSN --query Q  # standalone KG search
 saige serve --tools fs,fetch --workspace .   # HTTP + SSE turn stream with approve/cancel
 
 # Agent definitions (*.agent.md in ~/.config/saige/agents, .saige/agents, --agents-dir)
 saige agent list                               # every definition, highest version first
 saige agent show repo-steward@^1               # digests, sub-agents, skill hashes, the file
 saige agent validate examples/agents           # offline checks; exit 2 when invalid
-saige ask --agents-dir examples/agents --agent assistant "question"   # also chat and serve
+saige agent run --agents-dir examples/agents --agent assistant "question"   # also serve
 saige acp --agents-dir examples/agents --agent assistant             # ACP agent over stdio for editors
 saige export claude --agents-dir examples/agents --agent assistant --dry-run   # also codex, gemini, opencode, cursor, skills
 saige import --dry-run                       # .claude/skills, .codex/skills, .cursor/rules and .cursorrules into .agents/skills
@@ -103,14 +101,14 @@ saige launch claude --agents-dir examples/agents --agent assistant -- -p "questi
 saige approvals list                          # held approvals; approve or deny TOKEN
 
 # Evals
-saige eval init evals                          # scaffold a corpus and manifest
-saige eval validate evals                      # check the manifest and corpus offline
-saige eval run --manifest evals/saige.eval.json --dry-run
-saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=5000'
-saige eval run --manifest evals/saige.eval.json --store eval-results --resume RUN_ID
-saige eval runs --store eval-results           # list recorded runs; show <run-id> for one
-saige eval run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
-saige eval compare RUN_ID --store eval-results # regression gate vs the previous run: exit 1 regressed, 3 inconclusive
+saige evals init evals                          # scaffold a corpus and manifest
+saige evals validate evals                      # check the manifest and corpus offline
+saige evals run --manifest evals/saige.eval.json --dry-run
+saige evals run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=5000'
+saige evals run --manifest evals/saige.eval.json --store eval-results --resume RUN_ID
+saige evals list --store eval-results           # list recorded runs; show <run-id> for one
+saige evals run --manifest evals/saige.eval.json --provider anthropic --batch --batch-store .saige/batches
+saige evals compare RUN_ID --store eval-results # regression gate vs the previous run: exit 1 regressed, 3 inconclusive
 
 # MCP server (separate binary)
 saige-mcp --tools research --searxng-url URL  # research tools over MCP/stdio

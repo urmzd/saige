@@ -10,14 +10,9 @@ import (
 
 func TestHarnessFlagDefaults(t *testing.T) {
 	ctx := context.Background()
-	for cmd, want := range map[string]string{"chat": toolsReadOnly, "ask": toolsNone} {
-		c := newChatCmd(ctx)
-		if cmd == "ask" {
-			c = newAskCmd(ctx)
-		}
-		if got := c.Flags().Lookup("tools").DefValue; got != want {
-			t.Errorf("%s --tools default = %q, want %q", cmd, got, want)
-		}
+	c := newAgentRunCmd(ctx)
+	if got := c.Flags().Lookup("tools").DefValue; got != toolsNone {
+		t.Errorf("--tools default = %q, want %q", got, toolsNone)
 	}
 }
 

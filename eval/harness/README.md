@@ -39,14 +39,14 @@ Each subdirectory of the corpus directory is one script:
 ## Quick Start
 
 ```bash
-saige eval init evals                                  # sample corpus plus evals/saige.eval.json
+saige evals init evals                                  # sample corpus plus evals/saige.eval.json
 export OPENAI_API_KEY=sk-...
-saige eval validate evals                              # strict, offline checks
-saige eval run --manifest evals/saige.eval.json --dry-run
-saige eval run --manifest evals/saige.eval.json
+saige evals validate evals                              # strict, offline checks
+saige evals run --manifest evals/saige.eval.json --dry-run
+saige evals run --manifest evals/saige.eval.json
 ```
 
-`saige eval run` works with or without a manifest. Flags: `--manifest`, `--experiments-dir`, `--model`, `--api-base`, `--api-key`, `--flows base,stateless`, `--id` prefix filter, `--count`, `--force` to re-run scripts that already have a `metrics.json`, `--continue-on-error` (default true), `--concurrency N`, `--store DIR` with `--suite NAME` to record the run, `--resume RUN` to continue a stored run, `--assert` to add a gate, `--dry-run` to stop after the checks and print the plan, and `--allow-unknown-model`. With a manifest, only the flags that are set override it. The root `--provider` flag (when set) selects a saige provider instead of the OpenAI-compatible endpoint.
+`saige evals run` works with or without a manifest. Flags: `--manifest`, `--experiments-dir`, `--model`, `--api-base`, `--api-key`, `--flows base,stateless`, `--id` prefix filter, `--count`, `--force` to re-run scripts that already have a `metrics.json`, `--continue-on-error` (default true), `--concurrency N`, `--store DIR` with `--suite NAME` to record the run, `--resume RUN` to continue a stored run, `--assert` to add a gate, `--dry-run` to stop after the checks and print the plan, and `--allow-unknown-model`. With a manifest, only the flags that are set override it. The root `--provider` flag (when set) selects a saige provider instead of the OpenAI-compatible endpoint.
 
 Before any model call the command validates the manifest and corpus, checks that a key is available, and checks the model against the catalog. A model that matches no catalog family is refused for `openai` (including the OpenAI API host), `anthropic`, and `google` unless `--allow-unknown-model` is passed. The command exits with status 1 when a script fails or an assertion is violated, and with status 3 when the run is inconclusive (see [Failures](#failures)).
 
@@ -117,11 +117,11 @@ A manifest declares one suite in JSON. It is decoded strictly: an unknown key is
 | `assert` | `eval.Assertion` gates over the turn metrics (`turn_succeeded`, `latency_ms`, `input_tokens`, `output_tokens`, `output_bytes`) |
 | `store` | Results store directory |
 
-`LoadManifest` returns the manifest with a list of `Issue` values; `saige eval validate [path]` prints them as `file:/pointer: severity: message` and fails on any error. `path` is a manifest, a directory holding `saige.eval.json`, or a bare corpus directory.
+`LoadManifest` returns the manifest with a list of `Issue` values; `saige evals validate [path]` prints them as `file:/pointer: severity: message` and fails on any error. `path` is a manifest, a directory holding `saige.eval.json`, or a bare corpus directory.
 
 ## Providers
 
-`NewProviderClient(p)` sends every request through a saige `types.Provider`, so the provider's adapter, retry, fallback, and routing decorators apply. The provider transport makes one attempt per call and leaves retries to the provider stack (`saige eval run` wraps the provider in a 6-attempt retry decorator). `WithJSONSchema` needs a `types.StructuredOutputProvider`, and a `Temperature` or `Seed` set on the client needs a `types.OptionsProvider`; a provider without them fails the call rather than dropping the request. `NewProviderClient` leaves both unset, so the provider's configured sampling applies.
+`NewProviderClient(p)` sends every request through a saige `types.Provider`, so the provider's adapter, retry, fallback, and routing decorators apply. The provider transport makes one attempt per call and leaves retries to the provider stack (`saige evals run` wraps the provider in a 6-attempt retry decorator). `WithJSONSchema` needs a `types.StructuredOutputProvider`, and a `Temperature` or `Seed` set on the client needs a `types.OptionsProvider`; a provider without them fails the call rather than dropping the request. `NewProviderClient` leaves both unset, so the provider's configured sampling applies.
 
 `NewClient` sends temperature 0 unless the model catalog says the model rejects it with its default reasoning settings (`AcceptsTemperature`). Reasoning models such as `o3` get no temperature; a model the catalog does not know resolves to the OpenAI baseline, which accepts it.
 
@@ -133,7 +133,7 @@ When an edit turn's request still fails, the built-in flows record that turn wit
 
 A failed flow fails its script: the runner writes `<script>/error.json` (`experiment_id`, `flow`, `error`, `timestamp`) and no `metrics.json`, so the next run retries it. With `Runner.ContinueOnError` the remaining scripts still run and all failures are returned together; without it the run stops at the first failure.
 
-A failure on infrastructure is inconclusive, not failed: `eval.IsInfra` reports rate limits, unavailable servers, other retryable statuses, authentication failures, network failures, timeouts, cancellation, and errors marked with `eval.Infra`. An edit turn lost that way is recorded with `inconclusive: true`, and its `turn_succeeded` score carries the error and `Inconclusive` instead of a 0, so a gate leaves it out instead of failing it. A script lost that way is recorded as a subject error marked inconclusive. When no script failed for another reason and no gate failed, `Run` returns an `*InconclusiveError` (`errors.Is(err, harness.ErrInconclusive)`) if more than `Runner.MaxInconclusive` of the scripts are inconclusive (default 0, none tolerated), if the gate was inconclusive, or if the run was cancelled. Within the tolerance it returns nil. `saige eval run` exits with status 3 for an inconclusive run; `--resume` reruns only the scripts that did not complete.
+A failure on infrastructure is inconclusive, not failed: `eval.IsInfra` reports rate limits, unavailable servers, other retryable statuses, authentication failures, network failures, timeouts, cancellation, and errors marked with `eval.Infra`. An edit turn lost that way is recorded with `inconclusive: true`, and its `turn_succeeded` score carries the error and `Inconclusive` instead of a 0, so a gate leaves it out instead of failing it. A script lost that way is recorded as a subject error marked inconclusive. When no script failed for another reason and no gate failed, `Run` returns an `*InconclusiveError` (`errors.Is(err, harness.ErrInconclusive)`) if more than `Runner.MaxInconclusive` of the scripts are inconclusive (default 0, none tolerated), if the gate was inconclusive, or if the run was cancelled. Within the tolerance it returns nil. `saige evals run` exits with status 3 for an inconclusive run; `--resume` reruns only the scripts that did not complete.
 
 `DefaultMetrics` includes a `reliability` report per flow that has edit turns, built by `ComputeReliability`. Its `provider` field names the client's transport.
 
@@ -143,17 +143,17 @@ A failure on infrastructure is inconclusive, not failed: `eval.IsInfra` reports 
 
 `Runner.Resume` names a stored run to continue. Scripts that completed there (every flow recorded, no script failure) are not run again: their stored units are copied into the new run. The other scripts run even when a `metrics.json` exists. The new run gets its own ID and is complete on its own.
 
-`Runner.Assert` gates the recorded units with `eval.SuiteResult.GateWith` and a `GatePolicy` of `Runner.MaxInconclusive`. A violated gate makes `Run` return an `*AssertionError` (`errors.Is(err, harness.ErrAssertionsFailed)`), and a stored run carries the outcome and violations. A failed gate does not mark the run itself as errored. Scripts skipped because their `metrics.json` exists add no units unless `Runner.ReuseMetrics` is set, which rebuilds them from the file when it records the same model. `saige eval run` sets it, so a rerun gates the whole corpus without new calls.
+`Runner.Assert` gates the recorded units with `eval.SuiteResult.GateWith` and a `GatePolicy` of `Runner.MaxInconclusive`. A violated gate makes `Run` return an `*AssertionError` (`errors.Is(err, harness.ErrAssertionsFailed)`), and a stored run carries the outcome and violations. A failed gate does not mark the run itself as errored. Scripts skipped because their `metrics.json` exists add no units unless `Runner.ReuseMetrics` is set, which rebuilds them from the file when it records the same model. `saige evals run` sets it, so a rerun gates the whole corpus without new calls.
 
-`Runner.Plan` reports what `Run` would do with each script (run, skip, or resume) and how many chat calls it would make. `saige eval run --dry-run` prints it.
+`Runner.Plan` reports what `Run` would do with each script (run, skip, or resume) and how many chat calls it would make. `saige evals run --dry-run` prints it.
 
 ## Recording Runs
 
 Set `Runner.Results` to an `eval/store` store to record each `Run` as one stored run, with provenance from `Runner.Provenance` plus the client's model. Every executed script adds one unit per flow per turn, keyed like `001-example/1@stateless`, with the turn's latency and tokens as timing and the scores `turn_succeeded`, `latency_ms`, `input_tokens`, `output_tokens`, and `output_bytes` (see `ScriptObservations`). A failed script adds one unit carrying its error, counted as a subject error. Skipped scripts add nothing, so pass `--force` to record a full rerun.
 
 ```bash
-saige eval run --experiments-dir evals --store eval-results --suite docs
-saige eval runs --store eval-results
+saige evals run --experiments-dir evals --store eval-results --suite docs
+saige evals list --store eval-results
 ```
 
 ## Built-in Flows

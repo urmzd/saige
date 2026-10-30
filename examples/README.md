@@ -22,7 +22,7 @@ The programs embedded in the root README's Quick Start. Each builds the `default
 
 ## Agent definitions
 
-Definitions in [`agents/`](agents/), run with `saige ask --agents-dir examples/agents --agent NAME`. See [agent definitions](../docs/guides/agent-definitions.md).
+Definitions in [`agents/`](agents/), run with `saige agent run --agents-dir examples/agents --agent NAME`. See [agent definitions](../docs/guides/agent-definitions.md).
 
 | Definition | Description |
 |------------|-------------|

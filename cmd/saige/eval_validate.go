@@ -12,7 +12,7 @@ import (
 	"github.com/urmzd/saige/eval/harness"
 )
 
-// errEvalInvalid is returned by saige eval validate after it printed the
+// errEvalInvalid is returned by saige evals validate after it printed the
 // issues, so the error is not printed a second time.
 var errEvalInvalid = errors.New("validation failed")
 

@@ -137,11 +137,11 @@ func TestAskAgentFlagErrors(t *testing.T) {
 		code int
 		want string
 	}{
-		{[]string{"ask", "--agents-dir", dir, "--agent", "ghost", "hi"}, exitInvalid, `no definition named "ghost"`},
-		{[]string{"ask", "--agents-dir", dir, "--agent", "assistant@^2", "hi"}, exitInvalid, "available: 1.0.0"},
-		{[]string{"ask", "--agents-dir", dir, "--agent", "assistant", "--tools", "read", "hi"}, 1, "--tools and --agent"},
-		{[]string{"ask", "--agents-dir", dir, "--agent", "assistant", "--system", "x", "hi"}, 1, "--system and --agent"},
-		{[]string{"chat", "--agents-dir", dir, "--agent", "assistant", "--tools", "read"}, 1, "--tools and --agent"},
+		{[]string{"agent", "run", "ghost", "--agents-dir", dir, "hi"}, exitInvalid, `no definition named "ghost"`},
+		{[]string{"agent", "run", "--agents-dir", dir, "--agent", "assistant@^2", "hi"}, exitInvalid, "available: 1.0.0"},
+		{[]string{"agent", "run", "--agents-dir", dir, "--agent", "assistant", "--tools", "read", "hi"}, 1, "--tools and --agent"},
+		{[]string{"agent", "run", "--agents-dir", dir, "--agent", "assistant", "--system", "x", "hi"}, 1, "--system and --agent"},
+		{[]string{"agent", "run", "assistant", "--agents-dir", dir, "--tools", "read", "hi"}, 1, "--tools and --agent"},
 	}
 	for _, tc := range cases {
 		code, out := runCLI(t, tc.args...)
@@ -155,7 +155,7 @@ func TestBindCLIAgent(t *testing.T) {
 	agentsSandbox(t)
 	resetCatalogCache()
 	root := newRootCmd(context.Background())
-	cmd, _, err := root.Find([]string{"ask"})
+	cmd, _, err := root.Find([]string{"agent", "run"})
 	if err != nil {
 		t.Fatal(err)
 	}

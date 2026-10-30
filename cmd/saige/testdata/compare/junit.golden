@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="saige eval compare" tests="2" failures="1" skipped="0">
+<testsuites name="saige evals compare" tests="2" failures="1" skipped="0">
   <testsuite name="nightly" tests="2" failures="1" skipped="0">
     <properties>
       <property name="baseline" value="base"></property>

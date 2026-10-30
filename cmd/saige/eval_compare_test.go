@@ -111,14 +111,14 @@ func TestEvalCompareExitCodes(t *testing.T) {
 		{"no candidate", []string{}, exitInvalid, nil},
 		{"bad threshold", []string{"held", "--threshold", "correct"}, exitInvalid, nil},
 		{"bad significance", []string{"held", "--significance", "0"}, exitInvalid, nil},
-		{"bad format", []string{"--format", "yaml", "eval", "compare", "held"}, exitInvalid, nil},
+		{"bad format", []string{"--format", "yaml", "evals", "compare", "held"}, exitInvalid, nil},
 		{"missing baseline", []string{"base"}, 1, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			args := tt.args
 			if len(args) == 0 || args[0] != "--format" {
-				args = append([]string{"eval", "compare"}, args...)
+				args = append([]string{"evals", "compare"}, args...)
 			}
 			args = append(args, "--store", dir)
 			code, out, stderr := runEvalCLI(t, args...)
@@ -138,7 +138,7 @@ func TestEvalCompareFormats(t *testing.T) {
 	dir := seedCompareStore(t)
 	for _, format := range []string{"human", "markdown", "junit", "json"} {
 		t.Run(format, func(t *testing.T) {
-			code, out, stderr := runEvalCLI(t, "--format", format, "eval", "compare", "regressed", "--baseline", "base",
+			code, out, stderr := runEvalCLI(t, "--format", format, "evals", "compare", "regressed", "--baseline", "base",
 				"--metric", "correct", "--metric", "latency_ms", "--lower-is-better", "latency_ms", "--store", dir)
 			if code != 1 {
 				t.Fatalf("exit %d, want 1: %s", code, stderr)
@@ -174,7 +174,7 @@ func TestEvalCompareInconclusiveFormats(t *testing.T) {
 	dir := seedCompareStore(t)
 	for _, format := range []string{"markdown", "junit"} {
 		t.Run(format, func(t *testing.T) {
-			code, out, _ := runEvalCLI(t, "--format", format, "eval", "compare", "outage", "--baseline", "base", "--store", dir)
+			code, out, _ := runEvalCLI(t, "--format", format, "evals", "compare", "outage", "--baseline", "base", "--store", dir)
 			if code != exitInconclusive {
 				t.Fatalf("exit %d, want %d", code, exitInconclusive)
 			}
@@ -186,12 +186,12 @@ func TestEvalCompareInconclusiveFormats(t *testing.T) {
 func TestEvalCompareOutputFile(t *testing.T) {
 	dir := seedCompareStore(t)
 	path := filepath.Join(t.TempDir(), "report.xml")
-	code, out, _ := runEvalCLI(t, "--format", "junit", "eval", "compare", "held", "--baseline", "base", "--store", dir, "--output", path)
+	code, out, _ := runEvalCLI(t, "--format", "junit", "evals", "compare", "held", "--baseline", "base", "--store", dir, "--output", path)
 	if code != 0 || out != "" {
 		t.Fatalf("exit %d, stdout %q; want 0 and nothing on stdout", code, out)
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(data), `<testsuites name="saige eval compare" tests="1" failures="0" skipped="0">`) {
+	if err != nil || !strings.Contains(string(data), `<testsuites name="saige evals compare" tests="1" failures="0" skipped="0">`) {
 		t.Fatalf("report file = %s, %v", data, err)
 	}
 }
@@ -237,14 +237,14 @@ func TestEvalCompareWithPostgresStore(t *testing.T) {
 		{"regressed", 1},
 		{"outage", exitInconclusive},
 	} {
-		code, out, stderr := runEvalCLI(t, "eval", "compare", tt.run, "--baseline", "base", "--store", dsn, "--tenant", "acme")
+		code, out, stderr := runEvalCLI(t, "evals", "compare", tt.run, "--baseline", "base", "--store", dsn, "--tenant", "acme")
 		if code != tt.wantCode {
 			t.Fatalf("%s: exit %d, want %d\n%s\n%s", tt.run, code, tt.wantCode, out, stderr)
 		}
 	}
 	// The latest baseline of the outage run skips nothing: regressed is
 	// the newest succeeded run before it.
-	code, out, _ := runEvalCLI(t, "eval", "compare", "outage", "--store", dsn, "--tenant", "acme")
+	code, out, _ := runEvalCLI(t, "evals", "compare", "outage", "--store", dsn, "--tenant", "acme")
 	if code != exitInconclusive || !strings.Contains(out, "baseline   regressed") {
 		t.Fatalf("latest baseline: exit %d\n%s", code, out)
 	}

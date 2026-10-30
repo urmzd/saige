@@ -1,4 +1,4 @@
-### saige eval compare: inconclusive
+### saige evals compare: inconclusive
 
 **inconclusive**: 0 of 1 metrics regressed. Candidate `outage` against baseline `base` (commit `c0ffee040000` against `c0ffee010000`), suite `nightly`.
 
