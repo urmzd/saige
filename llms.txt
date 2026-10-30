@@ -32,7 +32,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 - [docs/guides/mcp-client.md](docs/guides/mcp-client.md): MCP client: pooled sessions, retries, drift detection, config loading
 - [docs/guides/batch.md](docs/guides/batch.md): Batch processing: vendor batch APIs behind types.BatchProvider, local fallback, durable job store, batch pricing and budget, eval.WithBatch, agent.RunBatch
 - [docs/architecture/durable-execution.md](docs/architecture/durable-execution.md): Durable runs: local engine and anchor engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
-- [docs/guides/observability.md](docs/guides/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction
+- [docs/guides/observability.md](docs/guides/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction, opt-in tool content
 - [docs/guides/deployment.md](docs/guides/deployment.md): Single PostgreSQL 18 deployment with pgvector and pg_search, migrations, hybrid search
 - [docs/architecture/model-capabilities.md](docs/architecture/model-capabilities.md): Capability declarations per vendor and the gaps still open
 - [docs/architecture/orchestration-policies.md](docs/architecture/orchestration-policies.md): Conversation ownership, subagent results, handoff return links, sticky routing, approval limits

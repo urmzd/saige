@@ -11,9 +11,10 @@ a, err := agent.New(agent.Config{
     SubAgents: []agent.SubAgentDef{researcher},
     Metrics:   myMetrics, // optional; keeps receiving every record
 }, otel.WithTracing(otel.Config{
-    TracerProvider: tp,
-    MeterProvider:  mp,
-    Redactor:       maskEmails, // optional
+    TracerProvider:     tp,
+    MeterProvider:      mp,
+    Redactor:           maskEmails, // optional
+    CaptureToolContent: true,       // optional; see "Tool content"
 }))
 if err != nil {
     return err
@@ -29,7 +30,7 @@ A `Metrics` sink set before the option keeps receiving every record next to the 
 | Span | Kind | Attributes |
 |------|------|------------|
 | `chat {model}` | client | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.request.*` options, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.response.time_to_first_chunk`, `saige.route.*`, `saige.dials.*` |
-| `execute_tool {name}` | internal | `gen_ai.tool.name`, `gen_ai.tool.description`, `saige.tool.capability` |
+| `execute_tool {name}` | internal | `gen_ai.tool.name`, `gen_ai.tool.description`, `saige.tool.capability`; with `CaptureToolContent`, `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` |
 | `invoke_agent {name}` | internal | `gen_ai.agent.name` |
 
 Usage is merged across the parts a provider streams and written once when the stream ends, so a provider that reports prompt tokens first and completion tokens last keeps both. Partial usage is kept when the stream fails.
@@ -54,7 +55,18 @@ A failed span gets an error status, an exception event, and these attributes:
 | `saige.error.transient` | Whether a retry can succeed. Set for classified errors only |
 | `saige.error.retry_after_ms` | The delay the server asked for, when it sent one |
 
-Provider and tool errors can contain request bodies or user data. Set `Config.Redactor` to rewrite every message before it reaches a span status or exception event. Spans carry no message content.
+Provider and tool errors can contain request bodies or user data. Set `Config.Redactor` to rewrite every message before it reaches a span status or exception event.
+
+## Tool content
+
+Spans carry no message content by default. Set `Config.CaptureToolContent` to record each tool call's arguments and result on its `execute_tool` span:
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.tool.call.arguments` | The call's arguments as JSON |
+| `gen_ai.tool.call.result` | The result text, including the text of a failed call. Absent when the tool returned none |
+
+Arguments and results often hold user data, so turn this on only where the telemetry backend may store it. `Config.Redactor` rewrites each value first, and each value is cut to `otel.MaxToolContentBytes` (8 KiB) at a rune boundary, ending with `…`. Prompts and model responses are never recorded.
 
 ## Metrics
 

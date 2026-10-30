@@ -3,8 +3,10 @@ package otel
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/codes"
 
@@ -256,5 +258,70 @@ func TestWrapRegistryKeepsEveryTool(t *testing.T) {
 	a, _ := src.Get("a")
 	if _, ok := a.(*TracedTool); ok {
 		t.Fatal("source registry was modified")
+	}
+}
+
+func TestTracedToolContent(t *testing.T) {
+	boom := errors.New("boom")
+	args := map[string]any{"city": "Lisbon", "days": 2}
+	long := strings.Repeat("é", MaxToolContentBytes) // two bytes per rune
+	tests := []struct {
+		name       string
+		tool       types.Tool
+		rich       bool
+		args       map[string]any
+		opts       []ToolOption
+		wantArgs   string // "" means the attribute is absent
+		wantResult string
+	}{
+		{name: "off by default", tool: plainTool{name: "a"}, args: args},
+		{name: "plain call", tool: plainTool{name: "a"}, args: args, opts: []ToolOption{WithToolContent()},
+			wantArgs: `{"city":"Lisbon","days":2}`, wantResult: "a ran"},
+		{name: "nil arguments", tool: plainTool{name: "a"}, opts: []ToolOption{WithToolContent()},
+			wantArgs: "{}", wantResult: "a ran"},
+		{name: "rich result text", tool: richTool{plainTool{name: "r"}}, rich: true, args: args,
+			opts: []ToolOption{WithToolContent()}, wantArgs: `{"city":"Lisbon","days":2}`, wantResult: "rich"},
+		{name: "result flagged as error", tool: isErrorTool{plainTool{name: "e"}}, rich: true, args: args,
+			opts: []ToolOption{WithToolContent()}, wantArgs: `{"city":"Lisbon","days":2}`, wantResult: "e failed"},
+		{name: "error keeps the partial result", tool: plainTool{name: "a", err: boom}, args: args,
+			opts: []ToolOption{WithToolContent()}, wantArgs: `{"city":"Lisbon","days":2}`, wantResult: "a ran"},
+		{name: "redactor applies to content", tool: plainTool{name: "a"}, args: args,
+			opts: []ToolOption{WithToolContent(), WithToolRedactor(func(s string) string {
+				return strings.ReplaceAll(strings.ReplaceAll(s, "Lisbon", "[city]"), "ran", "[done]")
+			})},
+			wantArgs: `{"city":"[city]","days":2}`, wantResult: "a [done]"},
+		{name: "long value cut at a rune boundary", tool: plainTool{name: "a"}, args: map[string]any{"q": long},
+			opts:     []ToolOption{WithToolContent()},
+			wantArgs: truncate(`{"q":"`+long+`"}`, MaxToolContentBytes), wantResult: "a ran"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracer, rec := newSpyTracer()
+			tool := NewTracedTool(tt.tool, tracer, tt.opts...)
+			if tt.rich {
+				_, _ = tool.ExecuteRich(context.Background(), tt.args)
+			} else {
+				_, _ = tool.Execute(context.Background(), tt.args)
+			}
+			s := rec.all()[0]
+			for key, want := range map[string]string{
+				"gen_ai.tool.call.arguments": tt.wantArgs,
+				"gen_ai.tool.call.result":    tt.wantResult,
+			} {
+				got, ok := s.attr(key)
+				if want == "" {
+					if ok {
+						t.Errorf("%s = %q, want absent", key, got.AsString())
+					}
+					continue
+				}
+				if got.AsString() != want {
+					t.Errorf("%s = %q, want %q", key, got.AsString(), want)
+				}
+				if n := len(got.AsString()); n > MaxToolContentBytes || !utf8.ValidString(got.AsString()) {
+					t.Errorf("%s is %d bytes or not valid UTF-8", key, n)
+				}
+			}
+		})
 	}
 }

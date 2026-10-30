@@ -2,7 +2,9 @@ package otel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -29,13 +31,24 @@ type ToolOption func(*toolOptions)
 
 type toolOptions struct {
 	redactor func(string) string
+	content  bool
 }
 
-// WithToolRedactor scrubs error messages before they are written to a span.
-// See Config.Redactor.
+// WithToolRedactor scrubs error messages, and captured content, before they
+// are written to a span. See Config.Redactor.
 func WithToolRedactor(redact func(string) string) ToolOption {
 	return func(o *toolOptions) { o.redactor = redact }
 }
+
+// WithToolContent records each call's arguments and result on its span. See
+// Config.CaptureToolContent.
+func WithToolContent() ToolOption {
+	return func(o *toolOptions) { o.content = true }
+}
+
+// MaxToolContentBytes caps each captured argument or result value. Longer
+// values are cut at a rune boundary and end with "…".
+const MaxToolContentBytes = 8 << 10
 
 var (
 	_ types.RichTool     = (*TracedTool)(nil)
@@ -72,10 +85,10 @@ func (t *TracedTool) CachePolicy() types.CachePolicy {
 // Execute runs the tool within a traced span.
 func (t *TracedTool) Execute(ctx context.Context, args map[string]any) (string, error) {
 	var result string
-	err := t.traced(ctx, func(ctx context.Context) error {
+	err := t.traced(ctx, args, func(ctx context.Context) (string, error) {
 		var err error
 		result, err = t.Inner.Execute(ctx, args)
-		return err
+		return result, err
 	})
 	return result, err
 }
@@ -89,7 +102,7 @@ func (t *TracedTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		err    error
 	)
 	// The span error is reported through the span; the caller's error is err.
-	_ = t.traced(ctx, func(ctx context.Context) error {
+	_ = t.traced(ctx, args, func(ctx context.Context) (string, error) {
 		if rt, ok := t.Inner.(types.RichTool); ok {
 			result, err = rt.ExecuteRich(ctx, args)
 		} else {
@@ -101,9 +114,9 @@ func (t *TracedTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 			// The agent loop treats a result flagged IsError as a failed
 			// call, so the span reports it as one too. Only the span sees
 			// this error; the caller gets the result unchanged.
-			return toolResultError{msg: result.Text()}
+			return result.Text(), toolResultError{msg: result.Text()}
 		}
-		return err
+		return result.Text(), err
 	})
 	return result, err
 }
@@ -115,8 +128,9 @@ type toolResultError struct{ msg string }
 func (e toolResultError) Error() string { return e.msg }
 
 // traced runs fn inside an execute_tool span. The error fn returns is recorded
-// on the span and returned.
-func (t *TracedTool) traced(ctx context.Context, fn func(context.Context) error) error {
+// on the span and returned. With content capture on, args and the result text
+// fn returns are recorded too.
+func (t *TracedTool) traced(ctx context.Context, args map[string]any, fn func(context.Context) (string, error)) error {
 	def := t.Inner.Definition()
 	attrs := []attribute.KeyValue{
 		attribute.String("gen_ai.operation.name", "execute_tool"),
@@ -126,15 +140,55 @@ func (t *TracedTool) traced(ctx context.Context, fn func(context.Context) error)
 	if def.Description != "" {
 		attrs = append(attrs, attribute.String("gen_ai.tool.description", def.Description))
 	}
+	if t.opts.content {
+		attrs = append(attrs, attribute.String("gen_ai.tool.call.arguments", t.content(encodeArgs(args))))
+	}
 	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("execute_tool %s", def.Name),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attrs...),
 	)
 	defer span.End()
 
-	err := fn(ctx)
+	result, err := fn(ctx)
+	if t.opts.content && result != "" {
+		span.SetAttributes(attribute.String("gen_ai.tool.call.result", t.content(result)))
+	}
 	recordSpanError(span, err, t.opts.redactor)
 	return err
+}
+
+// content redacts and caps one captured value.
+func (t *TracedTool) content(s string) string {
+	if t.opts.redactor != nil {
+		s = t.opts.redactor(s)
+	}
+	return truncate(s, MaxToolContentBytes)
+}
+
+// encodeArgs renders call arguments as JSON. Arguments that cannot be encoded
+// fall back to Go's formatting so the span still shows them.
+func encodeArgs(args map[string]any) string {
+	if args == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Sprint(args)
+	}
+	return string(b)
+}
+
+// truncate cuts s to at most limit bytes at a rune boundary, marking the cut.
+func truncate(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	const mark = "…"
+	cut := limit - len(mark)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + mark
 }
 
 // tracedConfigurable is a TracedTool over a types.Configurable tool. It is a
