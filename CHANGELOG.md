@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.44.0 (2026-10-30)
+
+### Features
+
+- **catalog**: price Gemini 3 Flash and Gemini embeddings (#133) ([a5c1878](https://github.com/urmzd/saige/commit/a5c1878a318633c3faf592530afce0c10a7ec3cc))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.43.0...v0.44.0)
+
+
 ## 0.43.0 (2026-10-30)
 
 ### Breaking
