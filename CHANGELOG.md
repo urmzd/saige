@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.42.0 (2026-10-30)
+
+### Features
+
+- **otel**: opt-in capture of tool call arguments and results (#131) ([0b7dfca](https://github.com/urmzd/saige/commit/0b7dfca6e6b994c05b840935673068894000ffac))
+
+### Bug Fixes
+
+- **deps**: patch vulnerable Go dependencies (#130) ([dbb8f95](https://github.com/urmzd/saige/commit/dbb8f955801685fab79a3e4f18c60eab4daacf98))
+
+### Misc
+
+- split DESIGN_DECISIONS into ADRs and file docs by kind (#129) ([6263875](https://github.com/urmzd/saige/commit/6263875f3b76798948f1b1071dae27afe0e66efc))
+- refocus README on standalone delivery ([19ba9bb](https://github.com/urmzd/saige/commit/19ba9bb176b6b4c5f40d56815fa0678057109e17))
+- update platform references to Humagen (#125) ([41b6b44](https://github.com/urmzd/saige/commit/41b6b4439ba2a226598e001b112a1ae775edfde3))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.41.0...v0.42.0)
+
+
 ## 0.41.0 (2026-10-21)
 
 ### Breaking
