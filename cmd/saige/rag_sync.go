@@ -97,7 +97,7 @@ id_rsa*, credentials*.json, *.tfstate and similar), and paths matched by
 .gitignore or .saigeignore. Skipped files are reported and never pruned.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "rag sync"})
+			out.Header(tui.OutputHeader{Operation: "knowledge sync"})
 
 			src, err := f.source()
 			if err != nil {

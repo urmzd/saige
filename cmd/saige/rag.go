@@ -62,23 +62,6 @@ func lazyDescriber(newProvider func() (agenttypes.Provider, error)) agenttypes.E
 	})
 }
 
-func newRagCmd(ctx context.Context) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "rag",
-		Short: "RAG document operations (search, lookup, ingest, sync, delete)",
-	}
-
-	cmd.AddCommand(
-		newRagSearchCmd(ctx),
-		newRagLookupCmd(ctx),
-		newRagIngestCmd(ctx),
-		newRagSyncCmd(ctx),
-		newRagDeleteCmd(ctx),
-	)
-
-	return cmd
-}
-
 // openRAGPipeline connects to the RAG database (--db, then SAIGE_RAG_DB) and
 // builds the shared pipeline. The returned cleanup closes the pipeline and
 // the pool. withEmbedder is set only for commands that embed (search, ingest).
@@ -116,7 +99,7 @@ func newRagSearchCmd(ctx context.Context) *cobra.Command {
 		Short: "Search documents",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "rag search"})
+			out.Header(tui.OutputHeader{Operation: "knowledge search"})
 
 			if query == "" {
 				return reported(out, fmt.Errorf("--query is required"))
@@ -156,7 +139,7 @@ func newRagLookupCmd(ctx context.Context) *cobra.Command {
 		Short: "Get variant by UUID",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "rag lookup"})
+			out.Header(tui.OutputHeader{Operation: "knowledge show"})
 
 			if uuid == "" {
 				return reported(out, fmt.Errorf("--uuid is required"))
@@ -204,7 +187,7 @@ stored with its description, which is what search matches. Pick a model that
 takes images; the description call is billed to that provider.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "rag ingest"})
+			out.Header(tui.OutputHeader{Operation: "knowledge ingest"})
 
 			if file == "" {
 				return reported(out, fmt.Errorf("--file is required"))
@@ -272,7 +255,7 @@ func newRagDeleteCmd(ctx context.Context) *cobra.Command {
 		Short: "Delete a document",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := tui.ResolveOutput(persistentFlagVars.isJSON(), tui.TemplateByName(tmplName))
-			out.Header(tui.OutputHeader{Operation: "rag delete"})
+			out.Header(tui.OutputHeader{Operation: "knowledge delete"})
 
 			if uuid == "" {
 				return reported(out, fmt.Errorf("--uuid is required"))

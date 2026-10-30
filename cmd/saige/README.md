@@ -1,6 +1,6 @@
 # saige CLI
 
-Interactive chat, single-shot queries, standalone RAG/KG operations, and live evals from the terminal.
+Agent execution, persistent sessions, knowledge operations, and live evals from the terminal.
 
 ```bash
 go install github.com/urmzd/saige/cmd/saige@latest
@@ -8,65 +8,32 @@ go install github.com/urmzd/saige/cmd/saige@latest
 
 Or use the [install script](../../README.md#installation) for a pre-built binary. Update in place with `saige update`, or check without installing via `saige update --check`. Updates are verified against the release's `SHA256SUMS`.
 
-## Chat and Ask
+## Agent runs and sessions
+
+Each invocation streams one turn and exits. There is no CLI TUI. Pass a definition name, or `-` to use the configured model directly:
 
 ```bash
-# Interactive multi-turn chat (Bubble Tea TUI)
-saige chat
-saige chat --provider anthropic --model claude-haiku-5-5
-saige chat --provider ollama   # fully local, on a model pulled into Ollama
-saige chat --verbose  # plain-text mode for pipes/CI
-saige chat --tools harness --workspace ./repo  # add write_file, edit_file, execute_code, fetch_url
-
-# Single-shot question (pipe-friendly)
-saige ask "What is retrieval-augmented generation?"
-echo "Explain transformers" | saige ask --template minimal
-
-# Run an agent definition (see docs/guides/agent-definitions.md)
-saige ask --agents-dir examples/agents --agent assistant "What does go.mod declare?"
-saige chat --agent repo-steward@^1 --workspace .
-
-# With RAG/KG tools attached to the agent
-saige chat --rag-db "postgres://localhost/mydb" --kg-db "postgres://localhost/mydb"
-saige ask --rag-db "$SAIGE_RAG_DB" "What does the paper say about attention?"
+saige agent run - "What is retrieval-augmented generation?"
+saige agent run - --provider ollama "Explain transformers"
+echo "Explain transformers" | saige agent run -
+saige agent run assistant --agents-dir examples/agents "What does go.mod declare?"
+saige agent run repo-steward@^1 --session review --trace "Review this repository"
+saige agent run repo-steward@^1 --session review --trace "Explain your first finding"
+saige agent run - --rag-db "$SAIGE_RAG_DB" "What does the paper say about attention?"
 ```
 
-### Chat keys
+Without `--session`, conversation state is ephemeral. With `--session ID`, a missing session is created and an existing one is restored. IDs contain 1-128 letters, digits, hyphens or underscores and start with a letter or digit. Files live under the OS user config directory in `saige/sessions`; `--sessions-dir` overrides it. Session files have mode 0600 and are replaced atomically. A lock prevents concurrent turns on the same session. After a process is killed, remove its `.json.lock` file only after confirming no process is still using that session.
 
-The input stays focused while a reply streams, so you can type the next message at any time.
+Definition sessions require the same resolved definition digest on subsequent turns, including its resolved sub-agents. Use a new ID after changing the definition. Ad hoc sessions can be continued with different model and tool flags. A failed turn saves any conversation state the SDK committed, so partial history is preserved.
 
-| Key | While a reply streams | Otherwise |
-|---|---|---|
-| `Enter` | Queue the message; it runs when the current reply would finish | Send |
-| `Ctrl-J` or `Alt-Enter` | Steer: add the message at the next safe point without stopping the run (most terminals send `Ctrl-J` for `Ctrl-Enter`) | Send |
-| `Esc` | Stop the run and stay in the session | |
-| `Ctrl-C` | Stop the run; press again to quit | Press twice to quit |
-| `PgUp` `PgDn` | Scroll a page | Scroll a page |
-| `Shift-Up` `Shift-Down` | Scroll half a page | Scroll half a page |
-| `Up` `Down`, mouse wheel | Scroll a line (the wheel scrolls three) | Same |
-| `Ctrl-Home` `Ctrl-End` | Jump to the top or the bottom | Same |
-| `Home` `End` `Ctrl-U` `Ctrl-D` | With an empty input: top, bottom, half a page up or down | Same |
-| `Ctrl-F` | Filter the transcript | Filter the transcript |
-| `Ctrl-T` | Expand or collapse reasoning | Same |
-
-Queued messages show in a strip above the input until the run picks them up. A stopped run is tagged `stopped`; `/continue` resumes the last turn, and messages still queued at the stop go back to the input. An error ends the turn, not the session. `/quit` exits.
-
-The transcript follows new output while it is scrolled to the bottom. Scrolling up pauses that, and a `↓ N new messages` line counts what arrived below; scrolling back to the bottom (or `Ctrl-End`) follows again.
-
-`Ctrl-F` opens a filter in place of the input, and the header shows `▽` with the query and how many entries it keeps. Terms are words the entry must contain (case is ignored) and `kind:NAME`, with several names separated by commas: `user`, `text`, `thinking`, `tool`, `media`, `citation`, `refusal`, `approval`, `usage`, `notice`, `error`, `stopped`. For example `kind:tool,media chart`. `Enter` keeps the filter, `Esc` clears it.
-
-Reasoning is collapsed to one line with its word count. Citations are numbered footnotes under the answer. A refusal is labelled `⊘ declined`. Media never renders inline: it is a placeholder with its type, size, name and where the bytes are kept, such as `[image image/png 1024x768 · 120 KB · chart.png · saige-artifact://9f1c…]`, or `[image/png streaming… 120 KB]` while it arrives.
-
-The spinner, the fade-in of new entries and smooth scrolling are off with `--no-animation`, when `NO_COLOR` or `SAIGE_REDUCED_MOTION` is set, and on a `dumb` terminal.
-
-`--template detailed` adds expanded reasoning, tool arguments and results, handoffs and routes to the transcript.
+`--trace` writes JSON lines to stderr: the loaded definition and digest, tool names, whether a session was restored and its message count, provider routes, tool execution and citation events, and session saves. It does not dump tool arguments, results or conversation text. Answers stay on stdout. The default `--template minimal` omits progress; `--template detailed` explicitly includes reasoning and tool details in the rendered output.
 
 ### JSON output
 
-With `--format json`, `ask` and `chat` write one JSON object per line: a wire version 2 envelope per stream event (`{"v":2,"kind":"part.delta","data":{"index":0,"text":"..."}}`), the same format other stream consumers decode. Media bytes are written inline whatever their size. `chat --format json` reads prompts line by line from stdin and writes its prompts to stderr, so stdout stays machine-readable.
+`--format json` writes wire version 2 event envelopes to stdout; trace events remain on stderr. Stdin is read as one complete prompt per invocation.
 
 ```bash
-saige ask --format json "Summarize RFC 9110" | jq -j 'select(.kind=="text.delta") | .data.content'
+saige agent run - --format json "Summarize RFC 9110" | jq -j 'select(.kind=="part.delta") | .data.text // empty'
 ```
 
 ### Built-in tools
@@ -75,8 +42,8 @@ saige ask --format json "Summarize RFC 9110" | jq -j 'select(.kind=="text.delta"
 
 | Value | Tools |
 |---|---|
-| `none` | None. The default for `ask`. |
-| `readonly` | `read_file`, `list_dir`, `glob`, `grep`, scratch tools. The default for `chat`. |
+| `none` | None. The default for ad hoc `agent run`. |
+| `readonly` | `read_file`, `list_dir`, `glob`, `grep`, scratch tools. |
 | `harness` | Adds `write_file`, `edit_file`, `execute_code`, and `fetch_url` |
 | a group list | Any of `read`, `write`, `exec`, `web`, such as `read,exec` |
 
@@ -88,9 +55,7 @@ Tools that change data (`write_file`, `edit_file`, `execute_code`, `rag_update`,
 
 | Command | How approval works |
 |---|---|
-| `saige chat` | The TUI shows the tool's arguments and asks `Approve? (y/n)`. Only `y`/`yes` approve and `n`/`no` deny; anything else, including an empty answer, asks again. |
-| `saige chat --verbose` | Same prompt, inline in the plain-text stream. End of input denies. |
-| `saige ask` | Cannot prompt. `--approve=deny` (default) rejects the call and tells the model why; `--approve=allow` runs it. |
+| `saige agent run -` | Cannot prompt. `--approve=deny` (default) rejects the call and tells the model why; `--approve=allow` runs it. |
 
 ## Serve
 
@@ -161,31 +126,33 @@ Safety rules:
 | `fetch` | `fetch` | Private and metadata addresses refused |
 | `bash` | `bash` | Requires approval. `--bash-network deny` (default) needs `sandbox-exec` or `unshare`; `--bash-network allow` runs without network isolation |
 
-## Standalone RAG Operations
+## Knowledge: documents
+
+`knowledge` defaults to `--backend rag`. Search and ingest also support `--backend kg`; show, sync and delete are RAG-only. Graph inspection always uses KG. Unsupported backend/flag combinations fail before opening the database. Existing `SAIGE_RAG_DB` and `SAIGE_KG_DB` variables select each backend’s database.
 
 Results are printed as indented JSON. Pass `--format json` for the plain JSON renderer (no header or styling), suitable for scripting.
 
 Ingest and search use the same embedding provider (`--embed-provider`, defaulting to the LLM provider) and retrieve by vector similarity, so a search finds documents ingested by an earlier run. Use the same embedding settings for both.
 
 ```bash
-saige rag ingest --db "$SAIGE_RAG_DB" --file paper.pdf --mime application/pdf
-saige rag sync --db "$SAIGE_RAG_DB" --dir docs --include '**/*.md' --exclude 'drafts/**' --prune
-saige rag search --db "$SAIGE_RAG_DB" --query "attention mechanism"
-saige rag lookup --db "$SAIGE_RAG_DB" --uuid <variant-uuid>
-saige rag delete --db "$SAIGE_RAG_DB" --uuid <doc-uuid>
+saige knowledge ingest --db "$SAIGE_RAG_DB" --file paper.pdf --mime application/pdf
+saige knowledge sync --db "$SAIGE_RAG_DB" --dir docs --include '**/*.md' --exclude 'drafts/**' --prune
+saige knowledge search --db "$SAIGE_RAG_DB" --query "attention mechanism"
+saige knowledge show --db "$SAIGE_RAG_DB" --uuid <variant-uuid>
+saige knowledge delete --db "$SAIGE_RAG_DB" --uuid <doc-uuid>
 ```
 
-`rag sync` walks `--dir` and ingests new files, replaces changed ones in place, and with `--prune` deletes documents of files that no longer exist. It skips `.git`, `.hg`, `.svn`, `node_modules`, dot paths, secret file names (`.env*`, `*.pem`, `*.key`, `id_rsa*` and similar), and paths in `.gitignore` or `.saigeignore`. `--include-hidden`, `--include-tool-dirs`, `--allow-secret-names` and `--no-ignore-files` turn those off; `--include` and `--exclude` add doublestar globs relative to `--dir`. The output lists skipped paths with a count per reason, and skipped paths are never pruned.
+`knowledge sync` walks `--dir` and ingests new files, replaces changed ones in place, and with `--prune` deletes documents of files that no longer exist. It skips `.git`, `.hg`, `.svn`, `node_modules`, dot paths, secret file names (`.env*`, `*.pem`, `*.key`, `id_rsa*` and similar), and paths in `.gitignore` or `.saigeignore`. `--include-hidden`, `--include-tool-dirs`, `--allow-secret-names` and `--no-ignore-files` turn those off; `--include` and `--exclude` add doublestar globs relative to `--dir`. The output lists skipped paths with a count per reason, and skipped paths are never pruned.
 
-## Standalone KG Operations
+## Knowledge: graph
 
-`kg ingest` extracts entities and relations with the LLM selected by `--provider`/`--model` and embeds them with the embedding provider. Read commands (`search`, `graph`, `node`) need only the embedding provider.
+`knowledge ingest --backend kg` extracts entities and relations with the LLM selected by `--provider`/`--model` and embeds them with the embedding provider. Search uses the embedding provider; graph export and neighbors need only the database.
 
 ```bash
-saige kg ingest --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the roadmap."
-saige kg search --db "$SAIGE_KG_DB" --query "Who presented?"
-saige kg graph  --db "$SAIGE_KG_DB" --limit 50
-saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
+saige knowledge ingest --backend kg --db "$SAIGE_KG_DB" --name "meeting" --text "Alice presented the roadmap."
+saige knowledge search --backend kg --db "$SAIGE_KG_DB" --query "Who presented?"
+saige knowledge graph export  --db "$SAIGE_KG_DB" --limit 50
+saige knowledge graph neighbors   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
 ```
 
 ## Live Evals
@@ -193,22 +160,22 @@ saige kg node   --db "$SAIGE_KG_DB" --id <entity-uuid> --depth 2
 Run a multi-turn eval corpus against any OpenAI-compatible API or a saige provider (see [eval/harness](../../eval/harness/README.md)):
 
 ```bash
-saige eval init evals                          # scaffold a sample corpus and saige.eval.json
-saige eval validate evals                      # check the manifest and corpus offline
-saige eval run --manifest evals/saige.eval.json --dry-run   # preflight and print the plan
-saige eval run --manifest evals/saige.eval.json             # --experiments-dir is optional with a manifest
-saige eval run --experiments-dir evals --model gpt-6-luna --flows base --force
-saige eval run --experiments-dir evals --store eval-results --suite docs   # also record the run for saige eval runs/show
-saige eval run --manifest evals/saige.eval.json --store eval-results --resume <run-id>
-saige eval run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=2000'
-saige eval runs --store eval-results [--suite S] [--limit N]
-saige eval show <run-id> --store eval-results
-saige eval compare <run-id> --store eval-results            # regression gate against the previous succeeded run
-saige eval compare --suite pr-42 --baseline-suite main --store eval-results --format markdown --output compare.md
-saige eval runs --store postgres://user:pass@host/db --tenant acme   # a PostgreSQL results store
-saige eval online --store postgres://user:pass@host/db --since 24h --rate 0.1 --scorer tool_success_rate
-saige eval online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
-saige eval scorers
+saige evals init evals                          # scaffold a sample corpus and saige.eval.json
+saige evals validate evals                      # check the manifest and corpus offline
+saige evals run --manifest evals/saige.eval.json --dry-run   # preflight and print the plan
+saige evals run --manifest evals/saige.eval.json             # --experiments-dir is optional with a manifest
+saige evals run --experiments-dir evals --model gpt-6-luna --flows base --force
+saige evals run --experiments-dir evals --store eval-results --suite docs   # also record the run for saige evals list/show
+saige evals run --manifest evals/saige.eval.json --store eval-results --resume <run-id>
+saige evals run --manifest evals/saige.eval.json --concurrency 4 --assert 'aggregate:latency_ms<=2000'
+saige evals list --store eval-results [--suite S] [--limit N]
+saige evals show <run-id> --store eval-results
+saige evals compare <run-id> --store eval-results            # regression gate against the previous succeeded run
+saige evals compare --suite pr-42 --baseline-suite main --store eval-results --format markdown --output compare.md
+saige evals list --store postgres://user:pass@host/db --tenant acme   # a PostgreSQL results store
+saige evals online --store postgres://user:pass@host/db --since 24h --rate 0.1 --scorer tool_success_rate
+saige evals online --store postgres://user:pass@host/db --watch --scorer tool_success_rate
+saige evals scorers
 ```
 
 `runs`, `show` and `scorers` accept `--format json`. `compare` accepts `--format human|markdown|junit|json`.
@@ -217,14 +184,14 @@ The API key is chosen by the host the request goes to, never by the first variab
 
 Each script gets an `outputs/` directory and a `metrics.json`. `--continue-on-error` (default true) keeps running after a failed experiment, writes `<experiment>/error.json`, and exits non-zero with all failures joined. A script or edit turn whose request fails on infrastructure (a rate limit, an outage, a timeout, bad credentials, an unreachable endpoint, or cancellation) is inconclusive rather than failed, since the model never answered.
 
-| Exit status | `saige eval run` | `saige eval compare` |
+| Exit status | `saige evals run` | `saige evals compare` |
 | --- | --- | --- |
 | 0 | every script ran and every assertion held, with at most `--max-inconclusive` of the scripts inconclusive | no metric regressed |
 | 1 | a script failed for another reason, or a measured result violated an assertion | a metric regressed, or the candidate failed its `--assert` gate |
-| 2 | the manifest, corpus or flags are invalid (`saige eval validate` uses the same code) | invalid flags, or the baseline is the candidate |
+| 2 | the manifest, corpus or flags are invalid (`saige evals validate` uses the same code) | invalid flags, or the baseline is the candidate |
 | 3 | nothing failed for real, but more than `--max-inconclusive` (default 0) of the scripts were inconclusive or the gate was; rerun it, for example with `--resume` | inconclusive: a metric had fewer than `--min-cases` paired cases, only one run measured it, or the candidate's gate was inconclusive |
 
-Errors are printed once, as `error: <msg>`. `saige eval compare` pairs the cases both runs measured, checks each metric's pass rate (gated metrics) or mean, and fails when a drop beyond `--max-regression` (or a per-metric `--threshold`) is significant at `--significance`. Its flags, report formats and a GitHub Actions recipe are in [Regression Gate in CI](../../eval/README.md#regression-gate-in-ci).
+Errors are printed once, as `error: <msg>`. `saige evals compare` pairs the cases both runs measured, checks each metric's pass rate (gated metrics) or mean, and fails when a drop beyond `--max-regression` (or a per-metric `--threshold`) is significant at `--significance`. Its flags, report formats and a GitHub Actions recipe are in [Regression Gate in CI](../../eval/README.md#regression-gate-in-ci).
 
 ## Presets and the Catalog
 
@@ -267,12 +234,12 @@ saige agent list                        # every definition, highest version firs
 saige agent show repo-steward@^1        # source, digests, sub-agents, skill hashes, the file
 saige agent validate [PATH...]          # offline checks; exit 2 when anything is invalid
 saige agent schema                      # JSON Schema of the frontmatter
-saige ask --agent assistant "question"  # also chat, and serve (one pinned agent per session)
+saige agent run --agent assistant "question"  # also serve (one pinned agent per session)
 ```
 
 | Flag | Effect |
 | --- | --- |
-| `--agent` | On `ask`, `chat` and `serve`: run a definition, `NAME` or `NAME@RANGE`. `--preset`, `--model` and `--provider` override its model; `--tools` and `--system` cannot be combined with it. |
+| `--agent` | On `agent run` and `serve`: run a definition, `NAME` or `NAME@RANGE`. `--preset`, `--model` and `--provider` override its model; `--tools` and `--system` cannot be combined with it. |
 | `--agents-dir` | Add a directory of definitions (repeatable). |
 | `--mcp-config` | MCP configuration file whose servers a definition's `tools.mcp` may name. |
 | `--agents-reload` | On `serve --agent`: reload the definitions this often, so new sessions see edits. |
@@ -305,5 +272,5 @@ Without `--preset`, `--model` or `--provider`, the CLI runs one vendor: the firs
 ## Related
 
 - [`saige-mcp`](../saige-mcp/README.md): expose saige tools to Claude Code, Codex, and other MCP clients
-- [`agent`](../../agent/README.md): the SDK powering chat and ask
+- [`agent`](../../agent/README.md): the agent runtime
 - [Root README](../../README.md): project overview and installation

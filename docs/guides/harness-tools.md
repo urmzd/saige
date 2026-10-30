@@ -162,23 +162,23 @@ Discovery is disclosure, not permission: a discovered tool still passes through 
 
 ### CLI
 
-`saige chat` and `saige ask` take `--tools`:
+`saige agent run -` take `--tools`:
 
 | Value | Tools |
 |---|---|
-| `none` | No built-in tools. The default for `ask`. |
-| `readonly` | `read_file`, `list_dir`, `glob`, `grep`, and the scratch tools. The default for `chat`. |
+| `none` | No built-in tools. The default for ad hoc runs. |
+| `readonly` | `read_file`, `list_dir`, `glob`, `grep`, and the scratch tools. |
 | `harness` | Every group |
 | a group list | For example `read,exec` |
 
 ```bash
-saige chat                                      # read-only tools over the current directory
-saige chat --tools harness --workspace ./repo   # write_file, edit_file, and execute_code ask first
-saige chat --tools read,exec --sandbox docker   # run code in a container
-saige ask --tools harness --approve allow "Run the tests and summarize failures"
+saige agent run - --tools readonly "Summarize this repository"
+saige agent run - --tools harness --workspace ./repo --approve allow "Run the tests"
+saige agent run - --tools read,exec --sandbox docker --approve allow "Run the tests"
+saige agent run - --tools harness --approve allow "Run the tests and summarize failures"
 ```
 
-`--workspace` sets the root (default `.`), `--sandbox` picks `subprocess` or `docker`, and `--exec-network` sets `deny` or `allow`. In `chat`, write and exec calls show their arguments and ask `Approve? (y/n)`. `ask` cannot prompt, so `--approve` decides: `deny` by default.
+`--workspace` sets the root (default `.`), `--sandbox` picks `subprocess` or `docker`, and `--exec-network` sets `deny` or `allow`. `agent run` cannot prompt, so `--approve` decides: `deny` by default, or `allow` for explicitly authorized execution.
 
 ## Related
 

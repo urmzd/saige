@@ -45,7 +45,7 @@ Build agents, supply their context and memory, and evaluate the results through 
 - **Approvals and guardrails** for tool execution and model input/output, with [approval policies](docs/architecture/orchestration-policies.md) and [guardrails](docs/guides/guardrails.md).
 - **Context and memory** through branching conversations, hybrid vector/BM25/graph retrieval, citations and approval-gated [long-term memory](docs/guides/memory.md). See [RAG](rag/README.md) and [knowledge graphs](rag/knowledge/README.md).
 - **Durable execution** with resumable local or Postgres-backed runs, response caching and [batch jobs](docs/guides/batch.md). See [durable runs](docs/architecture/durable-execution.md).
-- **Evals** with composable scorers, regression gates, comparisons, experiments and LLM judges. Run suites with `saige eval` or use the [Go API](eval/README.md).
+- **Evals** with composable scorers, regression gates, comparisons, experiments and LLM judges. Run suites with `saige evals` or use the [Go API](eval/README.md).
 
 ## Installation
 
@@ -89,14 +89,14 @@ Ask a question from the CLI:
 
 ```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, or Vertex AI credentials
-saige ask "What is retrieval-augmented generation?"
+saige agent run - "What is retrieval-augmented generation?"
 ```
 
 Or run fully local with Ollama:
 
 ```bash
 ollama pull qwen3.5:4b
-saige ask --provider ollama "What is retrieval-augmented generation?"
+saige agent run - --provider ollama "What is retrieval-augmented generation?"
 ```
 
 Build the smallest agent in Go. From a clone, run `go run ./examples/quickstart/agent`:
@@ -176,7 +176,7 @@ See [concepts](docs/architecture/concepts.md) for the full picture.
 
 ### CLI
 
-Without flags, `saige ask` uses the default catalog preset and available credentials. `--provider ollama` serves `qwen3.5:4b` or any other chat model you have pulled. `saige chat` opens an interactive session. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands, and [catalog presets](docs/reference/catalog.md) for model selection and failover.
+Without flags, `saige agent run -` uses the default catalog preset and available credentials. `--provider ollama` serves `qwen3.5:4b` or any other chat model you have pulled. `saige agent run NAME --session ID` continues a saved conversation; `--trace` reports what loaded and ran on stderr. See the [CLI reference](cmd/saige/README.md) for `serve`, RAG, knowledge graph, eval and catalog commands, and [catalog presets](docs/reference/catalog.md) for model selection and failover.
 
 To use saige from an editor harness, run `saige-mcp`. See the [MCP server setup](cmd/saige-mcp/README.md).
 
@@ -400,7 +400,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 - [agent](agent/README.md): adapters, deltas, tools, sub-agents, conversation tree, testing
 - [rag](rag/README.md): chunking, retrieval, reranking, HyDE, tool bindings
 - [rag/knowledge](rag/knowledge/README.md): knowledge graph backend
-- [eval](eval/README.md): scorers, gates, experiments, LLM judges, `saige eval`
+- [eval](eval/README.md): scorers, gates, experiments, LLM judges, `saige evals`
 - [CLI reference](cmd/saige/README.md)
 - [MCP server](cmd/saige-mcp/README.md)
 - [Harness tools](docs/guides/harness-tools.md), [fs](tools/fs/README.md), [exec](tools/exec/README.md), [fetch](tools/fetch/README.md), [research](tools/research/README.md)

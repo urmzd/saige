@@ -62,7 +62,7 @@ func run(ctx context.Context, args []string, errW io.Writer) int {
 func newRootCmd(ctx context.Context) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:     cliName,
-		Short:   "AI SDK CLI: chat, ask, RAG, knowledge graph",
+		Short:   "Run agents, evaluate them, and manage knowledge",
 		Version: version,
 		// Commands return errors instead of exiting so deferred cleanup runs;
 		// run prints them once.
@@ -73,10 +73,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	addPersistentFlags(rootCmd)
 	addAgentPersistentFlags(rootCmd)
 	rootCmd.AddCommand(
-		newChatCmd(ctx),
-		newAskCmd(ctx),
-		newRagCmd(ctx),
-		newKgCmd(ctx),
+		newKnowledgeCmd(ctx),
 		newEvalCmd(ctx),
 		newServeCmd(ctx),
 		newModelsCmd(),

@@ -17,7 +17,7 @@ const (
 	toolsHarness  = "harness"
 )
 
-// harnessFlags selects the built-in harness toolset for ask and chat.
+// harnessFlags selects the built-in harness toolset for agent run.
 type harnessFlags struct {
 	mode      string
 	workspace string

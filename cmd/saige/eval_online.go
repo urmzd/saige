@@ -24,7 +24,7 @@ import (
 	"github.com/urmzd/saige/postgres"
 )
 
-// evalOnlineFlags holds the flags of saige eval online.
+// evalOnlineFlags holds the flags of saige evals online.
 type evalOnlineFlags struct {
 	store, tenant, source, scope, suite, channel string
 	since                                        time.Duration
@@ -55,7 +55,7 @@ Runs are read from conversations stored by agent/pgstore in the PostgreSQL
 database named by --source (default: --store when it is a PostgreSQL URL).
 A run ends at an assistant turn that calls no tools. The runs that pass the
 filters are sampled at --rate with --seed, so the same seed picks the same
-runs every time, and scored with each --scorer (a kind from saige eval
+runs every time, and scored with each --scorer (a kind from saige evals
 scorers, or a JSON scorer spec). --judge adds an LLM judge on the model
 selected by --provider and --model; pick a cheap one. Judge calls are
 charged to a budget of --judge-budget USD and --judge-max-calls calls, and

@@ -25,13 +25,14 @@ const (
 // deniedByFlag is the reason the model sees when --approve=deny rejects a call.
 const deniedByFlag = "denied by --approve=deny: this session cannot approve tool calls that need confirmation"
 
-func newAskCmd(ctx context.Context) *cobra.Command {
-	var tmplName, approve, agentRef string
+func newAgentRunCmd(ctx context.Context) *cobra.Command {
+	var tmplName, approve, agentRef, sessionID, sessionsDir string
+	var trace bool
 	var hf harnessFlags
 
 	cmd := &cobra.Command{
-		Use:   "ask [question]",
-		Short: "Single-shot question (pipe-friendly)",
+		Use:   "run NAME [question]",
+		Short: "Run one turn; use NAME - for an ad hoc agent, --session to continue",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cf := persistentFlagVars
 
@@ -39,15 +40,29 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--approve must be %q or %q, got %q", approveDeny, approveAllow, approve)
 			}
 
+			if agentRef == "" {
+				if len(args) == 0 {
+					return errors.New("usage: saige agent run NAME [question] (use - for an ad hoc agent)")
+				}
+				agentRef, args = args[0], args[1:]
+			}
+			if agentRef == "-" {
+				agentRef = ""
+			}
 			question := strings.Join(args, " ")
 			if question == "" {
 				question = readStdin()
 			}
 			if question == "" {
-				return errors.New(`usage: saige ask [flags] "question"`)
+				return errors.New(`usage: saige agent run NAME [flags] "question"`)
 			}
 
-			out := tui.ResolveOutput(cf.isJSON(), tui.TemplateByName(tmplName))
+			tmpl := tui.TemplateByName(tmplName)
+			if tmplName == "minimal" {
+				tmpl.ShowMarkers = false
+			}
+			out := tui.ResolveOutputWriters(cf.isJSON(), tmpl, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			opts := agentRunOptions{sessionID: sessionID, sessionsDir: sessionsDir, trace: trace, diagnostics: cmd.ErrOrStderr()}
 
 			if agentRef != "" {
 				run, err := bindCLIAgent(ctx, cmd, cf, agentRef, hf.options(), false)
@@ -59,11 +74,13 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 				if err != nil {
 					return reported(out, err)
 				}
-				if err := runAsk(ctx, a, question, out, approve == approveAllow); err != nil {
+				opts.identity = run.bound.Resolved.Digest
+				opts.definition = run.bound.Resolved.Name + "@" + run.bound.Resolved.Version
+				if err := runAgentTurn(ctx, a, question, out, approve == approveAllow, opts); err != nil {
 					return reported(out, err)
 				}
 				if !cf.isJSON() {
-					fmt.Println()
+					fmt.Fprintln(cmd.OutOrStdout())
 				}
 				return nil
 			}
@@ -96,22 +113,26 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return reported(out, err)
 			}
-			if err := runAsk(ctx, a, question, out, approve == approveAllow); err != nil {
+			opts.identity = "adhoc"
+			if err := runAgentTurn(ctx, a, question, out, approve == approveAllow, opts); err != nil {
 				return reported(out, err)
 			}
 			if !cf.isJSON() {
 				// JSON lines already end in a newline; text output does not.
-				fmt.Println()
+				fmt.Fprintln(cmd.OutOrStdout())
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&tmplName, "template", "default", "Output template (default|minimal|detailed)")
-	cmd.Flags().StringVar(&approve, "approve", approveDeny, "Decision for tool calls that need approval, since ask cannot prompt (deny|allow)")
+	cmd.Flags().StringVar(&tmplName, "template", "minimal", "Output template (default|minimal|detailed)")
+	cmd.Flags().StringVar(&approve, "approve", approveDeny, "Decision for tool calls that need approval, since agent run cannot prompt (deny|allow)")
 	addHarnessFlags(cmd, &hf, toolsNone)
 	cmd.Flags().StringVar(&agentRef, "agent", "", "Run an agent definition: NAME or NAME@RANGE (see saige agent list)")
 
+	cmd.Flags().StringVar(&sessionID, "session", "", "Create or continue a named session (letters, digits, hyphens and underscores)")
+	cmd.Flags().StringVar(&sessionsDir, "sessions-dir", "", "Session directory (default: user config directory/saige/sessions)")
+	cmd.Flags().BoolVar(&trace, "trace", false, "Write load, session, provider and tool events as JSON lines to stderr")
 	return cmd
 }
 
@@ -119,16 +140,7 @@ func newAskCmd(ctx context.Context) *cobra.Command {
 // resolved inline with allow, so a marked tool call can never leave the
 // command waiting for an answer nobody will give.
 func runAsk(ctx context.Context, agent *agentsdk.Agent, question string, out tui.Output, allow bool) error {
-	stream := agent.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
-	resolve := func(d types.MarkerDelta) {
-		if allow {
-			stream.ResolveMarker(d.ToolCallID, true, nil)
-			return
-		}
-		stream.ResolveMarkerWithMessage(d.ToolCallID, false, nil, deniedByFlag)
-	}
-	result := tui.StreamDeltasResolving(out, tui.AgentHeader{}, stream.Deltas(), resolve)
-	return result.Err
+	return runAskTraced(ctx, agent, question, out, allow, agentRunOptions{})
 }
 
 func readStdin() string {

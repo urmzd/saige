@@ -123,7 +123,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 // search, fused by the pipeline. BM25 runs in Postgres through ParadeDB
 // pg_search (pgstore.Store implements ragtypes.KeywordSearcher), so the
 // index lives with the data and a search in a new process finds documents
-// that an earlier `saige rag ingest` stored.
+// that an earlier `saige knowledge ingest` stored.
 //
 // withEmbedder is false for commands that never embed (lookup, delete), so
 // they work with any --provider, including one with no embedding API.

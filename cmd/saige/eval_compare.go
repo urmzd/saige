@@ -24,7 +24,7 @@ import (
 // (status 1).
 const exitInconclusive = 3
 
-// Report formats of saige eval compare.
+// Report formats of saige evals compare.
 const (
 	formatText     = "text"
 	formatHuman    = "human"
@@ -33,7 +33,7 @@ const (
 	formatJUnit    = "junit"
 )
 
-// Defaults of saige eval compare.
+// Defaults of saige evals compare.
 const (
 	defaultCompareSignificance = 0.05
 	defaultCompareMinCases     = 3
@@ -41,7 +41,7 @@ const (
 	maxListedCases = 50
 )
 
-// evalCompareFlags holds the flags of saige eval compare.
+// evalCompareFlags holds the flags of saige evals compare.
 type evalCompareFlags struct {
 	store, tenant, baseline, suite, output string
 	baselineSuite                          string
@@ -96,7 +96,7 @@ measured, or an inconclusive gate), 2 invalid input.`,
 	fl.StringVar(&f.baseline, "baseline", "latest", `Baseline run ID, or "latest" for the newest succeeded run of the candidate's suite before it`)
 	fl.StringVar(&f.suite, "suite", "", "Suite whose newest run is the candidate when no run is given")
 	fl.StringVar(&f.baselineSuite, "baseline-suite", "", `Suite the "latest" baseline comes from (default the candidate's suite)`)
-	fl.StringArrayVar(&f.asserts, "assert", nil, `Gate both runs again on a metric, as in saige eval run ("turn_succeeded>=1", "aggregate:latency_ms<=2000"); repeatable`)
+	fl.StringArrayVar(&f.asserts, "assert", nil, `Gate both runs again on a metric, as in saige evals run ("turn_succeeded>=1", "aggregate:latency_ms<=2000"); repeatable`)
 	fl.StringArrayVar(&f.metrics, "metric", nil, "Metric to check; repeatable (default: the metrics either run gated, or every shared metric when neither gated any)")
 	fl.Float64Var(&f.maxRegression, "max-regression", 0, "Largest drop a metric may show and pass: a share of cases for a gated metric, the metric's units otherwise")
 	fl.StringArrayVar(&f.thresholds, "threshold", nil, `Per-metric max regression, such as "faithfulness=0.05"; repeatable`)
@@ -108,7 +108,7 @@ measured, or an inconclusive gate), 2 invalid input.`,
 	return cmd
 }
 
-// compareFormat normalizes the global --format for saige eval compare.
+// compareFormat normalizes the global --format for saige evals compare.
 func compareFormat(format string) (string, error) {
 	switch format {
 	case "", formatHuman, formatText:
@@ -118,7 +118,7 @@ func compareFormat(format string) (string, error) {
 	case "md":
 		return formatMarkdown, nil
 	default:
-		return "", fmt.Errorf("--format %q: saige eval compare writes human, markdown, junit or json", format)
+		return "", fmt.Errorf("--format %q: saige evals compare writes human, markdown, junit or json", format)
 	}
 }
 
@@ -188,7 +188,7 @@ type compareGate struct {
 	Violations []eval.Violation `json:"violations,omitempty"`
 }
 
-// compareReport is what saige eval compare prints.
+// compareReport is what saige evals compare prints.
 type compareReport struct {
 	eval.RegressionReport
 	Baseline  runRef       `json:"baseline"`
@@ -516,7 +516,7 @@ func writeCompareMarkdown(w io.Writer, rep compareReport) error {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "### saige eval compare: %s\n\n", rep.Outcome)
+	fmt.Fprintf(&b, "### saige evals compare: %s\n\n", rep.Outcome)
 	fmt.Fprintf(&b, "**%s**: %d of %d metrics regressed. Candidate `%s` against baseline `%s`", rep.Outcome, regressed, len(rep.Metrics), rep.Candidate.ID, rep.Baseline.ID)
 	if rep.Candidate.Commit != "" && rep.Baseline.Commit != "" {
 		fmt.Fprintf(&b, " (commit `%s` against `%s`)", rep.Candidate.Commit, rep.Baseline.Commit)
@@ -674,7 +674,7 @@ func writeCompareJUnit(w io.Writer, rep compareReport) error {
 		suite.Skipped++
 	}
 	suite.Tests = len(suite.Cases)
-	doc := junitSuites{Name: "saige eval compare", Tests: suite.Tests, Failures: suite.Failures, Skipped: suite.Skipped, Suites: []junitSuite{suite}}
+	doc := junitSuites{Name: "saige evals compare", Tests: suite.Tests, Failures: suite.Failures, Skipped: suite.Skipped, Suites: []junitSuite{suite}}
 	if _, err := io.WriteString(w, xml.Header); err != nil {
 		return err
 	}

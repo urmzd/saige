@@ -469,3 +469,21 @@ These changes shipped in the releases before this one, up to 0.32.0. Names are g
 | Change | What to do |
 | --- | --- |
 | The module requires Go 1.26.9, and `golang.org/x/net` v0.60.0 and `golang.org/x/text` v0.42.0. Go 1.25 has no release with the fixes for the standard-library vulnerabilities govulncheck reports, x/net v0.60.0 requires Go 1.26, and the anchor dependency requires Go 1.26.4. | Build with Go 1.26.9 or newer. |
+
+## Consolidated CLI commands
+
+The CLI no longer starts an interactive TUI. The SDK `agent/tui` package remains available to applications.
+
+| Previous command | Replacement |
+|---|---|
+| `saige ask "question"` | `saige agent run - "question"` |
+| `saige ask --agent NAME "question"` | `saige agent run NAME "question"` |
+| `saige chat --agent NAME` | `saige agent run NAME --session ID "question"`, once per turn |
+| `saige eval …` | `saige evals …` |
+| `saige eval runs` | `saige evals list` |
+| `saige rag lookup` | `saige knowledge show` |
+| `saige rag search/ingest/sync/delete` | `saige knowledge search/ingest/sync/delete` |
+| `saige kg search/ingest` | `saige knowledge search/ingest --backend kg` |
+| `saige kg graph/node` | `saige knowledge graph export/neighbors` |
+
+The old root commands are removed. `agent run` defaults to minimal streaming output and no ad hoc tools; pass `--tools readonly` for file access, or `--approve allow` to authorize approval-marked tools. `--trace` reports definition loading, session restoration and execution on stderr. Session files are independent of ACP/server sessions. See the [CLI reference](../../cmd/saige/README.md#agent-runs-and-sessions).
