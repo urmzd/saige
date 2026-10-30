@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 2,
-  "revision": "2026-10-10.2",
+  "revision": "2026-10-30.1",
   "model_templates": {
     "anthropic.base": {
       "limits": {
@@ -347,6 +347,9 @@
       }
     },
     "google/gemini-embedding": {
+      "extends": "embedding"
+    },
+    "google/gemini-embedding-001": {
       "extends": "embedding"
     },
     "google/text-embedding-004": {
@@ -2056,6 +2059,35 @@
           }
         }
       },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.1,
+        "output_per_mtok": 0.4,
+        "cached_input_per_mtok": 0.01,
+        "as_of": "2026-10-30",
+        "source": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 0.3
+        },
+        "document": {
+          "input_per_mtok": 0.1
+        },
+        "image": {
+          "input_per_mtok": 0.1
+        },
+        "video": {
+          "input_per_mtok": 0.1
+        }
+      },
+      "tiers": {
+        "batch": {
+          "transport": "batch",
+          "discount": 0.5,
+          "cached_input_per_mtok": 0.01
+        }
+      },
       "notes": [
         "reasoning depth is set with ThinkingConfig.ThinkingBudget in tokens",
         "budget 0 disables thinking on flash"
@@ -2178,11 +2210,41 @@
           ]
         }
       },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.5,
+        "output_per_mtok": 3,
+        "cached_input_per_mtok": 0.05,
+        "as_of": "2026-10-30",
+        "source": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 1.0
+        },
+        "document": {
+          "input_per_mtok": 0.5
+        },
+        "image": {
+          "input_per_mtok": 0.5
+        },
+        "video": {
+          "input_per_mtok": 0.5
+        }
+      },
+      "tiers": {
+        "batch": {
+          "transport": "batch",
+          "discount": 0.5,
+          "cached_input_per_mtok": 0.05
+        }
+      },
       "notes": [
         "legacy: gemini-3-flash-preview is superseded by gemini-3.1-flash-lite",
         "reasoning depth is set with ThinkingConfig.ThinkingLevel, not a token budget",
         "thought signatures must round-trip or multi-turn function calling degrades",
-        "unpriced in this table: set Pricing via Register before enforcing a budget"
+        "one rate at every prompt length; Vertex AI (global) lists the same input and cached-input rates",
+        "cached audio input is $0.10 per 1M tokens, which the rate card cannot express apart from text"
       ]
     },
     {
@@ -2369,6 +2431,57 @@
       ]
     },
     {
+      "model": "google/gemini-3.5-flash",
+      "endpoint": "google-vertex",
+      "extends": "google.gemini3",
+      "params": {
+        "reasoning.effort": {
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium"
+        }
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 1.5,
+        "output_per_mtok": 9,
+        "cached_input_per_mtok": 0.15,
+        "as_of": "2026-10-30",
+        "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing"
+      },
+      "modality_pricing": {
+        "audio": {
+          "input_per_mtok": 1.5
+        },
+        "document": {
+          "input_per_mtok": 1.5
+        },
+        "image": {
+          "input_per_mtok": 1.5
+        },
+        "video": {
+          "input_per_mtok": 1.5
+        }
+      },
+      "tiers": {
+        "batch": {
+          "transport": "batch",
+          "discount": 0.5,
+          "cached_input_per_mtok": 0.075
+        }
+      },
+      "notes": [
+        "Vertex AI global rates; non-global regions list $1.65 / $9.90 (cached input $0.165)",
+        "the Gemini API price list no longer lists this model, so that offering stays unpriced",
+        "reasoning depth is set with ThinkingConfig.ThinkingLevel",
+        "thought signatures must round-trip or multi-turn function calling degrades"
+      ]
+    },
+    {
       "model": "google/gemini-3.6-flash",
       "endpoint": "google-gemini",
       "extends": "google.gemini3",
@@ -2501,6 +2614,46 @@
       "model": "google/gemini-embedding",
       "endpoint": "google-gemini",
       "extends": "embedding"
+    },
+    {
+      "model": "google/gemini-embedding-001",
+      "endpoint": "google-gemini",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.15,
+        "as_of": "2026-10-30",
+        "source": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "tiers": {
+        "batch": {
+          "transport": "batch",
+          "discount": 0.5
+        }
+      },
+      "notes": [
+        "billed per input token; output is free"
+      ]
+    },
+    {
+      "model": "google/gemini-embedding-001",
+      "endpoint": "google-vertex",
+      "extends": "embedding",
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.15,
+        "as_of": "2026-10-30",
+        "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing"
+      },
+      "tiers": {
+        "batch": {
+          "transport": "batch",
+          "discount": 0.2
+        }
+      },
+      "notes": [
+        "Vertex AI lists $0.00015 online and $0.00012 batch per 1,000 input tokens; output is free"
+      ]
     },
     {
       "model": "google/text-embedding-004",
