@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.43.0 (2026-10-30)
+
+### Breaking
+
+- **cli**: consolidate commands and add traced sessions (#132) ([fa11800](https://github.com/urmzd/saige/commit/fa118005ff3546582e7d168aab30b220868f9727))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.42.0...v0.43.0)
+
+
 ## 0.42.0 (2026-10-30)
 
 ### Features
