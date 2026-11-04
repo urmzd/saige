@@ -1,5 +1,9 @@
 # Upgrading to this release
 
+## Durable backend moves to orchagent
+
+`github.com/urmzd/anchor` is archived. `agent/durable/anchor` now builds on `github.com/urmzd/orchagent/durable` and its Postgres adapter, whose API is unchanged. If you import anchor's ledger, queue or Postgres adapter yourself, change `github.com/urmzd/anchor/pkg/...` to `github.com/urmzd/orchagent/durable/...` and `github.com/urmzd/anchor/adapters/postgres/...` to `github.com/urmzd/orchagent/durable/adapters/postgres/...`. The saige package path, the `durable.anchor.*` wire codes and the Postgres tables are unchanged.
+
 ## Anchor backend rename
 
 The durable backend package moves from `agent/durable/duraturo` to `agent/durable/anchor`, backed by `github.com/urmzd/anchor` and its Postgres adapter. Update imports; the shared `SAIGE_TEST_POSTGRES_DSN` test setting is unchanged. The wire error codes are `durable.anchor.*` (they were `durable.duraturo.*`): upgrade every process that exchanges errors together. Recorded runs still replay: the replay fixtures under `agent/internal/testdata/legacy` hold no backend name. Their generator, `fixturegen`, imports the release it records, which predates the rename.

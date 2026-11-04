@@ -185,10 +185,10 @@ Each update rewrites the snapshot. Large or long-running workloads need a differ
 
 ## The anchor engine
 
-`agent/durable/anchor` runs an agent as a [anchor](https://github.com/urmzd/anchor) workflow.
-anchor keeps runs and their step records in a ledger and delivers run IDs to workers through a queue.
+`agent/durable/anchor` runs an agent as an [orchagent durable](https://github.com/urmzd/orchagent/tree/main/durable) workflow.
+It keeps runs and their step records in a ledger and delivers run IDs to workers through a queue.
 `ledger.NewMemory` and `queue.NewMemory` form a complete single-process system.
-`github.com/urmzd/anchor/adapters/postgres` maps both onto Postgres tables the host owns, so Postgres is the only infrastructure.
+`github.com/urmzd/orchagent/durable/adapters/postgres` maps both onto Postgres tables the host owns, so Postgres is the only infrastructure.
 The adapter validates the tables and never migrates them; `pgledger.RecommendedDDL` and `pgqueue.RecommendedDDL` return suggested DDL.
 
 ```go
