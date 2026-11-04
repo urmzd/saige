@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/anchor/adapters/postgres/pgledger"
-	"github.com/urmzd/anchor/adapters/postgres/pgqueue"
-	"github.com/urmzd/anchor/pkg/worker"
+	"github.com/urmzd/orchagent/durable/adapters/postgres/pgledger"
+	"github.com/urmzd/orchagent/durable/adapters/postgres/pgqueue"
+	"github.com/urmzd/orchagent/durable/worker"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"

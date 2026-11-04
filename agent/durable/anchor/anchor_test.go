@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/anchor/pkg/ledger"
-	"github.com/urmzd/anchor/pkg/queue"
-	"github.com/urmzd/anchor/pkg/worker"
+	"github.com/urmzd/orchagent/durable/ledger"
+	"github.com/urmzd/orchagent/durable/queue"
+	"github.com/urmzd/orchagent/durable/worker"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
