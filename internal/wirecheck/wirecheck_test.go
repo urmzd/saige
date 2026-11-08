@@ -42,6 +42,24 @@ import (
 	p26 "github.com/urmzd/saige/eval/online"
 	p27 "github.com/urmzd/saige/eval/pgstore"
 	p28 "github.com/urmzd/saige/eval/store"
+	faddress "github.com/urmzd/saige/flow/address"
+	fattachment "github.com/urmzd/saige/flow/attachment"
+	fattachmentintake "github.com/urmzd/saige/flow/attachment/intake"
+	fattachmentresolve "github.com/urmzd/saige/flow/attachment/resolve"
+	fblob "github.com/urmzd/saige/flow/blob"
+	fbus "github.com/urmzd/saige/flow/bus"
+	fconnector "github.com/urmzd/saige/flow/connector"
+	fdefinition "github.com/urmzd/saige/flow/definition"
+	fevent "github.com/urmzd/saige/flow/event"
+	feventlegacy "github.com/urmzd/saige/flow/event/legacy"
+	fisolation "github.com/urmzd/saige/flow/isolation"
+	fruntime "github.com/urmzd/saige/flow/runtime"
+	fsession "github.com/urmzd/saige/flow/session"
+	fthread "github.com/urmzd/saige/flow/thread"
+	fturn "github.com/urmzd/saige/flow/turn"
+	fturnnative "github.com/urmzd/saige/flow/turn/native"
+	fturnsandbox "github.com/urmzd/saige/flow/turn/sandbox"
+	_ "github.com/urmzd/saige/flow/wirecodes"
 	p40 "github.com/urmzd/saige/netguard"
 	p29 "github.com/urmzd/saige/postgres"
 	p30 "github.com/urmzd/saige/rag/bm25retriever"
@@ -239,6 +257,63 @@ func sentinels() []sentinel {
 		{"eval/store", "ErrInvalidID", p28.ErrInvalidID},
 		{"eval/store", "ErrNotFound", p28.ErrNotFound},
 		{"eval/store", "ErrRunExists", p28.ErrRunExists},
+		{"flow/address", "ErrInvalid", faddress.ErrInvalid},
+		{"flow/attachment", "ErrInvalid", fattachment.ErrInvalid},
+		{"flow/attachment/intake", "ErrBlockedAddress", fattachmentintake.ErrBlockedAddress},
+		{"flow/attachment/intake", "ErrNotAllowed", fattachmentintake.ErrNotAllowed},
+		{"flow/attachment/intake", "ErrRefused", fattachmentintake.ErrRefused},
+		{"flow/attachment/intake", "ErrStatus", fattachmentintake.ErrStatus},
+		{"flow/attachment/intake", "ErrTooManyRedirects", fattachmentintake.ErrTooManyRedirects},
+		{"flow/attachment/resolve", "ErrNotApplicable", fattachmentresolve.ErrNotApplicable},
+		{"flow/attachment/resolve", "ErrUnavailable", fattachmentresolve.ErrUnavailable},
+		{"flow/blob", "ErrCorrupt", fblob.ErrCorrupt},
+		{"flow/blob", "ErrDigestMismatch", fblob.ErrDigestMismatch},
+		{"flow/blob", "ErrInvalid", fblob.ErrInvalid},
+		{"flow/blob", "ErrNotFound", fblob.ErrNotFound},
+		{"flow/blob", "ErrTooLarge", fblob.ErrTooLarge},
+		{"flow/bus", "ErrClosed", fbus.ErrClosed},
+		{"flow/bus", "ErrInvalid", fbus.ErrInvalid},
+		{"flow/bus", "ErrLeaseLost", fbus.ErrLeaseLost},
+		{"flow/bus", "ErrSlowConsumer", fbus.ErrSlowConsumer},
+		{"flow/connector", "ErrNotFound", fconnector.ErrNotFound},
+		{"flow/connector", "ErrUndeliverable", fconnector.ErrUndeliverable},
+		{"flow/connector", "ErrUnsupported", fconnector.ErrUnsupported},
+		{"flow/definition", "ErrConflict", fdefinition.ErrConflict},
+		{"flow/definition", "ErrExists", fdefinition.ErrExists},
+		{"flow/definition", "ErrInvalid", fdefinition.ErrInvalid},
+		{"flow/definition", "ErrNotFound", fdefinition.ErrNotFound},
+		{"flow/definition", "ErrPin", fdefinition.ErrPin},
+		{"flow/definition", "ErrRetired", fdefinition.ErrRetired},
+		{"flow/event", "ErrInvalid", fevent.ErrInvalid},
+		{"flow/event/legacy", "ErrDropped", feventlegacy.ErrDropped},
+		{"flow/event/legacy", "ErrUnknown", feventlegacy.ErrUnknown},
+		{"flow/isolation", "ErrNoConnectors", fisolation.ErrNoConnectors},
+		{"flow/isolation", "ErrReleased", fisolation.ErrReleased},
+		{"flow/isolation", "ErrUnisolated", fisolation.ErrUnisolated},
+		{"flow/runtime", "ErrAnswerUnavailable", fruntime.ErrAnswerUnavailable},
+		{"flow/runtime", "ErrCompactUnavailable", fruntime.ErrCompactUnavailable},
+		{"flow/runtime", "ErrHoldUnavailable", fruntime.ErrHoldUnavailable},
+		{"flow/runtime", "ErrInvalid", fruntime.ErrInvalid},
+		{"flow/runtime", "ErrNoQuestion", fruntime.ErrNoQuestion},
+		{"flow/runtime", "ErrNotAChild", fruntime.ErrNotAChild},
+		{"flow/runtime", "ErrNotAllowed", fruntime.ErrNotAllowed},
+		{"flow/runtime", "ErrNotHeld", fruntime.ErrNotHeld},
+		{"flow/runtime", "ErrQuestionClosed", fruntime.ErrQuestionClosed},
+		{"flow/runtime", "ErrSeqExhausted", fruntime.ErrSeqExhausted},
+		{"flow/runtime", "ErrStopUnavailable", fruntime.ErrStopUnavailable},
+		{"flow/runtime", "ErrStopped", fruntime.ErrStopped},
+		{"flow/session", "ErrBudget", fsession.ErrBudget},
+		{"flow/session", "ErrDenied", fsession.ErrDenied},
+		{"flow/session", "ErrInvalid", fsession.ErrInvalid},
+		{"flow/session", "ErrLimit", fsession.ErrLimit},
+		{"flow/session", "ErrNotFound", fsession.ErrNotFound},
+		{"flow/thread", "ErrGap", fthread.ErrGap},
+		{"flow/thread", "ErrInvalid", fthread.ErrInvalid},
+		{"flow/turn", "ErrInvalid", fturn.ErrInvalid},
+		{"flow/turn/native", "ErrInvalid", fturnnative.ErrInvalid},
+		{"flow/turn/native", "ErrNoSuchTool", fturnnative.ErrNoSuchTool},
+		{"flow/turn/native", "ErrNoSuchToolGroup", fturnnative.ErrNoSuchToolGroup},
+		{"flow/turn/sandbox", "ErrInvalid", fturnsandbox.ErrInvalid},
 		{"netguard", "ErrBlocked", p40.ErrBlocked},
 		{"postgres", "ErrEmbeddingDimMismatch", p29.ErrEmbeddingDimMismatch},
 		{"postgres", "ErrExtensionUnavailable", p29.ErrExtensionUnavailable},

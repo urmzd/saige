@@ -1,0 +1,17 @@
+{
+  "id": "ev-1",
+  "source": "fiber://run/r1",
+  "type": "run.delta.thinking.v1",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 1,
+  "tenant": "acme",
+  "run": "r1",
+  "seq": 7,
+  "agent": "helper",
+  "version": "1.2.0",
+  "digest": "sha256:abc",
+  "data": {
+    "text": "Consider the plan"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "ev-1",
+  "source": "fiber://run/r1",
+  "type": "run.context.compacted.v1",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 1,
+  "tenant": "acme",
+  "run": "r1",
+  "seq": 7,
+  "agent": "helper",
+  "version": "1.2.0",
+  "digest": "sha256:abc",
+  "data": {
+    "trigger": "input_pressure",
+    "strategy": "summary",
+    "tokens_before": 9000,
+    "tokens_after": 2000,
+    "summarized": 30,
+    "kept": 4
+  }
+}

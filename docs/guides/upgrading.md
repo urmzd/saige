@@ -1,5 +1,9 @@
 # Upgrading to this release
 
+## The event runtime moves into saige
+
+`github.com/urmzd/orchagent/flow/...` is now `github.com/urmzd/saige/flow/...` for the event union, the bus, definitions, sessions and threads, the turn seam and its runtimes, and the durable turn (`flow/runtime`). Change the import prefix. The alias packages under `flow/turn/native` are gone: import `agent/types` (for `saigetypes`), `agent/agenttest` (for `turn/native/agenttest`) and `rag/types` (for `ragtypes`) instead; the names are the same. Stored and wire names (`fiber_*` tables, `fiber://`, `fiber.*` kinds and record keys) are unchanged. The `flow.App` composition root, `Ask` and `Reply`, and the session handle did not move: build `runtime.New` directly. Flow's Postgres tests read `SAIGE_TEST_POSTGRES_DSN` (they read `FLOW_POSTGRES_TEST_URL`). Import `github.com/urmzd/saige/flow/wirecodes` for its side effect to keep `errors.Is` working on flow errors after they cross saige's wire codec.
+
 ## The sandbox moves into saige
 
 `github.com/urmzd/orchagent/sandbox` is now `github.com/urmzd/saige/sandbox`: change the import prefix. The API and the runtime names (`playscape.*` labels, `/run/playscape`) are unchanged. The Kubernetes Job runner (`runner/k8s`), the `cli` tool provider and the `sandbox` command did not move. To keep `errors.Is` working on sandbox errors after they cross saige's wire codec, import `github.com/urmzd/saige/sandbox/wirecodes` for its side effect.

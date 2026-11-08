@@ -104,6 +104,8 @@ jobs:
           ./cmd/saige/
       # The durable engine's Postgres adapters, behind the integration tag.
       - run: go test -tags=integration -count=1 -p 1 -v ./durable/adapters/postgres/...
+      # flow's Postgres stores and the durable stop tests, each in a schema of its own.
+      - run: go test -count=1 -p 1 ./flow/...
 
   # The sandbox's isolation boundary: the isolate conformance suite and the
   # egress test against Docker under gVisor, required to run, not skipped.

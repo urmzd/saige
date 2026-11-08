@@ -45,6 +45,9 @@ Start with [concepts](architecture/concepts.md), then open the guide for the pie
 | [Batch processing](guides/batch.md) | Vendor batch APIs at half price, the local fallback, durable jobs, budget, evals, `agent.RunBatch` |
 | [Durable execution](architecture/durable-execution.md) | Local engine and anchor on Postgres, saved approvals, uncertain steps, reconciliation, budget receipts |
 | [Durable engine](architecture/durable-engine.md) | `durable/`: ledger, queue, worker and replay, the Postgres adapters, capabilities |
+| [Flow](architecture/flow.md) | `flow/`: events on a channel bus and the durable turn: stopping, compaction, usage, parking |
+| [Event union](architecture/flow-events.md) | The envelope, types and catalog, channels, definitions and pins, the Runtime seam |
+| [Agent sessions](architecture/flow-sessions.md) | Session keys, child calls, governance, budgets |
 | [Sandbox](architecture/sandbox.md) | `sandbox/`: confined tools, NGAC, pools, isolated instances, the egress gate |
 | [Replay design](architecture/durable-replay.md) | Record identity, the claim protocol, failure modes, park and resume |
 | [Cache contracts](architecture/cache-contracts.md) | Cache identity, provider cache modes, known limits |

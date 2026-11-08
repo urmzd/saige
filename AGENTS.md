@@ -49,6 +49,16 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `sandbox/runner/` | Run executor seam: run one command, stream logs, report the exit code; `Local` (host, for tests) and `Shell` (an executor as a tool) |
 | `sandbox/isolate/` | Isolated instances: `Driver`, `Instance`, `Spec` (zero value is the strictest), warm `Pool` leasing one instance per run, `Executor`; `docker` (gVisor by default, embedded seccomp, remote daemons), `local` (no isolation, tests), `isolatetest` (the conformance suite), `egress` (the gate: per-lease default-deny allowlist, credential injection) |
 | `sandbox/metrics/`, `sandbox/wirecodes/` | The `Recorder` every sandbox component emits through; the sandbox sentinels' wire codes, registered on import |
+| `flow/event/`, `flow/event/legacy/` | The envelope, the sealed `Body` union and the catalog (decoder, renderer, `Sensitive`, `OptIn` per type), typed ingress references; readers for data written before the union |
+| `flow/address/`, `flow/attachment/` (`intake`, `resolve`), `flow/blob/` | Place URIs; typed file references, their intake into the content-addressed blob store, and resolution into model input |
+| `flow/bus/` | The channel bus: publish once on a channel, subscribe by channel and type prefix; Memory and Postgres, outbox, consumer groups, `bustest` |
+| `flow/connector/` | What a connector is: the `Trigger`, `Sink`, `Subscriber` and `Actor` faces, roles found by type assertion |
+| `flow/definition/` | saige definitions plus a `Policy` sidecar, per tenant in an insert-only `Source`, pinned by each run; `definitiontest` |
+| `flow/session/`, `flow/thread/` | An agent's continuing conversation keyed by (tenant, parent, agent, label), with admission, grants and budgets; the append-only journal of what was said |
+| `flow/turn/` | The one seam between a run and whatever executes a turn: `turn.Runtime`; `native` (on saige's agent loop), `sandbox` (any Runtime inside `sandbox/`), `runtimetest` |
+| `flow/runtime/` | The durable turn on `durable/`: accept, pin, stop, compact, usage, parking, child sessions |
+| `flow/isolation/` | The seam to an isolated instance for a run's tools; `isolate` leases them from `sandbox/isolate` |
+| `flow/wirecodes/` | The flow sentinels' wire codes, registered on import |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
 | `rag/knowledge/` | Knowledge graph public API (`knowledge.New`, query helpers) |
@@ -178,6 +188,23 @@ Angular conventional commits enforced by gitit:
 - New backends implement the existing interfaces (`workspace.Workspace`, `node.Factory`, `runner.Executor`, `isolate.Driver`, `metrics.Recorder`); every `isolate.Driver` passes `isolatetest.Run`, with `Isolated: true` when it isolates.
 - No durable queue here: tasks run in process. Retried runs belong to `durable/`.
 - Runtime names keep their spelling (`playscape.*` container labels, `/run/playscape`, the `playscape` proxy user): running instances and images depend on them.
+
+## Flow rules
+
+- **Every event type has a renderer.** A type is registered once in the `flow/event` catalog with its decoder, a byte-stable renderer and its `Sensitive` and `OptIn` flags; the catalog test fails without a renderer. `type` is the only discriminator and carries the version: a breaking change to a body is a new `.vN` type, never an edit. A known type whose data does not decode is an error; only an unknown type becomes `event.Unknown`.
+- **Subscriptions are default deny.** An empty tenant, channel list or type list matches nothing; there is no "everything" subscription. A control channel matches only a subscription that names it exactly. Opt-in families (`run.usage`, `run.context`) arrive only when named.
+- **One Runtime seam.** A turn runs through `turn.Runtime` and nothing else. Only `flow/turn/native` and `flow/definition` reach saige's agent loop and providers; the rest of flow imports saige's types alone (`flow/turn/imports_test.go`). Sandboxing is a decorator around any Runtime, never a second path.
+- **Pins fail closed.** A run pins its definition at accept (name, version, saige digest, sub-agent versions, policy hash) and its thread history up to a sequence, and every attempt verifies both. A moved digest, a missing row or an empty digest fails the run terminally. Never re-resolve "latest" inside a workflow body.
+- **Volatile content goes last.** Tools and system prompt, then history, then the request, then its files, so a long thread's prompt cache stays warm.
+- **A run's events have one writer.** Only the attempt executing a run publishes its `run.*` events. Anything addressed to a run goes to its control channel.
+- **A stop is recorded before it is announced, and a stopped run is a result.** `Runtime.Stop` writes the request on the run in the ledger, then publishes it; the body decides from the record alone. Nothing about a particular stop reaches the thread journal.
+- **Usage is counted once, from what an attempt relayed**, keyed by its accounting id, inside the memoized activity; cost comes only from saige's price catalog, as integer micro-units.
+- **A parked run decides from its records.** A question's resolution is a write-once event record; the body never reads the clock or a request to decide. An attempt runs at most one turn. A run never waits for another run in its turn: delegation parks the parent on the child's ending.
+- **An approval is a second pair of eyes.** `Runtime.Answer` refuses an approval from the requester unless the pinned Policy sets `self_approval`, and admits only the Policy's approvers when it names them.
+- **Tenant is never read from a request body.** flow has no transport; the host sets the tenant and actor from the caller's credential. A host that lets callers publish refuses the `control` scheme and the `run.*` types.
+- **Sensitive bodies stay in.** A body marked `Sensitive` is rendered to the model but left out of egress and logs unless the subscriber opts in. `Envelope.Private` is never serialized.
+- **Who a turn acts for comes from the run's record**, never from the task input, trigger context or anything a model produced.
+- Names stored in databases or on the wire keep their spelling (`fiber_*` tables, `fiber://`, `fiber.*` kinds and record keys).
 
 ## Code Style
 

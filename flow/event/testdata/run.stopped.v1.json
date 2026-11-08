@@ -1,0 +1,46 @@
+{
+  "id": "ev-1",
+  "source": "fiber://run/r1",
+  "type": "run.stopped.v1",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 1,
+  "tenant": "acme",
+  "run": "r1",
+  "seq": 7,
+  "agent": "helper",
+  "version": "1.2.0",
+  "digest": "sha256:abc",
+  "data": {
+    "attempt": 1,
+    "reason": "wrong repo",
+    "by": "ana",
+    "text": "I was",
+    "usage": {
+      "own": {
+        "model_calls": 2,
+        "requests": 2,
+        "prompt_tokens": 900,
+        "cached_prompt_tokens": 400,
+        "completion_tokens": 120,
+        "cost": {
+          "micros": 1250,
+          "currency": "USD",
+          "as_of": "2026-07-24"
+        }
+      },
+      "total": {
+        "model_calls": 2,
+        "requests": 2,
+        "prompt_tokens": 900,
+        "cached_prompt_tokens": 400,
+        "completion_tokens": 120,
+        "cost": {
+          "micros": 1250,
+          "currency": "USD",
+          "as_of": "2026-07-24"
+        }
+      }
+    }
+  }
+}
