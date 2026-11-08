@@ -36,6 +36,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 - [docs/architecture/flow.md](docs/architecture/flow.md): flow (`flow/`): typed events on a channel bus and the durable turn: delivery, durability, stopping, compaction, usage, parking
 - [docs/architecture/flow-events.md](docs/architecture/flow-events.md): The event union: the envelope, types and catalog, channels, subscriptions, definitions and pins, the Runtime seam
 - [docs/architecture/flow-sessions.md](docs/architecture/flow-sessions.md): Agent sessions: keys, child calls and waits, governance, budgets and live usage
+- [docs/architecture/flow-slack.md](docs/architecture/flow-slack.md): The Slack connector: what it publishes, references, delivery, reactions, stopping a session
 - [docs/architecture/sandbox.md](docs/architecture/sandbox.md): The sandbox (`sandbox/`): NGAC-confined tools over one workspace, bounded pools, isolated instances under gVisor, the egress gate
 - [docs/architecture/durable-replay.md](docs/architecture/durable-replay.md): Replay correctness spec: record identity, the claim protocol, failure modes, park and resume
 - [docs/guides/observability.md](docs/guides/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction, opt-in tool content

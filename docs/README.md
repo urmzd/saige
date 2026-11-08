@@ -48,6 +48,7 @@ Start with [concepts](architecture/concepts.md), then open the guide for the pie
 | [Flow](architecture/flow.md) | `flow/`: events on a channel bus and the durable turn: stopping, compaction, usage, parking |
 | [Event union](architecture/flow-events.md) | The envelope, types and catalog, channels, definitions and pins, the Runtime seam |
 | [Agent sessions](architecture/flow-sessions.md) | Session keys, child calls, governance, budgets |
+| [Slack connector](architecture/flow-slack.md) | What Slack publishes, references, delivery, stopping a session |
 | [Sandbox](architecture/sandbox.md) | `sandbox/`: confined tools, NGAC, pools, isolated instances, the egress gate |
 | [Replay design](architecture/durable-replay.md) | Record identity, the claim protocol, failure modes, park and resume |
 | [Cache contracts](architecture/cache-contracts.md) | Cache identity, provider cache modes, known limits |
