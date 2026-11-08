@@ -49,10 +49,15 @@ import (
 	fblob "github.com/urmzd/saige/flow/blob"
 	fbus "github.com/urmzd/saige/flow/bus"
 	fconnector "github.com/urmzd/saige/flow/connector"
+	f4cron "github.com/urmzd/saige/flow/connectors/cron"
+	f4github "github.com/urmzd/saige/flow/connectors/github"
+	f4credential "github.com/urmzd/saige/flow/credential"
 	fdefinition "github.com/urmzd/saige/flow/definition"
+	f4egress "github.com/urmzd/saige/flow/egress"
 	fevent "github.com/urmzd/saige/flow/event"
 	feventlegacy "github.com/urmzd/saige/flow/event/legacy"
 	fisolation "github.com/urmzd/saige/flow/isolation"
+	f4membership "github.com/urmzd/saige/flow/membership"
 	fruntime "github.com/urmzd/saige/flow/runtime"
 	fsession "github.com/urmzd/saige/flow/session"
 	fsignature "github.com/urmzd/saige/flow/signature"
@@ -319,6 +324,15 @@ func sentinels() []sentinel {
 		{"flow/signature", "ErrNoSecret", fsignature.ErrNoSecret},
 		{"flow/signature", "ErrSignatureMismatch", fsignature.ErrSignatureMismatch},
 		{"flow/signature", "ErrTimestampSkew", fsignature.ErrTimestampSkew},
+		{"flow/connectors/cron", "ErrExpression", f4cron.ErrExpression},
+		{"flow/connectors/cron", "ErrSchedule", f4cron.ErrSchedule},
+		{"flow/connectors/github", "ErrNoApproval", f4github.ErrNoApproval},
+		{"flow/credential", "ErrNoCredential", f4credential.ErrNoCredential},
+		{"flow/egress", "ErrInvalid", f4egress.ErrInvalid},
+		{"flow/egress", "ErrPanic", f4egress.ErrPanic},
+		{"flow/egress", "ErrRunning", f4egress.ErrRunning},
+		{"flow/membership", "ErrInvalid", f4membership.ErrInvalid},
+		{"flow/membership", "ErrNotFound", f4membership.ErrNotFound},
 		{"netguard", "ErrBlocked", p40.ErrBlocked},
 		{"postgres", "ErrEmbeddingDimMismatch", p29.ErrEmbeddingDimMismatch},
 		{"postgres", "ErrExtensionUnavailable", p29.ErrExtensionUnavailable},

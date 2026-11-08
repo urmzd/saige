@@ -21,10 +21,15 @@ import (
 	"github.com/urmzd/saige/flow/blob"
 	"github.com/urmzd/saige/flow/bus"
 	"github.com/urmzd/saige/flow/connector"
+	"github.com/urmzd/saige/flow/connectors/cron"
+	"github.com/urmzd/saige/flow/connectors/github"
+	"github.com/urmzd/saige/flow/credential"
 	"github.com/urmzd/saige/flow/definition"
+	"github.com/urmzd/saige/flow/egress"
 	"github.com/urmzd/saige/flow/event"
 	eventlegacy "github.com/urmzd/saige/flow/event/legacy"
 	"github.com/urmzd/saige/flow/isolation"
+	"github.com/urmzd/saige/flow/membership"
 	"github.com/urmzd/saige/flow/runtime"
 	"github.com/urmzd/saige/flow/session"
 	"github.com/urmzd/saige/flow/signature"
@@ -97,6 +102,15 @@ func init() {
 		"flow.signature.no_secret":                  signature.ErrNoSecret,
 		"flow.signature.signature_mismatch":         signature.ErrSignatureMismatch,
 		"flow.signature.timestamp_skew":             signature.ErrTimestampSkew,
+		"flow.connectors.cron.expression":           cron.ErrExpression,
+		"flow.connectors.cron.schedule":             cron.ErrSchedule,
+		"flow.connectors.github.no_approval":        github.ErrNoApproval,
+		"flow.credential.no_credential":             credential.ErrNoCredential,
+		"flow.egress.invalid":                       egress.ErrInvalid,
+		"flow.egress.panic":                         egress.ErrPanic,
+		"flow.egress.running":                       egress.ErrRunning,
+		"flow.membership.invalid":                   membership.ErrInvalid,
+		"flow.membership.not_found":                 membership.ErrNotFound,
 	} {
 		agenttypes.RegisterWireSentinel(code, err)
 	}

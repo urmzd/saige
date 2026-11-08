@@ -1,5 +1,5 @@
 // Package isolation is the seam between a run's tools and the isolated
-// instance they execute in (RFC 0004, "The sandbox").
+// instance they execute in.
 //
 // The agent loop stays in the trusted process. What a run's tools do, the
 // shell, the file tools and stdio MCP servers, happens in an Instance leased

@@ -460,7 +460,7 @@ Surfaces are adapters. Delivery does not know which surface it serves.
   channel plus type prefix and render what arrives onto their surface.
 
 Implemented in `flow/connector` (`Trigger.Ingest(ctx, publish)`,
-`Subscriber`), and, with the connectors, `flow/membership` and `flow/egress`.
+`Subscriber`), `flow/membership` and `flow/egress`.
 
 - **Ingress.** Slack publishes `message.posted.v1` (mentions from `Bots`),
   `slack.command.invoked.v1` and `slack.session.stopped.v1`. GitHub publishes
