@@ -150,6 +150,11 @@ type Config struct {
 	// published. An error refuses the request.
 	Prepare func(context.Context, *event.Envelope) error
 
+	// Socket turns on Socket Mode: Slack delivers events over a websocket
+	// this connector opens, so the server needs no public URL. Nil serves
+	// the Events API over HTTP only.
+	Socket *SocketConfig
+
 	// Interval coalesces edits. Zero means sink.DefaultInterval.
 	Interval time.Duration
 
@@ -265,9 +270,18 @@ func intervalOr(d time.Duration) time.Duration {
 func (c *Connector) Name() string { return Name }
 
 // Ingest implements connector.Trigger. It parks until ctx is cancelled while
-// ServeHTTP publishes.
+// ServeHTTP publishes, and in Socket Mode also holds the websocket open.
 func (c *Connector) Ingest(ctx context.Context, publish connector.Publish) error {
-	return c.pipe.Serve(ctx, publish)
+	if c.cfg.Socket == nil {
+		return c.pipe.Serve(ctx, publish)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- c.pipe.Serve(ctx, publish) }()
+	c.socket(ctx)
+	cancel()
+	return <-served
 }
 
 // Ingesting reports whether an Ingest is running and this connector can
@@ -288,6 +302,12 @@ func (c *Connector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	c.serveVerified(w, r, body)
+}
+
+// serveVerified handles a request whose sender is already established: a
+// signed HTTP request, or an envelope on this app's own Socket Mode socket.
+func (c *Connector) serveVerified(w http.ResponseWriter, r *http.Request, body []byte) {
 	if strings.HasSuffix(r.URL.Path, CommandsPath) {
 		c.serveCommand(w, r, body)
 		return
