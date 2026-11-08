@@ -51,3 +51,7 @@ linters:
       - path: (^|/)storetest/
         linters:
           - goconst
+      - path: (^|/)(ledgertest|queuetest)/
+        linters:
+          - goconst
+          - gocyclo

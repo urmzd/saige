@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/orchagent/durable/replay"
-	"github.com/urmzd/orchagent/durable/run"
+	"github.com/urmzd/saige/durable/replay"
+	"github.com/urmzd/saige/durable/run"
 
 	"github.com/urmzd/saige/agent/types"
 )

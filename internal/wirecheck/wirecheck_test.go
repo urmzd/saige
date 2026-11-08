@@ -36,6 +36,7 @@ import (
 	p21 "github.com/urmzd/saige/agent/tree"
 	types "github.com/urmzd/saige/agent/types"
 	p23 "github.com/urmzd/saige/agent/workspace"
+	p41 "github.com/urmzd/saige/durable/run"
 	p24 "github.com/urmzd/saige/eval"
 	p25 "github.com/urmzd/saige/eval/harness"
 	p26 "github.com/urmzd/saige/eval/online"
@@ -206,6 +207,13 @@ func sentinels() []sentinel {
 		{"agent/workspace", "ErrInvalidRef", p23.ErrInvalidRef},
 		{"agent/workspace", "ErrNotFound", p23.ErrNotFound},
 		{"agent/workspace", "ErrReadOnly", p23.ErrReadOnly},
+		{"durable/run", "ErrAlreadyRecorded", p41.ErrAlreadyRecorded},
+		{"durable/run", "ErrAlreadyTerminal", p41.ErrAlreadyTerminal},
+		{"durable/run", "ErrMaxAttempts", p41.ErrMaxAttempts},
+		{"durable/run", "ErrNonDeterministic", p41.ErrNonDeterministic},
+		{"durable/run", "ErrNotFound", p41.ErrNotFound},
+		{"durable/run", "ErrParked", p41.ErrParked},
+		{"durable/run", "ErrSuperseded", p41.ErrSuperseded},
 		{"eval", "ErrInfra", p24.ErrInfra},
 		{"eval", "ErrInlineInput", p24.ErrInlineInput},
 		{"eval", "ErrJudgeMedia", p24.ErrJudgeMedia},

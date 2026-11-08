@@ -38,7 +38,11 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/notify/` | In-memory `types.Notifier`, subscriber fan-out, `Listen` triggers, and `Cache`, a local level kept coherent through a notifier |
 | `agent/batch/` | Batch jobs over `types.BatchProvider`: durable runner and job stores, local fallback, coalescer for evals |
 | `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
-| `agent/durable/anchor/` | anchor-backed durable engine: runs on any anchor ledger and queue, such as Postgres tables |
+| `agent/durable/anchor/` | Agent runs on the durable engine: each model call and tool execution a memoized step, on any ledger and queue, such as Postgres tables |
+| `durable/` | The durable engine: `Activity`, `Step`, `Event`, `Emit`, `Client`, `Start`/`Exec`; code survives crashes by replaying from the ledger |
+| `durable/run/`, `durable/ledger/`, `durable/queue/` | Leaf types and sentinel errors; the ledger (durable truth) and queue (fenced, time-bounded claims) interfaces, each with a `Memory` implementation and a conformance suite (`ledgertest`, `queuetest`) |
+| `durable/replay/`, `durable/worker/` | Memoized re-execution of a run (`Frame`); the worker that claims, replays to the frontier and persists one outcome per claim, plus the janitor |
+| `durable/adapters/postgres/` | `pgledger` and `pgqueue` on tables the host owns (validate, never migrate), `pgkit` (`Apply` under an advisory lock, `Listener` for LISTEN/NOTIFY) |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
 | `rag/knowledge/` | Knowledge graph public API (`knowledge.New`, query helpers) |
@@ -148,6 +152,16 @@ Angular conventional commits enforced by gitit:
 - `chore:` maintenance
 - `ci:` CI/CD changes
 - `perf:` performance
+
+## Durable engine rules
+
+- Keep the package DAG one way: `run` imports only the standard library; `ledger` and `queue` import `run`; the root `durable` never imports `worker` or an adapter; nothing below the root imports it. Only `durable/adapters/postgres` imports pgx.
+- Adapters validate, never migrate: no adapter runs DDL on its own. `RecommendedDDL` returns a string; `pgkit.Apply` runs only what its caller passes.
+- Never widen `Ledger` or `Queue` for one backend: optional powers are capability interfaces found by type assertion (`queue.DeltaLog`, `ledger.RunGetter`, `ledger.PrefixReader`).
+- Every ledger and queue backend passes `ledgertest.Run` or `queuetest.Run` from its own tests.
+- `Attempt` (the fencing token, up on every claim) and `Failures` (the retry budget, up only on a failed `Release` or an expiry reclaim) stay separate; settle and re-enqueue never touch `Failures`.
+- Record keys are `name#occurrence`, scoped under the parent's key: a breaking input or output change is a new activity name.
+- Names stored in databases or on the wire keep their spelling (`durable.anchor.*` codes, `durable_*` tables).
 
 ## Code Style
 
