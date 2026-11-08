@@ -141,7 +141,8 @@ func (c *Connector) socketOnce(ctx context.Context) (served bool, err error) {
 }
 
 // serveEnvelope hands one envelope to the HTTP handler's verified half and
-// reports whether to acknowledge it, with any response payload. The socket
+// reports whether to acknowledge it, with any response payload: everything
+// but a failure on this side is acknowledged. The socket
 // is this app's own, opened with its app token, so its envelopes need no
 // signature.
 func (c *Connector) serveEnvelope(ctx context.Context, env socketEnvelope) (map[string]any, bool) {
@@ -161,7 +162,9 @@ func (c *Connector) serveEnvelope(ctx context.Context, env socketEnvelope) (map[
 		}
 		path, body = CommandsPath, []byte(form.Encode())
 	case socketInteractive:
-		// Not read yet: acknowledged so Slack does not deliver it again.
+		if status := c.interact(ctx, env.Payload); status >= http.StatusInternalServerError {
+			return nil, false
+		}
 		return map[string]any{}, true
 	default:
 		return map[string]any{}, true
@@ -172,7 +175,9 @@ func (c *Connector) serveEnvelope(ctx context.Context, env socketEnvelope) (map[
 	}
 	rec := &socketReply{header: http.Header{}, status: http.StatusOK}
 	c.serveVerified(rec, r, body)
-	if rec.status >= http.StatusMultipleChoices {
+	// Only a failure on this side is worth Slack's delivering it again: a
+	// payload refused as malformed or forbidden would be refused again.
+	if rec.status >= http.StatusInternalServerError {
 		return nil, false
 	}
 	ack := map[string]any{}
