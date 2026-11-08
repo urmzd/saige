@@ -45,6 +45,7 @@ Start with [concepts](architecture/concepts.md), then open the guide for the pie
 | [Batch processing](guides/batch.md) | Vendor batch APIs at half price, the local fallback, durable jobs, budget, evals, `agent.RunBatch` |
 | [Durable execution](architecture/durable-execution.md) | Local engine and anchor on Postgres, saved approvals, uncertain steps, reconciliation, budget receipts |
 | [Durable engine](architecture/durable-engine.md) | `durable/`: ledger, queue, worker and replay, the Postgres adapters, capabilities |
+| [Sandbox](architecture/sandbox.md) | `sandbox/`: confined tools, NGAC, pools, isolated instances, the egress gate |
 | [Replay design](architecture/durable-replay.md) | Record identity, the claim protocol, failure modes, park and resume |
 | [Cache contracts](architecture/cache-contracts.md) | Cache identity, provider cache modes, known limits |
 | [Observability](guides/observability.md) | OpenTelemetry spans and metrics, error attributes, redaction |

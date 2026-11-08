@@ -33,6 +33,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 - [docs/guides/batch.md](docs/guides/batch.md): Batch processing: vendor batch APIs behind types.BatchProvider, local fallback, durable job store, batch pricing and budget, eval.WithBatch, agent.RunBatch
 - [docs/architecture/durable-execution.md](docs/architecture/durable-execution.md): Durable runs: local engine and anchor engine on Postgres, approvals, uncertain steps, reconciliation, budget receipts
 - [docs/architecture/durable-engine.md](docs/architecture/durable-engine.md): The durable engine (`durable/`): ledger, queue, worker, replay, the Postgres adapters, capabilities
+- [docs/architecture/sandbox.md](docs/architecture/sandbox.md): The sandbox (`sandbox/`): NGAC-confined tools over one workspace, bounded pools, isolated instances under gVisor, the egress gate
 - [docs/architecture/durable-replay.md](docs/architecture/durable-replay.md): Replay correctness spec: record identity, the claim protocol, failure modes, park and resume
 - [docs/guides/observability.md](docs/guides/observability.md): OpenTelemetry tracing and metrics: span tree, usage, routing, error kinds, redaction, opt-in tool content
 - [docs/guides/deployment.md](docs/guides/deployment.md): Single PostgreSQL 18 deployment with pgvector and pg_search, migrations, hybrid search
@@ -57,6 +58,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 ## Key Files
 
 - Parts examples: examples/parts/build/main.go, examples/parts/image/main.go, examples/parts/document/main.go, examples/parts/stream/main.go
+- Sandbox: sandbox/controlplane/memory.go, sandbox/sandbox/sandbox.go, sandbox/ngac/ngac.go, sandbox/isolate/isolate.go, sandbox/isolate/docker/docker.go, sandbox/isolate/egress/egress.go, examples/sandbox/main.go
 - Quick start: examples/quickstart/agent/main.go, examples/quickstart/tool/main.go, examples/quickstart/structured/main.go, examples/quickstart/dials/main.go, examples/quickstart/rag/main.go
 - Presets: agent/provider/catalog/data/default.json, agent/provider/preset/preset.go
 - Agent definitions: agent/definition/definition.go, agent/definition/decode.go, agent/definition/registry.go, agent/definition/source.go, agent/definition/rule.go, agent/definition/bind/bind.go, agent/definition/pgsource/pgsource.go, examples/agents/, cmd/saige/agents.go, cmd/saige-mcp/definition.go

@@ -43,6 +43,12 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `durable/run/`, `durable/ledger/`, `durable/queue/` | Leaf types and sentinel errors; the ledger (durable truth) and queue (fenced, time-bounded claims) interfaces, each with a `Memory` implementation and a conformance suite (`ledgertest`, `queuetest`) |
 | `durable/replay/`, `durable/worker/` | Memoized re-execution of a run (`Frame`); the worker that claims, replays to the frontier and persists one outcome per claim, plus the janitor |
 | `durable/adapters/postgres/` | `pgledger` and `pgqueue` on tables the host owns (validate, never migrate), `pgkit` (`Apply` under an advisory lock, `Listener` for LISTEN/NOTIFY) |
+| `sandbox/workspace/`, `sandbox/ngac/`, `sandbox/sandbox/` | The shared workspace (`Local` on `os.Root`); the NGAC policy machine; the enforcement point that decides every workspace operation and spawn under the tool's name |
+| `sandbox/tool/`, `sandbox/task/`, `sandbox/node/`, `sandbox/node/inproc/` | The tool unit, its `Runtime` and `Registry`; the task; execution nodes and the in-process node factory |
+| `sandbox/controlplane/` | Composition root: deployments as bounded in-process pools (`Deploy`, `Scale`, `Submit`, `Result`) |
+| `sandbox/runner/` | Run executor seam: run one command, stream logs, report the exit code; `Local` (host, for tests) and `Shell` (an executor as a tool) |
+| `sandbox/isolate/` | Isolated instances: `Driver`, `Instance`, `Spec` (zero value is the strictest), warm `Pool` leasing one instance per run, `Executor`; `docker` (gVisor by default, embedded seccomp, remote daemons), `local` (no isolation, tests), `isolatetest` (the conformance suite), `egress` (the gate: per-lease default-deny allowlist, credential injection) |
+| `sandbox/metrics/`, `sandbox/wirecodes/` | The `Recorder` every sandbox component emits through; the sandbox sentinels' wire codes, registered on import |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
 | `agent/agenttest/` | Test models (ScriptedProvider, FunctionModel, the tool-call emulator) and MockTool |
 | `rag/knowledge/` | Knowledge graph public API (`knowledge.New`, query helpers) |
@@ -138,6 +144,7 @@ gofmt -w .          # format
 fsrc run README.md  # re-embed examples/quickstart into the README (CI fails on drift)
 fsrc run docs/guides/agent-definitions.md  # re-embed examples/agents (a test fails on drift)
 fsrc run docs/guides/parts.md              # re-embed examples/parts
+fsrc run sandbox/README.md                 # re-embed examples/sandbox
 ```
 
 ## Commit Convention
@@ -162,6 +169,15 @@ Angular conventional commits enforced by gitit:
 - `Attempt` (the fencing token, up on every claim) and `Failures` (the retry budget, up only on a failed `Release` or an expiry reclaim) stay separate; settle and re-enqueue never touch `Failures`.
 - Record keys are `name#occurrence`, scoped under the parent's key: a breaking input or output change is a new activity name.
 - Names stored in databases or on the wire keep their spelling (`durable.anchor.*` codes, `durable_*` tables).
+
+## Sandbox rules
+
+- Nothing in `sandbox/` is a service: no listener, and no files, environment variables or URLs read to decide what to build. Backends are chosen in code.
+- `sandbox/sandbox`, `ngac`, `workspace` and `isolate` (with `isolate/egress`) are a security boundary. A driver never starts an instance weaker than its spec (`ErrUnsupported` instead). Any change near them needs tests that confinement still holds (traversal, symlink escapes, sibling prefixes, list leak, spawn gating, prohibition override, multi-policy-class conjunction). Default is always deny.
+- Keep the DAG one way: only `controlplane` imports `controlplane`; `task`, `workspace`, `metrics`, `ngac` and `isolate/egress` import only the standard library, and no sandbox package imports saige outside `sandbox/` (`wirecodes` is the one bridge).
+- New backends implement the existing interfaces (`workspace.Workspace`, `node.Factory`, `runner.Executor`, `isolate.Driver`, `metrics.Recorder`); every `isolate.Driver` passes `isolatetest.Run`, with `Isolated: true` when it isolates.
+- No durable queue here: tasks run in process. Retried runs belong to `durable/`.
+- Runtime names keep their spelling (`playscape.*` container labels, `/run/playscape`, the `playscape` proxy user): running instances and images depend on them.
 
 ## Code Style
 

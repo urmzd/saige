@@ -105,6 +105,38 @@ jobs:
       # The durable engine's Postgres adapters, behind the integration tag.
       - run: go test -tags=integration -count=1 -p 1 -v ./durable/adapters/postgres/...
 
+  # The sandbox's isolation boundary: the isolate conformance suite and the
+  # egress test against Docker under gVisor, required to run, not skipped.
+  gvisor:
+    name: Sandbox under gVisor
+    runs-on: ubuntu-latest
+    env:
+      # A pinned gVisor release, checked against this digest before use.
+      GVISOR_RELEASE: "20261012"
+      GVISOR_SHA512: 9606445eed5aedfcf05310e7ccef61d994089914c6622fc82624c24d2b18db1b2210f40e40a7be27b8b7772859de7d95c501b4eba66423053c960bf671377c5e
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install runsc as a Docker runtime
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/gvisor.tar.bz2" "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/x86_64/gvisor.tar.bz2"
+          echo "${GVISOR_SHA512}  $RUNNER_TEMP/gvisor.tar.bz2" | sha512sum --check --strict
+          tar -xjf "$RUNNER_TEMP/gvisor.tar.bz2" -C "$RUNNER_TEMP" runsc
+          sudo install -m 0755 "$RUNNER_TEMP/runsc" /usr/local/bin/runsc
+          # --oci-seccomp: gVisor enforces the driver's seccomp profile too.
+          # --host-uds=all: compartments' unix sockets cross sandboxes through
+          # the shared socket directory.
+          sudo runsc install -- --oci-seccomp --host-uds=all
+          sudo systemctl restart docker
+          runsc --version
+      - name: Conformance suite under runsc
+        env:
+          SANDBOX_DOCKER_TEST_RUNTIME: runsc
+          SANDBOX_DOCKER_TEST_REQUIRED: "1"
+        run: go test -race -count=1 -v ./sandbox/isolate/docker/
+
   # Benchmarks run on every pull request so a benchmark that no longer
   # compiles or panics fails the build. Timings on shared runners are noisy,
   # so the job reports them as an artifact and does not compare them.
@@ -164,10 +196,11 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
 
-  # The README and the parts guide embed the programs under
-  # examples/quickstart and examples/parts with fsrc markers. The build job
-  # compiles those programs; this job fails when a document no longer
-  # matches them. Fix with `fsrc run README.md docs/guides/parts.md`.
+  # The README, the parts guide and the sandbox README embed the programs
+  # under examples/quickstart, examples/parts and examples/sandbox with fsrc
+  # markers. The build job compiles those programs; this job fails when a
+  # document no longer matches them. Fix with
+  # `fsrc run README.md docs/guides/parts.md sandbox/README.md`.
   embed:
     name: Embedded examples
     runs-on: ubuntu-latest
@@ -175,8 +208,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: urmzd/fsrc@v4
         with:
-          files: README.md docs/guides/parts.md
+          files: README.md docs/guides/parts.md sandbox/README.md
           commit-dry: "true"
           commit-push: "false"
       # The action stages the files, so compare against HEAD, not the index.
-      - run: git diff --exit-code HEAD -- README.md docs/guides/parts.md
+      - run: git diff --exit-code HEAD -- README.md docs/guides/parts.md sandbox/README.md
