@@ -55,7 +55,8 @@ import (
 // side by side instead of one after the other's answer. A call waits on at
 // most one thing per park: a call that needs both an approval and an awaited
 // result waits on the approval first, and on its result at the park that
-// follows the approval. A call whose approval is denied, or expires into a
+// follows the approval, built from the arguments it was approved with, a
+// person's edit included. A call whose approval is denied, or expires into a
 // denial, awaits nothing: nothing it would have started starts, and its
 // result is the denial, as for any denied call.
 //
@@ -529,8 +530,9 @@ func (p *parker) holdWait(ctx context.Context, calls []saigetypes.ToolCallPart) 
 // callWaits is what each call of a batch waits on, in call order: its
 // approval or question while it has no answer, else the result it awaits
 // while that has not arrived. A call waits on one thing per park, so a
-// delegation that needs approval starts only once it is approved, and one
-// whose approval is denied starts nothing.
+// delegation that needs approval starts only once it is approved, with the
+// arguments it was approved with, and one whose approval is denied starts
+// nothing.
 func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
 	var waits []Wait
 	for _, tc := range calls {
@@ -539,7 +541,11 @@ func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
 				waits = append(waits, Wait{Question: q, CallID: tc.ID})
 				continue
 			}
-		} else if p.denied(tc, a) {
+		} else if call, ok := p.approved(tc, a); ok {
+			// What the call awaits starts from the call as it was approved:
+			// a person's edit, never the model's arguments it replaced.
+			tc = call
+		} else {
 			// A denied call does not run, so nothing it would have awaited
 			// is started or waited for: its result is the denial.
 			continue
@@ -553,15 +559,24 @@ func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
 	return waits
 }
 
-// denied reports whether a call's answer refuses it: an answer to its
-// approval that is not an approval, the denial an unanswered approval
-// expires into included.
-func (p *parker) denied(tc saigetypes.ToolCallPart, a event.Answer) bool {
-	if a.Decision == event.DecisionApprove {
-		return false
+// approved returns a call as its answer lets it run: with the arguments an
+// approval edited, when it edited them, and as the model asked otherwise. It
+// reports false for a call the answer refuses: an approval answered with
+// anything but approve (the denial an unanswered one expires into included),
+// or approved with edited arguments that cannot be read, which saige is
+// told is a refusal too (see decide).
+func (p *parker) approved(tc saigetypes.ToolCallPart, a event.Answer) (saigetypes.ToolCallPart, bool) {
+	if q, ok := p.need(tc); !ok || q.Kind != event.QuestionApproval {
+		return tc, true
 	}
-	q, ok := p.need(tc)
-	return ok && q.Kind == event.QuestionApproval
+	r, err := resolution(a)
+	if err != nil || !r.Approved {
+		return tc, false
+	}
+	if r.ModifiedArgs != nil {
+		tc.Arguments = r.ModifiedArgs
+	}
+	return tc, true
 }
 
 // need reports the question a call puts to a person, if it puts one.
