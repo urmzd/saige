@@ -134,11 +134,16 @@ type ChildParked struct {
 // answer, in order.
 type Text struct {
 	Text string `json:"text"`
+	// Parent is the path of tool call ids, from the run's own agent down,
+	// of the nested agent that said this: an agent the run's agent runs as
+	// a tool. Empty is the run's own agent. It is set on every delta body.
+	Parent []string `json:"parent,omitempty"`
 }
 
 // Thinking is the body of run.delta.thinking.v1 (was delta.thinking).
 type Thinking struct {
-	Text string `json:"text"`
+	Text   string   `json:"text"`
+	Parent []string `json:"parent,omitempty"`
 }
 
 // ToolCall is the body of run.delta.tool.call.v1 (was delta.tool.call).
@@ -148,6 +153,7 @@ type ToolCall struct {
 	Phase          string          `json:"phase"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
 	ArgumentsBytes int             `json:"arguments_bytes,omitempty"`
+	Parent         []string        `json:"parent,omitempty"`
 }
 
 // ToolDone is the body of run.delta.tool.done.v1 (was delta.tool.done).
@@ -158,6 +164,7 @@ type ToolDone struct {
 	Error          string          `json:"error,omitempty"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
 	ArgumentsBytes int             `json:"arguments_bytes,omitempty"`
+	Parent         []string        `json:"parent,omitempty"`
 }
 
 // Provenance locates the source a citation came from. It mirrors saige's
@@ -177,6 +184,10 @@ type Citation struct {
 	Text   string     `json:"text"`
 	Source Provenance `json:"source"`
 	Index  int        `json:"index"`
+	// ToolCallID is the call whose result the citation came from, when a
+	// tool's result rather than the model cited it.
+	ToolCallID string   `json:"tool_call_id,omitempty"`
+	Parent     []string `json:"parent,omitempty"`
 }
 
 // Action is the body of run.action.taken.v1 (was action.taken). Target and

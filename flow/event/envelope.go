@@ -45,6 +45,16 @@ type Envelope struct {
 	Session       string `json:"session,omitempty"`
 	ParentSession string `json:"parent_session,omitempty"`
 
+	// Lineage of a run in a tree of runs, stamped on every event of the run
+	// when the run is created. Root is the run the tree answers from: a run
+	// that no other run called is its own root. ParentRun is the run that
+	// called this one, and ParentToolCall the id of the tool call it was
+	// called through, as the host minted it. A subscriber that follows one
+	// response subscribes by Root and nests each run under its parent call.
+	Root           string `json:"root,omitempty"`
+	ParentRun      string `json:"parent_run,omitempty"`
+	ParentToolCall string `json:"parent_tool_call,omitempty"`
+
 	// Data is the body for Type.
 	Data Body `json:"data"`
 
