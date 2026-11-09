@@ -3,6 +3,8 @@ package native_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -305,9 +307,10 @@ func TestAskPersonParksAsAChoiceOrAReplyAndReturnsTheAnswer(t *testing.T) {
 	}
 }
 
-// Two questions in one batch park twice: the second continuation carries both
-// answers, and the batch runs once, after both.
-func TestABatchWithTwoQuestionsParksOncePerQuestion(t *testing.T) {
+// Two questions in one batch park the turn once, on both, in call order. A
+// continuation with only one answer parks again on the other, and the batch
+// runs once, after both.
+func TestABatchWithTwoQuestionsParksOnceForBoth(t *testing.T) {
 	t.Parallel()
 	f := newParkFixture(t, []string{"deploy"},
 		toolCalls(
@@ -317,25 +320,174 @@ func TestABatchWithTwoQuestionsParksOncePerQuestion(t *testing.T) {
 		agenttest.TextResponse("Done."))
 	_, first := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
 	if first.Parked == nil || first.Parked.CallID != "c1" {
-		t.Fatalf("first park is %+v, want the deploy approval", first.Parked)
+		t.Fatalf("park is %+v, want the deploy approval first", first.Parked)
 	}
-	resume := *first.Parked
-	resume.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}}
-	_, second := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &resume})
-	if second.Parked == nil || second.Parked.CallID != "q1" {
-		t.Fatalf("second park is %+v, want the question", second.Parked)
+	waits := first.Parked.Waits()
+	if len(waits) != 2 || waits[0].CallID != "c1" || waits[0].Question.Kind != event.QuestionApproval ||
+		waits[1].CallID != "q1" || waits[1].Question.Kind != event.QuestionReply || waits[0].Question.ID == waits[1].Question.ID {
+		t.Fatalf("the park waits on %+v, want the approval and the question, in call order", waits)
+	}
+
+	// One answer is not enough: the turn parks again, on the other alone.
+	partial := *first.Parked
+	partial.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}}
+	_, second := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &partial})
+	if second.Parked == nil || second.Parked.CallID != "q1" || len(second.Parked.Batch) != 0 {
+		t.Fatalf("second park is %+v, want the question alone", second.Parked)
 	}
 	if len(f.deploy.Calls) != 0 {
 		t.Fatal("deploy ran before the batch's second question was answered")
 	}
-	again := *second.Parked
-	again.Answers["q1"] = event.Answer{Text: "audit"}
-	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a3", Resume: &again})
+
+	both := *first.Parked
+	both.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}, "q1": {Text: "audit"}}
+	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a3", Resume: &both})
 	if res.Parked != nil || res.Text != "Done." || len(f.deploy.Calls) != 1 {
-		t.Errorf("third turn gave %+v with deploy run %d times", res, len(f.deploy.Calls))
+		t.Errorf("the continuation gave %+v with deploy run %d times", res, len(f.deploy.Calls))
 	}
 	if f.model.CallCount() != 2 {
 		t.Errorf("the model was called %d times, want 2", f.model.CallCount())
+	}
+}
+
+// awaitingTool is a tool whose result arrives from outside the turn, as a
+// delegation's does: the turn parks on each call to it, and the continuation
+// runs the call with the answer it was given.
+type awaitingTool struct{ *agenttest.MockTool }
+
+func (awaitingTool) AwaitQuestion(call saigetypes.ToolCallPart) (event.Question, bool) {
+	text, _ := call.Arguments["text"].(string)
+	return event.Question{Prompt: text, Tool: &event.QuestionTool{Name: call.Name, CallID: call.ID}}, true
+}
+
+func (a awaitingTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	_, _ = a.MockTool.Execute(ctx, args)
+	answer, ok := native.AnswerFor(ctx)
+	if !ok {
+		return "", errors.New("no answer arrived")
+	}
+	return answer.Text, nil
+}
+
+// toolResults are the results a conversation carries, in order, as
+// "call=text".
+func toolResults(msgs []saigetypes.Message) []string {
+	var out []string
+	for _, m := range msgs {
+		for _, p := range saigetypes.PartsOf(m) {
+			if tr, ok := p.(saigetypes.ToolResultPart); ok {
+				out = append(out, tr.CallID+"="+tr.Text())
+			}
+		}
+	}
+	return out
+}
+
+// A batch of calls that each await a result parks once, on every one of
+// them, and runs nothing, the call that waits on nothing included. The
+// continuation with every answer runs the batch once: each call with its own
+// answer, the other call once, and every result in call order.
+func TestABatchOfAwaitingCallsParksOnceOnEveryWait(t *testing.T) {
+	t.Parallel()
+	delegate := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "delegate"}}}
+	lookup := &agenttest.MockTool{Def: saigetypes.ToolDef{Name: "lookup"}, Result: "found"}
+	model := &agenttest.ScriptedProvider{Responses: [][]saigetypes.Delta{
+		toolCalls(
+			saigetypes.ToolCallPart{ID: "d1", Name: "delegate", Arguments: map[string]any{"text": "one"}},
+			saigetypes.ToolCallPart{ID: "l1", Name: "lookup", Arguments: map[string]any{}},
+			saigetypes.ToolCallPart{ID: "d2", Name: "delegate", Arguments: map[string]any{"text": "two"}},
+			saigetypes.ToolCallPart{ID: "d3", Name: "delegate", Arguments: map[string]any{"text": "three"}},
+		),
+		agenttest.TextResponse("All in."),
+	}}
+	rev := offlineRevision(1, "You delegate.")
+	rev.Spec.Tools = []string{"delegate", "lookup"}
+	r, err := native.New(rev, native.WithTools(native.StaticTools(delegate, lookup)),
+		native.WithProvider(native.ProviderOffline, func(native.Spec) (saigetypes.Provider, error) { return model, nil }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	run := func(turn native.Turn) native.Result {
+		t.Helper()
+		res, err := r.Run(context.Background(), turn, func(context.Context, event.Body) error { return nil })
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return res
+	}
+
+	res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+	if res.Parked == nil {
+		t.Fatalf("the turn did not park: %+v", res)
+	}
+	waits := res.Parked.Waits()
+	var got []string
+	for _, w := range waits {
+		if w.Question.Kind != event.QuestionDelegation {
+			t.Errorf("wait %s is a %s, want a delegation", w.CallID, w.Question.Kind)
+		}
+		got = append(got, w.CallID+":"+w.Question.Prompt)
+	}
+	if want := []string{"d1/await:one", "d2/await:two", "d3/await:three"}; !slices.Equal(got, want) {
+		t.Fatalf("the park waits on %v, want %v", got, want)
+	}
+	if res.Parked.CallID != "d1/await" || res.Parked.Question.ID != waits[0].Question.ID {
+		t.Errorf("the park's first wait is %s %s, want d1's", res.Parked.CallID, res.Parked.Question.ID)
+	}
+	if delegate.CallCount() != 0 || lookup.CallCount() != 0 {
+		t.Fatalf("delegate ran %d and lookup %d times while the turn parked", delegate.CallCount(), lookup.CallCount())
+	}
+
+	// The record survives its trip through the turn seam whole.
+	seam, err := native.ParkedTo(*res.Parked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seam.Questions) != 3 || seam.Questions[2].ID != waits[2].Question.ID {
+		t.Fatalf("the seam's questions are %+v, want all three", seam.Questions)
+	}
+	back, err := native.ParkedOf(seam)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back.Answers = map[string]event.Answer{
+		"d3/await": {Text: "three done"}, "d1/await": {Text: "one done"}, "d2/await": {Text: "two done"},
+	}
+	res = run(native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &back})
+	if res.Parked != nil || res.Text != "All in." {
+		t.Fatalf("the continuation gave %+v", res)
+	}
+	if delegate.CallCount() != 3 || lookup.CallCount() != 1 {
+		t.Errorf("delegate ran %d and lookup %d times, want 3 and 1", delegate.CallCount(), lookup.CallCount())
+	}
+	want := []string{"d1=one done", "l1=found", "d2=two done", "d3=three done"}
+	if got := toolResults(model.Requests()[1].Messages); !slices.Equal(got, want) {
+		t.Errorf("the model saw results %v, want %v", got, want)
+	}
+}
+
+// A call that waits alone parks as it always did: one question, no batch.
+func TestASingleWaitParksWithoutABatch(t *testing.T) {
+	t.Parallel()
+	f := newParkFixture(t, []string{"deploy"},
+		toolCalls(
+			saigetypes.ToolCallPart{ID: "c1", Name: "lookup", Arguments: map[string]any{}},
+			saigetypes.ToolCallPart{ID: "c2", Name: "deploy", Arguments: map[string]any{"env": "prod"}},
+		))
+	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+	if res.Parked == nil || res.Parked.CallID != "c2" || res.Parked.Batch != nil || len(res.Parked.Waits()) != 1 {
+		t.Fatalf("park is %+v, want the approval alone", res.Parked)
+	}
+	raw, err := json.Marshal(res.Parked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"batch"`) {
+		t.Errorf("a single wait's record carries a batch: %s", raw)
+	}
+	seam, err := native.ParkedTo(*res.Parked)
+	if err != nil || seam.Questions != nil {
+		t.Errorf("the seam carries questions %+v, %v; want Question alone", seam.Questions, err)
 	}
 }
 

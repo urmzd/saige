@@ -817,28 +817,37 @@ func (r *Runtime) runTurn(ctx context.Context, in Input) (Output, error) {
 		out.Parked.Transcript, out.Parked.Since = transcript, 0
 		r.claimUsage(ctx, in, out.UsageAttempts, claimed)
 		said.WriteString(out.Text)
-		res, werr := r.awaitAnswer(ctx, at, out)
+		res, werr := r.awaitAnswers(ctx, at, out)
 		if werr != nil {
 			return Output{}, werr
 		}
-		if res.Stopped != nil {
+		if stop := stoppedIn(res); stop != nil {
 			out.Text = said.String()
-			return r.stoppedWhileParked(ctx, at, out, *res.Stopped, parks)
+			return r.stoppedWhileParked(ctx, at, out, *stop, parks)
 		}
-		if q := out.Parked.Question; q.Kind == event.QuestionHold && res.Answer.Decision != event.DecisionApprove {
-			// A hold that was not approved stops the run, and the batch it
-			// held never runs (hold.go).
-			out.Text = said.String()
-			return r.stoppedWhileParked(ctx, at, out, heldStop(q, *res.Answer), parks)
+		waits := out.Parked.Waits()
+		for i, w := range waits {
+			if q := w.Question; q.Kind == event.QuestionHold && res[i].Answer.Decision != event.DecisionApprove {
+				// A hold that was not approved stops the run, and the batch
+				// it held never runs (hold.go).
+				out.Text = said.String()
+				return r.stoppedWhileParked(ctx, at, out, heldStop(q, *res[i].Answer), parks)
+			}
 		}
 		parks++
-		at.answer = res.Answer
+		// The batch continues once, with every answer it waited on.
+		at.answer, at.answers = res[0].Answer, nil
 		next := *out.Parked
-		next.Answers = make(map[string]event.Answer, len(out.Parked.Answers)+1)
+		next.Answers = make(map[string]event.Answer, len(out.Parked.Answers)+len(waits))
 		for k, v := range out.Parked.Answers {
 			next.Answers[k] = v
 		}
-		next.Answers[out.Parked.CallID] = *res.Answer
+		for i, w := range waits {
+			next.Answers[w.CallID] = *res[i].Answer
+			if len(waits) > 1 {
+				at.answers = append(at.answers, *res[i].Answer)
+			}
+		}
 		out, err = r.resume.Call(ctx, Continue{Input: in, Seq: parks, Parked: next})
 		if usageErr := r.reconcileSessionUsage(ctx, in); usageErr != nil {
 			if errors.Is(usageErr, run.ErrParked) {
@@ -956,8 +965,10 @@ type attemptLog struct {
 	attempt int
 	opened  bool
 	// answer is the answer this attempt resumed with, carried on its
-	// resumed event.
-	answer *event.Answer
+	// resumed event; answers is every answer, when its park waited on more
+	// than one.
+	answer  *event.Answer
+	answers []event.Answer
 }
 
 type openerKey struct{}
@@ -972,7 +983,7 @@ func (a *attemptLog) open(ctx context.Context) error {
 		// Attempt 1 started the work; every later attempt resumed it, whether
 		// it was parked on a question or interrupted by a crash. The answer,
 		// when there is one, says which.
-		body = event.Resumed{Attempt: a.attempt, Answer: a.answer}
+		body = event.Resumed{Attempt: a.attempt, Answer: a.answer, Answers: a.answers}
 	}
 	if err := a.r.publish(ctx, a.in, a.band.open, body); err != nil {
 		return err
@@ -1084,7 +1095,7 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	// A Delegator's report of a child run is checked against the ledger and
 	// its total read from there; see ReportChildUsage.
 	execCtx := context.WithValue(ctx, childUsageKey{}, r.childUsage(in.Trigger.Tenant, req.RunID))
-	execCtx = context.WithValue(execCtx, childQuestionKey{}, r.childQuestion(in.Trigger.Tenant, req.RunID))
+	execCtx = context.WithValue(execCtx, childQuestionKey{}, r.childQuestions(in.Trigger.Tenant, req.RunID))
 	// The turn acts for the actor on the run's record, read here and not
 	// from anything the turn produces, so a model cannot name someone else.
 	// It travels in the context rather than in the Request: a turn

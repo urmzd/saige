@@ -90,7 +90,8 @@
 //
 // A turn that may park (Turn.Park) ends at a question for a person instead of
 // waiting for one: an approval of a marked tool call, or the agent's
-// ask_person tool. Result.Parked holds the question and everything a later
+// ask_person tool. A batch of tool calls parks once, on every call in it that
+// waits. Result.Parked holds the questions and everything a later
 // turn (Turn.Resume) needs to continue it with the answer, sending exactly
 // what an uninterrupted turn would have sent. A turn that may not park
 // refuses approvals instead. See park.go.

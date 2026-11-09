@@ -83,14 +83,26 @@ type Parked struct {
 	// Reason explains the park, in the words of whatever the run waits for.
 	Reason string `json:"reason,omitempty"`
 	// Question is what the run waits on a person for, when it parked on one.
+	// When it parked on several at once it is the first of Questions.
 	Question *Question `json:"question,omitempty"`
+	// Questions is every question of a park that waits on more than one at
+	// once, in the order the agent's tool calls asked them: a batch of calls
+	// that each wait parks the run once, on all of them. Each is answered on
+	// its own, and the run resumes when every one is. Empty when the run
+	// parked on one question, which is then Question alone, as a reader that
+	// knows only Question expects.
+	Questions []Question `json:"questions,omitempty"`
 }
 
 // Resumed is the body of run.resumed.v1 (was lifecycle.resumed).
 type Resumed struct {
 	Attempt int `json:"attempt,omitempty"`
 	// Answer is the answer the run resumed with, when it parked on a question.
+	// When it parked on several it is the first of Answers.
 	Answer *Answer `json:"answer,omitempty"`
+	// Answers is every answer the run resumed with, in the order of the
+	// park's Questions, when it parked on more than one. Empty otherwise.
+	Answers []Answer `json:"answers,omitempty"`
 }
 
 // Completed is the body of run.completed.v1 (was lifecycle.completed).
@@ -467,6 +479,32 @@ func renderQuestion(q *Question) string {
 	return s
 }
 
+// renderQuestions renders a park's questions: all of them when it parked on
+// several, else the one.
+func renderQuestions(q *Question, all []Question) string {
+	if len(all) == 0 {
+		return renderQuestion(q)
+	}
+	parts := make([]string, len(all))
+	for i := range all {
+		parts[i] = renderQuestion(&all[i])
+	}
+	return line(parts...)
+}
+
+// renderAnswers renders the answers a run resumed with, as renderQuestions
+// renders its questions.
+func renderAnswers(a *Answer, all []Answer) string {
+	if len(all) == 0 {
+		return renderAnswer(a)
+	}
+	parts := make([]string, len(all))
+	for i := range all {
+		parts[i] = renderAnswer(&all[i])
+	}
+	return line(parts...)
+}
+
 func renderAnswer(a *Answer) string {
 	if a == nil {
 		return ""
@@ -514,12 +552,12 @@ func init() {
 			})},
 		{Type: TypeParked, New: func() Body { return new(Parked) },
 			Render: render(func(e Envelope, b Parked) string {
-				return line("run", e.Run, "parked:", b.Reason, renderQuestion(b.Question))
+				return line("run", e.Run, "parked:", b.Reason, renderQuestions(b.Question, b.Questions))
 			})},
 		// An answer is human-authored free text.
 		{Type: TypeResumed, Sensitive: true, New: func() Body { return new(Resumed) },
 			Render: render(func(e Envelope, b Resumed) string {
-				return line("run", e.Run, fmt.Sprintf("resumed, attempt %d", b.Attempt), renderAnswer(b.Answer))
+				return line("run", e.Run, fmt.Sprintf("resumed, attempt %d", b.Attempt), renderAnswers(b.Answer, b.Answers))
 			})},
 		{Type: TypeCompleted, New: func() Body { return new(Completed) },
 			Render: render(func(_ Envelope, b Completed) string { return b.Text })},
