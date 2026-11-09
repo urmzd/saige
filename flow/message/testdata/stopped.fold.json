@@ -1,0 +1,131 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "search",
+        "input": {
+          "q": "x"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "stopped",
+          "elapsed_ms": 100
+        }
+      },
+      {
+        "type": "text",
+        "text": "Partial answer."
+      }
+    ],
+    "stop_reason": "stopped",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "search",
+        "input": {
+          "q": "x"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "stopped",
+          "elapsed_ms": 100
+        }
+      },
+      {
+        "type": "text",
+        "text": "Partial answer."
+      }
+    ],
+    "stop_reason": "stopped",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "search",
+        "input": {
+          "q": "x"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "stopped",
+          "elapsed_ms": 100
+        }
+      },
+      {
+        "type": "text",
+        "text": "Partial answer."
+      }
+    ],
+    "stop_reason": "stopped",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  }
+}

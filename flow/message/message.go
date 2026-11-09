@@ -274,17 +274,38 @@ type ModelUsage struct {
 	CostUSD float64          `json:"cost_usd"`
 }
 
-func (MessageStart) EventType() string      { return TypeMessageStart }
+// EventType implements Event.
+func (MessageStart) EventType() string { return TypeMessageStart }
+
+// EventType implements Event.
 func (ContentBlockStart) EventType() string { return TypeContentBlockStart }
+
+// EventType implements Event.
 func (ContentBlockDelta) EventType() string { return TypeContentBlockDelta }
-func (ContentBlockStop) EventType() string  { return TypeContentBlockStop }
-func (MessageDelta) EventType() string      { return TypeMessageDelta }
-func (MessageStop) EventType() string       { return TypeMessageStop }
-func (Ping) EventType() string              { return TypePing }
-func (Error) EventType() string             { return TypeError }
-func (Nested) EventType() string            { return TypeNested }
-func (ToolStatus) EventType() string        { return TypeToolStatus }
-func (Progress) EventType() string          { return TypeProgress }
+
+// EventType implements Event.
+func (ContentBlockStop) EventType() string { return TypeContentBlockStop }
+
+// EventType implements Event.
+func (MessageDelta) EventType() string { return TypeMessageDelta }
+
+// EventType implements Event.
+func (MessageStop) EventType() string { return TypeMessageStop }
+
+// EventType implements Event.
+func (Ping) EventType() string { return TypePing }
+
+// EventType implements Event.
+func (Error) EventType() string { return TypeError }
+
+// EventType implements Event.
+func (Nested) EventType() string { return TypeNested }
+
+// EventType implements Event.
+func (ToolStatus) EventType() string { return TypeToolStatus }
+
+// EventType implements Event.
+func (Progress) EventType() string { return TypeProgress }
 
 // Less is the stream's total order of envelopes: time, then run, then the
 // run's sequence.

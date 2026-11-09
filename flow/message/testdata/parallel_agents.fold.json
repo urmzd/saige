@@ -1,0 +1,531 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Asking two agents."
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "researcher",
+          "title": "Find sources"
+        },
+        "kind": "agent",
+        "title": "Find sources",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Find sources",
+          "elapsed_ms": 2000
+        },
+        "lane": {
+          "agent_run_id": "run_a",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Found one.",
+              "citations": [
+                {
+                  "type": "search_result_location",
+                  "source": "https://example.com/notes",
+                  "title": "Design notes",
+                  "cited_text": "Lanes nest under calls.",
+                  "search_result_index": 0
+                }
+              ]
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_a_1",
+              "name": "search",
+              "input": {
+                "q": "lanes"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_a_1",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_a_1"
+                ],
+                "status": "done",
+                "elapsed_ms": 300
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_a_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "3 hits"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " Done."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "writer",
+          "title": "Draft"
+        },
+        "kind": "agent",
+        "title": "Draft",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Draft",
+          "elapsed_ms": 1800
+        },
+        "lane": {
+          "agent_run_id": "run_b",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Drafting."
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_b_1",
+              "name": "lint",
+              "input": {},
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_b_1",
+                "path": [
+                  "htu_root_2",
+                  "htu_run_b_1"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_b_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "clean"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " Draft ready."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Drafting. Draft ready."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Found one. Done."
+          },
+          {
+            "type": "search_result",
+            "source": "https://example.com/notes",
+            "title": "Design notes",
+            "content": [
+              {
+                "type": "text",
+                "text": "Lanes nest under calls."
+              }
+            ],
+            "citations": {
+              "enabled": true
+            }
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Both agents answered."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 300,
+      "output_tokens": 40
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 300,
+            "output_tokens": 40
+          },
+          "claude-y": {
+            "input_tokens": 50,
+            "output_tokens": 10
+          }
+        },
+        "cost_usd": 0.0032
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Asking two agents."
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "researcher",
+          "title": "Find sources"
+        },
+        "kind": "agent",
+        "title": "Find sources",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Find sources",
+          "elapsed_ms": 2000
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "writer",
+          "title": "Draft"
+        },
+        "kind": "agent",
+        "title": "Draft",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Draft",
+          "elapsed_ms": 1800
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Drafting. Draft ready."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Found one. Done."
+          },
+          {
+            "type": "search_result",
+            "source": "https://example.com/notes",
+            "title": "Design notes",
+            "content": [
+              {
+                "type": "text",
+                "text": "Lanes nest under calls."
+              }
+            ],
+            "citations": {
+              "enabled": true
+            }
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Both agents answered."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 300,
+      "output_tokens": 40
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 300,
+            "output_tokens": 40
+          },
+          "claude-y": {
+            "input_tokens": 50,
+            "output_tokens": 10
+          }
+        },
+        "cost_usd": 0.0032
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Asking two agents."
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "researcher",
+          "title": "Find sources"
+        },
+        "kind": "agent",
+        "title": "Find sources",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Find sources",
+          "elapsed_ms": 2000
+        },
+        "lane": {
+          "agent_run_id": "run_a",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Found one.",
+              "citations": [
+                {
+                  "type": "search_result_location",
+                  "source": "https://example.com/notes",
+                  "title": "Design notes",
+                  "cited_text": "Lanes nest under calls.",
+                  "search_result_index": 0
+                }
+              ]
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_a_1",
+              "name": "search",
+              "input": {
+                "q": "lanes"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_a_1",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_a_1"
+                ],
+                "status": "done",
+                "elapsed_ms": 300
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_a_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "3 hits"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " Done."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "writer",
+          "title": "Draft"
+        },
+        "kind": "agent",
+        "title": "Draft",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Draft",
+          "elapsed_ms": 1800
+        },
+        "lane": {
+          "agent_run_id": "run_b",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Drafting."
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_b_1",
+              "name": "lint",
+              "input": {},
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_b_1",
+                "path": [
+                  "htu_root_2",
+                  "htu_run_b_1"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_b_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "clean"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " Draft ready."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Drafting. Draft ready."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Found one. Done."
+          },
+          {
+            "type": "search_result",
+            "source": "https://example.com/notes",
+            "title": "Design notes",
+            "content": [
+              {
+                "type": "text",
+                "text": "Lanes nest under calls."
+              }
+            ],
+            "citations": {
+              "enabled": true
+            }
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Both agents answered."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 300,
+      "output_tokens": 40
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 300,
+            "output_tokens": 40
+          },
+          "claude-y": {
+            "input_tokens": 50,
+            "output_tokens": 10
+          }
+        },
+        "cost_usd": 0.0032
+      }
+    },
+    "done": true
+  }
+}

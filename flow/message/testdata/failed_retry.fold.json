@@ -1,0 +1,92 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "First try."
+      },
+      {
+        "type": "text",
+        "text": "Second try."
+      }
+    ],
+    "stop_reason": "failed",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "First try."
+      },
+      {
+        "type": "text",
+        "text": "Second try."
+      }
+    ],
+    "stop_reason": "failed",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "First try."
+      },
+      {
+        "type": "text",
+        "text": "Second try."
+      }
+    ],
+    "stop_reason": "failed",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  }
+}

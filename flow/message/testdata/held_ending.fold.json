@@ -1,0 +1,287 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "scout",
+          "title": "Scout"
+        },
+        "kind": "agent",
+        "title": "Scout",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Scout",
+          "elapsed_ms": 100
+        },
+        "lane": {
+          "agent_run_id": "run_s",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Scouted."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "started"
+          }
+        ]
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "delegate_task",
+        "input": {
+          "task": "tidy"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "elapsed_ms": 100
+        },
+        "lane": {
+          "agent_run_id": "run_bg",
+          "depth": 1,
+          "content": [],
+          "done": false
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "queued"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Scout is on it."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "scout",
+          "title": "Scout"
+        },
+        "kind": "agent",
+        "title": "Scout",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Scout",
+          "elapsed_ms": 100
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "started"
+          }
+        ]
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "delegate_task",
+        "input": {
+          "task": "tidy"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "elapsed_ms": 100
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "queued"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Scout is on it."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "scout",
+          "title": "Scout"
+        },
+        "kind": "agent",
+        "title": "Scout",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Scout",
+          "elapsed_ms": 100
+        },
+        "lane": {
+          "agent_run_id": "run_s",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Scouted."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "started"
+          }
+        ]
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "delegate_task",
+        "input": {
+          "task": "tidy"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "elapsed_ms": 100
+        },
+        "lane": {
+          "agent_run_id": "run_bg",
+          "depth": 1,
+          "content": [],
+          "done": false
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "queued"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Scout is on it."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  }
+}
