@@ -43,7 +43,11 @@ func (r *Runtime) AcceptOwnChild(ctx context.Context, trigger event.Envelope, su
 	} else if !errors.Is(err, run.ErrNotFound) {
 		return Acceptance{}, err
 	}
-	acc, startErr := r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber, Parent: &ParentRef{RunID: parentRun}}, "")
+	lineage, err := childLineage(LineageFrom(ctx), held, parentRun)
+	if err != nil {
+		return Acceptance{}, err
+	}
+	acc, startErr := r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber, Parent: &ParentRef{RunID: parentRun}, Lineage: lineage}, "")
 	if acc.RunID == "" {
 		return acc, startErr
 	}

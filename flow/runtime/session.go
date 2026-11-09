@@ -45,7 +45,7 @@ func (r *Runtime) acceptSession(ctx context.Context, e event.Envelope, agent str
 	if held != rec {
 		return Acceptance{}, fmt.Errorf("%w: session identity changed", session.ErrInvalid)
 	}
-	return r.start(ctx, Input{Trigger: e, Subscriber: agent, Run: runID, Session: &held, RequireBudget: true}, "")
+	return r.start(ctx, Input{Trigger: e, Subscriber: agent, Run: runID, Session: &held, RequireBudget: true, Lineage: LineageFrom(ctx)}, "")
 }
 
 func (in Input) threadKey() thread.Key {
@@ -161,7 +161,11 @@ func (r *Runtime) acceptSessionChild(ctx context.Context, e event.Envelope, agen
 	if pin.Session == nil || rec.Key.Parent != pin.Session.ID {
 		return Acceptance{}, session.ErrDenied
 	}
-	return r.start(ctx, Input{Trigger: e, Subscriber: agent, Run: runID, Session: &rec, Parent: &ParentRef{RunID: parentRun, QuestionID: questionID}}, "")
+	lineage, err := childLineage(LineageFrom(ctx), pin, parentRun)
+	if err != nil {
+		return Acceptance{}, err
+	}
+	return r.start(ctx, Input{Trigger: e, Subscriber: agent, Run: runID, Session: &rec, Parent: &ParentRef{RunID: parentRun, QuestionID: questionID}, Lineage: lineage}, "")
 }
 
 func (r *Runtime) reserveChild(ctx context.Context, parent Input, in Input, childRun string) (session.AdmissionStore, error) {
@@ -250,7 +254,7 @@ func (r *Runtime) AcceptOwnVersion(ctx context.Context, e event.Envelope, agent,
 	if agent == "" || version == "" || event.IsControl(e.Channel) || event.Family(e.Type) == "run" {
 		return Acceptance{}, ErrInvalid
 	}
-	return r.start(ctx, Input{Trigger: e, Subscriber: agent}, version)
+	return r.start(ctx, Input{Trigger: e, Subscriber: agent, Lineage: LineageFrom(ctx)}, version)
 }
 
 // WithChildRunID names a governed child's deterministic run before admission.
