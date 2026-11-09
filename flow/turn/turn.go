@@ -92,6 +92,13 @@ type Spec struct {
 	Tools        []string `json:"tools,omitempty"`
 	Sources      []Source `json:"sources,omitempty"`
 	Access       Policy   `json:"access,omitempty"`
+	// Output, when set, constrains the agent's final answer to a JSON
+	// schema: the answer is a JSON object that matches Output.Schema. Nil
+	// means free text. An agent with tools is sent the schema only once its
+	// last reply calls none and is not already such an object; that reply
+	// was streamed too, so the answer's text is then the draft followed by
+	// the JSON.
+	Output *Output `json:"output,omitempty"`
 	// Fallbacks are the models tried, in order, when a call to the primary
 	// fails with an error another model could fix.
 	Fallbacks []ModelRef `json:"fallbacks,omitempty"`
@@ -107,6 +114,13 @@ type Spec struct {
 	Answerers    []string `json:"answerers,omitempty"`
 	// TaggedOnly runs the agent only when a message names it.
 	TaggedOnly bool `json:"tagged_only,omitempty"`
+}
+
+// Output is the shape an agent's final answer takes.
+type Output struct {
+	// Schema is the JSON Schema the answer is constrained to. Its top-level
+	// type is "object". Empty or null constrains nothing.
+	Schema json.RawMessage `json:"schema"`
 }
 
 // ModelRef names one model behind one provider.
