@@ -7,11 +7,11 @@
 {"type":"humagen.tool_status","tool_use_id":"htu_root_2","path":["htu_root_2"],"status":"running","title":"Help","elapsed_ms":0}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"message_start","message":{"id":"run_p","type":"message","role":"assistant","content":[],"humagen":{"root_run":"root","agent":"planner"}}}}
 {"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"planner: running"}
-{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Planned."}}}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_h","depth":1,"event":{"type":"message_start","message":{"id":"run_h","type":"message","role":"assistant","content":[],"humagen":{"root_run":"root","agent":"helper"}}}}
 {"type":"humagen.progress","parent_tool_use_id":"htu_root_2","text":"helper: running"}
-{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_h","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_h","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_h","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Helped."}}}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"content_block_stop","index":0}}
 {"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_p","depth":1,"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0}}}

@@ -423,3 +423,49 @@ func (n *Nested) UnmarshalJSON(b []byte) error {
 	*n = Nested{ParentToolUseID: plain.ParentToolUseID, AgentRunID: plain.AgentRunID, Depth: plain.Depth, Event: inner}
 	return nil
 }
+
+// MarshalJSON writes a block as Anthropic's API does: only the fields its
+// type has, with an empty text or thinking written out, so a client that
+// appends each delta to the field starts from "", and a tool call's input
+// written as {} until it has one.
+func (b Block) MarshalJSON() ([]byte, error) {
+	switch b.Type {
+	case BlockText:
+		return json.Marshal(struct {
+			Type      string     `json:"type"`
+			Text      string     `json:"text"`
+			Citations []Citation `json:"citations,omitempty"`
+		}{b.Type, b.Text, b.Citations})
+	case BlockThinking:
+		return json.Marshal(struct {
+			Type     string `json:"type"`
+			Thinking string `json:"thinking"`
+		}{b.Type, b.Thinking})
+	case BlockServerToolUse:
+		input := b.Input
+		if len(input) == 0 {
+			input = json.RawMessage(`{}`)
+		}
+		return json.Marshal(struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+			Kind  string          `json:"kind,omitempty"`
+			Title string          `json:"title,omitempty"`
+		}{b.Type, b.ID, b.Name, input, b.Kind, b.Title})
+	case BlockServerToolResult:
+		content := b.Content
+		if content == nil {
+			content = []ResultContent{}
+		}
+		return json.Marshal(struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   []ResultContent `json:"content"`
+			IsError   bool            `json:"is_error,omitempty"`
+		}{b.Type, b.ToolUseID, content, b.IsError})
+	}
+	type plain Block
+	return json.Marshal(plain(b))
+}

@@ -234,3 +234,23 @@ func Fold(events []Event, depth int) Message {
 	}
 	return f.Message(depth)
 }
+
+// MarshalJSON writes the block as Block does, with the call's status and
+// lane beside its fields.
+func (c Content) MarshalJSON() ([]byte, error) {
+	block, err := json.Marshal(c.Block)
+	if err != nil {
+		return nil, err
+	}
+	extra, err := json.Marshal(struct {
+		Status *ToolStatus `json:"status,omitempty"`
+		Lane   *Lane       `json:"lane,omitempty"`
+	}{c.Status, c.Lane})
+	if err != nil {
+		return nil, err
+	}
+	if string(extra) == "{}" {
+		return block, nil
+	}
+	return append(append(block[:len(block)-1:len(block)-1], ','), extra[1:]...), nil
+}
