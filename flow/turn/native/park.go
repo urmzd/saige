@@ -851,7 +851,10 @@ func (r *replayFirst) Stream(ctx context.Context, req saigetypes.Request) (<-cha
 	r.used = true
 	r.mu.Unlock()
 	if !first {
-		return r.Inner.Stream(ctx, req)
+		// Every later call is a provider request, checked as the base checks
+		// one: a response schema the provider cannot enforce is refused, not
+		// dropped.
+		return r.Base.Stream(ctx, req)
 	}
 	deltas := saigetypes.MessageDeltas(r.msg)
 	// This is a durable replay, not a provider request. Its zero receipt releases
