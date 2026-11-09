@@ -716,9 +716,11 @@ the run continues once, when the last is in, with every answer. The batch
 then runs once: each call with its own answer, and a call that waited on
 nothing runs exactly once, its result in call order. A call waits on one
 thing per park: a delegation that needs approval waits on the approval, and
-its child starts at the park after it is approved. A host's hold parks the
-batch on itself alone, and the calls' waits come after it is approved. A
-stop resolves every question of the park and stops every child.
+its child starts at the park after it is approved. A denied approval, or one
+that expires into a denial, starts nothing: the call's result is the denial.
+A host's hold parks the batch on itself alone, and the calls' waits come
+after it is approved. A stop resolves every question of the park and stops
+every child.
 
 A parked turn's record stores the transcript it continues from. A run that
 parks again stores only what its turn added since the previous park

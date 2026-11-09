@@ -20,9 +20,13 @@ import (
 	"github.com/urmzd/saige/flow/turn/native"
 )
 
-// fanout is a lead that delegates to ops three times in one message, then
-// answers with every result it was given, in the order they came.
-type fanout struct{ calls atomic.Int32 }
+// fanout is a lead that sends one batch of tool calls, then answers with
+// every result it was given, in the order they came. Its batch is three
+// delegations to ops unless it is given one.
+type fanout struct {
+	calls atomic.Int32
+	batch []saigetypes.ToolCallPart
+}
 
 func (m *fanout) Stream(_ context.Context, req saigetypes.Request) (<-chan saigetypes.Delta, error) {
 	m.calls.Add(1)
@@ -30,9 +34,14 @@ func (m *fanout) Stream(_ context.Context, req saigetypes.Request) (<-chan saige
 	if results := resultsIn(req.Messages); len(results) > 0 {
 		deltas = agenttest.TextResponse("Lead got: " + strings.Join(results, " | "))
 	} else {
-		tool := runtime.DelegateToolName("ops")
-		for i, x := range []string{"a", "b", "c"} {
-			call := saigetypes.ToolCallPart{ID: "d" + x, Name: tool, Arguments: map[string]any{"text": "deploy " + x}}
+		batch := m.batch
+		if batch == nil {
+			tool := runtime.DelegateToolName("ops")
+			for _, x := range []string{"a", "b", "c"} {
+				batch = append(batch, saigetypes.ToolCallPart{ID: "d" + x, Name: tool, Arguments: map[string]any{"text": "deploy " + x}})
+			}
+		}
+		for i, call := range batch {
 			deltas = append(deltas,
 				saigetypes.PartStart{Index: i, Kind: saigetypes.KindToolCall, ID: call.ID, Name: call.Name},
 				saigetypes.PartEnd{Index: i, Part: call})

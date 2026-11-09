@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -588,5 +589,86 @@ func TestAContinuationsToolEventsCarryTheParkedCallsArguments(t *testing.T) {
 	}
 	if done != `{"env":"staging"}` {
 		t.Errorf("the continuation's done event carries %q, want the edited arguments", done)
+	}
+}
+
+// A call that needs approval and awaits a result awaits nothing once its
+// approval is denied, or expires into a denial: the turn does not park on
+// its result, nothing it would have started starts, and its result is the
+// denial. In a batch, another call's wait proceeds and its call runs with
+// its answer.
+func TestADeniedApprovalOfAnAwaitingCallAwaitsNothing(t *testing.T) {
+	t.Parallel()
+	for _, answer := range []struct {
+		name string
+		a    event.Answer
+		says string
+	}{
+		{"denied", event.Answer{Decision: event.DecisionDeny, Note: "not this one"}, "not this one"},
+		{"expired", event.Answer{Decision: event.DecisionDeny, Expired: true, Note: "nobody answered before the question expired"}, "nobody answered"},
+	} {
+		for _, batch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s batch=%v", answer.name, batch), func(t *testing.T) {
+				t.Parallel()
+				delegate := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "delegate"}}}
+				relay := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "relay"}}}
+				calls := []saigetypes.ToolCallPart{{ID: "d1", Name: "delegate", Arguments: map[string]any{"text": "one"}}}
+				if batch {
+					calls = append(calls, saigetypes.ToolCallPart{ID: "r1", Name: "relay", Arguments: map[string]any{"text": "two"}})
+				}
+				model := &agenttest.ScriptedProvider{Responses: [][]saigetypes.Delta{toolCalls(calls...), agenttest.TextResponse("Done.")}}
+				rev := offlineRevision(1, "You delegate.")
+				rev.Spec.Tools, rev.Spec.Approvals = []string{"delegate", "relay"}, []string{"delegate"}
+				r, err := native.New(rev, native.WithTools(native.StaticTools(delegate, relay)),
+					native.WithProvider(native.ProviderOffline, func(native.Spec) (saigetypes.Provider, error) { return model, nil }))
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				run := func(turn native.Turn) native.Result {
+					t.Helper()
+					res, err := r.Run(context.Background(), turn, func(context.Context, event.Body) error { return nil })
+					if err != nil {
+						t.Fatalf("Run: %v", err)
+					}
+					return res
+				}
+
+				res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+				if res.Parked == nil {
+					t.Fatalf("the turn did not park: %+v", res)
+				}
+				var got []string
+				for _, w := range res.Parked.Waits() {
+					got = append(got, w.CallID+":"+w.Question.Kind)
+				}
+				want := []string{"d1:" + event.QuestionApproval}
+				if batch {
+					want = append(want, "r1/await:"+event.QuestionDelegation)
+				}
+				if !slices.Equal(got, want) {
+					t.Fatalf("the park waits on %v, want %v", got, want)
+				}
+
+				resume := *res.Parked
+				resume.Answers = map[string]event.Answer{"d1": answer.a}
+				if batch {
+					resume.Answers["r1/await"] = event.Answer{Text: "two done"}
+				}
+				res = run(native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &resume})
+				if res.Parked != nil {
+					t.Fatalf("the continuation parked again on %+v: a denied call awaits nothing", res.Parked.Waits())
+				}
+				if res.Text != "Done." || delegate.CallCount() != 0 {
+					t.Fatalf("the continuation gave %+v with delegate run %d times, want it finished without delegate", res, delegate.CallCount())
+				}
+				results := toolResults(model.Requests()[1].Messages)
+				if len(results) == 0 || !strings.HasPrefix(results[0], "d1=") || !strings.Contains(results[0], answer.says) {
+					t.Errorf("the model saw results %v, want d1's denial first", results)
+				}
+				if batch && (relay.CallCount() != 1 || len(results) != 2 || results[1] != "r1=two done") {
+					t.Errorf("relay ran %d times and the model saw %v, want relay's answer after the denial", relay.CallCount(), results)
+				}
+			})
+		}
 	}
 }

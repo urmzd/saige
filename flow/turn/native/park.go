@@ -55,7 +55,9 @@ import (
 // side by side instead of one after the other's answer. A call waits on at
 // most one thing per park: a call that needs both an approval and an awaited
 // result waits on the approval first, and on its result at the park that
-// follows the approval, as before.
+// follows the approval. A call whose approval is denied, or expires into a
+// denial, awaits nothing: nothing it would have started starts, and its
+// result is the denial, as for any denied call.
 //
 // # Continuing with the answer
 //
@@ -527,15 +529,20 @@ func (p *parker) holdWait(ctx context.Context, calls []saigetypes.ToolCallPart) 
 // callWaits is what each call of a batch waits on, in call order: its
 // approval or question while it has no answer, else the result it awaits
 // while that has not arrived. A call waits on one thing per park, so a
-// delegation that needs approval starts only once it is approved.
+// delegation that needs approval starts only once it is approved, and one
+// whose approval is denied starts nothing.
 func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
 	var waits []Wait
 	for _, tc := range calls {
-		if _, answered := p.answers[tc.ID]; !answered {
+		if a, answered := p.answers[tc.ID]; !answered {
 			if q, ok := p.need(tc); ok {
 				waits = append(waits, Wait{Question: q, CallID: tc.ID})
 				continue
 			}
+		} else if p.denied(tc, a) {
+			// A denied call does not run, so nothing it would have awaited
+			// is started or waited for: its result is the denial.
+			continue
 		}
 		if _, arrived := p.answers[awaitKey(tc.ID)]; !arrived {
 			if q, ok := p.await(tc); ok {
@@ -544,6 +551,17 @@ func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
 		}
 	}
 	return waits
+}
+
+// denied reports whether a call's answer refuses it: an answer to its
+// approval that is not an approval, the denial an unanswered approval
+// expires into included.
+func (p *parker) denied(tc saigetypes.ToolCallPart, a event.Answer) bool {
+	if a.Decision == event.DecisionApprove {
+		return false
+	}
+	q, ok := p.need(tc)
+	return ok && q.Kind == event.QuestionApproval
 }
 
 // need reports the question a call puts to a person, if it puts one.
