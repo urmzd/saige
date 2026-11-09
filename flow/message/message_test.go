@@ -227,6 +227,40 @@ func lineage() []event.Envelope {
 		envs
 }
 
+// batchPark: a called agent parks once on three waits, two approvals and
+// a choice, answered out of order, and one approval denied.
+func batchPark() []event.Envelope {
+	c := run{id: "run_c", agent: "ops", parentRun: rootRun, parentCall: "htu_root_1"}
+	qa := event.Question{ID: "q_a", Kind: event.QuestionApproval, Prompt: "Allow ops to call deploy?",
+		Approvers: []string{"alice"}, Tool: &event.QuestionTool{Name: "deploy", CallID: "toolu_a"}}
+	qb := event.Question{ID: "q_b", Kind: event.QuestionApproval, Prompt: "Allow ops to call migrate?",
+		Approvers: []string{"bob"}, Tool: &event.QuestionTool{Name: "migrate", CallID: "toolu_b"}}
+	qq := event.Question{ID: "q_q", Kind: event.QuestionChoice, Prompt: "Which region?",
+		Options: []string{"eu", "us"}, AskedOf: "carol"}
+	answers := []event.Answer{
+		{QuestionID: "q_q", Choice: "eu"},
+		{QuestionID: "q_b", Decision: event.DecisionApprove},
+		{QuestionID: "q_a", Decision: event.DecisionDeny},
+	}
+	return newTree().
+		on(root, event.Accepted{}, requested("toolu_1", "agent"),
+			executing("toolu_1", "agent", `{"agent":"ops","title":"Release"}`)).
+		on(c, event.Accepted{}, event.Text{Text: "Need three answers."},
+			requested("toolu_a", "deploy"), requested("toolu_b", "migrate"), requested("toolu_q", "ask_person"),
+			event.Parked{Question: &qa, Questions: []event.Question{qa, qb, qq}},
+			event.Resumed{Answer: &answers[0], Answers: answers},
+			executing("toolu_b", "migrate", `{"to":"v2"}`),
+			event.ToolDone{ID: "toolu_b", Name: "migrate", Result: "migrated"},
+			event.ToolDone{ID: "toolu_a", Name: "deploy", Error: "denied by alice"},
+			executing("toolu_q", "ask_person", `{"question":"Which region?"}`),
+			event.ToolDone{ID: "toolu_q", Name: "ask_person", Result: "eu"},
+			event.Text{Text: "Migrated in eu; the deploy was denied."},
+			event.Completed{}).
+		on(root, event.ToolDone{ID: "toolu_1", Name: "agent", Result: "Migrated in eu; the deploy was denied."},
+			event.Text{Text: "Released, without the deploy."}, event.Completed{}).
+		envs
+}
+
 type scenario struct {
 	name string
 	envs func() []event.Envelope
@@ -246,6 +280,7 @@ var scenarios = []scenario{
 	{name: "stopped", envs: stopped},
 	{name: "in_run_nested", envs: inRunNested},
 	{name: "lineage", envs: lineage},
+	{name: "batch_park", envs: batchPark},
 }
 
 func project(envs []event.Envelope, check func(int, *message.Projector, []message.Event)) []message.Event {
@@ -473,6 +508,80 @@ func TestBubble(t *testing.T) {
 	m = message.Fold(upTo, 0)
 	if s := m.Content[0].Status; s == nil || s.Question == nil || len(s.Path) != 3 {
 		t.Fatalf("a depth-0 reader does not see the grandchild's question: %+v", s)
+	}
+}
+
+// TestBatchPark: every wait of a parked batch shows on its own call, each
+// deep one also on the depth-one call, and each answer, matched by its
+// question, moves its own call on.
+func TestBatchPark(t *testing.T) {
+	stream := project(batchPark(), nil)
+	parkedAt, resumedAt := -1, -1
+	for i, e := range stream {
+		if p, ok := e.(message.Progress); ok && p.Text == "ops: awaiting approval" {
+			parkedAt = i
+		}
+		if p, ok := e.(message.Progress); ok && p.Text == "ops: running" && parkedAt >= 0 && resumedAt < 0 {
+			resumedAt = i
+		}
+	}
+	if parkedAt < 0 || resumedAt < 0 {
+		t.Fatalf("no park and resume progress (%d, %d)", parkedAt, resumedAt)
+	}
+	type status struct {
+		scope, call, status, question string
+		path                          int
+	}
+	var park, resume []status
+	for i, e := range stream {
+		scope := "root"
+		if n, ok := e.(message.Nested); ok {
+			scope, e = n.ParentToolUseID, n.Event
+		}
+		s, ok := e.(message.ToolStatus)
+		if !ok {
+			continue
+		}
+		q := ""
+		if s.Question != nil {
+			q = s.Question.ID
+		}
+		st := status{scope, s.ToolUseID, s.Status, q, len(s.Path)}
+		switch {
+		case i < parkedAt && s.Status != message.StatusQueued && s.Status != message.StatusRunning:
+			park = append(park, st)
+		case i > parkedAt && i < resumedAt:
+			resume = append(resume, st)
+		}
+	}
+	wantPark := []status{
+		{"root", "htu_root_1", message.StatusAwaitingInput, "q_q", 1},
+		{"htu_root_1", "htu_run_c_1", message.StatusAwaitingApproval, "q_a", 2},
+		{"root", "htu_root_1", message.StatusAwaitingApproval, "q_a", 2},
+		{"htu_root_1", "htu_run_c_2", message.StatusAwaitingApproval, "q_b", 2},
+		{"root", "htu_root_1", message.StatusAwaitingApproval, "q_b", 2},
+	}
+	wantResume := []status{
+		{"root", "htu_root_1", message.StatusRunning, "", 1},
+		{"htu_root_1", "htu_run_c_1", message.StatusDenied, "", 2},
+		{"htu_root_1", "htu_run_c_2", message.StatusRunning, "", 2},
+	}
+	if !reflect.DeepEqual(park, wantPark) {
+		t.Errorf("park statuses:\n got %+v\nwant %+v", park, wantPark)
+	}
+	if !reflect.DeepEqual(resume, wantResume) {
+		t.Errorf("resume statuses:\n got %+v\nwant %+v", resume, wantResume)
+	}
+	m := message.Fold(stream, 1)
+	byID := map[string]string{}
+	for _, c := range m.Content[0].Lane.Content {
+		if c.Status != nil {
+			byID[c.ID] = c.Status.Status
+		}
+	}
+	want := map[string]string{"htu_run_c_1": message.StatusDenied, "htu_run_c_2": message.StatusDone, "htu_run_c_3": message.StatusDone}
+	if !reflect.DeepEqual(byID, want) {
+		t.Errorf("folded lane statuses = %v, want %v", byID, want)
 	}
 }
 

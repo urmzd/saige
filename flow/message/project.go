@@ -164,7 +164,8 @@ type runState struct {
 	nested map[string]*lane
 	inner  []*lane
 	ended  bool
-	parked *parking
+	// parked are the waits the run is parked on, one per question.
+	parked []parking
 	usage  ownTally
 }
 
@@ -211,16 +212,23 @@ type call struct {
 	executed bool
 	execAt   time.Time
 	status   string
-	// bubbled is the deeper call whose status a depth-one call shows.
-	bubbled *call
+	// question is what the call waits on while it awaits a person.
+	question *Question
+	// bubbles are the deeper calls, waiting on a person or failed, whose
+	// status a depth-one call shows: the last one is shown.
+	bubbles []*call
 	lanes   []*lane
 }
 
-// parking is the question a run waits on.
+// parking is one question a run waits on.
 type parking struct {
-	call *call
-	lane *lane
-	kind string
+	call     *call
+	lane     *lane
+	kind     string
+	status   string
+	question *event.Question
+	// at is the question's place in the park, which is the answer's.
+	at int
 }
 
 // ending is the root's end as it arrived.
@@ -390,9 +398,9 @@ func (p *Projector) apply(r *runState, e event.Envelope) {
 	case event.ToolDone:
 		p.toolDone(r, b, e.Time)
 	case event.Parked:
-		p.park(r, b.Question, e.Time)
+		p.park(r, b, e.Time)
 	case event.Resumed:
-		p.resume(r, b.Answer, e.Time)
+		p.resume(r, b, e.Time)
 	case event.Completed:
 		p.end(r, StopEndTurn, b.Text, b.Usage, e.Time)
 	case event.Failed:
@@ -593,48 +601,117 @@ func (p *Projector) searchResults(c *call) []ResultContent {
 	return out
 }
 
-func (p *Projector) park(r *runState, q *event.Question, at time.Time) {
+// park reports each question run r parked on on the call it is about: the
+// call it names, else the call that started the child run it names, else
+// the call that started r. A wait on a child run is not a person's and
+// shows nothing: the child's own lane does. Waits on the call that started
+// r are reported first, so a depth-one call goes on showing the waits of
+// the calls below it.
+func (p *Projector) park(r *runState, b event.Parked, at time.Time) {
 	p.start(r.own)
 	p.closeAll(r)
-	if q == nil || q.Kind == event.QuestionDelegation {
-		return
+	qs := b.Questions
+	if len(qs) == 0 && b.Question != nil {
+		qs = []event.Question{*b.Question}
 	}
-	status, state := StatusAwaitingInput, "awaiting input"
-	if q.Kind == event.QuestionApproval || q.Kind == event.QuestionHold {
-		status, state = StatusAwaitingApproval, "awaiting approval"
+	r.parked = nil
+	for i := range qs {
+		q := &qs[i]
+		if q.Kind == event.QuestionDelegation {
+			continue
+		}
+		w := parking{lane: r.own, kind: q.Kind, status: StatusAwaitingInput, question: q, at: i}
+		if q.Kind == event.QuestionApproval || q.Kind == event.QuestionHold {
+			w.status = StatusAwaitingApproval
+		}
+		switch w.call = p.questionCall(r, q); {
+		case w.call == nil:
+			w.call = r.own.parent
+		case w.call.lane.run == r:
+			w.lane = w.call.lane
+		}
+		r.parked = append(r.parked, w)
 	}
-	var c *call
-	if q.Tool != nil && q.Tool.CallID != "" {
-		c = p.findCall(r, q.Tool.CallID)
+	slices.SortStableFunc(r.parked, func(a, b parking) int { return b.above(r) - a.above(r) })
+	var lanes []*lane
+	approval := map[*lane]bool{}
+	for _, w := range r.parked {
+		if w.call != nil {
+			p.setStatus(w.call, w.status, question(w.question), at)
+		}
+		if !slices.Contains(lanes, w.lane) {
+			lanes = append(lanes, w.lane)
+		}
+		approval[w.lane] = approval[w.lane] || w.status == StatusAwaitingApproval
 	}
-	l := r.own
-	switch {
-	case c == nil:
-		c = r.own.parent
-	case c.lane.run == r:
-		l = c.lane
+	for _, l := range lanes {
+		state := "awaiting input"
+		if approval[l] {
+			state = "awaiting approval"
+		}
+		p.progress(l, state)
 	}
-	r.parked = &parking{call: c, lane: l, kind: q.Kind}
-	if c != nil {
-		p.setStatus(c, status, question(q), at)
-	}
-	p.progress(l, state)
 }
 
-func (p *Projector) resume(r *runState, a *event.Answer, at time.Time) {
-	pk := r.parked
-	r.parked = nil
-	if pk == nil {
-		return
+// above is 1 for a wait shown on the call that started run r, else 0.
+func (w parking) above(r *runState) int {
+	if w.call != nil && w.call.lane.run != r {
+		return 1
 	}
-	if c := pk.call; c != nil && !c.done {
-		status := StatusRunning
-		if a != nil && a.Decision == event.DecisionDeny && pk.kind == event.QuestionApproval {
-			status, c.denied = StatusDenied, true
+	return 0
+}
+
+// questionCall is the call a question of run r is about, if it names one.
+func (p *Projector) questionCall(r *runState, q *event.Question) *call {
+	if q.Tool != nil && q.Tool.CallID != "" {
+		if c := p.findCall(r, q.Tool.CallID); c != nil {
+			return c
 		}
-		p.setStatus(c, status, nil, at)
 	}
-	p.progress(pk.lane, "running")
+	if child := p.runs[q.ChildRunID]; q.ChildRunID != "" && child != nil && child.own.parent != nil {
+		return child.own.parent
+	}
+	return nil
+}
+
+// resume moves each call run r waited on along with its answer: denied for
+// an approval denied, else running.
+func (p *Projector) resume(r *runState, b event.Resumed, at time.Time) {
+	waits := r.parked
+	r.parked = nil
+	answers := b.Answers
+	if len(answers) == 0 && b.Answer != nil {
+		answers = []event.Answer{*b.Answer}
+	}
+	var lanes []*lane
+	for _, w := range waits {
+		if c := w.call; c != nil && !c.done {
+			status := StatusRunning
+			if a := answerFor(answers, w.question.ID, w.at); a != nil && a.Decision == event.DecisionDeny && w.kind == event.QuestionApproval {
+				status, c.denied = StatusDenied, true
+			}
+			p.setStatus(c, status, nil, at)
+		}
+		if !slices.Contains(lanes, w.lane) {
+			lanes = append(lanes, w.lane)
+		}
+	}
+	for _, l := range lanes {
+		p.progress(l, "running")
+	}
+}
+
+// answerFor is the answer to question id, else the i-th answer.
+func answerFor(answers []event.Answer, id string, i int) *event.Answer {
+	for j := range answers {
+		if id != "" && answers[j].QuestionID == id {
+			return &answers[j]
+		}
+	}
+	if i < len(answers) && (id == "" || answers[i].QuestionID == "") {
+		return &answers[i]
+	}
+	return nil
 }
 
 // end ends run r: its lanes' messages, and at the root the response, once
@@ -729,28 +806,37 @@ func (p *Projector) setStatus(c *call, status string, q *Question, at time.Time)
 	if c.status == status && q == nil {
 		return
 	}
-	c.status, c.bubbled = status, nil
-	ts := ToolStatus{ToolUseID: c.id, Path: slices.Clone(c.path), Status: status, Title: c.title, Question: q, ElapsedMs: elapsed(c, at)}
-	p.emit(c.lane, ts)
+	c.status, c.question, c.bubbles = status, q, nil
+	p.emit(c.lane, ToolStatus{ToolUseID: c.id, Path: slices.Clone(c.path), Status: status, Title: c.title, Question: q, ElapsedMs: elapsed(c, at)})
 	if c.lane.depth < 1 || len(c.path) < 2 {
 		return
 	}
 	top := p.byID[c.path[0]]
-	switch status {
-	case StatusAwaitingApproval, StatusAwaitingInput, StatusError:
-		ts.ToolUseID, ts.Path, ts.ElapsedMs = c.path[0], slices.Clone(c.path), elapsed(top, at)
-		p.out = append(p.out, ts)
-		if top != nil {
-			top.bubbled = c
+	bubbles := status == StatusAwaitingApproval || status == StatusAwaitingInput || status == StatusError
+	if top == nil {
+		if bubbles {
+			p.out = append(p.out, ToolStatus{ToolUseID: c.path[0], Path: slices.Clone(c.path), Status: status, Title: c.title, Question: q})
 		}
-	default:
-		if top != nil && top.bubbled == c {
-			top.bubbled = nil
-			own := firstOf(top.status, StatusRunning)
-			p.out = append(p.out, ToolStatus{ToolUseID: top.id, Path: slices.Clone(top.path), Status: own,
-				Title: top.title, ElapsedMs: elapsed(top, at)})
-		}
+		return
 	}
+	shown := len(top.bubbles) > 0 && top.bubbles[len(top.bubbles)-1] == c
+	top.bubbles = slices.DeleteFunc(top.bubbles, func(b *call) bool { return b == c })
+	switch {
+	case bubbles:
+		top.bubbles = append(top.bubbles, c)
+		p.out = append(p.out, p.bubble(top, c, at))
+	case !shown:
+	case len(top.bubbles) > 0:
+		p.out = append(p.out, p.bubble(top, top.bubbles[len(top.bubbles)-1], at))
+	default:
+		p.out = append(p.out, ToolStatus{ToolUseID: top.id, Path: slices.Clone(top.path), Status: firstOf(top.status, StatusRunning),
+			Title: top.title, Question: top.question, ElapsedMs: elapsed(top, at)})
+	}
+}
+
+// bubble is deep call c's status as depth-one call top shows it.
+func (p *Projector) bubble(top, c *call, at time.Time) ToolStatus {
+	return ToolStatus{ToolUseID: top.id, Path: slices.Clone(c.path), Status: c.status, Title: c.title, Question: c.question, ElapsedMs: elapsed(top, at)}
 }
 
 // progress reports lane l's state when it changes.
