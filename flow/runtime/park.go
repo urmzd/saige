@@ -1079,7 +1079,7 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 	if q.Tool.Name == "session_call" {
 		target = args.Agent
 	}
-	in, err := childInput(parent, target, args.Text, q.ID)
+	in, err := childInput(parent, target, args.Text, q.ID, q.Tool.CallID)
 	if err != nil {
 		return "", durable.NonRetryable(err)
 	}
@@ -1149,7 +1149,9 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 		if in.Session == nil {
 			return "", durable.NonRetryable(fmt.Errorf("%w: governed child calls need a session store", ErrInvalid))
 		}
-		id, err := r.childStarter(ctx, parent, call)
+		// The host admits the child with this context, so the child is
+		// stamped as the call it is unless the host says otherwise.
+		id, err := r.childStarter(WithLineage(ctx, in.Lineage), parent, call)
 		return finish(id, err)
 	}
 	if err := r.reserveChildBudget(ctx, parent, &in); err != nil {
@@ -1187,8 +1189,10 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 // Its id is derived from the parent and the wait, so a retried start joins
 // the run the first one started, and its source is not an address, so the
 // child has no surface and a thread of its own. It publishes on
-// delegation://<tenant>/delegation, where no surface renders it.
-func childInput(parent Input, target, text, questionID string) (Input, error) {
+// delegation://<tenant>/delegation, where no surface renders it. Its lineage
+// is the parent's tree, called through callID: the tool call the parent's
+// model made, by the id the parent's run.delta.tool.call events carry.
+func childInput(parent Input, target, text, questionID, callID string) (Input, error) {
 	if target == "" {
 		return Input{}, fmt.Errorf("%w: delegation names no agent", ErrInvalid)
 	}
@@ -1213,7 +1217,11 @@ func childInput(parent Input, target, text, questionID string) (Input, error) {
 		Tenant:  tenant,
 		Data:    body,
 	}
-	return Input{Trigger: trigger, Subscriber: target, Parent: &ParentRef{RunID: parentID, QuestionID: questionID}}, nil
+	return Input{
+		Trigger: trigger, Subscriber: target,
+		Parent:  &ParentRef{RunID: parentID, QuestionID: questionID},
+		Lineage: parent.Lineage.Child(parentID, callID),
+	}, nil
 }
 
 // childEnded answers a delegation from its child run's record, once the

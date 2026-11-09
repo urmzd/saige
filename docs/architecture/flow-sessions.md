@@ -47,6 +47,25 @@ the starter must return that ID. Recovery preserves accepted work and fences
 abandoned admission with a failed ledger record before releasing the slot.
 `WithSessionRuntime` must also be set on a host-created sandbox.
 
+## Lineage
+
+Every event of a run carries its lineage: `Root`, `ParentRun` and
+`ParentToolCall`. A root run is its own root and names no parent. A host sets a
+child's lineage with `runtime.WithLineage` on the context it accepts the child
+with. `AcceptOwnChild` and the session child admissions take the root and
+parent from the durable parent, so the host passes only the call id. A
+delegation flow starts itself is called through the parent's tool call, by
+the id the parent's `run.delta.tool.call` events carry. A `ChildStarter`
+receives that lineage on its context. A turn reads its own from
+`Request.Lineage` and passes `Lineage.Child(RunID, call)` to a run it starts.
+The lineage is fixed in the durable input, so a retry, replay or resume
+stamps the same values. A run without lineage stores none.
+
+An accept fails with `ErrInvalid` when a call names no parent run, a parent
+run has no root, a run that no run called names another root, a run is its
+own parent or the called root of its tree, or a child admission names a
+parent or root other than the durable parent's.
+
 ## Storage and roles
 
 `runtime.WithSessions` takes the store: `session.NewMemory`, or
