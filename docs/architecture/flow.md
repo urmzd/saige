@@ -855,10 +855,13 @@ Verified against the code, and honest.
   The run queue flow builds on Postgres has no `DeltaLog`, so durable's
   per-run delta journal is not written; the bus carries every event.
 - **sandbox's queue is at-most-once** in beta. Durability comes from durable.
-- **Citations are derived from retrieval.** Citations are extracted from RAG
-  `AssembledContext` blocks and emitted as flow's own `run.delta.citation.v1`
-  events. saige's `CitationDelta`, which reports what a model or tool cited, is
-  not translated into events yet.
+- **Citations come from retrieval and from tools, not from the model.**
+  Retrieved passages are extracted from RAG `AssembledContext` blocks and
+  emitted as `run.delta.citation.v1` events before the agent starts. Sources a
+  tool attributes its result to (saige's `CitationDelta`) follow, labelled
+  with the citing agent's own markers; one that repeats a citation already
+  published under the same marker and source is dropped. Citations a model
+  produces itself (provider-native search) are not translated.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover

@@ -16,10 +16,12 @@
 //
 // # Citations
 //
-// Citations are derived from retrieval (see Retriever and Citations), which
-// makes them honest: they report the passages the turn was given, not the ones
-// a model claims to have used. saige's CitationDelta, which reports what a
-// model or tool cited, is not translated.
+// A turn's citations come from two places. Its retrieved passages are
+// published first (see Retriever and Citations), which makes them honest: they
+// report the passages the turn was given, not the ones a model claims to have
+// used. The sources a tool attributes its result to follow as the tools run,
+// from saige's CitationDelta, at any depth. A tool's citation that repeats one
+// already published is dropped (see Translator.Delta).
 //
 // # Context layout
 //
@@ -715,6 +717,11 @@ func (r *Runner) Run(ctx context.Context, t Turn, emit func(context.Context, eve
 	}
 
 	prompt := t.Text
+	// retrieved are the citations published from retrieval, which the
+	// translator must not publish again. A continuation retrieves nothing,
+	// so it cannot tell a tool's citation that repeats one the parked turn
+	// published, and publishes it.
+	var retrieved []event.Body
 	if t.Resume != nil {
 		// A continuation sends the request the parked turn sent, retrieved
 		// passages and all, and does not retrieve again: its citations were
@@ -725,13 +732,13 @@ func (r *Runner) Run(ctx context.Context, t Turn, emit func(context.Context, eve
 		if err != nil {
 			return res, fmt.Errorf("native: agent %q version %s: retrieve: %w", r.rev.Spec.Name, r.rev.Version, err)
 		}
-		cites := Citations(ac)
-		for _, c := range cites {
+		retrieved = Citations(ac)
+		for _, c := range retrieved {
 			if err := send(c); err != nil {
 				return res, err
 			}
 		}
-		res.Citations = len(cites)
+		res.Citations = len(retrieved)
 		if ac != nil && ac.Prompt != "" {
 			prompt = ac.Prompt + "\n\n" + prompt
 		}
@@ -814,6 +821,7 @@ func (r *Runner) Run(ctx context.Context, t Turn, emit func(context.Context, eve
 	// The translator's hook goes last, so the arguments it records are the
 	// ones every other hook has finished with: what the tool runs with.
 	translator := newTranslator(r.toolArgs)
+	translator.published(retrieved)
 	if pending != nil {
 		// A continuation's first call is answered with the recorded message
 		// and its deltas are dropped (see replaying), so the translator is

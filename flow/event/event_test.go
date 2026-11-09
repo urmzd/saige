@@ -58,6 +58,8 @@ func samples() []event.Body {
 		event.ToolCall{ID: "c1", Name: "search", Phase: event.PhaseExecuting, Arguments: json.RawMessage(`{"q":"fiber"}`)},
 		event.ToolDone{ID: "c1", Name: "search", Result: "3 hits", Arguments: json.RawMessage(`{"q":"fiber"}`)},
 		event.Citation{Label: "[1]", Text: "quoted", Source: event.Provenance{DocumentTitle: "Handbook", SourceURI: "https://example.com/h"}, Index: 0},
+		event.ToolMarker{ID: "c2", Name: "deploy", Markers: []event.Marker{{Kind: "human_approval", Message: "Deploys need sign-off"}},
+			Interrupt: &event.MarkerInterrupt{ID: "i1", Kind: "approval", ExpiresAt: at.Add(time.Hour)}, Parent: []string{"c1"}},
 		event.Action{Name: "jira_transition", Target: "jira://acme/PROJ-7", Summary: "moved to Done", Address: "jira://acme/PROJ-7", Data: json.RawMessage(`{"status":"Done"}`)},
 		event.UsageCall{AccountingID: "r1/a1/1", Agent: "helper", Model: "m", Requests: 1, PromptTokens: 900, CompletionTokens: 120, Cost: cost, ContextWindow: 200000},
 		event.UsageChild{AccountingID: "run:r2", RunID: "r2", Agent: "deployer", Depth: 1, Usage: usage},

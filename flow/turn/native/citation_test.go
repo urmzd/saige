@@ -1,9 +1,12 @@
 package native_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/urmzd/saige/agent/agenttest"
+	saigetypes "github.com/urmzd/saige/agent/types"
 	ragtypes "github.com/urmzd/saige/rag/types"
 
 	"github.com/urmzd/saige/flow/event"
@@ -123,4 +126,68 @@ func decodeCitation(t *testing.T, c event.Body) event.Citation {
 		t.Fatalf("decode citation: %v", err)
 	}
 	return out
+}
+
+// citingTool attributes its result to the sources it was made with.
+type citingTool struct{ cites []saigetypes.Citation }
+
+func (citingTool) Definition() saigetypes.ToolDef {
+	return saigetypes.ToolDef{Name: "search", Parameters: saigetypes.ParameterSchema{Type: "object"}}
+}
+
+func (citingTool) Execute(context.Context, map[string]any) (string, error) { return "found", nil }
+
+func (c citingTool) ExecuteRich(context.Context, map[string]any) (saigetypes.ToolResult, error) {
+	return saigetypes.ToolResult{Parts: []saigetypes.ToolOutputPart{saigetypes.Text("found")}, Citations: c.cites}, nil
+}
+
+// A tool can cite a source the turn's retrieval already published. When it
+// cites it under the same marker, the retrieved citation stands and the
+// tool's is not published again; a source retrieval did not give the turn is
+// published, with the call that cited it.
+func TestAToolsCitationOfARetrievedSourceIsNotPublishedTwice(t *testing.T) {
+	t.Parallel()
+
+	const runbook = "https://example.test/runbook"
+	rev := offlineRevision(1, "answer from the runbook")
+	rev.Spec.Sources = []native.Source{{Name: "runbook", URI: "file://runbook.md"}}
+	rev.Spec.Tools = []string{"search"}
+	r, err := native.New(rev,
+		native.WithTools(native.StaticTools(citingTool{cites: []saigetypes.Citation{
+			saigetypes.NewCitation(saigetypes.CitationRetrieval, runbook, "Runbook"),
+			saigetypes.NewCitation(saigetypes.CitationWeb, "https://example.test/blog", "Blog"),
+		}})),
+		native.WithRetriever(retrieverFunc(func(context.Context, string) (*ragtypes.AssembledContext, error) {
+			return &ragtypes.AssembledContext{
+				Prompt: "Context: deploys run on merge to main.",
+				Blocks: []ragtypes.ContextBlock{{
+					Text: "deploys run on merge to main", Citation: "[1]",
+					Provenance: ragtypes.Provenance{DocumentTitle: "Runbook", SourceURI: runbook},
+				}},
+			}, nil
+		})),
+		native.WithScript(
+			agenttest.ToolCallResponse("c1", "search", map[string]any{}),
+			agenttest.TextResponse("deploys happen on merge [1], says the blog [2]"),
+		))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, _ := collect(t, r, native.Turn{Text: "when do deploys happen?"})
+
+	var cites []event.Citation
+	for _, b := range got {
+		if b.Type() == event.TypeCitation {
+			cites = append(cites, decodeCitation(t, b))
+		}
+	}
+	if len(cites) != 2 {
+		t.Fatalf("got %d citations (%+v), want the retrieved one and the blog", len(cites), cites)
+	}
+	if c := cites[0]; c.Label != "[1]" || c.Source.SourceURI != runbook || c.ToolCallID != "" || c.Text != "deploys run on merge to main" {
+		t.Errorf("first citation is %+v, want the retrieved passage", c)
+	}
+	if c := cites[1]; c.Label != "[2]" || c.Source.SourceURI != "https://example.test/blog" || c.ToolCallID != "c1" {
+		t.Errorf("second citation is %+v, want the blog as [2] from c1", c)
+	}
 }
