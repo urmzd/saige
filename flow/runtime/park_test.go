@@ -635,6 +635,11 @@ func TestReplayingAParkedThenResumedRunIsDeterministic(t *testing.T) {
 	}
 	if parked := lifecycleOf(t, p.bus.of(runID), event.TypeParked); len(parked) != 1 {
 		t.Errorf("the question was announced %d times, want once", len(parked))
+	} else if parked[0].Question == nil || parked[0].Question.ID != q.ID || parked[0].Questions != nil || parked[0].Reason != "waiting on a person" {
+		t.Errorf("a single question was announced as %+v, want it alone, as before batches", parked[0])
+	}
+	if resumed := lifecycleOf(t, p.bus.of(runID), event.TypeResumed); len(resumed) == 0 || resumed[0].Answer == nil || resumed[0].Answers != nil {
+		t.Errorf("a single answer resumed the run as %+v, want it alone", resumed)
 	}
 	_, records, err := w.ledger.Load(context.Background(), runID)
 	if err != nil {

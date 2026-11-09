@@ -187,9 +187,9 @@ type turn struct {
 	// childUsage checks and reads a child run a Delegator reports, from the
 	// runtime executing the turn. Nil when the runtime offered none.
 	childUsage func(context.Context, string) (event.UsageChild, error)
-	// childQuestion checks and reads a child run a Delegator watches for
+	// childQuestions checks and reads a child run a Delegator watches for
 	// questions (WatchChildQuestions). Nil when the runtime offered none.
-	childQuestion func(context.Context, string) (event.ChildParked, bool, bool, error)
+	childQuestions func(context.Context, string) ([]event.ChildParked, bool, error)
 	// actor is who the turn acts for, from the context the runtime executed
 	// it under: the actor on the run's durable record, or a delegated
 	// sub-task's parent's. The task never carries it, so nothing the task
@@ -449,9 +449,9 @@ func (s *Sandbox) execute(ctx context.Context, req Request, emit func(context.Co
 	// type: the channel holds the request until the turn reads it, so a
 	// request that arrives before the task has been picked up is not lost to
 	// timing.
-	childQuestion, _ := ctx.Value(childQuestionKey{}).(func(context.Context, string) (event.ChildParked, bool, bool, error))
+	childQuestions, _ := ctx.Value(childQuestionKey{}).(func(context.Context, string) ([]event.ChildParked, bool, error))
 	actor, _ := event.ActorFrom(ctx)
-	if err := s.attach(req.RunID, &turn{sink: sink, stop: StopSignal(ctx), compact: CompactSignal(ctx), holds: turnrt.HoldsFrom(ctx), abort: make(chan struct{}), childUsage: childUsageOf(ctx), childQuestion: childQuestion, actor: actor}); err != nil {
+	if err := s.attach(req.RunID, &turn{sink: sink, stop: StopSignal(ctx), compact: CompactSignal(ctx), holds: turnrt.HoldsFrom(ctx), abort: make(chan struct{}), childUsage: childUsageOf(ctx), childQuestions: childQuestions, actor: actor}); err != nil {
 		return Outcome{}, err
 	}
 	// Detaching aborts the task if it is still running, which it is on every
@@ -1283,10 +1283,10 @@ func (s *Sandbox) hostCallContext(ctx context.Context, parent Request, send func
 	})
 	dctx = context.WithValue(dctx, childQuestionKey{}, func(ctx context.Context, runID string) error {
 		t := s.turn(parent.RunID)
-		if t == nil || t.childQuestion == nil {
+		if t == nil || t.childQuestions == nil {
 			return fmt.Errorf("%w: this runtime cannot vouch for child runs", ErrNotAChild)
 		}
-		return watchChild(ctx, t.childQuestion, runID, func(cq event.ChildParked) error {
+		return watchChild(ctx, t.childQuestions, runID, func(cq event.ChildParked) error {
 			return send(cq)
 		})
 	})

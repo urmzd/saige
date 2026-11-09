@@ -45,6 +45,18 @@ import (
 // question, the model's message (Parked.Pending), and the conversation up to
 // it (Parked.Transcript), exactly as saige holds them.
 //
+// # One park for the whole batch
+//
+// The turn parks at the level of the batch, not of the call. Every call of
+// the message that waits and has no answer yet is a wait of the park
+// (Parked.Batch, in call order): an approval, an ask_person question, a call
+// to an Awaiting tool. So a message that delegates to three agents parks
+// once, holding all three waits, and the runtime starts the three child runs
+// side by side instead of one after the other's answer. A call waits on at
+// most one thing per park: a call that needs both an approval and an awaited
+// result waits on the approval first, and on its result at the park that
+// follows the approval, as before.
+//
 // # Continuing with the answer
 //
 // The continuation is a turn with Turn.Resume. Its input is the same
@@ -58,8 +70,11 @@ import (
 // The recorded call's deltas and usage are not published again: they were the
 // parked turn's, and that turn already published and counted them.
 //
-// A batch with two questions parks twice, once per question, and the second
-// continuation carries both answers.
+// A batch with several waits is continued once, when every wait has its
+// answer: the continuation carries them all, and the batch runs once, each
+// call with its own answer, the calls that never waited included. A call
+// that did not wait has not run before then, so it runs exactly once, and
+// its result takes its place in call order like any other.
 //
 // # Holding a turn for the host
 //
@@ -91,7 +106,8 @@ const MaxOptions = 32
 // Parked is a turn that ended at a question. It is everything a later turn
 // needs to continue it.
 type Parked struct {
-	// Question is what the turn is waiting on a person for.
+	// Question is what the turn is waiting on a person for: the first wait
+	// of its batch.
 	Question event.Question `json:"question"`
 	// Prompt is the request the turn sent, exactly: a continuation sends it
 	// again rather than rendering or retrieving anew.
@@ -100,6 +116,11 @@ type Parked struct {
 	// question is about, or, for a delegation's result, the call's id with
 	// "/await" after it.
 	CallID string `json:"call_id"`
+	// Batch is every wait of the batch, in call order, Question and CallID
+	// first, when the batch waits on more than one thing. Empty when it
+	// waits on one, which keeps a single wait's record as it always was.
+	// Waits reads either form.
+	Batch []Wait `json:"batch,omitempty"`
 	// Since is set by a runtime that stores a parked turn's record as the
 	// part of the transcript after the first Since messages of the previous
 	// park's: Transcript is then only what the turn added. A continuation
@@ -118,6 +139,21 @@ type Parked struct {
 	// Answers are the answers the pending batch already has, by tool call
 	// id: earlier questions about the same message.
 	Answers map[string]event.Answer `json:"answers,omitempty"`
+}
+
+// Wait is one thing a parked batch waits on: a question, and where its
+// answer goes among Parked.Answers.
+type Wait struct {
+	Question event.Question `json:"question"`
+	CallID   string         `json:"call_id"`
+}
+
+// Waits returns every wait of the parked batch, in call order.
+func (p Parked) Waits() []Wait {
+	if len(p.Batch) > 0 {
+		return p.Batch
+	}
+	return []Wait{{Question: p.Question, CallID: p.CallID}}
 }
 
 // parkedReason is what the hooks that end a turn at its question tell saige.
@@ -406,12 +442,11 @@ type parker struct {
 	answers map[string]event.Answer
 	held    turn.Holds
 
-	mu       sync.Mutex
-	parking  bool
-	question *event.Question
-	callID   string
-	pending  *saigetypes.AssistantMessage
-	batch    map[string]bool
+	mu      sync.Mutex
+	parking bool
+	waits   []Wait
+	pending *saigetypes.AssistantMessage
+	batch   map[string]bool
 }
 
 func (p *parker) hooks() saige.Hooks {
@@ -440,8 +475,8 @@ func (p *parker) hooks() saige.Hooks {
 }
 
 // afterModel looks at a message the model just sent, before any of its tool
-// calls run. A call that needs a person and has no answer parks the whole
-// batch, on the first such call.
+// calls run. Every call that needs a person or awaits a result and has no
+// answer is a wait, and any wait parks the whole batch, once, on all of them.
 func (p *parker) afterModel(ctx context.Context, msg saigetypes.AssistantMessage) {
 	if !p.enabled {
 		return
@@ -452,38 +487,11 @@ func (p *parker) afterModel(ctx context.Context, msg saigetypes.AssistantMessage
 			calls = append(calls, tc)
 		}
 	}
-	var q *event.Question
-	var callID string
-	// A host's hold comes first: nothing in the batch runs until it is
-	// settled, the calls that need a person included.
-	if len(calls) > 0 && p.held != nil {
-		for _, h := range p.held(ctx) {
-			if _, settled := p.answers[holdKey(h.ID)]; settled || strings.TrimSpace(h.ID) == "" {
-				continue
-			}
-			built := p.hold(h)
-			q, callID = &built, holdKey(h.ID)
-			break
-		}
+	waits := p.holdWait(ctx, calls)
+	if len(waits) == 0 {
+		waits = p.callWaits(calls)
 	}
-	for _, tc := range calls {
-		if q != nil {
-			break
-		}
-		if _, answered := p.answers[tc.ID]; !answered {
-			if built, ok := p.need(tc); ok {
-				q, callID = &built, tc.ID
-				break
-			}
-		}
-		if _, arrived := p.answers[awaitKey(tc.ID)]; !arrived {
-			if built, ok := p.await(tc); ok {
-				q, callID = &built, awaitKey(tc.ID)
-				break
-			}
-		}
-	}
-	if q == nil {
+	if len(waits) == 0 {
 		return
 	}
 	batch := make(map[string]bool, len(calls))
@@ -495,9 +503,47 @@ func (p *parker) afterModel(ctx context.Context, msg saigetypes.AssistantMessage
 	if p.parking {
 		return
 	}
-	p.parking, p.question, p.callID, p.batch = true, q, callID, batch
+	p.parking, p.waits, p.batch = true, waits, batch
 	pending := msg
 	p.pending = &pending
+}
+
+// holdWait is the wait a host's hold puts on a batch: the oldest hold its
+// answers do not settle, alone. A hold comes first: nothing in the batch
+// runs, and nothing it waits on starts, until the hold is settled.
+func (p *parker) holdWait(ctx context.Context, calls []saigetypes.ToolCallPart) []Wait {
+	if len(calls) == 0 || p.held == nil {
+		return nil
+	}
+	for _, h := range p.held(ctx) {
+		if _, settled := p.answers[holdKey(h.ID)]; settled || strings.TrimSpace(h.ID) == "" {
+			continue
+		}
+		return []Wait{{Question: p.hold(h), CallID: holdKey(h.ID)}}
+	}
+	return nil
+}
+
+// callWaits is what each call of a batch waits on, in call order: its
+// approval or question while it has no answer, else the result it awaits
+// while that has not arrived. A call waits on one thing per park, so a
+// delegation that needs approval starts only once it is approved.
+func (p *parker) callWaits(calls []saigetypes.ToolCallPart) []Wait {
+	var waits []Wait
+	for _, tc := range calls {
+		if _, answered := p.answers[tc.ID]; !answered {
+			if q, ok := p.need(tc); ok {
+				waits = append(waits, Wait{Question: q, CallID: tc.ID})
+				continue
+			}
+		}
+		if _, arrived := p.answers[awaitKey(tc.ID)]; !arrived {
+			if q, ok := p.await(tc); ok {
+				waits = append(waits, Wait{Question: q, CallID: awaitKey(tc.ID)})
+			}
+		}
+	}
+	return waits
 }
 
 // need reports the question a call puts to a person, if it puts one.
@@ -691,7 +737,7 @@ func resolution(a event.Answer) (saige.Resolution, error) {
 func (p *parker) parked(branch []saigetypes.Message, base int, whole bool) (*Parked, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.parking || p.pending == nil || p.question == nil {
+	if !p.parking || p.pending == nil || len(p.waits) == 0 {
 		return nil, errors.New("the turn did not park")
 	}
 	// The branch is: the system prompt, what the turn was given, what it
@@ -719,7 +765,10 @@ func (p *parker) parked(branch []saigetypes.Message, base int, whole bool) (*Par
 	if start > end {
 		return nil, errors.New("the turn's conversation is shorter than what it was given")
 	}
-	out := &Parked{Question: *p.question, CallID: p.callID, Whole: whole}
+	out := &Parked{Question: p.waits[0].Question, CallID: p.waits[0].CallID, Whole: whole}
+	if len(p.waits) > 1 {
+		out.Batch = append([]Wait(nil), p.waits...)
+	}
 	for _, m := range branch[start:end] {
 		raw, err := EncodeMessage(m)
 		if err != nil {

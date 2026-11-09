@@ -233,7 +233,14 @@ type CompactRequest struct {
 // stopped, opaque to everyone else. The host fills Answers and passes the
 // whole value back as Input.Resume.
 type Parked struct {
+	// Question is what the turn waits on. When its batch of tool calls
+	// waits on several things at once it is the first of Questions.
 	Question event.Question `json:"question"`
+	// Questions is every question the turn parked on, in call order, when
+	// there is more than one: a batch of calls that each wait parks once, on
+	// all of them, and resumes once every one is answered. Empty when the
+	// turn parked on Question alone.
+	Questions []event.Question `json:"questions,omitempty"`
 	// Prompt is the request message the parked turn sent.
 	Prompt string `json:"prompt"`
 	// Answers are the answers the turn resumes with, by question id.

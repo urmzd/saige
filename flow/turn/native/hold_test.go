@@ -45,3 +45,35 @@ func TestAHostsHoldParksTheNextBatchOnlyWhereTheTurnMayPark(t *testing.T) {
 		t.Fatalf("a turn that may not park: %+v with %d lookups, want it run", res, g.lookup.CallCount())
 	}
 }
+
+// A hold parks its batch on itself alone: nothing the batch's calls wait on
+// is asked or started until the hold is approved, and then they are asked
+// together, at the next park.
+func TestAHoldParksItsBatchAloneBeforeItsCallsWait(t *testing.T) {
+	holds := func(context.Context) []native.Hold {
+		return []native.Hold{{ID: "h1", Prompt: "Grant more?"}}
+	}
+	f := newParkFixture(t, []string{"deploy"},
+		toolCalls(
+			saigetypes.ToolCallPart{ID: "c1", Name: "deploy", Arguments: map[string]any{"env": "prod"}},
+			saigetypes.ToolCallPart{ID: "q1", Name: native.AskPersonToolName, Arguments: map[string]any{"question": "Why?"}},
+		),
+		agenttest.TextResponse("Done."))
+	_, res := f.run(t, native.Turn{Text: "go", Park: true, Holds: holds, Accounting: "r/a1"})
+	if res.Parked == nil || res.Parked.Question.Kind != event.QuestionHold || len(res.Parked.Waits()) != 1 {
+		t.Fatalf("park is %+v, want the hold alone", res.Parked)
+	}
+	resume := *res.Parked
+	resume.Answers = map[string]event.Answer{resume.CallID: {QuestionID: resume.Question.ID, Decision: event.DecisionApprove}}
+	_, res = f.run(t, native.Turn{Text: "go", Park: true, Holds: holds, Accounting: "r/a2", Resume: &resume})
+	if res.Parked == nil {
+		t.Fatal("the approved hold did not lead to the calls' own park")
+	}
+	waits := res.Parked.Waits()
+	if len(waits) != 2 || waits[0].CallID != "c1" || waits[1].CallID != "q1" {
+		t.Fatalf("second park waits on %+v, want the approval and the question together", waits)
+	}
+	if len(f.deploy.Calls) != 0 {
+		t.Fatal("deploy ran before its approval")
+	}
+}

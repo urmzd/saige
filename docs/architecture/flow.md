@@ -572,7 +572,12 @@ for an approval the tool, the call id, the arguments and the tool's schema,
 `asked_of`, when it expires and what it defaults to. It travels on
 `run.parked.v1` (`Parked.Question`), and `Runtime.Status` reports a parked
 run as `parked` with `Run.Question`, read from the run's records
-(`Runtime.PendingQuestion`).
+(`Runtime.PendingQuestion`). A park on several questions at once carries them
+all in `Parked.Questions`, in call order, with the first also in
+`Parked.Question` for readers that know only it; `run.resumed.v1` carries
+every answer in `Resumed.Answers` the same way, and
+`Runtime.PendingQuestions` lists every open one. A single question leaves
+both lists empty, as before.
 
 ### Holding a run for the host
 
@@ -701,8 +706,19 @@ call's deltas and usage are not published again. A turn that compacted before
 it parked records its whole conversation instead of the part after the
 request.
 
-A batch with two questions parks twice, once per question; the second
-continuation carries both answers, and the batch runs once, after both.
+A batch parks once, on every call in it that waits. Two questions, an
+approval next to an `ask_person`, or three delegations each become a wait of
+the same park (`native.Parked.Batch`, in call order). The workflow body
+starts every child run the batch delegates to and records every question
+before the run parks, so the children run side by side. Each wait resolves
+on its own (an answer, a child ending, an expiry), each wakes the run, and
+the run continues once, when the last is in, with every answer. The batch
+then runs once: each call with its own answer, and a call that waited on
+nothing runs exactly once, its result in call order. A call waits on one
+thing per park: a delegation that needs approval waits on the approval, and
+its child starts at the park after it is approved. A host's hold parks the
+batch on itself alone, and the calls' waits come after it is approved. A
+stop resolves every question of the park and stops every child.
 
 A parked turn's record stores the transcript it continues from. A run that
 parks again stores only what its turn added since the previous park

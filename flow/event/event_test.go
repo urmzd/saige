@@ -201,7 +201,7 @@ func TestDecodeRejectsMalformedKnown(t *testing.T) {
 		t.Fatalf("unknown type decoded to %T", b)
 	}
 	// Empty data is the zero body.
-	if b, err := event.Decode(event.TypeText, nil); err != nil || b != (event.Text{}) {
+	if b, err := event.Decode(event.TypeText, nil); err != nil || !reflect.DeepEqual(b, event.Body(event.Text{})) {
 		t.Fatalf("Decode(nil) = %#v, %v", b, err)
 	}
 }
