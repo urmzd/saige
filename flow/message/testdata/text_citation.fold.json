@@ -1,0 +1,128 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Go 1.26 shipped in February.",
+        "citations": [
+          {
+            "type": "search_result_location",
+            "source": "https://go.dev/doc/go1.26",
+            "title": "Go 1.26 release notes",
+            "cited_text": "Go 1.26 was released in February 2026.",
+            "search_result_index": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 100
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 20,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 100
+          }
+        },
+        "cost_usd": 0.0015
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Go 1.26 shipped in February.",
+        "citations": [
+          {
+            "type": "search_result_location",
+            "source": "https://go.dev/doc/go1.26",
+            "title": "Go 1.26 release notes",
+            "cited_text": "Go 1.26 was released in February 2026.",
+            "search_result_index": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 100
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 20,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 100
+          }
+        },
+        "cost_usd": 0.0015
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "Go 1.26 shipped in February.",
+        "citations": [
+          {
+            "type": "search_result_location",
+            "source": "https://go.dev/doc/go1.26",
+            "title": "Go 1.26 release notes",
+            "cited_text": "Go 1.26 was released in February 2026.",
+            "search_result_index": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 100
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {
+          "claude-x": {
+            "input_tokens": 20,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 100
+          }
+        },
+        "cost_usd": 0.0015
+      }
+    },
+    "done": true
+  }
+}
