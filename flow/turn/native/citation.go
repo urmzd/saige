@@ -27,13 +27,13 @@ type Retriever interface {
 // Citations converts an assembled RAG context into citation event bodies, in
 // the order the context lists them.
 //
-// This is where flow's citations come from, and it is worth being explicit
-// about why. saige's CitationDelta reports what a model or tool cited, which
-// flow does not translate. The retrieval result already carries exactly what
-// a footnote needs: the exact source text, the inline label the assembled
-// prompt used, and resolvable provenance. Deriving citations from retrieval rather than from the model also
-// makes them honest: they report what the turn was GIVEN, which a model cannot
-// misattribute, rather than what it claims to have used.
+// The retrieval result already carries exactly what a footnote needs: the
+// exact source text, the inline label the assembled prompt used, and
+// resolvable provenance. Deriving citations from retrieval rather than from
+// the model also makes them honest: they report what the turn was GIVEN,
+// which a model cannot misattribute, rather than what it claims to have used.
+// The sources a tool cites are published as well, from saige's CitationDelta
+// (see Translator.Delta); one that repeats a retrieved citation is not.
 //
 // A nil or empty context yields no bodies. A block with neither text nor a
 // label is skipped: it would render as an empty footnote.

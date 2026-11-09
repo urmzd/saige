@@ -91,6 +91,7 @@ one. Nothing else in the envelope says what `data` holds.
 | `run.delta.tool.call.v1` | `ToolCall` | |
 | `run.delta.tool.done.v1` | `ToolDone` | |
 | `run.delta.citation.v1` | `Citation` | |
+| `run.delta.tool.marker.v1` | `ToolMarker` | A tool call waiting for a decision |
 | `run.action.taken.v1` | `Action` | |
 | `run.usage.v1` | `UsageCall` | Opt-in |
 | `run.usage.child.v1` | `UsageChild` | Opt-in |
