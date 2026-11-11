@@ -64,7 +64,7 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 ## Key Files
 
 - Parts examples: examples/parts/build/main.go, examples/parts/image/main.go, examples/parts/document/main.go, examples/parts/stream/main.go
-- Flow: flow/event/envelope.go, flow/event/catalog.go, flow/bus/bus.go, flow/runtime/runtime.go, flow/runtime/stop.go, flow/runtime/park.go, flow/turn/turn.go, flow/turn/native/native.go, flow/definition/resolver.go, flow/session/session.go
+- Flow: flow/event/envelope.go, flow/event/catalog.go, flow/bus/bus.go, flow/runtime/runtime.go, flow/runtime/stop.go, flow/runtime/park.go, flow/runtime/session_tools.go, flow/message/message.go, flow/message/project.go, flow/turn/turn.go, flow/turn/native/native.go, flow/definition/resolver.go, flow/session/session.go
 - Sandbox: sandbox/controlplane/memory.go, sandbox/sandbox/sandbox.go, sandbox/ngac/ngac.go, sandbox/isolate/isolate.go, sandbox/isolate/docker/docker.go, sandbox/isolate/egress/egress.go, examples/sandbox/main.go
 - Quick start: examples/quickstart/agent/main.go, examples/quickstart/tool/main.go, examples/quickstart/structured/main.go, examples/quickstart/dials/main.go, examples/quickstart/rag/main.go
 - Presets: agent/provider/catalog/data/default.json, agent/provider/preset/preset.go
