@@ -92,6 +92,9 @@ const (
 	questionStepPrefix = "fiber.question."
 	answerRecordPrefix = "fiber.answer."
 	childStepPrefix    = "fiber.child."
+	// parkedStepPrefix names the step that announces a park, by the first
+	// question the park waits on.
+	parkedStepPrefix = "fiber.parked."
 )
 
 func questionStepKey(id string) string  { return questionStepPrefix + id + "#0" }
@@ -212,16 +215,16 @@ var (
 	ErrAnswerUnavailable = errors.New("runtime: answers are not available")
 )
 
-// awaitAnswers announces a parked turn's questions once and returns their
-// resolutions, in the order of the batch's waits, or run.ErrParked while any
-// has none.
+// awaitAnswers records a parked turn's questions, announces the park once,
+// after they are recorded, and returns their resolutions, in the order of
+// the batch's waits, or run.ErrParked while any has none.
 //
 // A batch that waits on several things waits on all of them at once: every
 // child run it delegates to is started, and every question recorded, before
 // the run parks, and each resolves on its own (an answer, a child ending, an
 // expiry). The run is woken by each, and continues once every one is in. A
 // stop ends the wait for all of them. One wait is the batch it always was:
-// the same records, in the same order, and the same announcement.
+// the same question and answer records, and the same announcement.
 //
 //nolint:gocyclo // one pass over a parked batch and each way its questions resolve
 func (r *Runtime) awaitAnswers(ctx context.Context, at *attemptLog, out Outcome) ([]resolution, error) {
@@ -268,23 +271,12 @@ func (r *Runtime) awaitAnswers(ctx context.Context, at *attemptLog, out Outcome)
 	}
 	reason := waitReason(qs)
 	// Each question is its own recorded step, which is what Answer finds it
-	// by. The park is announced once, by the last of them: a replay that
-	// finds them all recorded announces nothing, and one that stopped part
-	// way records the rest and announces then.
+	// by. Recording announces nothing: the park is announced below, once
+	// every question it names is in the ledger.
 	fresh := false
 	for i := range qs {
-		last := i == len(qs)-1
-		if _, err := durable.Step(ctx, questionStepPrefix+qs[i].ID, func(ctx context.Context) (event.Question, error) {
+		if _, err := durable.Step(ctx, questionStepPrefix+qs[i].ID, func(context.Context) (event.Question, error) {
 			fresh = true
-			if last {
-				body := event.Parked{Attempt: at.attempt, Reason: reason, Question: &qs[0]}
-				if len(qs) > 1 {
-					body.Questions = qs
-				}
-				if err := at.publish(ctx, body); err != nil {
-					return event.Question{}, err
-				}
-			}
 			return qs[i], nil
 		}); err != nil {
 			return nil, err
@@ -314,6 +306,27 @@ func (r *Runtime) awaitAnswers(ctx context.Context, at *attemptLog, out Outcome)
 	// waits on.
 	if len(pending) == 0 || stoppedIn(res) != nil {
 		return res, nil
+	}
+
+	// The run waits, and says so once, as a recorded step of its own that
+	// runs after the questions are recorded. Whoever hears the park can
+	// therefore list its questions and answer any of them at once: announced
+	// from inside a question's step, the park was heard before that question
+	// was in the ledger, and an answer sent straight back found no question.
+	// A replay that finds the step recorded announces nothing. An attempt
+	// that failed between recording the questions and announcing them leaves
+	// the announcement to the next. A run that parked before this step
+	// existed has no record of it, so it announces its park once more if it
+	// is woken while a question is still open; with every question resolved
+	// it does not come this far.
+	if _, err := durable.Step(ctx, parkedStepPrefix+qs[0].ID, func(ctx context.Context) (struct{}, error) {
+		body := event.Parked{Attempt: at.attempt, Reason: reason, Question: &qs[0]}
+		if len(qs) > 1 {
+			body.Questions = qs
+		}
+		return struct{}{}, at.publish(ctx, body)
+	}); err != nil {
+		return nil, err
 	}
 
 	// Some resolutions are not in this attempt's records. Three things can
