@@ -185,7 +185,7 @@ func parseItem(item string, f field) (uint64, error) {
 			bits |= 1 << 0
 			continue
 		}
-		bits |= 1 << uint(v)
+		bits |= 1 << uint(v) //nolint:gosec // G115: number bounds v to the field, at most 59
 	}
 	return bits, nil
 }
