@@ -1,5 +1,9 @@
 # Upgrading to this release
 
+## The GitHub connector, cron, membership and egress move into saige
+
+`github.com/urmzd/orchagent/flow/{connectors/github,connectors/cron,membership,egress}` are now under `github.com/urmzd/saige/flow/`. Change the import prefix. Two breaking changes come with the GitHub connector: agents never approve a pull request, so `PrepareReview` takes `(Review, []ContextFile)` and refuses `APPROVE` with `ErrNoApproval`, and `Config.AllowReviewApproval` and `Config.AllowReviewApprovalFor` are gone. The Jira and webhook connectors, the author tools and the dispatcher did not move. New: `flow/credential`, the seam a connector's API client takes its token through (`credential.Client(src, connector, subject, nil)`).
+
 ## The Slack connector moves into saige
 
 `github.com/urmzd/orchagent/flow/connectors/slack` is now `github.com/urmzd/saige/flow/connectors/slack`, with `flow/connectors`, `flow/connectors/mention`, `flow/signature` and `flow/deliverystate`. Change the import prefix; the API, the `slack://` addresses and the stored delivery state are unchanged. The connector now also reports the people, channels and links a message refers to (`Request.References`).

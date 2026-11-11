@@ -61,6 +61,10 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `flow/connectors/` | The mesh: shared file intake and references for every connector; `internal/` holds what they share (inbound authentication, the sink that edits one message per run, rendering, JSON over HTTP) |
 | `flow/connectors/slack/` | The Slack peer: trigger (Events API, slash commands, stops), sink and actor (messages, reactions, agent sessions) |
 | `flow/connectors/mention/` | Finds the agents a person tagged and the people, places and links a message refers to |
+| `flow/connectors/github/` | The GitHub peer: trigger (webhooks), sink (one comment per run, reviews with inline findings, check runs) and actor; agents never approve (`ErrNoApproval`) |
+| `flow/connectors/cron/` | The schedule peer: a trigger only |
+| `flow/membership/`, `flow/egress/` | Which agents are members of which channels and what wakes them; delivery of a run's events to sinks by channel and type prefix |
+| `flow/credential/` | The credential seam: `Source.Token(ctx, connector, Subject{App or User})`, and `Client`, an `*http.Client` that asks the source on every request |
 | `flow/signature/`, `flow/deliverystate/` | Inbound webhook authentication (a security boundary); a sink's message handle and rendering kept across replicas |
 | `flow/wirecodes/` | The flow sentinels' wire codes, registered on import |
 | `agent/tui/` | Bubbletea interactive + verbose streaming TUI |
@@ -210,6 +214,8 @@ Angular conventional commits enforced by gitit:
 - **Who a turn acts for comes from the run's record**, never from the task input, trigger context or anything a model produced.
 - **`flow/signature` is a security boundary.** It is the only thing between the public internet and starting a run. Any change needs tests for constant-time comparison, verify-before-parse, the replay window, malformed input and duplicated headers. Default is always deny.
 - **Sinks are idempotent and an ingress adapter chooses no agent.** Render one message per run and edit it, never one per delta; an ingress adapter publishes a typed event on the surface's channel with the agents and references the text names.
+- **Agents never approve a pull request.** The GitHub connector submits `COMMENT` or `REQUEST_CHANGES` only; do not add an approval path behind any option.
+- **A credential is never a fallback.** A `credential.Source` answers for the subject asked for or returns `ErrNoCredential`; a person's call never acts with the app's token, and a token never reaches a log (`Token.String` redacts).
 - Names stored in databases or on the wire keep their spelling (`fiber_*` tables, `fiber://`, `fiber.*` kinds and record keys).
 
 ## Code Style
