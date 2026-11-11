@@ -1,0 +1,45 @@
+{
+  "id": "ev-1",
+  "source": "fiber://run/r1",
+  "type": "run.child.parked.v1",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 1,
+  "tenant": "acme",
+  "run": "r1",
+  "seq": 7,
+  "agent": "helper",
+  "version": "1.2.0",
+  "digest": "sha256:abc",
+  "data": {
+    "run_id": "r2",
+    "agent": "deployer",
+    "question": {
+      "id": "q1",
+      "kind": "approval",
+      "agent": "helper",
+      "prompt": "May I deploy?",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "tool": {
+        "name": "deploy",
+        "call_id": "c1",
+        "arguments": {
+          "env": "prod"
+        }
+      },
+      "approvers": [
+        "role:oncall"
+      ],
+      "expires_at": "2026-10-28T15:03:11Z",
+      "default": {
+        "question_id": "q1",
+        "decision": "deny",
+        "expired": true
+      },
+      "at": "2026-10-28T14:03:11Z"
+    }
+  }
+}

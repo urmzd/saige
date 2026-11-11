@@ -1,0 +1,28 @@
+{
+  "id": "ev-1",
+  "source": "fiber://run/r1",
+  "type": "run.usage.v1",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 1,
+  "tenant": "acme",
+  "run": "r1",
+  "seq": 7,
+  "agent": "helper",
+  "version": "1.2.0",
+  "digest": "sha256:abc",
+  "data": {
+    "accounting_id": "r1/a1/1",
+    "agent": "helper",
+    "model": "m",
+    "requests": 1,
+    "prompt_tokens": 900,
+    "completion_tokens": 120,
+    "cost": {
+      "micros": 1250,
+      "currency": "USD",
+      "as_of": "2026-07-24"
+    },
+    "context_window": 200000
+  }
+}

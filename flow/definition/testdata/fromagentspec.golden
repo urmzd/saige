@@ -1,0 +1,61 @@
+---
+apiVersion: "saige/v1"
+name: "docs-bot"
+version: "7.0.0"
+description: "Answers \"how do I\" questions."
+model:
+  use: "anthropic/claude-x"
+  fallback:
+    - "openai/gpt-x"
+tools:
+  registry:
+    - "github_comment"
+    - "search"
+  mcp:
+    - server: "linear"
+    - server: "notion"
+subagents:
+  - ref: "reviewer"
+  - ref: "writer"
+approval:
+  ask:
+    - "github_comment"
+    - "tag_writer"
+---
+You answer questions.
+
+---
+Never guess.
+
+# policy
+{
+  "workspace_areas": [
+    "drafts/",
+    "notes/"
+  ],
+  "mcp_write": [
+    "linear"
+  ],
+  "knowledge": [
+    {
+      "name": "handbook",
+      "uri": "kb://handbook",
+      "options": {
+        "k": "3"
+      }
+    }
+  ],
+  "fallback_on": [
+    "auth",
+    "rate_limit"
+  ],
+  "approvers": [
+    "ada",
+    "role:admin"
+  ],
+  "self_approval": true,
+  "answerers": [
+    "eve"
+  ],
+  "tagged_only": true
+}

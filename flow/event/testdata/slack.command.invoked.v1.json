@@ -1,0 +1,59 @@
+{
+  "id": "ev-1",
+  "source": "slack://T01",
+  "type": "slack.command.invoked.v1",
+  "subject": "C02",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 0,
+  "data": {
+    "text": "summarise this",
+    "actor": {
+      "id": "U07",
+      "display": "ada"
+    },
+    "mentions": [
+      "helper"
+    ],
+    "references": [
+      {
+        "kind": "agent",
+        "name": "helper",
+        "id": "U08BOT"
+      },
+      {
+        "kind": "person",
+        "name": "@grace",
+        "id": "U09"
+      },
+      {
+        "kind": "place",
+        "name": "#general",
+        "id": "C03",
+        "address": "slack://T01/C03"
+      },
+      {
+        "kind": "link",
+        "name": "the PR",
+        "address": "github://acme/handbook/pull/42",
+        "url": "https://github.com/acme/handbook/pull/42/files#r1"
+      }
+    ],
+    "attachments": [
+      {
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "media_type": "text/plain",
+        "name": "notes.txt",
+        "size": 5
+      }
+    ],
+    "context": {
+      "project": "handbook"
+    },
+    "command": "/ask",
+    "team": "T01",
+    "channel": "C02",
+    "user": "U07",
+    "app_id": "A01"
+  }
+}

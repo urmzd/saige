@@ -1,0 +1,15 @@
+{
+  "id": "ev-1",
+  "source": "slack://T01",
+  "type": "slack.session.stopped.v1",
+  "subject": "C02",
+  "channel": "slack://T01/C02",
+  "time": "2026-10-28T14:03:11Z",
+  "hops": 0,
+  "data": {
+    "team": "T01",
+    "channel": "C02",
+    "thread_ts": "1699.001",
+    "user": "U07"
+  }
+}
