@@ -107,7 +107,7 @@ func NewMemory(factory node.Factory, rec metrics.Recorder, opts ...Option) *Memo
 	if rec == nil {
 		rec = metrics.Nop()
 	}
-	base, cancel := context.WithCancel(context.Background())
+	base, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: kept on the control plane and called by Close
 	m := &Memory{
 		factory:     factory,
 		rec:         rec,

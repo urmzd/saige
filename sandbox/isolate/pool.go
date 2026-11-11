@@ -82,7 +82,7 @@ func NewPool(d Driver, cfg PoolConfig) *Pool {
 	if cfg.OnError == nil {
 		cfg.OnError = func(error) {}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: kept on the pool and called by Close
 	return &Pool{
 		driver: d, warm: cfg.Warm, max: cfg.Max, onErr: cfg.OnError,
 		ctx: ctx, cancel: cancel,
