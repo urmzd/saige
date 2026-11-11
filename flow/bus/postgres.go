@@ -307,7 +307,7 @@ func (p *Postgres) Subscribe(ctx context.Context, sub Subscription) (Stream, err
 
 // open starts a reader of sub after the position after.
 func (p *Postgres) open(ctx context.Context, sub Subscription, after uint64) *pgStream {
-	readCtx, cancel := context.WithCancel(ctx)
+	readCtx, cancel := context.WithCancel(ctx) //nolint:gosec // G118: kept on the stream and called by Close
 	s := &pgStream{
 		p:      p,
 		sub:    sub,
@@ -556,7 +556,7 @@ func (h *pgHub) subscribe(tenant string) (<-chan struct{}, func()) {
 	h.subs[tenant][ch] = struct{}{}
 	h.count++
 	if h.count == 1 {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: kept on the hub and called when the last subscriber leaves
 		h.cancel = cancel
 		go h.listen(ctx)
 	}

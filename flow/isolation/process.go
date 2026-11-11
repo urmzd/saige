@@ -36,7 +36,7 @@ func Start(ctx context.Context, inst Instance, cmd Command) (*Process, error) {
 	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	ectx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	ectx, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // G118: kept on the process and called by Close
 	p := &Process{stdin: inW, stdout: outR, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(p.done)
