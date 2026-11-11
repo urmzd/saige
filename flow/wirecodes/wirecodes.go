@@ -14,21 +14,27 @@ package wirecodes
 
 import (
 	agenttypes "github.com/urmzd/saige/agent/types"
-	address "github.com/urmzd/saige/flow/address"
-	attachment "github.com/urmzd/saige/flow/attachment"
+	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/attachment"
 	attachmentintake "github.com/urmzd/saige/flow/attachment/intake"
 	attachmentresolve "github.com/urmzd/saige/flow/attachment/resolve"
-	blob "github.com/urmzd/saige/flow/blob"
-	bus "github.com/urmzd/saige/flow/bus"
-	connector "github.com/urmzd/saige/flow/connector"
-	definition "github.com/urmzd/saige/flow/definition"
-	event "github.com/urmzd/saige/flow/event"
+	"github.com/urmzd/saige/flow/blob"
+	"github.com/urmzd/saige/flow/bus"
+	"github.com/urmzd/saige/flow/connector"
+	"github.com/urmzd/saige/flow/connectors/cron"
+	"github.com/urmzd/saige/flow/connectors/github"
+	"github.com/urmzd/saige/flow/credential"
+	"github.com/urmzd/saige/flow/definition"
+	"github.com/urmzd/saige/flow/egress"
+	"github.com/urmzd/saige/flow/event"
 	eventlegacy "github.com/urmzd/saige/flow/event/legacy"
-	isolation "github.com/urmzd/saige/flow/isolation"
-	runtime "github.com/urmzd/saige/flow/runtime"
-	session "github.com/urmzd/saige/flow/session"
-	thread "github.com/urmzd/saige/flow/thread"
-	turn "github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/isolation"
+	"github.com/urmzd/saige/flow/membership"
+	"github.com/urmzd/saige/flow/runtime"
+	"github.com/urmzd/saige/flow/session"
+	"github.com/urmzd/saige/flow/signature"
+	"github.com/urmzd/saige/flow/thread"
+	"github.com/urmzd/saige/flow/turn"
 	turnnative "github.com/urmzd/saige/flow/turn/native"
 	turnsandbox "github.com/urmzd/saige/flow/turn/sandbox"
 )
@@ -92,6 +98,19 @@ func init() {
 		"flow.turn.native.no_such_tool":             turnnative.ErrNoSuchTool,
 		"flow.turn.native.no_such_tool_group":       turnnative.ErrNoSuchToolGroup,
 		"flow.turn.sandbox.invalid":                 turnsandbox.ErrInvalid,
+		"flow.signature.malformed":                  signature.ErrMalformed,
+		"flow.signature.no_secret":                  signature.ErrNoSecret,
+		"flow.signature.signature_mismatch":         signature.ErrSignatureMismatch,
+		"flow.signature.timestamp_skew":             signature.ErrTimestampSkew,
+		"flow.connectors.cron.expression":           cron.ErrExpression,
+		"flow.connectors.cron.schedule":             cron.ErrSchedule,
+		"flow.connectors.github.no_approval":        github.ErrNoApproval,
+		"flow.credential.no_credential":             credential.ErrNoCredential,
+		"flow.egress.invalid":                       egress.ErrInvalid,
+		"flow.egress.panic":                         egress.ErrPanic,
+		"flow.egress.running":                       egress.ErrRunning,
+		"flow.membership.invalid":                   membership.ErrInvalid,
+		"flow.membership.not_found":                 membership.ErrNotFound,
 	} {
 		agenttypes.RegisterWireSentinel(code, err)
 	}

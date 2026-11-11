@@ -1,5 +1,13 @@
 # Upgrading to this release
 
+## The GitHub connector, cron, membership and egress move into saige
+
+`github.com/urmzd/orchagent/flow/{connectors/github,connectors/cron,membership,egress}` are now under `github.com/urmzd/saige/flow/`. Change the import prefix. Two breaking changes come with the GitHub connector: agents never approve a pull request, so `PrepareReview` takes `(Review, []ContextFile)` and refuses `APPROVE` with `ErrNoApproval`, and `Config.AllowReviewApproval` and `Config.AllowReviewApprovalFor` are gone. The Jira and webhook connectors, the author tools and the dispatcher did not move. New: `flow/credential`, the seam a connector's API client takes its token through (`credential.Client(src, connector, subject, nil)`).
+
+## The Slack connector moves into saige
+
+`github.com/urmzd/orchagent/flow/connectors/slack` is now `github.com/urmzd/saige/flow/connectors/slack`, with `flow/connectors`, `flow/connectors/mention`, `flow/signature` and `flow/deliverystate`. Change the import prefix; the API, the `slack://` addresses and the stored delivery state are unchanged. The connector now also reports the people, channels and links a message refers to (`Request.References`).
+
 ## The event runtime moves into saige
 
 `github.com/urmzd/orchagent/flow/...` is now `github.com/urmzd/saige/flow/...` for the event union, the bus, definitions, sessions and threads, the turn seam and its runtimes, and the durable turn (`flow/runtime`). Change the import prefix. The alias packages under `flow/turn/native` are gone: import `agent/types` (for `saigetypes`), `agent/agenttest` (for `turn/native/agenttest`) and `rag/types` (for `ragtypes`) instead; the names are the same. Stored and wire names (`fiber_*` tables, `fiber://`, `fiber.*` kinds and record keys) are unchanged. The `flow.App` composition root, `Ask` and `Reply`, and the session handle did not move: build `runtime.New` directly. Flow's Postgres tests read `SAIGE_TEST_POSTGRES_DSN` (they read `FLOW_POSTGRES_TEST_URL`). Import `github.com/urmzd/saige/flow/wirecodes` for its side effect to keep `errors.Is` working on flow errors after they cross saige's wire codec.
