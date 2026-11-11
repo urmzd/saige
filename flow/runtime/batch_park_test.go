@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -327,5 +328,111 @@ func TestAMixedBatchParksOnceAndRunsItsOtherCallOnce(t *testing.T) {
 	}
 	if questions != 2 {
 		t.Errorf("the ledger holds %d question records, want 2", questions)
+	}
+}
+
+// A park is announced once its questions can be answered. Whoever hears it
+// lists every question it names and answers each of them from inside the
+// park's own publication, the earliest a host can: nothing waits and nothing
+// is retried. Each answer is taken, and the run goes on with them. A park
+// announced from inside the step that records a question was heard before
+// that question was in the ledger: it was missing from the pending
+// questions, and its answer found no question.
+func TestAParkIsAnnouncedOnceItsQuestionsCanBeAnswered(t *testing.T) {
+	type heard struct {
+		announced []string
+		pending   []string
+		err       error
+	}
+	region := saigetypes.ToolCallPart{ID: "q1", Name: native.AskPersonToolName, Arguments: map[string]any{"question": "Which region?", "options": []any{"eu", "us"}}}
+	why := saigetypes.ToolCallPart{ID: "q2", Name: native.AskPersonToolName, Arguments: map[string]any{"question": "Why?"}}
+	for _, tc := range []struct {
+		name  string
+		calls []saigetypes.ToolCallPart
+		want  []string
+	}{
+		{name: "one question", calls: []saigetypes.ToolCallPart{why}, want: []string{"audit"}},
+		{name: "two questions", calls: []saigetypes.ToolCallPart{region, why}, want: []string{"eu", "audit"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			batch := []saigetypes.Delta{}
+			for i, c := range tc.calls {
+				batch = append(batch,
+					saigetypes.PartStart{Index: i, Kind: saigetypes.KindToolCall, ID: c.ID, Name: c.Name},
+					saigetypes.PartEnd{Index: i, Part: c})
+			}
+			p := newParking(t, w, batch, agenttest.TextResponse("Done."))
+
+			var rt *runtime.Runtime
+			var once sync.Once
+			got := make(chan heard, 1)
+			w.bus.rec.failWhen(func(e event.Envelope) error {
+				if e.Type != event.TypeParked {
+					return nil
+				}
+				once.Do(func() {
+					var h heard
+					defer func() { got <- h }()
+					ctx := context.Background()
+					body, err := decode[event.Parked](e)
+					if err != nil || body.Question == nil {
+						h.err = fmt.Errorf("the park is %+v: %v", body, err)
+						return
+					}
+					qs := body.Questions
+					if len(qs) == 0 {
+						qs = []event.Question{*body.Question}
+					}
+					pending, err := rt.PendingQuestions(ctx, "acme", e.Run)
+					if err != nil {
+						h.err = err
+						return
+					}
+					for _, q := range pending {
+						h.pending = append(h.pending, q.ID)
+					}
+					// The last question first: it is the one recorded last.
+					for _, q := range slices.Backward(qs) {
+						h.announced = append([]string{q.ID}, h.announced...)
+						a := event.Answer{Text: "audit"}
+						if q.Kind == event.QuestionChoice {
+							a = event.Answer{Choice: "eu"}
+						}
+						if _, _, err := rt.Answer(ctx, runtime.AnswerRequest{Tenant: "acme", RunID: e.Run, QuestionID: q.ID, Answer: a, By: "ana"}); err != nil {
+							h.err = errors.Join(h.err, fmt.Errorf("answer %s: %w", q.ID, err))
+						}
+					}
+				})
+				return nil
+			})
+			rt = p.rt(t)
+			p.workers(t, rt, 2, 0)
+			runID := p.accept(t, rt, tag("ops", "evt-1", "ship"))
+
+			// What the announcement found comes first: a run whose answers
+			// were refused never ends, and that is the less telling failure.
+			var h heard
+			select {
+			case h = <-got:
+			case <-time.After(20 * time.Second):
+				t.Fatalf("run %s never announced a park: %v", runID, kindsOf(w.bus.of(runID)))
+			}
+			if h.err != nil {
+				t.Fatalf("at the park's announcement: %v", h.err)
+			}
+			if len(h.announced) != len(tc.calls) || !slices.Equal(h.pending, h.announced) {
+				t.Fatalf("at the park's announcement the pending questions are %v, want the announced %v", h.pending, h.announced)
+			}
+			if out := p.result(t, rt, runID); out.Text != "Done." {
+				t.Fatalf("Output = %+v", out)
+			}
+			if got := resultsIn(p.model.Requests()[1].Messages); !slices.Equal(got, tc.want) {
+				t.Errorf("the model saw results %v, want %v", got, tc.want)
+			}
+			if n := len(lifecycleOf(t, p.bus.of(runID), event.TypeParked)); n != 1 {
+				t.Errorf("the run announced %d parks, want 1", n)
+			}
+		})
 	}
 }

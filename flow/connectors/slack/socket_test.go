@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,19 +17,40 @@ import (
 
 // fakeSocketSlack is Slack's side of Socket Mode: apps.connections.open
 // hands out a websocket, and each connection runs script.
+//
+// A connection is served on a goroutine of the fake's server, which the
+// connector under test keeps reconnecting to until the test stops it. So the
+// fake reports a broken connection only while the test still expects
+// something of it (until quiet), and its cleanup ends every connection and
+// waits for them, so none reports to a test that is over.
 type fakeSocketSlack struct {
 	t      *testing.T
 	server *httptest.Server
-	script func(ctx context.Context, conn *websocket.Conn, n int)
+	script func(ctx context.Context, f *fakeSocketSlack, conn *websocket.Conn, n int)
+	ctx    context.Context
+	conns  sync.WaitGroup
+	over   atomic.Bool
 
 	mu    sync.Mutex
 	opens int
 	token string
 }
 
-func newFakeSocketSlack(t *testing.T, script func(ctx context.Context, conn *websocket.Conn, n int)) *fakeSocketSlack {
+// quiet is called when the test has seen what it came for. A connection
+// that breaks after it, as every one does when the connector is stopped, is
+// not a failure.
+func (f *fakeSocketSlack) quiet() { f.over.Store(true) }
+
+func (f *fakeSocketSlack) errorf(format string, args ...any) {
+	if !f.over.Load() {
+		f.t.Errorf(format, args...)
+	}
+}
+
+func newFakeSocketSlack(t *testing.T, script func(ctx context.Context, f *fakeSocketSlack, conn *websocket.Conn, n int)) *fakeSocketSlack {
 	t.Helper()
-	f := &fakeSocketSlack{t: t, script: script}
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &fakeSocketSlack{t: t, script: script, ctx: ctx}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /open", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -38,19 +60,28 @@ func newFakeSocketSlack(t *testing.T, script func(ctx context.Context, conn *web
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": "ws" + strings.TrimPrefix(f.server.URL, "http") + "/socket"})
 	})
 	mux.HandleFunc("GET /socket", func(w http.ResponseWriter, r *http.Request) {
+		f.conns.Add(1)
+		defer f.conns.Done()
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
-			t.Errorf("accept: %v", err)
+			f.errorf("accept: %v", err)
 			return
 		}
 		defer func() { _ = conn.CloseNow() }()
 		f.mu.Lock()
 		n := f.opens
 		f.mu.Unlock()
-		f.script(r.Context(), conn, n)
+		// A hijacked connection's request context does not end when the
+		// server closes, so the script runs on the fake's.
+		f.script(f.ctx, f, conn, n)
 	})
 	f.server = httptest.NewServer(mux)
-	t.Cleanup(f.server.Close)
+	t.Cleanup(func() {
+		f.quiet()
+		cancel()
+		f.server.Close()
+		f.conns.Wait()
+	})
 	return f
 }
 
@@ -58,21 +89,19 @@ func (f *fakeSocketSlack) config(onError func(error)) *slack.SocketConfig {
 	return &slack.SocketConfig{AppToken: "xapp-test", OpenURL: f.server.URL + "/open", OnError: onError, MaxBackoff: 10 * time.Millisecond}
 }
 
-func send(ctx context.Context, t *testing.T, conn *websocket.Conn, v any) {
-	t.Helper()
+func (f *fakeSocketSlack) send(ctx context.Context, conn *websocket.Conn, v any) {
 	b, _ := json.Marshal(v)
 	if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
-		t.Errorf("write: %v", err)
+		f.errorf("write: %v", err)
 	}
 }
 
-func ackOf(ctx context.Context, t *testing.T, conn *websocket.Conn) string {
-	t.Helper()
+func (f *fakeSocketSlack) ackOf(ctx context.Context, conn *websocket.Conn) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		t.Errorf("no ack: %v", err)
+		f.errorf("no ack: %v", err)
 		return ""
 	}
 	var ack struct {
@@ -87,14 +116,14 @@ func ackOf(ctx context.Context, t *testing.T, conn *websocket.Conn) string {
 // and is acknowledged. When Slack asks for a new connection, one is opened.
 func TestSocketModeDeliversEventsAndReconnects(t *testing.T) {
 	acks := make(chan string, 4)
-	f := newFakeSocketSlack(t, func(ctx context.Context, conn *websocket.Conn, n int) {
-		send(ctx, t, conn, map[string]any{"type": "hello"})
+	f := newFakeSocketSlack(t, func(ctx context.Context, f *fakeSocketSlack, conn *websocket.Conn, n int) {
+		f.send(ctx, conn, map[string]any{"type": "hello"})
 		if n == 1 {
-			send(ctx, t, conn, map[string]any{"type": "events_api", "envelope_id": "env-1", "payload": json.RawMessage(appMention)})
-			acks <- ackOf(ctx, t, conn)
-			send(ctx, t, conn, map[string]any{"type": "interactive", "envelope_id": "env-2", "payload": map[string]any{"type": "block_actions"}})
-			acks <- ackOf(ctx, t, conn)
-			send(ctx, t, conn, map[string]any{"type": "disconnect", "reason": "refresh_requested"})
+			f.send(ctx, conn, map[string]any{"type": "events_api", "envelope_id": "env-1", "payload": json.RawMessage(appMention)})
+			acks <- f.ackOf(ctx, conn)
+			f.send(ctx, conn, map[string]any{"type": "interactive", "envelope_id": "env-2", "payload": map[string]any{"type": "block_actions"}})
+			acks <- f.ackOf(ctx, conn)
+			f.send(ctx, conn, map[string]any{"type": "disconnect", "reason": "refresh_requested"})
 			return
 		}
 		<-ctx.Done()
@@ -102,6 +131,8 @@ func TestSocketModeDeliversEventsAndReconnects(t *testing.T) {
 	var mu sync.Mutex
 	var failures []error
 	_, tags := start(t, slack.Config{Socket: f.config(func(err error) { mu.Lock(); failures = append(failures, err); mu.Unlock() })})
+	// Whatever this test returns with, it expects no more of the fake.
+	defer f.quiet()
 
 	select {
 	case e := <-tags:

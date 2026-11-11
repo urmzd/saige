@@ -550,5 +550,5 @@ These names are in stored data and do not change:
 | Kind | Names |
 |------|-------|
 | Tables | `fiber_runs`, `fiber_run_records`, `fiber_run_queue`, `fiber_threads`, `fiber_thread_entries`, `fiber_knowledge_documents`, `fiber_knowledge_chunks`, `fiber_tool_providers`, `fiber_tool_snapshots` |
-| Record keys | `fiber.question.<id>`, `fiber.answer.<id>`, `fiber.child.<id>`, `fiber.stop`, `fiber.usage.a<attempt>`, `fiber.knowledge.v1` |
+| Record keys | `fiber.question.<id>`, `fiber.parked.<id>`, `fiber.answer.<id>`, `fiber.child.<id>`, `fiber.stop`, `fiber.usage.a<attempt>`, `fiber.knowledge.v1` |
 | Activity names | `fiber.turn`, `fiber.turn.agent`, `fiber.turn.resume`, kept only so a v1 run is recognised and failed terminally |

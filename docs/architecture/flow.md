@@ -616,7 +616,8 @@ far is published and kept.
 
 ```
 agent activity (memoized)        returns the parked turn
-  -> step fiber.question.<id>   announces run.parked.v1 once; the record is the question
+  -> step fiber.question.<id>   the record is the question, which Answer finds it by
+  -> step fiber.parked.<id>     announces run.parked.v1 once, after every question of the park is recorded
   -> event fiber.answer.<id>    the resolution: absent, the body returns ErrParked and the run waits
 Runtime.Answer                   checks the answer, writes the resolution (first write wins), wakes the run
   -> next attempt replays         the turn and the question from records, reads the resolution

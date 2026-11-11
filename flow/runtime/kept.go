@@ -7,5 +7,6 @@ const (
 	RecordQuestionPrefix = questionStepPrefix
 	RecordAnswerPrefix   = answerRecordPrefix
 	RecordChildPrefix    = childStepPrefix
+	RecordParkedPrefix   = parkedStepPrefix
 	RecordUsagePrefix    = usageRecordName
 )

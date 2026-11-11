@@ -101,11 +101,11 @@ func TestInteractionsFromAnotherTeamOrAFailedHost(t *testing.T) {
 // acknowledged.
 func TestSocketModeInteractionsReachTheHost(t *testing.T) {
 	acked := make(chan string, 1)
-	f := newFakeSocketSlack(t, func(ctx context.Context, conn *websocket.Conn, n int) {
-		send(ctx, t, conn, map[string]any{"type": "hello"})
+	f := newFakeSocketSlack(t, func(ctx context.Context, f *fakeSocketSlack, conn *websocket.Conn, n int) {
+		f.send(ctx, conn, map[string]any{"type": "hello"})
 		if n == 1 {
-			send(ctx, t, conn, map[string]any{"type": "interactive", "envelope_id": "env-9", "payload": json.RawMessage(blockActions)})
-			acked <- ackOf(ctx, t, conn)
+			f.send(ctx, conn, map[string]any{"type": "interactive", "envelope_id": "env-9", "payload": json.RawMessage(blockActions)})
+			acked <- f.ackOf(ctx, conn)
 		}
 		<-ctx.Done()
 	})
@@ -114,6 +114,8 @@ func TestSocketModeInteractionsReachTheHost(t *testing.T) {
 		pressed <- in
 		return nil
 	}})
+	// Whatever this test returns with, it expects no more of the fake.
+	defer f.quiet()
 	select {
 	case in := <-pressed:
 		if in.ActionID != "aui.approve#1" || in.User != "U0HUMAN1" {

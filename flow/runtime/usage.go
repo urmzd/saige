@@ -279,8 +279,10 @@ var ErrNotAChild = errors.New("runtime: not a child run that can be rolled up")
 // executing under tenant, and refuses anything it cannot vouch for. Nothing the
 // host says about the child is trusted but its run id: the run must exist in
 // the ledger, belong to the parent's tenant, not be the parent, and have
-// ended, and its total and agent are read from its own record. Another
-// tenant's run is refused with the same error as a run that does not exist.
+// ended, and its total and agent are read from its own record. A run has
+// ended when the ledger says so, or when it has told this parent how it
+// ended and the ledger is about to (endedFor). Another tenant's run is
+// refused with the same error as a run that does not exist.
 func (r *Runtime) childUsage(tenant, parentRunID string) func(context.Context, string) (event.UsageChild, error) {
 	return func(ctx context.Context, runID string) (event.UsageChild, error) {
 		runID = strings.TrimSpace(runID)
@@ -304,11 +306,18 @@ func (r *Runtime) childUsage(tenant, parentRunID string) func(context.Context, s
 		if in.Session != nil && rec.ParentRunID != parentRunID {
 			return event.UsageChild{}, fmt.Errorf("%w: run %q has another parent", ErrNotAChild, runID)
 		}
-		if !rec.Status.Terminal() {
-			return event.UsageChild{}, fmt.Errorf("%w: run %q has not ended", ErrNotAChild, runID)
-		}
 		var total event.Usage
-		if rec.Status == run.StatusSucceeded {
+		if !rec.Status.Terminal() {
+			// A child tells its parent how it ended as the last thing its
+			// body does, a moment before the ledger records the run as ended.
+			// A parent that resumes in that moment still rolls the child up:
+			// the child's turn is over, and what it spent is in its records.
+			u, ok := r.endedFor(ctx, parentRunID, runID, in, records)
+			if !ok {
+				return event.UsageChild{}, fmt.Errorf("%w: run %q has not ended", ErrNotAChild, runID)
+			}
+			total = u.Total
+		} else if rec.Status == run.StatusSucceeded {
 			var out Output
 			if err := json.Unmarshal(rec.Output, &out); err == nil && out.Usage != nil {
 				total = out.Usage.Total
@@ -324,6 +333,23 @@ func (r *Runtime) childUsage(tenant, parentRunID string) func(context.Context, s
 			Usage:        total,
 		}, nil
 	}
+}
+
+// endedFor reports what a child run spent when the ledger does not yet hold
+// its ending but the child has told this parent how it ended: the parent's
+// question about the child is resolved with the child's own answer. Only the
+// runtime writes an answer that names a run, when the run's body is done
+// (answerParent), so a run that is still working, or parked, is never rolled
+// up this way. The figure is the one the child's output will hold.
+func (r *Runtime) endedFor(ctx context.Context, parentRunID, runID string, in Input, records []run.Record) (event.RunUsage, bool) {
+	if in.Parent == nil || in.Parent.RunID != parentRunID || in.Parent.QuestionID == "" {
+		return event.RunUsage{}, false
+	}
+	res, ok := r.storedResolution(ctx, parentRunID, in.Parent.QuestionID)
+	if !ok || res.Answer == nil || res.Answer.RunID != runID {
+		return event.RunUsage{}, false
+	}
+	return RecordedUsage(records)
 }
 
 // ReportChildUsage rolls a child run up into the run whose turn delegated to
