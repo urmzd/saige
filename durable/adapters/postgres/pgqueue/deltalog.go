@@ -402,7 +402,9 @@ func (h *deltaHub) subscribe(runID string) (<-chan struct{}, func()) {
 	set[ch] = struct{}{}
 	h.count++
 	if h.count == 1 {
-		ctx, cancel := context.WithCancel(context.Background())
+		// The cancel func is kept on the hub and called when the last
+		// subscriber leaves, in the func returned below.
+		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancelled by the last unsubscribe
 		h.cancel = cancel
 		h.gen++
 		h.synced = false
