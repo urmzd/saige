@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/urmzd/saige/flow/session"
@@ -106,6 +107,61 @@ func TestPostgresIdentityAndConfinement(t *testing.T) {
 	a, err := again.BudgetAccount(context.Background(), t.Name(), "root")
 	if err != nil || !a.Ready() {
 		t.Fatal(a, err)
+	}
+}
+
+// Many callers that open the same new session at once all get it. The
+// table holds two unique keys for one identity, the id and the key it is
+// derived from, and a concurrent first insert may collide on either: both
+// must read as "already open", never as an error. Each round uses a tenant
+// no earlier run wrote, so every round races on rows that do not exist yet.
+func TestPostgresConcurrentFirstOpenNeverFails(t *testing.T) {
+	dsn := os.Getenv("SAIGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("SAIGE_TEST_POSTGRES_DSN is not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	s := session.NewPostgres(pool)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 40; round++ {
+		tenant := fmt.Sprintf("%s-%d-%d", t.Name(), time.Now().UnixNano(), round)
+		p, err := s.Open(ctx, tenant, session.Open{Parent: "github://acme/repo/pull/5", Agent: "reviewer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const calls = 16
+		ids := make([]string, calls)
+		var wg sync.WaitGroup
+		for i := 0; i < calls; i++ {
+			wg.Go(func() {
+				r, err := s.Open(ctx, tenant, session.Open{Parent: p.ID, Agent: "security"})
+				if err != nil {
+					t.Errorf("round %d: %v", round, err)
+					return
+				}
+				ids[i] = r.ID
+			})
+		}
+		wg.Wait()
+		if t.Failed() {
+			return
+		}
+		for _, id := range ids {
+			if id != ids[0] {
+				t.Fatalf("round %d: callers opened different sessions: %v", round, ids)
+			}
+		}
+		children, err := s.List(ctx, tenant, session.Filter{Parent: p.ID})
+		if err != nil || len(children) != 1 {
+			t.Fatalf("round %d: concurrent first open duplicated children: %v %v", round, children, err)
+		}
 	}
 }
 
