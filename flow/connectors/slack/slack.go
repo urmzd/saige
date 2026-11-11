@@ -150,6 +150,12 @@ type Config struct {
 	// published. An error refuses the request.
 	Prepare func(context.Context, *event.Envelope) error
 
+	// Interact hears a person press a button or menu on the app's messages,
+	// or choose one of its shortcuts, from HTTP (InteractivityPath) or
+	// Socket Mode. It must return quickly: Slack waits three seconds. Nil
+	// acknowledges and ignores them.
+	Interact func(context.Context, Interaction) error
+
 	// Socket turns on Socket Mode: Slack delivers events over a websocket
 	// this connector opens, so the server needs no public URL. Nil serves
 	// the Events API over HTTP only.
@@ -308,6 +314,10 @@ func (c *Connector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveVerified handles a request whose sender is already established: a
 // signed HTTP request, or an envelope on this app's own Socket Mode socket.
 func (c *Connector) serveVerified(w http.ResponseWriter, r *http.Request, body []byte) {
+	if strings.HasSuffix(r.URL.Path, InteractivityPath) {
+		c.serveInteractive(w, r, body)
+		return
+	}
 	if strings.HasSuffix(r.URL.Path, CommandsPath) {
 		c.serveCommand(w, r, body)
 		return
