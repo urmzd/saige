@@ -28,6 +28,10 @@ rt, err := runtime.New(durable.New(ledger, queue), definitions, broker,
 | `address`, `attachment`, `blob` | Place URIs, file references and their bytes |
 | `bus` | The channel bus, in memory or on Postgres |
 | `connector` | The faces a connector implements |
+| `connectors`, `connectors/slack`, `connectors/github`, `connectors/cron`, `connectors/mention` | The connector mesh and its Slack, GitHub and schedule peers; mentions and references |
+| `membership`, `egress` | Who a channel event wakes; delivery of run events to sinks |
+| `credential` | The token a connector or tool acts with, for an app or a person |
+| `signature`, `deliverystate` | Webhook authentication; a sink's delivery state across replicas |
 | `definition` | Agent definitions with a policy, pinned per run |
 | `session`, `thread` | Continuing conversations and their journals |
 | `turn`, `turn/native`, `turn/sandbox` | The turn seam and its two runtimes |
@@ -40,6 +44,8 @@ rt, err := runtime.New(durable.New(ledger, queue), definitions, broker,
 - [Events and the durable turn](../docs/architecture/flow.md): delivery, durability, stopping, compaction, usage, parking
 - [The event union](../docs/architecture/flow-events.md): the envelope, types, catalog, channels, definitions, the Runtime seam
 - [Agent sessions](../docs/architecture/flow-sessions.md): keys, child calls, governance, budgets
+- [Slack connector](../docs/architecture/flow-slack.md)
+- [GitHub connector](../docs/architecture/flow-github.md) and [feedback](../docs/architecture/flow-github-feedback.md)
 - [AGENTS.md](../AGENTS.md): the flow rules
 
 ## Development

@@ -788,11 +788,15 @@ leaves
   flow/attachment     the typed reference to a file an agent was handed
   flow/event          the envelope, the sealed Body union, Unknown and the catalog
   flow/event/legacy   reads JSON written before the union, maps old kinds to types
+  flow/signature      HMAC verification for inbound webhooks
+  flow/credential     the token a connector or tool acts with, for an app or a person
 
 seams
   flow/blob           content-addressed file bytes; flow/attachment/intake and resolve
   flow/bus            channel bus: Memory and Postgres, bustest
   flow/connector      Trigger / Sink / Subscriber / Actor faces, registry of sinks
+  flow/membership     which agents are members of which channels, and what wakes them
+  flow/deliverystate  a sink's message handle and rendering across replicas
   flow/definition     saige definitions, Policy, insert-only Source, Resolver and pins
   flow/session        an agent's continuing conversation; flow/thread, its journal
   flow/isolation      the seam to an isolated instance; isolate (on sandbox/isolate)
@@ -802,6 +806,8 @@ composition
   flow/turn/native    the default Runtime, on saige's agent loop; tools, citations, usage, parking
   flow/turn/sandbox   any Runtime inside sandbox/, under the pinned policy
   flow/runtime        the durable turn: accept, pin, stop, usage, parking
+  flow/egress         delivery to sinks by channel and type prefix
+  flow/connectors     slack, github, cron, mention, and what they share
 ```
 
 A host composes these in Go: `runtime.New(durable.New(ledger, queue),
@@ -809,7 +815,7 @@ resolver, bus, opts...)` with the `turn.Runtime` it chose, and every other
 backend as a constructed value. Nothing reads a configuration file or a
 `FIBER_*` variable (model providers still read their vendor's key, such as
 `ANTHROPIC_API_KEY`, when an agent is built). Each backend family has a
-conformance suite (`bustest`, `definitiontest`, `threadtest`, `blobtest`)
+conformance suite (`bustest`, `definitiontest`, `membershiptest`, `threadtest`, `blobtest`)
 every implementation passes. Only `flow/turn/native` and `flow/definition`
 reach saige's agent loop and providers; the rest import its types alone, and
 `flow/turn/imports_test.go` keeps it that way.
@@ -826,7 +832,7 @@ stamping the tenant and actor on what it accepts, belong to that program.
 
 Two, and changes near either require tests proving confinement still holds.
 
-**`flow/signature`** (arriving with the connectors) is the only thing between the public internet and starting a
+**`flow/signature`** is the only thing between the public internet and starting a
 run. It verifies HMAC over the raw request body before that body is parsed.
 Rules that follow: verify before parsing, hash the exact bytes received, compare
 with `hmac.Equal` in constant time, and fail closed on every ambiguity including

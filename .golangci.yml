@@ -54,12 +54,12 @@ linters:
       # flow moved from orchagent, which linted only for errors. These files
       # carry its undocumented exported names and repeated literals as they
       # were; new files under flow/ meet the full config.
-      - path: ^(flow/attachment/sniff\.go|flow/event/feedback\.go|flow/event/ingress\.go|flow/event/run\.go|flow/runtime/hold\.go|flow/runtime/host_child\.go|flow/runtime/park\.go|flow/runtime/sandbox\.go|flow/runtime/session_tools\.go|flow/runtime/session_wait\.go|flow/runtime/session\.go|flow/runtime/stop\.go|flow/runtime/usage\.go|flow/session/access\.go|flow/session/accounting\.go|flow/session/admission\.go|flow/session/budget\.go|flow/session/memory\.go|flow/session/postgres\.go|flow/session/session\.go|flow/thread/window\.go|flow/turn/native/tools\.go|flow/turn/turn\.go)$
+      - path: ^(flow/attachment/sniff\.go|flow/event/feedback\.go|flow/event/ingress\.go|flow/event/run\.go|flow/runtime/hold\.go|flow/runtime/host_child\.go|flow/runtime/park\.go|flow/runtime/sandbox\.go|flow/runtime/session_tools\.go|flow/runtime/session_wait\.go|flow/runtime/session\.go|flow/runtime/stop\.go|flow/runtime/usage\.go|flow/session/access\.go|flow/session/accounting\.go|flow/session/admission\.go|flow/session/budget\.go|flow/session/memory\.go|flow/session/postgres\.go|flow/session/session\.go|flow/thread/window\.go|flow/turn/native/tools\.go|flow/turn/turn\.go|flow/connectors/github/action_target\.go|flow/connectors/github/api\.go|flow/connectors/github/attachments\.go|flow/connectors/github/checks\.go|flow/connectors/github/event\.go|flow/connectors/github/extension\.go|flow/connectors/github/feedback\.go|flow/connectors/github/feedback_poll\.go|flow/connectors/github/fix_pull\.go|flow/connectors/github/fix_pull_api\.go|flow/connectors/github/fix_pull_fake\.go|flow/connectors/github/github\.go|flow/connectors/github/mutations_api\.go|flow/connectors/github/reactions\.go|flow/connectors/github/reactions_fake\.go|flow/connectors/github/read_scope\.go|flow/connectors/github/replies\.go|flow/connectors/github/resolution_state\.go|flow/connectors/github/review\.go|flow/connectors/github/review_comments\.go|flow/connectors/github/review_fake\.go|flow/connectors/github/review_recovery\.go|flow/connectors/github/review_sink\.go|flow/connectors/github/suggestion_feedback\.go|flow/connectors/github/thread\.go|flow/connectors/github/workflows\.go|flow/connectors/github/workflows_fake\.go)$
         linters:
           - goconst
           - revive
       # Conformance suites: one long table of cases per contract.
-      - path: (^|/)(ledgertest|queuetest|isolatetest|isolationtest|blobtest|bustest|definitiontest|threadtest|runtimetest|resolvetest)/
+      - path: (^|/)(ledgertest|queuetest|isolatetest|isolationtest|blobtest|bustest|definitiontest|threadtest|runtimetest|resolvetest|membershiptest)/
         linters:
           - goconst
           - gocyclo
