@@ -28,8 +28,8 @@ import (
 	"path/filepath"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/urmzd/orchagent/durable/adapters/postgres/pgledger"
-	"github.com/urmzd/orchagent/durable/adapters/postgres/pgqueue"
+	"github.com/urmzd/saige/durable/adapters/postgres/pgledger"
+	"github.com/urmzd/saige/durable/adapters/postgres/pgqueue"
 
 	agentsdk "github.com/urmzd/saige/agent"
 	durableanchor "github.com/urmzd/saige/agent/durable/anchor"

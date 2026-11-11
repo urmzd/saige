@@ -1,11 +1,11 @@
 // Package anchor runs SAIGE agents as durable workflows on
-// github.com/urmzd/orchagent/durable (formerly anchor). Each LLM call and tool execution becomes a
+// github.com/urmzd/saige/durable (formerly anchor). Each LLM call and tool execution becomes a
 // memoized anchor step: a crashed or restarted worker replays the run to
 // its first unrecorded step instead of repeating (and re-billing) the work.
 //
 // The engine composes any anchor ledger and queue. The in-memory pair
 // (ledger.NewMemory, queue.NewMemory) is a complete single-process system;
-// github.com/urmzd/orchagent/durable/adapters/postgres runs both on Postgres tables the
+// github.com/urmzd/saige/durable/adapters/postgres runs both on Postgres tables the
 // host owns. The core agent package never imports this package: it depends
 // only on the types.StepRunner seam.
 //
@@ -29,11 +29,11 @@ import (
 	"reflect"
 	"time"
 
-	dt "github.com/urmzd/orchagent/durable"
-	"github.com/urmzd/orchagent/durable/ledger"
-	"github.com/urmzd/orchagent/durable/queue"
-	"github.com/urmzd/orchagent/durable/run"
-	"github.com/urmzd/orchagent/durable/worker"
+	dt "github.com/urmzd/saige/durable"
+	"github.com/urmzd/saige/durable/ledger"
+	"github.com/urmzd/saige/durable/queue"
+	"github.com/urmzd/saige/durable/run"
+	"github.com/urmzd/saige/durable/worker"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/internal/durablecodec"

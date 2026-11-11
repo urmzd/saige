@@ -1,6 +1,6 @@
 module github.com/urmzd/saige
 
-go 1.26.10
+go 1.26.11
 
 require (
 	cloud.google.com/go/auth v0.24.1
@@ -22,7 +22,6 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/urmzd/orchagent v0.1.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0

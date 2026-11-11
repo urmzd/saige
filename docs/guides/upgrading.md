@@ -1,5 +1,9 @@
 # Upgrading to this release
 
+## The durable engine moves into saige
+
+`github.com/urmzd/orchagent/durable` is now `github.com/urmzd/saige/durable`, and saige no longer requires orchagent. Change `github.com/urmzd/orchagent/durable` to `github.com/urmzd/saige/durable` in every import, including the Postgres adapters (`durable/adapters/postgres/pgledger`, `pgqueue`, `pgkit`). The API, the `durable.anchor.*` wire codes and the Postgres tables are unchanged. The Redis queue (`durable/adapters/redis/redisqueue`), the `durable` ledger inspector and the engine's examples did not move; `pgqueue` covers the queue on Postgres alone. The Postgres adapters' integration tests now read `SAIGE_TEST_POSTGRES_DSN` (they read `DURABLE_POSTGRES_URL`).
+
 ## Durable backend moves to orchagent
 
 `github.com/urmzd/anchor` is archived. `agent/durable/anchor` now builds on `github.com/urmzd/orchagent/durable` and its Postgres adapter, whose API is unchanged. If you import anchor's ledger, queue or Postgres adapter yourself, change `github.com/urmzd/anchor/pkg/...` to `github.com/urmzd/orchagent/durable/...` and `github.com/urmzd/anchor/adapters/postgres/...` to `github.com/urmzd/orchagent/durable/adapters/postgres/...`. The saige package path, the `durable.anchor.*` wire codes and the Postgres tables are unchanged.

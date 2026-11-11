@@ -16,6 +16,8 @@ test-race:
 test-postgres:
     SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
     go test -count=1 -p 1 ./integration/... ./agent/pgstore/... ./rag/pgstore/... ./rag/knowledge/pgstore/... ./agent/durable/anchor/... ./agent/definition/... ./cmd/saige/
+    SAIGE_TEST_POSTGRES_DSN="${SAIGE_TEST_POSTGRES_DSN:-postgres://postgres:test@localhost:5433/postgres?sslmode=disable}" \
+    go test -tags=integration -count=1 -p 1 ./durable/adapters/postgres/...
 
 # Run tests with coverage report
 test-cover:
