@@ -98,7 +98,7 @@ func (n *Notices) Listen(topic string, fn func(tenant string, payload []byte)) (
 	n.listeners[topic][id] = fn
 	n.count++
 	if n.count == 1 {
-		ctx, stop := context.WithCancel(context.Background())
+		ctx, stop := context.WithCancel(context.Background()) //nolint:gosec // G118: kept on the hub and called when the last listener leaves
 		n.cancel = stop
 		go pgListen(ctx, n.pool, n.retry, noticeChannel, &n.listening, n.connected, n.notified)
 	}
