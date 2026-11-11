@@ -50,6 +50,15 @@ import (
 	p33 "github.com/urmzd/saige/rag/knowledge/types"
 	p34 "github.com/urmzd/saige/rag/source"
 	p35 "github.com/urmzd/saige/rag/types"
+	p42 "github.com/urmzd/saige/sandbox/controlplane"
+	p43 "github.com/urmzd/saige/sandbox/isolate"
+	p44 "github.com/urmzd/saige/sandbox/isolate/docker"
+	p45 "github.com/urmzd/saige/sandbox/isolate/egress"
+	p46 "github.com/urmzd/saige/sandbox/ngac"
+	p47 "github.com/urmzd/saige/sandbox/runner"
+	p48 "github.com/urmzd/saige/sandbox/sandbox"
+	_ "github.com/urmzd/saige/sandbox/wirecodes"
+	p49 "github.com/urmzd/saige/sandbox/workspace"
 	p36 "github.com/urmzd/saige/tools"
 	p37 "github.com/urmzd/saige/tools/exec"
 	p38 "github.com/urmzd/saige/tools/fetch"
@@ -257,6 +266,30 @@ func sentinels() []sentinel {
 		{"rag/types", "ErrUnsupportedMIMEType", p35.ErrUnsupportedMIMEType},
 		{"rag/types", "ErrVariantNotFound", p35.ErrVariantNotFound},
 		{"rag/types", "ErrVariantPart", p35.ErrVariantPart},
+		{"sandbox/controlplane", "ErrClosed", p42.ErrClosed},
+		{"sandbox/controlplane", "ErrExists", p42.ErrExists},
+		{"sandbox/controlplane", "ErrFull", p42.ErrFull},
+		{"sandbox/controlplane", "ErrNotFound", p42.ErrNotFound},
+		{"sandbox/controlplane", "ErrUnknownTask", p42.ErrUnknownTask},
+		{"sandbox/isolate", "ErrClosed", p43.ErrClosed},
+		{"sandbox/isolate", "ErrInvalidCommand", p43.ErrInvalidCommand},
+		{"sandbox/isolate", "ErrInvalidSpec", p43.ErrInvalidSpec},
+		{"sandbox/isolate", "ErrStart", p43.ErrStart},
+		{"sandbox/isolate", "ErrTimeout", p43.ErrTimeout},
+		{"sandbox/isolate", "ErrUnsupported", p43.ErrUnsupported},
+		{"sandbox/isolate/docker", "ErrInsecureRuntime", p44.ErrInsecureRuntime},
+		{"sandbox/isolate/egress", "ErrDenied", p45.ErrDenied},
+		{"sandbox/isolate/egress", "ErrDuplicateGrant", p45.ErrDuplicateGrant},
+		{"sandbox/isolate/egress", "ErrInvalidPolicy", p45.ErrInvalidPolicy},
+		{"sandbox/isolate/egress", "ErrNonPublicAddress", p45.ErrNonPublicAddress},
+		{"sandbox/ngac", "ErrExists", p46.ErrExists},
+		{"sandbox/ngac", "ErrNotFound", p46.ErrNotFound},
+		{"sandbox/runner", "ErrInvalidRequest", p47.ErrInvalidRequest},
+		{"sandbox/runner", "ErrStart", p47.ErrStart},
+		{"sandbox/runner", "ErrTimeout", p47.ErrTimeout},
+		{"sandbox/sandbox", "ErrDenied", p48.ErrDenied},
+		{"sandbox/workspace", "ErrInvalidKey", p49.ErrInvalidKey},
+		{"sandbox/workspace", "ErrNotFound", p49.ErrNotFound},
 		{"tools", "ErrNoRoot", p36.ErrNoRoot},
 		{"tools/exec", "ErrCommandDenied", p37.ErrCommandDenied},
 		{"tools/exec", "ErrDockerUnavailable", p37.ErrDockerUnavailable},

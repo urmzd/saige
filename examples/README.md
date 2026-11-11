@@ -70,6 +70,12 @@ Messages as typed parts, media input and part deltas. See [parts](../docs/guides
 |---------|-------------|
 | [`rag/arxiv`](rag/arxiv/) | Full pipeline with arXiv papers |
 
+## Sandbox
+
+| Example | Description |
+|---------|-------------|
+| [`sandbox`](sandbox/) | Compose a control plane, deploy a service with a workspace policy, submit tasks, and see a write outside the tool's area denied; embedded in [the sandbox README](../sandbox/README.md) |
+
 ## Validation
 
 [`validation/`](validation/) runs live end-to-end checks against real providers. See its [README](validation/README.md).

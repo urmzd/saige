@@ -1,5 +1,9 @@
 # Upgrading to this release
 
+## The sandbox moves into saige
+
+`github.com/urmzd/orchagent/sandbox` is now `github.com/urmzd/saige/sandbox`: change the import prefix. The API and the runtime names (`playscape.*` labels, `/run/playscape`) are unchanged. The Kubernetes Job runner (`runner/k8s`), the `cli` tool provider and the `sandbox` command did not move. To keep `errors.Is` working on sandbox errors after they cross saige's wire codec, import `github.com/urmzd/saige/sandbox/wirecodes` for its side effect.
+
 ## The durable engine moves into saige
 
 `github.com/urmzd/orchagent/durable` is now `github.com/urmzd/saige/durable`, and saige no longer requires orchagent. Change `github.com/urmzd/orchagent/durable` to `github.com/urmzd/saige/durable` in every import, including the Postgres adapters (`durable/adapters/postgres/pgledger`, `pgqueue`, `pgkit`). The API, the `durable.anchor.*` wire codes and the Postgres tables are unchanged. The Redis queue (`durable/adapters/redis/redisqueue`), the `durable` ledger inspector and the engine's examples did not move; `pgqueue` covers the queue on Postgres alone. The Postgres adapters' integration tests now read `SAIGE_TEST_POSTGRES_DSN` (they read `DURABLE_POSTGRES_URL`).
