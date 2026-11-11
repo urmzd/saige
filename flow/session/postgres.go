@@ -76,10 +76,20 @@ func (p *Postgres) Open(ctx context.Context, tenant string, o Open) (Record, err
 		}
 		depth = parent.Depth + 1
 	}
-	// The unique key is the arbiter across replicas. Conflict updates no identity.
-	return scan(p.pool.QueryRow(ctx, `INSERT INTO fiber_sessions(tenant,id,parent,agent,label,channel,depth)
- VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(tenant,id) DO UPDATE SET id=EXCLUDED.id RETURNING `+columns,
-		tenant, k.ID(), k.Parent, k.Agent, k.Label, channel(k, o.Channel), depth))
+	// The unique keys are the arbiter across replicas. A session has two, its
+	// id and the key the id is derived from, and callers that open the same
+	// new session at once can collide on either. Naming no conflict target
+	// lets both arbitrate: naming one leaves a collision on the other to
+	// fail as a duplicate key. A conflict inserts nothing and changes
+	// nothing, and the session already there is read back.
+	id := k.ID()
+	r, err := scan(p.pool.QueryRow(ctx, `INSERT INTO fiber_sessions(tenant,id,parent,agent,label,channel,depth)
+ VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING `+columns,
+		tenant, id, k.Parent, k.Agent, k.Label, channel(k, o.Channel), depth))
+	if errors.Is(err, ErrNotFound) {
+		return p.Get(ctx, tenant, id)
+	}
+	return r, err
 }
 func (p *Postgres) Get(ctx context.Context, tenant, id string) (Record, error) {
 	if tenant == "" {
