@@ -22,6 +22,12 @@ parent's pinned `Access.Spawn`. The pinned policy's `session_depth` defaults to
 replicas. Retrying a call reuses its reservation; only failed admission or a
 terminal ledger result releases it.
 
+`runtime.WithSessionTools` limits those verbs to the ones a host names. A verb
+left out is not offered to a turn and does not resolve for a spec that names
+it. With no names, a turn is offered none: a host that calls agents through its
+own tool (`runtime.WithCallTool`) can keep `session_read` and `session_link`
+and leave the calling verbs out. Sessions themselves do not change.
+
 A recorded parent stop fences child admission before and after reservation.
 If acceptance races the stop, the runtime records the child's stop before
 acknowledging the call, including calls started with `wait: false`.

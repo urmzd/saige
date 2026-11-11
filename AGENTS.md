@@ -57,6 +57,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `flow/session/`, `flow/thread/` | An agent's continuing conversation keyed by (tenant, parent, agent, label), with admission, grants and budgets; the append-only journal of what was said |
 | `flow/turn/` | The one seam between a run and whatever executes a turn: `turn.Runtime`; `native` (on saige's agent loop), `sandbox` (any Runtime inside `sandbox/`), `runtimetest` |
 | `flow/runtime/` | The durable turn on `durable/`: accept, pin, stop, compact, usage, parking, child sessions |
+| `flow/message/` | One streamed assistant message for a tree of runs: a `Projector` turns the tree's envelopes into Anthropic-shaped stream events with nested lanes per called agent, and a `Folder` reads the stream back into a `Message`; both pure |
 | `flow/isolation/` | The seam to an isolated instance for a run's tools; `isolate` leases them from `sandbox/isolate` |
 | `flow/connectors/` | The mesh: shared file intake and references for every connector; `internal/` holds what they share (inbound authentication, the sink that edits one message per run, rendering, JSON over HTTP) |
 | `flow/connectors/slack/` | The Slack peer: trigger (Events API, slash commands, stops), sink and actor (messages, reactions, agent sessions) |
