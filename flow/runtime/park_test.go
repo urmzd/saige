@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -959,7 +960,7 @@ func (m routed) Stream(_ context.Context, req saigetypes.Request) (<-chan saiget
 
 // delegating is a world where "lead" delegates to "ops", which asks a person
 // which env, with delegations as child runs.
-func childRunWorld(t *testing.T, w *world) (*runtime.Runtime, *parking) {
+func childRunWorld(t *testing.T, w *world, opts ...runtime.Option) (*runtime.Runtime, *parking) {
 	t.Helper()
 	p := newParking(t, w)
 	w.specs.set(native.Spec{
@@ -972,7 +973,7 @@ func childRunWorld(t *testing.T, w *world) (*runtime.Runtime, *parking) {
 	}, runtime.WithCatalog(func(runtime.Request, func(event.Action) error) (native.Tools, error) {
 		return native.StaticTools(p.deploy), nil
 	}))
-	return p.rt(t, runtime.WithChildRuns()), p
+	return p.rt(t, append([]runtime.Option{runtime.WithChildRuns()}, opts...)...), p
 }
 
 // pendingOf waits for a run to be parked on a question of a kind.
@@ -1037,6 +1038,85 @@ func TestDelegatingParentsParkSoTheirChildrenRunAtAnyConcurrency(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// holdWaker wakes runs as the queue it wraps does, and then keeps the first
+// caller that wakes run where it is until release is closed. A child run
+// wakes its parent from inside its own body, so holding that call holds the
+// child a step short of ended while the parent goes on.
+type holdWaker struct {
+	runtime.Waker
+	run     atomic.Value // string
+	once    sync.Once
+	release chan struct{}
+	done    sync.Once
+}
+
+// free lets the held caller go. It is safe to call more than once.
+func (h *holdWaker) free() { h.done.Do(func() { close(h.release) }) }
+
+func (h *holdWaker) Enqueue(ctx context.Context, runID string, delay time.Duration) error {
+	err := h.Waker.Enqueue(ctx, runID, delay)
+	if run, _ := h.run.Load().(string); run != "" && run == runID {
+		h.once.Do(func() { <-h.release })
+	}
+	return err
+}
+
+// A parent rolls up a child that has told it how it ended, even when the
+// parent resumes before the ledger records the child as ended. The child
+// answers its parent as the last thing its body does, so there is always a
+// moment in which the parent can run ahead; here the child is held in that
+// moment until the parent has finished. A parent that looked only at the
+// child's status found it still running and dropped what it spent.
+func TestAParentRollsUpAChildThatAnsweredBeforeTheLedgerRecordsItsEnd(t *testing.T) {
+	w := newWorld(t)
+	hold := &holdWaker{Waker: w.queue, release: make(chan struct{})}
+	rt, p := childRunWorld(t, w, runtime.WithWaker(hold))
+	p.workers(t, rt, 2, 0)
+	// Registered after the workers, so it runs before they are stopped: a
+	// failed test must not leave a worker held.
+	t.Cleanup(hold.free)
+
+	parent := p.accept(t, rt, tag("lead", "evt-1", "ship"))
+	wait := pendingOf(t, rt, parent, event.QuestionDelegation)
+	q := pendingOf(t, rt, wait.ChildRunID, event.QuestionChoice)
+	// From here the first wake of the parent is the child's, and it is held.
+	hold.run.Store(parent)
+	p.answer(t, rt, wait.ChildRunID, q.ID, event.Answer{Choice: "staging"})
+
+	out := p.result(t, rt, parent)
+	if !strings.Contains(out.Text, "Child chose staging") {
+		t.Fatalf("parent answered %q, want the child's answer", out.Text)
+	}
+	// The parent is done and the child is still inside its body.
+	if rec, _, err := p.ledger.Load(context.Background(), wait.ChildRunID); err != nil || rec.Status.Terminal() {
+		t.Fatalf("the child is %v (%v) when its parent ends, want it not yet ended", rec.Status, err)
+	}
+	var rolled []event.UsageChild
+	for _, e := range p.bus.of(parent) {
+		if e.Type == event.TypeUsageChild {
+			c, err := decode[event.UsageChild](e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rolled = append(rolled, c)
+		}
+	}
+	if len(rolled) != 1 || rolled[0].RunID != wait.ChildRunID {
+		t.Fatalf("the parent rolled up %+v, want its one child %s", rolled, wait.ChildRunID)
+	}
+
+	hold.free()
+	child := p.result(t, rt, wait.ChildRunID)
+	if child.Usage == nil {
+		t.Fatalf("the child's output holds no usage: %+v", child)
+	}
+	got, _ := json.Marshal(rolled[0].Usage)
+	want, _ := json.Marshal(child.Usage.Total)
+	if string(got) != string(want) {
+		t.Errorf("the parent rolled up %+v, want what the child's output holds, %+v", rolled[0].Usage, child.Usage)
 	}
 }
 
