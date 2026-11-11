@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,6 +129,9 @@ type Sandbox struct {
 	delegator      Delegator
 	callTool       string
 	sessionRuntime func() *Runtime
+	// sessionTools, when not nil, names the session verbs a turn is offered;
+	// nil offers every one.
+	sessionTools []string
 	// instances gives each turn its claim on an isolated instance; nil
 	// gives none, and tools that need one refuse.
 	instances RunInstances
@@ -889,8 +893,18 @@ func (s *Sandbox) turnTools(ctx context.Context, rt tool.Runtime, req Request, s
 	sessionTools := map[string]saigetypes.Tool{}
 	if s.sessionRuntime != nil && req.Session != nil {
 		if r := s.sessionRuntime(); r != nil {
-			sessionTools = r.sessionTools(req, send)
+			for name, t := range r.sessionTools(req, send) {
+				// A verb the host left out (WithSessionTools) is not a tool
+				// of this turn at all, so a spec that names it does not
+				// resolve it either.
+				if s.sessionTools == nil || slices.Contains(s.sessionTools, name) {
+					sessionTools[name] = t
+				}
+			}
 			for _, name := range sessionToolNames {
+				if _, offered := sessionTools[name]; !offered {
+					continue
+				}
 				if name != "session_call" || len(req.Definition.Spec.Access.Spawn) > 0 {
 					add(name)
 				}

@@ -22,6 +22,17 @@ func WithSessionRuntime(get func() *Runtime) SandboxOption {
 	return func(s *Sandbox) { s.sessionRuntime = get }
 }
 
+// WithSessionTools limits the session verbs a turn with a session is offered
+// to those named: session_call, session_listen, session_read, session_status
+// and session_link. Without it a turn is offered every one. With no names it
+// is offered none, which is what a host that calls agents through its own
+// tool (WithCallTool) and reads sessions through its own wants. A verb left
+// out is no tool of the turn, even when a spec names it; a name that is not
+// a session verb is ignored. Sessions themselves are unaffected.
+func WithSessionTools(names ...string) SandboxOption {
+	return func(s *Sandbox) { s.sessionTools = append([]string{}, names...) }
+}
+
 func (r *Runtime) sessionTools(req Request, send func(event.Body) error) map[string]saigetypes.Tool {
 	out := map[string]saigetypes.Tool{}
 	for _, name := range sessionToolNames {
