@@ -1,0 +1,52 @@
+{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"humagen":{"request_id":"req_1","root_run":"root","agent":"lead"}}}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"queued","elapsed_ms":0}
+{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"htu_root_1","name":"agent","input":{"agent":"ops","title":"Release"},"kind":"agent","title":"Release"}}
+{"type":"content_block_stop","index":0}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"running","title":"Release","elapsed_ms":0}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"message_start","message":{"id":"run_c","type":"message","role":"assistant","content":[],"humagen":{"root_run":"root","agent":"ops"}}}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"ops: running"}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Need three answers."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_1","path":["htu_root_1","htu_run_c_1"],"status":"queued","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_2","path":["htu_root_1","htu_run_c_2"],"status":"queued","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_3","path":["htu_root_1","htu_run_c_3"],"status":"queued","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":0}}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"awaiting_input","title":"Release","question":{"id":"q_q","kind":"choice","prompt":"Which region?","choices":["eu","us"],"who":["carol"]},"elapsed_ms":600}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_1","path":["htu_root_1","htu_run_c_1"],"status":"awaiting_approval","question":{"id":"q_a","kind":"approval","prompt":"Allow ops to call deploy?","who":["alice"]},"elapsed_ms":0}}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1","htu_run_c_1"],"status":"awaiting_approval","question":{"id":"q_a","kind":"approval","prompt":"Allow ops to call deploy?","who":["alice"]},"elapsed_ms":600}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_2","path":["htu_root_1","htu_run_c_2"],"status":"awaiting_approval","question":{"id":"q_b","kind":"approval","prompt":"Allow ops to call migrate?","who":["bob"]},"elapsed_ms":0}}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1","htu_run_c_2"],"status":"awaiting_approval","question":{"id":"q_b","kind":"approval","prompt":"Allow ops to call migrate?","who":["bob"]},"elapsed_ms":600}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"ops: awaiting approval"}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"running","title":"Release","elapsed_ms":700}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_1","path":["htu_root_1","htu_run_c_1"],"status":"denied","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_2","path":["htu_root_1","htu_run_c_2"],"status":"running","elapsed_ms":0}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"ops: running"}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"htu_run_c_2","name":"migrate","input":{"to":"v2"},"kind":"tool"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":1}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":2,"content_block":{"type":"server_tool_result","tool_use_id":"htu_run_c_2","content":[{"type":"text","text":"migrated"}]}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":2}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_2","path":["htu_root_1","htu_run_c_2"],"status":"done","elapsed_ms":100}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":3,"content_block":{"type":"server_tool_use","id":"htu_run_c_1","name":"deploy","input":{},"kind":"tool"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":3}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":4,"content_block":{"type":"server_tool_result","tool_use_id":"htu_run_c_1","content":[{"type":"text","text":"denied by alice"}],"is_error":true}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":4}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":5,"content_block":{"type":"server_tool_use","id":"htu_run_c_3","name":"ask_person","input":{"question":"Which region?"},"kind":"tool"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":5}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_3","path":["htu_root_1","htu_run_c_3"],"status":"running","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":6,"content_block":{"type":"server_tool_result","tool_use_id":"htu_run_c_3","content":[{"type":"text","text":"eu"}]}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":6}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_c_3","path":["htu_root_1","htu_run_c_3"],"status":"done","elapsed_ms":100}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_start","index":7,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_delta","index":7,"delta":{"type":"text_delta","text":"Migrated in eu; the deploy was denied."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"content_block_stop","index":7}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_c","depth":1,"event":{"type":"message_stop"}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"ops: done"}
+{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_result","tool_use_id":"htu_root_1","content":[{"type":"text","text":"Migrated in eu; the deploy was denied."}]}}
+{"type":"content_block_stop","index":1}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"done","title":"Release","elapsed_ms":1500}
+{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Released, without the deploy."}}
+{"type":"content_block_stop","index":2}
+{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0},"humagen":{"usage":{"by_model":{},"cost_usd":0}}}
+{"type":"message_stop"}

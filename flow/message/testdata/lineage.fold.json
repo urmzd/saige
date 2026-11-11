@@ -1,0 +1,290 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "session_call",
+        "input": {
+          "agent": "planner",
+          "text": "plan"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "elapsed_ms": 800
+        },
+        "lane": {
+          "agent_run_id": "run_p",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Planned."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "helper",
+          "title": "Help"
+        },
+        "kind": "agent",
+        "title": "Help",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Help",
+          "elapsed_ms": 800
+        },
+        "lane": {
+          "agent_run_id": "run_h",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Helped."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Planned."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Helped."
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "session_call",
+        "input": {
+          "agent": "planner",
+          "text": "plan"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "elapsed_ms": 800
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "helper",
+          "title": "Help"
+        },
+        "kind": "agent",
+        "title": "Help",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Help",
+          "elapsed_ms": 800
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Planned."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Helped."
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "session_call",
+        "input": {
+          "agent": "planner",
+          "text": "plan"
+        },
+        "kind": "tool",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "elapsed_ms": 800
+        },
+        "lane": {
+          "agent_run_id": "run_p",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Planned."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_2",
+        "name": "agent",
+        "input": {
+          "agent": "helper",
+          "title": "Help"
+        },
+        "kind": "agent",
+        "title": "Help",
+        "status": {
+          "tool_use_id": "htu_root_2",
+          "path": [
+            "htu_root_2"
+          ],
+          "status": "done",
+          "title": "Help",
+          "elapsed_ms": 800
+        },
+        "lane": {
+          "agent_run_id": "run_h",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Helped."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Planned."
+          }
+        ]
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_2",
+        "content": [
+          {
+            "type": "text",
+            "text": "Helped."
+          }
+        ]
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  }
+}

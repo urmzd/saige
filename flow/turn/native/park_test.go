@@ -3,6 +3,9 @@ package native_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -305,9 +308,10 @@ func TestAskPersonParksAsAChoiceOrAReplyAndReturnsTheAnswer(t *testing.T) {
 	}
 }
 
-// Two questions in one batch park twice: the second continuation carries both
-// answers, and the batch runs once, after both.
-func TestABatchWithTwoQuestionsParksOncePerQuestion(t *testing.T) {
+// Two questions in one batch park the turn once, on both, in call order. A
+// continuation with only one answer parks again on the other, and the batch
+// runs once, after both.
+func TestABatchWithTwoQuestionsParksOnceForBoth(t *testing.T) {
 	t.Parallel()
 	f := newParkFixture(t, []string{"deploy"},
 		toolCalls(
@@ -317,25 +321,175 @@ func TestABatchWithTwoQuestionsParksOncePerQuestion(t *testing.T) {
 		agenttest.TextResponse("Done."))
 	_, first := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
 	if first.Parked == nil || first.Parked.CallID != "c1" {
-		t.Fatalf("first park is %+v, want the deploy approval", first.Parked)
+		t.Fatalf("park is %+v, want the deploy approval first", first.Parked)
 	}
-	resume := *first.Parked
-	resume.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}}
-	_, second := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &resume})
-	if second.Parked == nil || second.Parked.CallID != "q1" {
-		t.Fatalf("second park is %+v, want the question", second.Parked)
+	waits := first.Parked.Waits()
+	if len(waits) != 2 || waits[0].CallID != "c1" || waits[0].Question.Kind != event.QuestionApproval ||
+		waits[1].CallID != "q1" || waits[1].Question.Kind != event.QuestionReply || waits[0].Question.ID == waits[1].Question.ID {
+		t.Fatalf("the park waits on %+v, want the approval and the question, in call order", waits)
+	}
+
+	// One answer is not enough: the turn parks again, on the other alone.
+	partial := *first.Parked
+	partial.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}}
+	_, second := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &partial})
+	if second.Parked == nil || second.Parked.CallID != "q1" || len(second.Parked.Batch) != 0 {
+		t.Fatalf("second park is %+v, want the question alone", second.Parked)
 	}
 	if len(f.deploy.Calls) != 0 {
 		t.Fatal("deploy ran before the batch's second question was answered")
 	}
-	again := *second.Parked
-	again.Answers["q1"] = event.Answer{Text: "audit"}
-	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a3", Resume: &again})
+
+	both := *first.Parked
+	both.Answers = map[string]event.Answer{"c1": {Decision: event.DecisionApprove}, "q1": {Text: "audit"}}
+	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a3", Resume: &both})
 	if res.Parked != nil || res.Text != "Done." || len(f.deploy.Calls) != 1 {
-		t.Errorf("third turn gave %+v with deploy run %d times", res, len(f.deploy.Calls))
+		t.Errorf("the continuation gave %+v with deploy run %d times", res, len(f.deploy.Calls))
 	}
 	if f.model.CallCount() != 2 {
 		t.Errorf("the model was called %d times, want 2", f.model.CallCount())
+	}
+}
+
+// awaitingTool is a tool whose result arrives from outside the turn, as a
+// delegation's does: the turn parks on each call to it, and the continuation
+// runs the call with the answer it was given.
+type awaitingTool struct{ *agenttest.MockTool }
+
+func (awaitingTool) AwaitQuestion(call saigetypes.ToolCallPart) (event.Question, bool) {
+	text, _ := call.Arguments["text"].(string)
+	args, _ := json.Marshal(call.Arguments)
+	return event.Question{Prompt: text, Tool: &event.QuestionTool{Name: call.Name, CallID: call.ID, Arguments: args}}, true
+}
+
+func (a awaitingTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	_, _ = a.MockTool.Execute(ctx, args)
+	answer, ok := native.AnswerFor(ctx)
+	if !ok {
+		return "", errors.New("no answer arrived")
+	}
+	return answer.Text, nil
+}
+
+// toolResults are the results a conversation carries, in order, as
+// "call=text".
+func toolResults(msgs []saigetypes.Message) []string {
+	var out []string
+	for _, m := range msgs {
+		for _, p := range saigetypes.PartsOf(m) {
+			if tr, ok := p.(saigetypes.ToolResultPart); ok {
+				out = append(out, tr.CallID+"="+tr.Text())
+			}
+		}
+	}
+	return out
+}
+
+// A batch of calls that each await a result parks once, on every one of
+// them, and runs nothing, the call that waits on nothing included. The
+// continuation with every answer runs the batch once: each call with its own
+// answer, the other call once, and every result in call order.
+func TestABatchOfAwaitingCallsParksOnceOnEveryWait(t *testing.T) {
+	t.Parallel()
+	delegate := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "delegate"}}}
+	lookup := &agenttest.MockTool{Def: saigetypes.ToolDef{Name: "lookup"}, Result: "found"}
+	model := &agenttest.ScriptedProvider{Responses: [][]saigetypes.Delta{
+		toolCalls(
+			saigetypes.ToolCallPart{ID: "d1", Name: "delegate", Arguments: map[string]any{"text": "one"}},
+			saigetypes.ToolCallPart{ID: "l1", Name: "lookup", Arguments: map[string]any{}},
+			saigetypes.ToolCallPart{ID: "d2", Name: "delegate", Arguments: map[string]any{"text": "two"}},
+			saigetypes.ToolCallPart{ID: "d3", Name: "delegate", Arguments: map[string]any{"text": "three"}},
+		),
+		agenttest.TextResponse("All in."),
+	}}
+	rev := offlineRevision(1, "You delegate.")
+	rev.Spec.Tools = []string{"delegate", "lookup"}
+	r, err := native.New(rev, native.WithTools(native.StaticTools(delegate, lookup)),
+		native.WithProvider(native.ProviderOffline, func(native.Spec) (saigetypes.Provider, error) { return model, nil }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	run := func(turn native.Turn) native.Result {
+		t.Helper()
+		res, err := r.Run(context.Background(), turn, func(context.Context, event.Body) error { return nil })
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return res
+	}
+
+	res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+	if res.Parked == nil {
+		t.Fatalf("the turn did not park: %+v", res)
+	}
+	waits := res.Parked.Waits()
+	var got []string
+	for _, w := range waits {
+		if w.Question.Kind != event.QuestionDelegation {
+			t.Errorf("wait %s is a %s, want a delegation", w.CallID, w.Question.Kind)
+		}
+		got = append(got, w.CallID+":"+w.Question.Prompt)
+	}
+	if want := []string{"d1/await:one", "d2/await:two", "d3/await:three"}; !slices.Equal(got, want) {
+		t.Fatalf("the park waits on %v, want %v", got, want)
+	}
+	if res.Parked.CallID != "d1/await" || res.Parked.Question.ID != waits[0].Question.ID {
+		t.Errorf("the park's first wait is %s %s, want d1's", res.Parked.CallID, res.Parked.Question.ID)
+	}
+	if delegate.CallCount() != 0 || lookup.CallCount() != 0 {
+		t.Fatalf("delegate ran %d and lookup %d times while the turn parked", delegate.CallCount(), lookup.CallCount())
+	}
+
+	// The record survives its trip through the turn seam whole.
+	seam, err := native.ParkedTo(*res.Parked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seam.Questions) != 3 || seam.Questions[2].ID != waits[2].Question.ID {
+		t.Fatalf("the seam's questions are %+v, want all three", seam.Questions)
+	}
+	back, err := native.ParkedOf(seam)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back.Answers = map[string]event.Answer{
+		"d3/await": {Text: "three done"}, "d1/await": {Text: "one done"}, "d2/await": {Text: "two done"},
+	}
+	res = run(native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &back})
+	if res.Parked != nil || res.Text != "All in." {
+		t.Fatalf("the continuation gave %+v", res)
+	}
+	if delegate.CallCount() != 3 || lookup.CallCount() != 1 {
+		t.Errorf("delegate ran %d and lookup %d times, want 3 and 1", delegate.CallCount(), lookup.CallCount())
+	}
+	want := []string{"d1=one done", "l1=found", "d2=two done", "d3=three done"}
+	if got := toolResults(model.Requests()[1].Messages); !slices.Equal(got, want) {
+		t.Errorf("the model saw results %v, want %v", got, want)
+	}
+}
+
+// A call that waits alone parks as it always did: one question, no batch.
+func TestASingleWaitParksWithoutABatch(t *testing.T) {
+	t.Parallel()
+	f := newParkFixture(t, []string{"deploy"},
+		toolCalls(
+			saigetypes.ToolCallPart{ID: "c1", Name: "lookup", Arguments: map[string]any{}},
+			saigetypes.ToolCallPart{ID: "c2", Name: "deploy", Arguments: map[string]any{"env": "prod"}},
+		))
+	_, res := f.run(t, native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+	if res.Parked == nil || res.Parked.CallID != "c2" || res.Parked.Batch != nil || len(res.Parked.Waits()) != 1 {
+		t.Fatalf("park is %+v, want the approval alone", res.Parked)
+	}
+	raw, err := json.Marshal(res.Parked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"batch"`) {
+		t.Errorf("a single wait's record carries a batch: %s", raw)
+	}
+	seam, err := native.ParkedTo(*res.Parked)
+	if err != nil || seam.Questions != nil {
+		t.Errorf("the seam carries questions %+v, %v; want Question alone", seam.Questions, err)
 	}
 }
 
@@ -436,5 +590,185 @@ func TestAContinuationsToolEventsCarryTheParkedCallsArguments(t *testing.T) {
 	}
 	if done != `{"env":"staging"}` {
 		t.Errorf("the continuation's done event carries %q, want the edited arguments", done)
+	}
+}
+
+// A call that needs approval and awaits a result awaits nothing once its
+// approval is denied, or expires into a denial: the turn does not park on
+// its result, nothing it would have started starts, and its result is the
+// denial. In a batch, another call's wait proceeds and its call runs with
+// its answer.
+func TestADeniedApprovalOfAnAwaitingCallAwaitsNothing(t *testing.T) {
+	t.Parallel()
+	for _, answer := range []struct {
+		name string
+		a    event.Answer
+		says string
+	}{
+		{"denied", event.Answer{Decision: event.DecisionDeny, Note: "not this one"}, "not this one"},
+		{"expired", event.Answer{Decision: event.DecisionDeny, Expired: true, Note: "nobody answered before the question expired"}, "nobody answered"},
+	} {
+		for _, batch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s batch=%v", answer.name, batch), func(t *testing.T) {
+				t.Parallel()
+				delegate := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "delegate"}}}
+				relay := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "relay"}}}
+				calls := []saigetypes.ToolCallPart{{ID: "d1", Name: "delegate", Arguments: map[string]any{"text": "one"}}}
+				if batch {
+					calls = append(calls, saigetypes.ToolCallPart{ID: "r1", Name: "relay", Arguments: map[string]any{"text": "two"}})
+				}
+				model := &agenttest.ScriptedProvider{Responses: [][]saigetypes.Delta{toolCalls(calls...), agenttest.TextResponse("Done.")}}
+				rev := offlineRevision(1, "You delegate.")
+				rev.Spec.Tools, rev.Spec.Approvals = []string{"delegate", "relay"}, []string{"delegate"}
+				r, err := native.New(rev, native.WithTools(native.StaticTools(delegate, relay)),
+					native.WithProvider(native.ProviderOffline, func(native.Spec) (saigetypes.Provider, error) { return model, nil }))
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				run := func(turn native.Turn) native.Result {
+					t.Helper()
+					res, err := r.Run(context.Background(), turn, func(context.Context, event.Body) error { return nil })
+					if err != nil {
+						t.Fatalf("Run: %v", err)
+					}
+					return res
+				}
+
+				res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+				if res.Parked == nil {
+					t.Fatalf("the turn did not park: %+v", res)
+				}
+				var got []string
+				for _, w := range res.Parked.Waits() {
+					got = append(got, w.CallID+":"+w.Question.Kind)
+				}
+				want := []string{"d1:" + event.QuestionApproval}
+				if batch {
+					want = append(want, "r1/await:"+event.QuestionDelegation)
+				}
+				if !slices.Equal(got, want) {
+					t.Fatalf("the park waits on %v, want %v", got, want)
+				}
+
+				resume := *res.Parked
+				resume.Answers = map[string]event.Answer{"d1": answer.a}
+				if batch {
+					resume.Answers["r1/await"] = event.Answer{Text: "two done"}
+				}
+				res = run(native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &resume})
+				if res.Parked != nil {
+					t.Fatalf("the continuation parked again on %+v: a denied call awaits nothing", res.Parked.Waits())
+				}
+				if res.Text != "Done." || delegate.CallCount() != 0 {
+					t.Fatalf("the continuation gave %+v with delegate run %d times, want it finished without delegate", res, delegate.CallCount())
+				}
+				results := toolResults(model.Requests()[1].Messages)
+				if len(results) == 0 || !strings.HasPrefix(results[0], "d1=") || !strings.Contains(results[0], answer.says) {
+					t.Errorf("the model saw results %v, want d1's denial first", results)
+				}
+				if batch && (relay.CallCount() != 1 || len(results) != 2 || results[1] != "r1=two done") {
+					t.Errorf("relay ran %d times and the model saw %v, want relay's answer after the denial", relay.CallCount(), results)
+				}
+			})
+		}
+	}
+}
+
+// A call that needs approval and awaits a result, approved with edited
+// arguments, awaits what the edit asks for: the wait is built from the
+// approved arguments, the call runs with them, and its published ToolDone
+// carries them. The model's arguments start nothing. In a batch, another
+// call's wait proceeds alongside.
+func TestAnApprovedEditIsWhatTheAwaitedCallStartsWith(t *testing.T) {
+	t.Parallel()
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("batch=%v", batch), func(t *testing.T) {
+			t.Parallel()
+			delegate := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "delegate", Parameters: saigetypes.ParameterSchema{
+				Type: "object", Properties: map[string]saigetypes.PropertyDef{"text": {Type: "string"}},
+			}}}}
+			relay := awaitingTool{&agenttest.MockTool{Def: saigetypes.ToolDef{Name: "relay"}}}
+			calls := []saigetypes.ToolCallPart{{ID: "d1", Name: "delegate", Arguments: map[string]any{"text": "as asked"}}}
+			if batch {
+				calls = append(calls, saigetypes.ToolCallPart{ID: "r1", Name: "relay", Arguments: map[string]any{"text": "two"}})
+			}
+			model := &agenttest.ScriptedProvider{Responses: [][]saigetypes.Delta{toolCalls(calls...), agenttest.TextResponse("Done.")}}
+			rev := offlineRevision(1, "You delegate.")
+			rev.Spec.Tools, rev.Spec.Approvals = []string{"delegate", "relay"}, []string{"delegate"}
+			r, err := native.New(rev, native.WithTools(native.StaticTools(delegate, relay)),
+				native.WithProvider(native.ProviderOffline, func(native.Spec) (saigetypes.Provider, error) { return model, nil }))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			run := func(turn native.Turn) ([]event.Body, native.Result) {
+				t.Helper()
+				var got []event.Body
+				res, err := r.Run(context.Background(), turn, func(_ context.Context, b event.Body) error {
+					got = append(got, b)
+					return nil
+				})
+				if err != nil {
+					t.Fatalf("Run: %v", err)
+				}
+				return got, res
+			}
+
+			_, res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a1"})
+			if res.Parked == nil || res.Parked.CallID != "d1" {
+				t.Fatalf("first park is %+v, want d1's approval", res.Parked)
+			}
+			answers := map[string]event.Answer{"d1": {Decision: event.DecisionApprove, Arguments: json.RawMessage(`{"text":"as edited"}`)}}
+			if batch {
+				answers["r1/await"] = event.Answer{Text: "two done"}
+			}
+			resume := *res.Parked
+			resume.Answers = answers
+			_, res = run(native.Turn{Text: "go", Park: true, Accounting: "r/a2", Resume: &resume})
+			if res.Parked == nil {
+				t.Fatal("the approved call did not wait on its result")
+			}
+			waits := res.Parked.Waits()
+			if len(waits) != 1 || waits[0].CallID != "d1/await" {
+				t.Fatalf("second park waits on %+v, want d1's result alone", waits)
+			}
+			q := waits[0].Question
+			if q.Prompt != "as edited" || q.Tool == nil || string(q.Tool.Arguments) != `{"text":"as edited"}` {
+				t.Fatalf("the wait asks %q with %s, want it built from the edit", q.Prompt, q.Tool.Arguments)
+			}
+
+			again := *res.Parked
+			again.Answers["d1/await"] = event.Answer{Text: "edited done"}
+			got, res := run(native.Turn{Text: "go", Park: true, Accounting: "r/a3", Resume: &again})
+			if res.Parked != nil || res.Text != "Done." {
+				t.Fatalf("the last continuation gave %+v", res)
+			}
+			if delegate.CallCount() != 1 || delegate.Calls[0]["text"] != "as edited" {
+				t.Errorf("delegate ran with %v, want the edit once", delegate.Calls)
+			}
+			done := false
+			for _, b := range got {
+				if b.Type() != event.TypeToolDone {
+					continue
+				}
+				td, err := decodeBody[event.ToolDone](b)
+				if err != nil || td.ID != "d1" {
+					continue
+				}
+				done = true
+				if !strings.Contains(string(td.Arguments), "as edited") || strings.Contains(string(td.Arguments), "as asked") {
+					t.Errorf("d1's ToolDone carries %s, want the arguments it ran with", td.Arguments)
+				}
+			}
+			if !done {
+				t.Error("no ToolDone was published for d1")
+			}
+			want := []string{"d1=edited done"}
+			if batch {
+				want = append(want, "r1=two done")
+			}
+			if got := toolResults(model.Requests()[1].Messages); !slices.Equal(got, want) {
+				t.Errorf("the model saw results %v, want %v", got, want)
+			}
+		})
 	}
 }

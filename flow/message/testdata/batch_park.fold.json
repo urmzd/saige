@@ -1,0 +1,368 @@
+{
+  "all": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "ops",
+          "title": "Release"
+        },
+        "kind": "agent",
+        "title": "Release",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Release",
+          "elapsed_ms": 1500
+        },
+        "lane": {
+          "agent_run_id": "run_c",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Need three answers."
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_2",
+              "name": "migrate",
+              "input": {
+                "to": "v2"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_2",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_2"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "migrated"
+                }
+              ]
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_1",
+              "name": "deploy",
+              "input": {},
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_1",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_1"
+                ],
+                "status": "denied",
+                "elapsed_ms": 0
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "denied by alice"
+                }
+              ],
+              "is_error": true
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_3",
+              "name": "ask_person",
+              "input": {
+                "question": "Which region?"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_3",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_3"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "eu"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "Migrated in eu; the deploy was denied."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Migrated in eu; the deploy was denied."
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Released, without the deploy."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_0": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "ops",
+          "title": "Release"
+        },
+        "kind": "agent",
+        "title": "Release",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Release",
+          "elapsed_ms": 1500
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Migrated in eu; the deploy was denied."
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Released, without the deploy."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  },
+  "depth_1": {
+    "id": "msg_1",
+    "humagen": {
+      "request_id": "req_1",
+      "root_run": "root",
+      "agent": "lead"
+    },
+    "content": [
+      {
+        "type": "server_tool_use",
+        "id": "htu_root_1",
+        "name": "agent",
+        "input": {
+          "agent": "ops",
+          "title": "Release"
+        },
+        "kind": "agent",
+        "title": "Release",
+        "status": {
+          "tool_use_id": "htu_root_1",
+          "path": [
+            "htu_root_1"
+          ],
+          "status": "done",
+          "title": "Release",
+          "elapsed_ms": 1500
+        },
+        "lane": {
+          "agent_run_id": "run_c",
+          "depth": 1,
+          "content": [
+            {
+              "type": "text",
+              "text": "Need three answers."
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_2",
+              "name": "migrate",
+              "input": {
+                "to": "v2"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_2",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_2"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "migrated"
+                }
+              ]
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_1",
+              "name": "deploy",
+              "input": {},
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_1",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_1"
+                ],
+                "status": "denied",
+                "elapsed_ms": 0
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "denied by alice"
+                }
+              ],
+              "is_error": true
+            },
+            {
+              "type": "server_tool_use",
+              "id": "htu_run_c_3",
+              "name": "ask_person",
+              "input": {
+                "question": "Which region?"
+              },
+              "kind": "tool",
+              "status": {
+                "tool_use_id": "htu_run_c_3",
+                "path": [
+                  "htu_root_1",
+                  "htu_run_c_3"
+                ],
+                "status": "done",
+                "elapsed_ms": 100
+              }
+            },
+            {
+              "type": "server_tool_result",
+              "tool_use_id": "htu_run_c_3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "eu"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "Migrated in eu; the deploy was denied."
+            }
+          ],
+          "stop_reason": "end_turn",
+          "done": true
+        }
+      },
+      {
+        "type": "server_tool_result",
+        "tool_use_id": "htu_root_1",
+        "content": [
+          {
+            "type": "text",
+            "text": "Migrated in eu; the deploy was denied."
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Released, without the deploy."
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "tree_usage": {
+      "usage": {
+        "by_model": {},
+        "cost_usd": 0
+      }
+    },
+    "done": true
+  }
+}

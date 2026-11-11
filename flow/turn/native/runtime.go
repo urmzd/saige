@@ -158,6 +158,9 @@ func ParkedTo(p Parked) (turn.Parked, error) {
 	if err := recode(p.Question, &out.Question); err != nil {
 		return out, err
 	}
+	for _, w := range p.Batch {
+		out.Questions = append(out.Questions, w.Question)
+	}
 	if len(p.Answers) > 0 {
 		if err := recode(p.Answers, &out.Answers); err != nil {
 			return out, err

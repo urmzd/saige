@@ -48,6 +48,12 @@ import (
 //     fiber.turn.resume activity, whose input is the parked outcome and
 //     the answer, both read from records.
 //
+// A batch of tool calls that waits on several things at once parks once, on
+// all of them (native.Parked.Waits): the body starts every child run the
+// batch delegates to, records every question as its own step, announces them
+// together, and reads each one's resolution. Each resolves on its own and
+// wakes the run; the run continues with every answer once the last is in.
+//
 // The resolution is write-once and the first write is the only one that
 // counts, which is what makes an answer exactly-once: Answer writes it, a stop
 // writes it, and an expiry writes it, and every one of them reads back
@@ -74,7 +80,7 @@ import (
 //
 // # Stopping a parked run
 //
-// Stop records the request and then resolves the pending question as
+// Stop records the request and then resolves every pending question as
 // stopped, and wakes the run, which ends lifecycle.stopped without resuming
 // its turn: nothing waits for a worker to pick a turn up that is not running.
 // A stop recorded while the turn was still running, before it parked, is found
@@ -206,70 +212,113 @@ var (
 	ErrAnswerUnavailable = errors.New("runtime: answers are not available")
 )
 
-// awaitAnswer announces a parked turn's question once and returns its
-// resolution, or run.ErrParked while there is none.
+// awaitAnswers announces a parked turn's questions once and returns their
+// resolutions, in the order of the batch's waits, or run.ErrParked while any
+// has none.
 //
-//nolint:gocyclo // one pass over a parked question and each way it resolves
-func (r *Runtime) awaitAnswer(ctx context.Context, at *attemptLog, out Outcome) (resolution, error) {
-	q := out.Parked.Question
+// A batch that waits on several things waits on all of them at once: every
+// child run it delegates to is started, and every question recorded, before
+// the run parks, and each resolves on its own (an answer, a child ending, an
+// expiry). The run is woken by each, and continues once every one is in. A
+// stop ends the wait for all of them. One wait is the batch it always was:
+// the same records, in the same order, and the same announcement.
+//
+//nolint:gocyclo // one pass over a parked batch and each way its questions resolve
+func (r *Runtime) awaitAnswers(ctx context.Context, at *attemptLog, out Outcome) ([]resolution, error) {
+	waits := out.Parked.Waits()
+	qs := make([]event.Question, len(waits))
+	for i, w := range waits {
+		qs[i] = w.Question
+	}
 	runID := at.in.runID()
 	// A completed model activity can ask for delegation just as a stop is
 	// recorded. Fence that work before creating a child or registering a wait.
-	if res, stopped, err := r.stoppedSessionWait(ctx, at.in, q); stopped || err != nil {
+	if res, stopped, err := r.stoppedSessionWait(ctx, at.in, qs); stopped || err != nil {
 		return res, err
 	}
-	var waits []sessionWait
-	isListen := q.Kind == event.QuestionDelegation && q.Tool != nil && q.Tool.Name == "session_listen"
-	if isListen {
-		var err error
-		waits, err = r.prepareSessionListen(ctx, at.in, q)
-		if err != nil {
-			return resolution{}, err
+	listens := make([][]sessionWait, len(qs))
+	for i := range qs {
+		q := &qs[i]
+		if isListen(*q) {
+			waits, err := r.prepareSessionListen(ctx, at.in, *q)
+			if err != nil {
+				return nil, err
+			}
+			listens[i] = waits
+			continue
 		}
-	}
-	if q.Kind == event.QuestionDelegation && !isListen {
+		if q.Kind != event.QuestionDelegation {
+			continue
+		}
 		// The child run is started once, as a recorded step: a replay reads
 		// its id back, and a retried start lands on the same run, whose id
-		// is derived from this run and the question.
+		// is derived from this run and the question. Every child of the
+		// batch is started here, before the run parks, so they run side by
+		// side.
 		child, err := durable.Step(ctx, childStepPrefix+q.ID, func(ctx context.Context) (string, error) {
-			return r.startChild(ctx, at.in, q)
+			return r.startChild(ctx, at.in, *q)
 		})
 		if err != nil {
-			if res, stopped, stopErr := r.stoppedSessionWait(ctx, at.in, q); stopped || stopErr != nil {
+			if res, stopped, stopErr := r.stoppedSessionWait(ctx, at.in, qs); stopped || stopErr != nil {
 				return res, stopErr
 			}
-			return resolution{}, err
+			return nil, err
 		}
 		q.ChildRunID = child
 	}
+	reason := waitReason(qs)
+	// Each question is its own recorded step, which is what Answer finds it
+	// by. The park is announced once, by the last of them: a replay that
+	// finds them all recorded announces nothing, and one that stopped part
+	// way records the rest and announces then.
 	fresh := false
-	waitReason := "waiting on a person"
-	if q.Kind == event.QuestionDelegation {
-		waitReason = "waiting on sessions"
-	}
-	if _, err := durable.Step(ctx, questionStepPrefix+q.ID, func(ctx context.Context) (event.Question, error) {
-		fresh = true
-		if err := at.publish(ctx, event.Parked{
-			Attempt: at.attempt, Reason: waitReason, Question: &q,
+	for i := range qs {
+		last := i == len(qs)-1
+		if _, err := durable.Step(ctx, questionStepPrefix+qs[i].ID, func(ctx context.Context) (event.Question, error) {
+			fresh = true
+			if last {
+				body := event.Parked{Attempt: at.attempt, Reason: reason, Question: &qs[0]}
+				if len(qs) > 1 {
+					body.Questions = qs
+				}
+				if err := at.publish(ctx, body); err != nil {
+					return event.Question{}, err
+				}
+			}
+			return qs[i], nil
 		}); err != nil {
-			return event.Question{}, err
+			return nil, err
 		}
-		return q, nil
-	}); err != nil {
-		return resolution{}, err
 	}
 
-	raw, err := durable.Event[json.RawMessage](ctx, answerRecordName(q.ID))
-	switch {
-	case err == nil:
-		return decodeResolution(raw)
-	case !errors.Is(err, run.ErrParked):
-		return resolution{}, err
+	res := make([]resolution, len(qs))
+	var pending []int
+	var parked error
+	for i, q := range qs {
+		raw, err := durable.Event[json.RawMessage](ctx, answerRecordName(q.ID))
+		switch {
+		case err == nil:
+			if res[i], err = decodeResolution(raw); err != nil {
+				return nil, err
+			}
+		case errors.Is(err, run.ErrParked):
+			pending = append(pending, i)
+			if parked == nil {
+				parked = err
+			}
+		default:
+			return nil, err
+		}
+	}
+	// A wait resolved as stopped ends the run whatever the rest of the batch
+	// waits on.
+	if len(pending) == 0 || stoppedIn(res) != nil {
+		return res, nil
 	}
 
-	// No resolution in this attempt's records. Three things can still
-	// decide it now, and each does so by writing the record and adopting
-	// whatever the record then holds.
+	// Some resolutions are not in this attempt's records. Three things can
+	// still decide them now, and each does so by writing the record and
+	// adopting whatever the record then holds.
 	if r.stops != nil {
 		// A stop recorded on the run ends the wait.
 		var stop *native.Stop
@@ -282,68 +331,168 @@ func (r *Runtime) awaitAnswer(ctx context.Context, at *attemptLog, out Outcome) 
 			stop = &s
 		}
 		if stop != nil {
-			return r.resolve(ctx, runID, resolution{QuestionID: q.ID, Stopped: stop})
+			for _, i := range pending {
+				x, err := r.resolve(ctx, runID, resolution{QuestionID: qs[i].ID, Stopped: stop})
+				if err != nil {
+					return nil, err
+				}
+				res[i] = x
+			}
+			return res, nil
 		}
-		if q.Tool != nil && q.Tool.Name == "session_call" {
-			var args struct {
-				Wait *bool `json:"wait"`
+		// A session call that does not wait for its child is resolved as soon
+		// as the child is started.
+		started := false
+		for _, i := range pending {
+			x, ok, err := r.startedSessionCall(ctx, runID, qs[i])
+			if err != nil {
+				return nil, err
 			}
-			if json.Unmarshal(q.Tool.Arguments, &args) == nil && args.Wait != nil && !*args.Wait {
-				child, err := r.loadRun(ctx, q.ChildRunID)
-				if err != nil {
-					return resolution{}, err
-				}
-				var ci Input
-				if err := json.Unmarshal(child.Input, &ci); err != nil {
-					return resolution{}, err
-				}
-				result := map[string]string{"run": q.ChildRunID}
-				if ci.Session != nil {
-					result["session"] = ci.Session.ID
-				}
-				raw, _ := json.Marshal(result)
-				res, err := r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: &event.Answer{QuestionID: q.ID, Text: string(raw), At: r.now().UTC()}})
-				if err != nil {
-					return resolution{}, err
-				}
-				if fresh {
-					r.wake(ctx, runID)
-					return resolution{}, run.ErrParked
-				}
-				return res, nil
+			if ok {
+				res[i], started = x, true
 			}
+		}
+		pending = unresolved(pending, res)
+		if started && fresh && len(pending) == 0 {
+			// The resolution is read by the next attempt, not this one: see
+			// below.
+			r.wake(ctx, runID)
+			return nil, run.ErrParked
 		}
 		// The rest only in an attempt that replayed the turn rather than ran
 		// it: an attempt executes at most one turn, because its sequence
 		// band, its usage record and its accounting keys are the attempt's.
-		// The attempt that asked parks, and the answer's wake-up starts the
+		// The attempt that asked parks, and each answer's wake-up starts the
 		// next one.
 		if !fresh {
-			// A resolution written after this attempt loaded its records is
-			// read rather than waited for.
-			if res, ok := r.storedResolution(ctx, runID, q.ID); ok {
-				return res, nil
-			}
-			if isListen {
-				if answer, ok := r.sessionListenEnded(ctx, at.in, q, waits); ok {
-					return r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: answer})
+			for _, i := range pending {
+				x, ok, err := r.settled(ctx, at.in, qs[i], listens[i])
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					res[i] = x
 				}
 			}
-			// A child run that ended without answering (its retries ran
-			// out) answers here, from its record.
-			if q.ChildRunID != "" {
-				if a, ok := r.childEnded(ctx, q); ok {
-					return r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: a})
-				}
-			}
-			// A question past its deadline takes its default. Never in the
-			// attempt that asked it: a person sees every question first.
-			if !q.ExpiresAt.IsZero() && !r.now().Before(q.ExpiresAt) {
-				return r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: expired(q, r.now())})
-			}
+			pending = unresolved(pending, res)
+		}
+		if len(pending) == 0 || stoppedIn(res) != nil {
+			return res, nil
 		}
 	}
-	return resolution{}, fmt.Errorf("runtime: run %s is %s for question %s: %w", runID, waitReason, q.ID, err)
+	return nil, fmt.Errorf("runtime: run %s is %s for question %s: %w", runID, reason, qs[pending[0]].ID, parked)
+}
+
+// settled decides a question an attempt that replayed its turn found without
+// a resolution in its records, from what the ledger holds now: a resolution
+// written after the attempt loaded its records, the sessions a listen waits
+// on having ended, a child run that ended without answering, or a deadline
+// that passed.
+func (r *Runtime) settled(ctx context.Context, in Input, q event.Question, listen []sessionWait) (resolution, bool, error) {
+	runID := in.runID()
+	if res, ok := r.storedResolution(ctx, runID, q.ID); ok {
+		return res, true, nil
+	}
+	settle := func(a *event.Answer) (resolution, bool, error) {
+		res, err := r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: a})
+		return res, err == nil, err
+	}
+	if isListen(q) {
+		if answer, ok := r.sessionListenEnded(ctx, in, q, listen); ok {
+			return settle(answer)
+		}
+	}
+	// A child run that ended without answering (its retries ran out)
+	// answers here, from its record.
+	if q.ChildRunID != "" {
+		if a, ok := r.childEnded(ctx, q); ok {
+			return settle(a)
+		}
+	}
+	// A question past its deadline takes its default. Never in the attempt
+	// that asked it: a person sees every question first.
+	if !q.ExpiresAt.IsZero() && !r.now().Before(q.ExpiresAt) {
+		return settle(expired(q, r.now()))
+	}
+	return resolution{}, false, nil
+}
+
+// startedSessionCall resolves a session call that does not wait for its
+// child's answer, with the child's run and session, once the child is
+// started.
+func (r *Runtime) startedSessionCall(ctx context.Context, runID string, q event.Question) (resolution, bool, error) {
+	if q.Tool == nil || q.Tool.Name != "session_call" {
+		return resolution{}, false, nil
+	}
+	var args struct {
+		Wait *bool `json:"wait"`
+	}
+	if json.Unmarshal(q.Tool.Arguments, &args) != nil || args.Wait == nil || *args.Wait {
+		return resolution{}, false, nil
+	}
+	child, err := r.loadRun(ctx, q.ChildRunID)
+	if err != nil {
+		return resolution{}, false, err
+	}
+	var ci Input
+	if err := json.Unmarshal(child.Input, &ci); err != nil {
+		return resolution{}, false, err
+	}
+	result := map[string]string{"run": q.ChildRunID}
+	if ci.Session != nil {
+		result["session"] = ci.Session.ID
+	}
+	raw, _ := json.Marshal(result)
+	res, err := r.resolve(ctx, runID, resolution{QuestionID: q.ID, Answer: &event.Answer{QuestionID: q.ID, Text: string(raw), At: r.now().UTC()}})
+	if err != nil {
+		return resolution{}, false, err
+	}
+	return res, true, nil
+}
+
+// isListen reports whether a question waits on sessions a listen names
+// rather than on a child run it starts.
+func isListen(q event.Question) bool {
+	return q.Kind == event.QuestionDelegation && q.Tool != nil && q.Tool.Name == "session_listen"
+}
+
+// waitReason is the park's reason, in the words of what it waits on.
+func waitReason(qs []event.Question) string {
+	sessions := 0
+	for _, q := range qs {
+		if q.Kind == event.QuestionDelegation {
+			sessions++
+		}
+	}
+	switch sessions {
+	case 0:
+		return "waiting on a person"
+	case len(qs):
+		return "waiting on sessions"
+	default:
+		return "waiting on a person and on sessions"
+	}
+}
+
+// unresolved is the waits among pending that have no resolution in res.
+func unresolved(pending []int, res []resolution) []int {
+	out := pending[:0:0]
+	for _, i := range pending {
+		if res[i].Answer == nil && res[i].Stopped == nil {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// stoppedIn returns the first stop among a batch's resolutions.
+func stoppedIn(res []resolution) *native.Stop {
+	for _, x := range res {
+		if x.Stopped != nil {
+			return x.Stopped
+		}
+	}
+	return nil
 }
 
 // expired is a question's default, as the answer it resolves to.
@@ -697,39 +846,62 @@ func (r *Runtime) wake(ctx context.Context, runID string) {
 }
 
 // PendingQuestion returns the question a run of tenant's is parked on, for a
-// host that shows it. A run that is not parked, does not exist or is another
+// host that shows it: the latest, when the run waits on several at once (see
+// PendingQuestions). A run that is not parked, does not exist or is another
 // tenant's reports false. It returns ErrAnswerUnavailable without
 // WithStopLedger.
 func (r *Runtime) PendingQuestion(ctx context.Context, tenant, runID string) (event.Question, bool, error) {
+	qs, err := r.PendingQuestions(ctx, tenant, runID)
+	if err != nil || len(qs) == 0 {
+		return event.Question{}, false, err
+	}
+	return qs[len(qs)-1], true, nil
+}
+
+// PendingQuestions returns every question a run of tenant's is parked on,
+// oldest first, for a host that shows them. A run whose batch of tool calls
+// waits on several things at once is parked on all of them, and each is
+// answered on its own. A run that is not parked, does not exist or is
+// another tenant's has none. It returns ErrAnswerUnavailable without
+// WithStopLedger.
+func (r *Runtime) PendingQuestions(ctx context.Context, tenant, runID string) ([]event.Question, error) {
 	if r.stops == nil {
-		return event.Question{}, false, fmt.Errorf("%w: no ledger", ErrAnswerUnavailable)
+		return nil, fmt.Errorf("%w: no ledger", ErrAnswerUnavailable)
 	}
 	rec, records, err := r.recordsOf(ctx, runID, true, prefixQuestion, prefixAnswer)
 	switch {
 	case errors.Is(err, run.ErrNotFound):
-		return event.Question{}, false, nil
+		return nil, nil
 	case err != nil:
-		return event.Question{}, false, fmt.Errorf("runtime: questions of %s: %w", runID, err)
+		return nil, fmt.Errorf("runtime: questions of %s: %w", runID, err)
 	}
 	var in Input
 	if err := json.Unmarshal(rec.Input, &in); err != nil || in.Trigger.Tenant != tenant || rec.Status.Terminal() {
-		return event.Question{}, false, nil
+		return nil, nil
 	}
-	q, ok := pendingQuestion(records)
-	return q, ok, nil
+	return pendingQuestions(records), nil
 }
 
 // pendingQuestion is the latest question among a run's records that has no
 // resolution.
 func pendingQuestion(records []run.Record) (event.Question, bool) {
+	qs := pendingQuestions(records)
+	if len(qs) == 0 {
+		return event.Question{}, false
+	}
+	return qs[len(qs)-1], true
+}
+
+// pendingQuestions is every question among a run's records that has no
+// resolution, oldest first.
+func pendingQuestions(records []run.Record) []event.Question {
 	resolved := map[string]bool{}
 	for _, rec := range records {
 		if rec.Kind == run.KindEvent && strings.HasPrefix(rec.Name, answerRecordPrefix) {
 			resolved[strings.TrimPrefix(rec.Name, answerRecordPrefix)] = true
 		}
 	}
-	var out event.Question
-	found := false
+	var out []event.Question
 	for _, rec := range records {
 		if !isQuestionRecord(rec) || rec.Status != run.RecordOK {
 			continue
@@ -738,14 +910,13 @@ func pendingQuestion(records []run.Record) (event.Question, bool) {
 		if json.Unmarshal(rec.Output, &q) != nil || q.ID == "" || resolved[q.ID] {
 			continue
 		}
-		if !found || q.At.After(out.At) {
-			out, found = q, true
-		}
+		out = append(out, q)
 	}
-	return out, found
+	slices.SortStableFunc(out, func(a, b event.Question) int { return a.At.Compare(b.At) })
+	return out
 }
 
-// stopParked resolves the question a run is parked on as stopped and wakes
+// stopParked resolves every question a run is parked on as stopped and wakes
 // the run, which then ends without resuming its turn. It is called by Stop
 // once the request is recorded.
 func (r *Runtime) stopParked(ctx context.Context, tenant, runID string, body []byte) error {
@@ -753,22 +924,28 @@ func (r *Runtime) stopParked(ctx context.Context, tenant, runID string, body []b
 	if err != nil {
 		return fmt.Errorf("runtime: stop %s: read its questions: %w", runID, err)
 	}
-	q, ok := pendingQuestion(records)
-	if !ok {
+	qs := pendingQuestions(records)
+	if len(qs) == 0 {
 		return nil
 	}
 	var req event.StopRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return fmt.Errorf("runtime: stop %s: %w", runID, err)
 	}
-	if _, err := r.resolve(ctx, runID, resolution{QuestionID: q.ID, Stopped: &native.Stop{Reason: req.Reason, By: req.By}}); err != nil {
-		return err
+	for _, q := range qs {
+		if _, err := r.resolve(ctx, runID, resolution{QuestionID: q.ID, Stopped: &native.Stop{Reason: req.Reason, By: req.By}}); err != nil {
+			return err
+		}
 	}
 	r.wake(ctx, runID)
-	// A run waiting on a child it delegated to stops the child too, with the
-	// same words: nobody waits for its answer any more.
+	// A run waiting on children it delegated to stops them too, with the
+	// same words: nobody waits for their answers any more.
+	children := make(map[string]bool, len(qs))
+	for _, q := range qs {
+		children[childStepPrefix+q.ID+"#0"] = true
+	}
 	for _, rec := range records {
-		if rec.Key != childStepPrefix+q.ID+"#0" || rec.Status != run.RecordOK {
+		if !children[rec.Key] || rec.Status != run.RecordOK {
 			continue
 		}
 		var child string
@@ -788,34 +965,38 @@ const childQuestionPoll = time.Second
 
 type childQuestionKey struct{}
 
-// childQuestion returns how a child run a Delegator started is checked and
-// read for a pending question: a run of the parent's tenant, other than the
-// parent, in the ledger.
-func (r *Runtime) childQuestion(tenant, parentRunID string) func(context.Context, string) (event.ChildParked, bool, bool, error) {
-	return func(ctx context.Context, runID string) (event.ChildParked, bool, bool, error) {
+// childQuestions returns how a child run a Delegator started is checked and
+// read for the questions it is parked on, each as the run.child.parked.v1
+// the parent shows: a run of the parent's tenant, other than the parent, in
+// the ledger. ended reports a child that has ended.
+func (r *Runtime) childQuestions(tenant, parentRunID string) func(context.Context, string) ([]event.ChildParked, bool, error) {
+	return func(ctx context.Context, runID string) ([]event.ChildParked, bool, error) {
 		runID = strings.TrimSpace(runID)
 		if r.stops == nil {
-			return event.ChildParked{}, false, false, fmt.Errorf("%w: watching a child run needs the run ledger (WithStopLedger)", ErrNotAChild)
+			return nil, false, fmt.Errorf("%w: watching a child run needs the run ledger (WithStopLedger)", ErrNotAChild)
 		}
 		if runID == "" || runID == parentRunID {
-			return event.ChildParked{}, false, false, fmt.Errorf("%w: %q", ErrNotAChild, runID)
+			return nil, false, fmt.Errorf("%w: %q", ErrNotAChild, runID)
 		}
 		rec, records, err := r.recordsOf(ctx, runID, true, prefixQuestion, prefixAnswer)
 		switch {
 		case errors.Is(err, run.ErrNotFound):
-			return event.ChildParked{}, false, false, fmt.Errorf("%w: no run %q", ErrNotAChild, runID)
+			return nil, false, fmt.Errorf("%w: no run %q", ErrNotAChild, runID)
 		case err != nil:
-			return event.ChildParked{}, false, false, fmt.Errorf("runtime: read child run %s: %w", runID, err)
+			return nil, false, fmt.Errorf("runtime: read child run %s: %w", runID, err)
 		}
 		var in Input
 		if err := json.Unmarshal(rec.Input, &in); err != nil || in.Trigger.Tenant != tenant {
-			return event.ChildParked{}, false, false, fmt.Errorf("%w: no run %q", ErrNotAChild, runID)
+			return nil, false, fmt.Errorf("%w: no run %q", ErrNotAChild, runID)
 		}
 		if rec.Status.Terminal() {
-			return event.ChildParked{}, false, true, nil
+			return nil, true, nil
 		}
-		q, ok := pendingQuestion(records)
-		return event.ChildParked{RunID: runID, Agent: in.Subscriber, Question: q}, ok, false, nil
+		var out []event.ChildParked
+		for _, q := range pendingQuestions(records) {
+			out = append(out, event.ChildParked{RunID: runID, Agent: in.Subscriber, Question: q})
+		}
+		return out, false, nil
 	}
 }
 
@@ -829,8 +1010,9 @@ func (r *Runtime) childQuestion(tenant, parentRunID string) func(context.Context
 //	err = runtime.WatchChildQuestions(ctx, acc.RunID)
 //	out, err := rt.Result(ctx, acc.RunID)
 //
-// Each question the child parks on is published once on the parent's stream
-// as run.child.parked, with the child's run id, so a host showing the
+// Each question the child parks on, every one of a batch it parks on at
+// once, is published once on the parent's stream as run.child.parked, with
+// the child's run id, so a host showing the
 // parent shows it waiting on that question, and answers it by answering the
 // child run. The watch reads the ledger, and ends when the child ends or the
 // delegation returns.
@@ -849,8 +1031,8 @@ func WatchChildQuestions(ctx context.Context, runID string) error {
 
 // watchChild polls a child run for questions and reports each new one, until
 // the child ends or ctx does.
-func watchChild(ctx context.Context, read func(context.Context, string) (event.ChildParked, bool, bool, error), runID string, report func(event.ChildParked) error) error {
-	if _, _, _, err := read(ctx, runID); err != nil {
+func watchChild(ctx context.Context, read func(context.Context, string) ([]event.ChildParked, bool, error), runID string, report func(event.ChildParked) error) error {
+	if _, _, err := read(ctx, runID); err != nil {
 		return err
 	}
 	go func() {
@@ -858,11 +1040,15 @@ func watchChild(ctx context.Context, read func(context.Context, string) (event.C
 		tick := time.NewTicker(childQuestionPoll)
 		defer tick.Stop()
 		for {
-			cq, ok, ended, err := read(ctx, runID)
+			// A read that fails reports nothing; the next poll reads again.
+			pending, ended, _ := read(ctx, runID)
 			if ended {
 				return
 			}
-			if err == nil && ok && !seen[cq.Question.ID] {
+			for _, cq := range pending {
+				if seen[cq.Question.ID] {
+					continue
+				}
 				seen[cq.Question.ID] = true
 				if report(cq) != nil {
 					return
@@ -1079,7 +1265,7 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 	if q.Tool.Name == "session_call" {
 		target = args.Agent
 	}
-	in, err := childInput(parent, target, args.Text, q.ID)
+	in, err := childInput(parent, target, args.Text, q.ID, q.Tool.CallID)
 	if err != nil {
 		return "", durable.NonRetryable(err)
 	}
@@ -1149,7 +1335,9 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 		if in.Session == nil {
 			return "", durable.NonRetryable(fmt.Errorf("%w: governed child calls need a session store", ErrInvalid))
 		}
-		id, err := r.childStarter(ctx, parent, call)
+		// The host admits the child with this context, so the child is
+		// stamped as the call it is unless the host says otherwise.
+		id, err := r.childStarter(WithLineage(ctx, in.Lineage), parent, call)
 		return finish(id, err)
 	}
 	if err := r.reserveChildBudget(ctx, parent, &in); err != nil {
@@ -1187,8 +1375,10 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 // Its id is derived from the parent and the wait, so a retried start joins
 // the run the first one started, and its source is not an address, so the
 // child has no surface and a thread of its own. It publishes on
-// delegation://<tenant>/delegation, where no surface renders it.
-func childInput(parent Input, target, text, questionID string) (Input, error) {
+// delegation://<tenant>/delegation, where no surface renders it. Its lineage
+// is the parent's tree, called through callID: the tool call the parent's
+// model made, by the id the parent's run.delta.tool.call events carry.
+func childInput(parent Input, target, text, questionID, callID string) (Input, error) {
 	if target == "" {
 		return Input{}, fmt.Errorf("%w: delegation names no agent", ErrInvalid)
 	}
@@ -1213,7 +1403,11 @@ func childInput(parent Input, target, text, questionID string) (Input, error) {
 		Tenant:  tenant,
 		Data:    body,
 	}
-	return Input{Trigger: trigger, Subscriber: target, Parent: &ParentRef{RunID: parentID, QuestionID: questionID}}, nil
+	return Input{
+		Trigger: trigger, Subscriber: target,
+		Parent:  &ParentRef{RunID: parentID, QuestionID: questionID},
+		Lineage: parent.Lineage.Child(parentID, callID),
+	}, nil
 }
 
 // childEnded answers a delegation from its child run's record, once the

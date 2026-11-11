@@ -1,0 +1,60 @@
+{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"humagen":{"request_id":"req_1","root_run":"root","agent":"lead"}}}
+{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Asking two agents."}}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"queued","elapsed_ms":0}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_2","path":["htu_root_2"],"status":"queued","elapsed_ms":0}
+{"type":"content_block_stop","index":0}
+{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"htu_root_1","name":"agent","input":{"agent":"researcher","title":"Find sources"},"kind":"agent","title":"Find sources"}}
+{"type":"content_block_stop","index":1}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"running","title":"Find sources","elapsed_ms":0}
+{"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"htu_root_2","name":"agent","input":{"agent":"writer","title":"Draft"},"kind":"agent","title":"Draft"}}
+{"type":"content_block_stop","index":2}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_2","path":["htu_root_2"],"status":"running","title":"Draft","elapsed_ms":0}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"message_start","message":{"id":"run_a","type":"message","role":"assistant","content":[],"humagen":{"root_run":"root","agent":"researcher"}}}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"researcher: running"}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"message_start","message":{"id":"run_b","type":"message","role":"assistant","content":[],"humagen":{"root_run":"root","agent":"writer"}}}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_2","text":"writer: running"}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"search_result_location","source":"https://example.com/notes","title":"Design notes","cited_text":"Lanes nest under calls.","search_result_index":0}}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Found one."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Drafting."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_a_1","path":["htu_root_1","htu_run_a_1"],"status":"queued","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_b_1","path":["htu_root_2","htu_run_b_1"],"status":"queued","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_stop","index":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"htu_run_a_1","name":"search","input":{"q":"lanes"},"kind":"tool"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_stop","index":1}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_a_1","path":["htu_root_1","htu_run_a_1"],"status":"running","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_stop","index":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"htu_run_b_1","name":"lint","input":{},"kind":"tool"}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_stop","index":1}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_b_1","path":["htu_root_2","htu_run_b_1"],"status":"running","elapsed_ms":0}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_start","index":2,"content_block":{"type":"server_tool_result","tool_use_id":"htu_run_b_1","content":[{"type":"text","text":"clean"}]}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_stop","index":2}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_b_1","path":["htu_root_2","htu_run_b_1"],"status":"done","elapsed_ms":100}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_start","index":2,"content_block":{"type":"server_tool_result","tool_use_id":"htu_run_a_1","content":[{"type":"text","text":"3 hits"}]}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_stop","index":2}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"humagen.tool_status","tool_use_id":"htu_run_a_1","path":["htu_root_1","htu_run_a_1"],"status":"done","elapsed_ms":300}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Done."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Draft ready."}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"content_block_stop","index":3}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":50,"output_tokens":10}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_1","agent_run_id":"run_a","depth":1,"event":{"type":"message_stop"}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_1","text":"researcher: done"}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"content_block_stop","index":3}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0}}}
+{"type":"humagen.nested","parent_tool_use_id":"htu_root_2","agent_run_id":"run_b","depth":1,"event":{"type":"message_stop"}}
+{"type":"humagen.progress","parent_tool_use_id":"htu_root_2","text":"writer: done"}
+{"type":"content_block_start","index":3,"content_block":{"type":"server_tool_result","tool_use_id":"htu_root_2","content":[{"type":"text","text":"Drafting. Draft ready."}]}}
+{"type":"content_block_stop","index":3}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_2","path":["htu_root_2"],"status":"done","title":"Draft","elapsed_ms":1800}
+{"type":"content_block_start","index":4,"content_block":{"type":"server_tool_result","tool_use_id":"htu_root_1","content":[{"type":"text","text":"Found one. Done."},{"type":"search_result","source":"https://example.com/notes","title":"Design notes","content":[{"type":"text","text":"Lanes nest under calls."}],"citations":{"enabled":true}}]}}
+{"type":"content_block_stop","index":4}
+{"type":"humagen.tool_status","tool_use_id":"htu_root_1","path":["htu_root_1"],"status":"done","title":"Find sources","elapsed_ms":2000}
+{"type":"content_block_start","index":5,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":5,"delta":{"type":"text_delta","text":"Both agents answered."}}
+{"type":"content_block_stop","index":5}
+{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":300,"output_tokens":40},"humagen":{"usage":{"by_model":{"claude-x":{"input_tokens":300,"output_tokens":40},"claude-y":{"input_tokens":50,"output_tokens":10}},"cost_usd":0.0032}}}
+{"type":"message_stop"}

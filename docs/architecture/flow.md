@@ -572,7 +572,12 @@ for an approval the tool, the call id, the arguments and the tool's schema,
 `asked_of`, when it expires and what it defaults to. It travels on
 `run.parked.v1` (`Parked.Question`), and `Runtime.Status` reports a parked
 run as `parked` with `Run.Question`, read from the run's records
-(`Runtime.PendingQuestion`).
+(`Runtime.PendingQuestion`). A park on several questions at once carries them
+all in `Parked.Questions`, in call order, with the first also in
+`Parked.Question` for readers that know only it; `run.resumed.v1` carries
+every answer in `Resumed.Answers` the same way, and
+`Runtime.PendingQuestions` lists every open one. A single question leaves
+both lists empty, as before.
 
 ### Holding a run for the host
 
@@ -701,8 +706,22 @@ call's deltas and usage are not published again. A turn that compacted before
 it parked records its whole conversation instead of the part after the
 request.
 
-A batch with two questions parks twice, once per question; the second
-continuation carries both answers, and the batch runs once, after both.
+A batch parks once, on every call in it that waits. Two questions, an
+approval next to an `ask_person`, or three delegations each become a wait of
+the same park (`native.Parked.Batch`, in call order). The workflow body
+starts every child run the batch delegates to and records every question
+before the run parks, so the children run side by side. Each wait resolves
+on its own (an answer, a child ending, an expiry), each wakes the run, and
+the run continues once, when the last is in, with every answer. The batch
+then runs once: each call with its own answer, and a call that waited on
+nothing runs exactly once, its result in call order. A call waits on one
+thing per park: a delegation that needs approval waits on the approval, and
+its child starts at the park after it is approved, from the arguments it was
+approved with, a person's edit included. A denied approval, or one that
+expires into a denial, starts nothing: the call's result is the denial.
+A host's hold parks the batch on itself alone, and the calls' waits come
+after it is approved. A stop resolves every question of the park and stops
+every child.
 
 A parked turn's record stores the transcript it continues from. A run that
 parks again stores only what its turn added since the previous park
@@ -861,10 +880,13 @@ Verified against the code, and honest.
   The run queue flow builds on Postgres has no `DeltaLog`, so durable's
   per-run delta journal is not written; the bus carries every event.
 - **sandbox's queue is at-most-once** in beta. Durability comes from durable.
-- **Citations are derived from retrieval.** Citations are extracted from RAG
-  `AssembledContext` blocks and emitted as flow's own `run.delta.citation.v1`
-  events. saige's `CitationDelta`, which reports what a model or tool cited, is
-  not translated into events yet.
+- **Citations come from retrieval and from tools, not from the model.**
+  Retrieved passages are extracted from RAG `AssembledContext` blocks and
+  emitted as `run.delta.citation.v1` events before the agent starts. Sources a
+  tool attributes its result to (saige's `CitationDelta`) follow, labelled
+  with the citing agent's own markers; one that repeats a citation already
+  published under the same marker and source is dropped. Citations a model
+  produces itself (provider-native search) are not translated.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover

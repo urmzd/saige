@@ -21,15 +21,25 @@ func (r *Runtime) sessionStop(ctx context.Context, in Input) (*native.Stop, erro
 	return &native.Stop{Reason: stop.Reason, By: stop.By}, nil
 }
 
-func (r *Runtime) stoppedSessionWait(ctx context.Context, in Input, q event.Question) (resolution, bool, error) {
+// stoppedSessionWait resolves every question of a parked batch as stopped
+// when a stop is recorded on the run, before the batch starts anything, and
+// returns what each resolution record then holds.
+func (r *Runtime) stoppedSessionWait(ctx context.Context, in Input, qs []event.Question) ([]resolution, bool, error) {
 	stop, err := r.sessionStop(ctx, in)
 	if err != nil || stop == nil {
-		return resolution{}, false, err
+		return nil, false, err
 	}
 	body, _ := json.Marshal(event.StopRequest{RunID: in.runID(), Reason: stop.Reason, By: stop.By})
 	if err := r.stopSessionChildren(context.WithoutCancel(ctx), in, body); err != nil {
-		return resolution{}, false, err
+		return nil, false, err
 	}
-	res, err := r.resolve(ctx, in.runID(), resolution{QuestionID: q.ID, Stopped: stop})
-	return res, true, err
+	out := make([]resolution, len(qs))
+	for i, q := range qs {
+		res, err := r.resolve(ctx, in.runID(), resolution{QuestionID: q.ID, Stopped: stop})
+		if err != nil {
+			return nil, true, err
+		}
+		out[i] = res
+	}
+	return out, true, nil
 }

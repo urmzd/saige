@@ -230,6 +230,11 @@ type Input struct {
 	// it (WithChildRuns). This run's ending answers the parent's wait. Absent
 	// for every other run, so their input hashes as it always did.
 	Parent *ParentRef `json:"parent,omitempty"`
+	// Lineage is the run's place in the tree of runs answering one request,
+	// fixed at accept like the pins, so every attempt stamps it on every
+	// event the same way. Zero for a root run, whose input is then
+	// byte for byte what it was before lineage existed.
+	Lineage Lineage `json:"lineage,omitzero"`
 }
 
 // ParentRef names the run, and the wait in it, that a child run answers.
@@ -285,6 +290,10 @@ type Request struct {
 	// RunID is the durable run. It is also the stream key: chunks a Sandbox
 	// tool produces find their way back to this run by it.
 	RunID string `json:"run_id"`
+	// Lineage is the run's place in its tree, Root always set (RunID for a
+	// root run). A host tool that starts a run this turn calls passes
+	// Lineage.Child(RunID, call) with WithLineage.
+	Lineage Lineage `json:"lineage,omitzero"`
 	// Tenant is the authorization scope carried from the trigger.
 	Tenant string `json:"tenant,omitempty"`
 	// Attempt is the execution attempt, from 1.
@@ -660,7 +669,7 @@ func (r *Runtime) Accept(ctx context.Context, trigger event.Envelope, subscriber
 		return Acceptance{}, fmt.Errorf("runtime: accept %s: %w: no subscriber", trigger.ID, ErrInvalid)
 	}
 	runID := RunKey(trigger.Tenant, trigger.ID, subscriber)
-	return r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber, Run: runID}, "")
+	return r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber, Run: runID, Lineage: LineageFrom(ctx)}, "")
 }
 
 // AcceptOwn accepts trigger for subscriber as the run RunID(tenant,
@@ -677,7 +686,7 @@ func (r *Runtime) AcceptOwn(ctx context.Context, trigger event.Envelope, subscri
 	if subscriber == "" {
 		return Acceptance{}, fmt.Errorf("runtime: accept %s: %w: no subscriber", trigger.ID, ErrInvalid)
 	}
-	return r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber}, "")
+	return r.start(ctx, Input{Trigger: trigger, Subscriber: subscriber, Lineage: LineageFrom(ctx)}, "")
 }
 
 // start resolves and pins the definition and history of in, then announces
@@ -691,6 +700,13 @@ func (r *Runtime) start(ctx context.Context, in Input, version string) (Acceptan
 	runID := in.runID()
 	if err := CheckRun(in.Subscriber, runID); err != nil {
 		return Acceptance{}, fmt.Errorf("runtime: accept %s: %w", id, err)
+	}
+	if err := in.Lineage.validate(runID); err != nil {
+		return Acceptance{}, fmt.Errorf("runtime: accept %s: %w", id, err)
+	}
+	if in.Parent != nil && in.Lineage.ParentRun != in.Parent.RunID {
+		return Acceptance{}, fmt.Errorf("runtime: accept %s: %w: lineage names parent run %q, but the run answers %s",
+			id, ErrInvalid, in.Lineage.ParentRun, in.Parent.RunID)
 	}
 	var (
 		pin definition.Pin
@@ -801,28 +817,37 @@ func (r *Runtime) runTurn(ctx context.Context, in Input) (Output, error) {
 		out.Parked.Transcript, out.Parked.Since = transcript, 0
 		r.claimUsage(ctx, in, out.UsageAttempts, claimed)
 		said.WriteString(out.Text)
-		res, werr := r.awaitAnswer(ctx, at, out)
+		res, werr := r.awaitAnswers(ctx, at, out)
 		if werr != nil {
 			return Output{}, werr
 		}
-		if res.Stopped != nil {
+		if stop := stoppedIn(res); stop != nil {
 			out.Text = said.String()
-			return r.stoppedWhileParked(ctx, at, out, *res.Stopped, parks)
+			return r.stoppedWhileParked(ctx, at, out, *stop, parks)
 		}
-		if q := out.Parked.Question; q.Kind == event.QuestionHold && res.Answer.Decision != event.DecisionApprove {
-			// A hold that was not approved stops the run, and the batch it
-			// held never runs (hold.go).
-			out.Text = said.String()
-			return r.stoppedWhileParked(ctx, at, out, heldStop(q, *res.Answer), parks)
+		waits := out.Parked.Waits()
+		for i, w := range waits {
+			if q := w.Question; q.Kind == event.QuestionHold && res[i].Answer.Decision != event.DecisionApprove {
+				// A hold that was not approved stops the run, and the batch
+				// it held never runs (hold.go).
+				out.Text = said.String()
+				return r.stoppedWhileParked(ctx, at, out, heldStop(q, *res[i].Answer), parks)
+			}
 		}
 		parks++
-		at.answer = res.Answer
+		// The batch continues once, with every answer it waited on.
+		at.answer, at.answers = res[0].Answer, nil
 		next := *out.Parked
-		next.Answers = make(map[string]event.Answer, len(out.Parked.Answers)+1)
+		next.Answers = make(map[string]event.Answer, len(out.Parked.Answers)+len(waits))
 		for k, v := range out.Parked.Answers {
 			next.Answers[k] = v
 		}
-		next.Answers[out.Parked.CallID] = *res.Answer
+		for i, w := range waits {
+			next.Answers[w.CallID] = *res[i].Answer
+			if len(waits) > 1 {
+				at.answers = append(at.answers, *res[i].Answer)
+			}
+		}
 		out, err = r.resume.Call(ctx, Continue{Input: in, Seq: parks, Parked: next})
 		if usageErr := r.reconcileSessionUsage(ctx, in); usageErr != nil {
 			if errors.Is(usageErr, run.ErrParked) {
@@ -940,8 +965,10 @@ type attemptLog struct {
 	attempt int
 	opened  bool
 	// answer is the answer this attempt resumed with, carried on its
-	// resumed event.
-	answer *event.Answer
+	// resumed event; answers is every answer, when its park waited on more
+	// than one.
+	answer  *event.Answer
+	answers []event.Answer
 }
 
 type openerKey struct{}
@@ -956,7 +983,7 @@ func (a *attemptLog) open(ctx context.Context) error {
 		// Attempt 1 started the work; every later attempt resumed it, whether
 		// it was parked on a question or interrupted by a crash. The answer,
 		// when there is one, says which.
-		body = event.Resumed{Attempt: a.attempt, Answer: a.answer}
+		body = event.Resumed{Attempt: a.attempt, Answer: a.answer, Answers: a.answers}
 	}
 	if err := a.r.publish(ctx, a.in, a.band.open, body); err != nil {
 		return err
@@ -1031,6 +1058,7 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	}
 	req := Request{
 		RunID:      in.runID(),
+		Lineage:    in.Lineage.of(in.runID()),
 		Tenant:     in.Trigger.Tenant,
 		Attempt:    attempt,
 		Origin:     in.Origin(),
@@ -1067,7 +1095,7 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	// A Delegator's report of a child run is checked against the ledger and
 	// its total read from there; see ReportChildUsage.
 	execCtx := context.WithValue(ctx, childUsageKey{}, r.childUsage(in.Trigger.Tenant, req.RunID))
-	execCtx = context.WithValue(execCtx, childQuestionKey{}, r.childQuestion(in.Trigger.Tenant, req.RunID))
+	execCtx = context.WithValue(execCtx, childQuestionKey{}, r.childQuestions(in.Trigger.Tenant, req.RunID))
 	// The turn acts for the actor on the run's record, read here and not
 	// from anything the turn produces, so a model cannot name someone else.
 	// It travels in the context rather than in the Request: a turn
@@ -1344,9 +1372,11 @@ func (r *Runtime) publish(ctx context.Context, in Input, seq uint64, body event.
 
 // event builds one event of a run. Its channel is the channel of the event
 // that triggered the run, its id is the run and sequence, and it carries the
-// pinned version and digest. It is one hop from the trigger.
+// pinned version and digest and the run's lineage. It is one hop from the
+// trigger.
 func (r *Runtime) event(in Input, seq uint64, body event.Body) event.Envelope {
 	runID := in.runID()
+	lineage := in.Lineage.of(runID)
 	e := event.Envelope{
 		ID:      runID + ":" + strconv.FormatUint(seq, 10),
 		Source:  "fiber://run/" + runID,
@@ -1360,7 +1390,12 @@ func (r *Runtime) event(in Input, seq uint64, body event.Body) event.Envelope {
 		Agent:   in.Subscriber,
 		Version: in.Pin.Version,
 		Digest:  in.Pin.Digest,
-		Data:    body,
+
+		Root:           lineage.Root,
+		ParentRun:      lineage.ParentRun,
+		ParentToolCall: lineage.ParentToolCall,
+
+		Data: body,
 	}
 	if in.Session != nil {
 		e.Session = in.Session.ID

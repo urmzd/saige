@@ -19,11 +19,12 @@ const (
 	TypeStopped     = "run.stopped.v1"
 	TypeChildParked = "run.child.parked.v1"
 
-	TypeText     = "run.delta.text.v1"
-	TypeThinking = "run.delta.thinking.v1"
-	TypeToolCall = "run.delta.tool.call.v1"
-	TypeToolDone = "run.delta.tool.done.v1"
-	TypeCitation = "run.delta.citation.v1"
+	TypeText       = "run.delta.text.v1"
+	TypeThinking   = "run.delta.thinking.v1"
+	TypeToolCall   = "run.delta.tool.call.v1"
+	TypeToolDone   = "run.delta.tool.done.v1"
+	TypeCitation   = "run.delta.citation.v1"
+	TypeToolMarker = "run.delta.tool.marker.v1"
 
 	TypeAction = "run.action.taken.v1"
 
@@ -82,14 +83,26 @@ type Parked struct {
 	// Reason explains the park, in the words of whatever the run waits for.
 	Reason string `json:"reason,omitempty"`
 	// Question is what the run waits on a person for, when it parked on one.
+	// When it parked on several at once it is the first of Questions.
 	Question *Question `json:"question,omitempty"`
+	// Questions is every question of a park that waits on more than one at
+	// once, in the order the agent's tool calls asked them: a batch of calls
+	// that each wait parks the run once, on all of them. Each is answered on
+	// its own, and the run resumes when every one is. Empty when the run
+	// parked on one question, which is then Question alone, as a reader that
+	// knows only Question expects.
+	Questions []Question `json:"questions,omitempty"`
 }
 
 // Resumed is the body of run.resumed.v1 (was lifecycle.resumed).
 type Resumed struct {
 	Attempt int `json:"attempt,omitempty"`
 	// Answer is the answer the run resumed with, when it parked on a question.
+	// When it parked on several it is the first of Answers.
 	Answer *Answer `json:"answer,omitempty"`
+	// Answers is every answer the run resumed with, in the order of the
+	// park's Questions, when it parked on more than one. Empty otherwise.
+	Answers []Answer `json:"answers,omitempty"`
 }
 
 // Completed is the body of run.completed.v1 (was lifecycle.completed).
@@ -134,11 +147,16 @@ type ChildParked struct {
 // answer, in order.
 type Text struct {
 	Text string `json:"text"`
+	// Parent is the path of tool call ids, from the run's own agent down,
+	// of the nested agent that said this: an agent the run's agent runs as
+	// a tool. Empty is the run's own agent. It is set on every delta body.
+	Parent []string `json:"parent,omitempty"`
 }
 
 // Thinking is the body of run.delta.thinking.v1 (was delta.thinking).
 type Thinking struct {
-	Text string `json:"text"`
+	Text   string   `json:"text"`
+	Parent []string `json:"parent,omitempty"`
 }
 
 // ToolCall is the body of run.delta.tool.call.v1 (was delta.tool.call).
@@ -148,6 +166,7 @@ type ToolCall struct {
 	Phase          string          `json:"phase"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
 	ArgumentsBytes int             `json:"arguments_bytes,omitempty"`
+	Parent         []string        `json:"parent,omitempty"`
 }
 
 // ToolDone is the body of run.delta.tool.done.v1 (was delta.tool.done).
@@ -158,6 +177,7 @@ type ToolDone struct {
 	Error          string          `json:"error,omitempty"`
 	Arguments      json.RawMessage `json:"arguments,omitempty"`
 	ArgumentsBytes int             `json:"arguments_bytes,omitempty"`
+	Parent         []string        `json:"parent,omitempty"`
 }
 
 // Provenance locates the source a citation came from. It mirrors saige's
@@ -173,10 +193,52 @@ type Provenance struct {
 
 // Citation is the body of run.delta.citation.v1 (was delta.citation).
 type Citation struct {
-	Label  string     `json:"label"`
+	// Label is the marker the answer cites the source with, such as "[1]".
+	Label string `json:"label"`
+	// Text is the cited text: the retrieved passage, or the quote a tool
+	// attributed to the source.
 	Text   string     `json:"text"`
 	Source Provenance `json:"source"`
-	Index  int        `json:"index"`
+	// Index is the passage's position in the retrieved context, or, for a
+	// tool's citation, the source's number less one.
+	Index int `json:"index"`
+	// ToolCallID is the call whose result the citation came from, when a
+	// tool's result rather than the model cited it.
+	ToolCallID string   `json:"tool_call_id,omitempty"`
+	Parent     []string `json:"parent,omitempty"`
+}
+
+// ToolMarker is the body of run.delta.tool.marker.v1: a tool call that
+// waits for a decision before it runs, such as an approval or an answer to
+// the model's question. The call's arguments are on its run.delta.tool.call.v1
+// events, not here.
+type ToolMarker struct {
+	// ID is the call's id within the agent that made it; with Parent it
+	// names the same call its ToolCall and ToolDone do.
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Markers say why the call waits, in the tool's or the model's words.
+	Markers []Marker `json:"markers,omitempty"`
+	// Interrupt is the decision the call waits on, when one was posted.
+	Interrupt *MarkerInterrupt `json:"interrupt,omitempty"`
+	Parent    []string         `json:"parent,omitempty"`
+}
+
+// Marker is one reason a tool call waits.
+type Marker struct {
+	// Kind is the marker's kind, such as "human_approval" or "clarification".
+	Kind    string `json:"kind"`
+	Message string `json:"message,omitempty"`
+}
+
+// MarkerInterrupt is the pending decision a ToolMarker waits on.
+type MarkerInterrupt struct {
+	// ID names the decision: a reply can answer it by this id.
+	ID string `json:"id"`
+	// Kind is what the decision is: "approval", "clarification", "budget"
+	// or "input".
+	Kind      string    `json:"kind,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // Action is the body of run.action.taken.v1 (was action.taken). Target and
@@ -353,6 +415,7 @@ func (Thinking) Type() string       { return TypeThinking }
 func (ToolCall) Type() string       { return TypeToolCall }
 func (ToolDone) Type() string       { return TypeToolDone }
 func (Citation) Type() string       { return TypeCitation }
+func (ToolMarker) Type() string     { return TypeToolMarker }
 func (Action) Type() string         { return TypeAction }
 func (UsageCall) Type() string      { return TypeUsageCall }
 func (UsageChild) Type() string     { return TypeUsageChild }
@@ -373,6 +436,7 @@ func (Thinking) isBody()       {}
 func (ToolCall) isBody()       {}
 func (ToolDone) isBody()       {}
 func (Citation) isBody()       {}
+func (ToolMarker) isBody()     {}
 func (Action) isBody()         {}
 func (UsageCall) isBody()      {}
 func (UsageChild) isBody()     {}
@@ -415,6 +479,32 @@ func renderQuestion(q *Question) string {
 	return s
 }
 
+// renderQuestions renders a park's questions: all of them when it parked on
+// several, else the one.
+func renderQuestions(q *Question, all []Question) string {
+	if len(all) == 0 {
+		return renderQuestion(q)
+	}
+	parts := make([]string, len(all))
+	for i := range all {
+		parts[i] = renderQuestion(&all[i])
+	}
+	return line(parts...)
+}
+
+// renderAnswers renders the answers a run resumed with, as renderQuestions
+// renders its questions.
+func renderAnswers(a *Answer, all []Answer) string {
+	if len(all) == 0 {
+		return renderAnswer(a)
+	}
+	parts := make([]string, len(all))
+	for i := range all {
+		parts[i] = renderAnswer(&all[i])
+	}
+	return line(parts...)
+}
+
 func renderAnswer(a *Answer) string {
 	if a == nil {
 		return ""
@@ -428,6 +518,24 @@ func renderAnswer(a *Answer) string {
 		return "answer: " + a.Choice
 	}
 	return line("answer:", a.Text, a.Note)
+}
+
+func renderMarker(b ToolMarker) string {
+	what := "a decision"
+	if b.Interrupt != nil && b.Interrupt.Kind != "" {
+		what = b.Interrupt.Kind
+	}
+	s := line("tool", b.Name, "waits for", what)
+	var why []string
+	for _, m := range b.Markers {
+		if m.Message != "" {
+			why = append(why, m.Message)
+		}
+	}
+	if len(why) > 0 {
+		s += ": " + strings.Join(why, "; ")
+	}
+	return s
 }
 
 func renderTokens(prompt, completion int) string {
@@ -444,12 +552,12 @@ func init() {
 			})},
 		{Type: TypeParked, New: func() Body { return new(Parked) },
 			Render: render(func(e Envelope, b Parked) string {
-				return line("run", e.Run, "parked:", b.Reason, renderQuestion(b.Question))
+				return line("run", e.Run, "parked:", b.Reason, renderQuestions(b.Question, b.Questions))
 			})},
 		// An answer is human-authored free text.
 		{Type: TypeResumed, Sensitive: true, New: func() Body { return new(Resumed) },
 			Render: render(func(e Envelope, b Resumed) string {
-				return line("run", e.Run, fmt.Sprintf("resumed, attempt %d", b.Attempt), renderAnswer(b.Answer))
+				return line("run", e.Run, fmt.Sprintf("resumed, attempt %d", b.Attempt), renderAnswers(b.Answer, b.Answers))
 			})},
 		{Type: TypeCompleted, New: func() Body { return new(Completed) },
 			Render: render(func(_ Envelope, b Completed) string { return b.Text })},
@@ -487,6 +595,8 @@ func init() {
 				}
 				return line(b.Label, b.Text, "("+src+")")
 			})},
+		{Type: TypeToolMarker, New: func() Body { return new(ToolMarker) },
+			Render: render(func(_ Envelope, b ToolMarker) string { return renderMarker(b) })},
 		{Type: TypeAction, New: func() Body { return new(Action) },
 			Render: render(func(_ Envelope, b Action) string {
 				if b.Error != "" {

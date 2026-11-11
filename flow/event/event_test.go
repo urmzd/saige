@@ -58,6 +58,8 @@ func samples() []event.Body {
 		event.ToolCall{ID: "c1", Name: "search", Phase: event.PhaseExecuting, Arguments: json.RawMessage(`{"q":"fiber"}`)},
 		event.ToolDone{ID: "c1", Name: "search", Result: "3 hits", Arguments: json.RawMessage(`{"q":"fiber"}`)},
 		event.Citation{Label: "[1]", Text: "quoted", Source: event.Provenance{DocumentTitle: "Handbook", SourceURI: "https://example.com/h"}, Index: 0},
+		event.ToolMarker{ID: "c2", Name: "deploy", Markers: []event.Marker{{Kind: "human_approval", Message: "Deploys need sign-off"}},
+			Interrupt: &event.MarkerInterrupt{ID: "i1", Kind: "approval", ExpiresAt: at.Add(time.Hour)}, Parent: []string{"c1"}},
 		event.Action{Name: "jira_transition", Target: "jira://acme/PROJ-7", Summary: "moved to Done", Address: "jira://acme/PROJ-7", Data: json.RawMessage(`{"status":"Done"}`)},
 		event.UsageCall{AccountingID: "r1/a1/1", Agent: "helper", Model: "m", Requests: 1, PromptTokens: 900, CompletionTokens: 120, Cost: cost, ContextWindow: 200000},
 		event.UsageChild{AccountingID: "run:r2", RunID: "r2", Agent: "deployer", Depth: 1, Usage: usage},
@@ -201,7 +203,7 @@ func TestDecodeRejectsMalformedKnown(t *testing.T) {
 		t.Fatalf("unknown type decoded to %T", b)
 	}
 	// Empty data is the zero body.
-	if b, err := event.Decode(event.TypeText, nil); err != nil || b != (event.Text{}) {
+	if b, err := event.Decode(event.TypeText, nil); err != nil || !reflect.DeepEqual(b, event.Body(event.Text{})) {
 		t.Fatalf("Decode(nil) = %#v, %v", b, err)
 	}
 }
@@ -240,6 +242,37 @@ func TestPrivateIsNeverSerialized(t *testing.T) {
 	}
 	if bytes.Contains(out, []byte("secret-123")) || bytes.Contains(out, []byte("installation")) {
 		t.Fatalf("private data serialized: %s", out)
+	}
+}
+
+// A run's lineage survives the wire: the fields a subscriber follows a
+// response by are read back as they were written, and a root run's event,
+// which names no parent, writes no parent keys.
+func TestLineageRoundTrips(t *testing.T) {
+	called := sample(event.Completed{Attempt: 1, Text: "done"})
+	called.Root, called.ParentRun, called.ParentToolCall = "r0", "r1", "htu_r1_2"
+	root := sample(event.Started{Attempt: 1})
+	root.Root = root.Run
+	for _, e := range []event.Envelope{called, root} {
+		out, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back event.Envelope
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back.Root != e.Root || back.ParentRun != e.ParentRun || back.ParentToolCall != e.ParentToolCall {
+			t.Errorf("%s: lineage (%q, %q, %q) read back as (%q, %q, %q)", out,
+				e.Root, e.ParentRun, e.ParentToolCall, back.Root, back.ParentRun, back.ParentToolCall)
+		}
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out, []byte(`"parent_run"`)) || bytes.Contains(out, []byte(`"parent_tool_call"`)) {
+		t.Errorf("a root run's event wrote parent keys: %s", out)
 	}
 }
 

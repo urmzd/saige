@@ -80,8 +80,8 @@ one. Nothing else in the envelope says what `data` holds.
 |------|------|-------|
 | `run.accepted.v1` | `Accepted` | |
 | `run.started.v1` | `Started` | |
-| `run.parked.v1` | `Parked` | Carries the question |
-| `run.resumed.v1` | `Resumed` | |
+| `run.parked.v1` | `Parked` | Carries the question; a park on several carries them all in `questions`, the first also in `question` |
+| `run.resumed.v1` | `Resumed` | A park on several questions resumes with every answer in `answers` |
 | `run.completed.v1` | `Completed` | Terminal, carries the run's usage |
 | `run.failed.v1` | `Failed` | Terminal, carries the error |
 | `run.stopped.v1` | `Stopped` | Terminal, carries the reason, the asker and the partial answer |
@@ -91,6 +91,7 @@ one. Nothing else in the envelope says what `data` holds.
 | `run.delta.tool.call.v1` | `ToolCall` | |
 | `run.delta.tool.done.v1` | `ToolDone` | |
 | `run.delta.citation.v1` | `Citation` | |
+| `run.delta.tool.marker.v1` | `ToolMarker` | A tool call waiting for a decision |
 | `run.action.taken.v1` | `Action` | |
 | `run.usage.v1` | `UsageCall` | Opt-in |
 | `run.usage.child.v1` | `UsageChild` | Opt-in |
