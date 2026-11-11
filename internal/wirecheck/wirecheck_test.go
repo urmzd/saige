@@ -55,6 +55,7 @@ import (
 	fisolation "github.com/urmzd/saige/flow/isolation"
 	fruntime "github.com/urmzd/saige/flow/runtime"
 	fsession "github.com/urmzd/saige/flow/session"
+	fsignature "github.com/urmzd/saige/flow/signature"
 	fthread "github.com/urmzd/saige/flow/thread"
 	fturn "github.com/urmzd/saige/flow/turn"
 	fturnnative "github.com/urmzd/saige/flow/turn/native"
@@ -314,6 +315,10 @@ func sentinels() []sentinel {
 		{"flow/turn/native", "ErrNoSuchTool", fturnnative.ErrNoSuchTool},
 		{"flow/turn/native", "ErrNoSuchToolGroup", fturnnative.ErrNoSuchToolGroup},
 		{"flow/turn/sandbox", "ErrInvalid", fturnsandbox.ErrInvalid},
+		{"flow/signature", "ErrMalformed", fsignature.ErrMalformed},
+		{"flow/signature", "ErrNoSecret", fsignature.ErrNoSecret},
+		{"flow/signature", "ErrSignatureMismatch", fsignature.ErrSignatureMismatch},
+		{"flow/signature", "ErrTimestampSkew", fsignature.ErrTimestampSkew},
 		{"netguard", "ErrBlocked", p40.ErrBlocked},
 		{"postgres", "ErrEmbeddingDimMismatch", p29.ErrEmbeddingDimMismatch},
 		{"postgres", "ErrExtensionUnavailable", p29.ErrExtensionUnavailable},
