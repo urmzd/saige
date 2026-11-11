@@ -306,6 +306,9 @@ type Runner struct {
 	toolArgs ToolArguments
 	// unavailable are the granted tools New dropped, in grant order.
 	unavailable []UnavailableTool
+	// schema is what the final answer is constrained to (Spec.Output);
+	// nil is free text.
+	schema *saigetypes.ParameterSchema
 }
 
 // UnavailableTool is a tool the revision grants that this process could not
@@ -468,6 +471,10 @@ func New(rev Revision, opts ...Option) (*Runner, error) {
 	if err := validate(rev); err != nil {
 		return nil, err
 	}
+	schema, err := responseSchema(rev)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := newConfig(opts)
 	if err != nil {
 		return nil, err
@@ -495,6 +502,7 @@ func New(rev Revision, opts ...Option) (*Runner, error) {
 		logger:      cfg.logger,
 		compaction:  cfg.compaction,
 		toolArgs:    cfg.toolArgs,
+		schema:      schema,
 	}, nil
 }
 
@@ -771,6 +779,11 @@ func (r *Runner) Run(ctx context.Context, t Turn, emit func(context.Context, eve
 		// Calls an Approving tool wants approved stop and ask, as a marked
 		// tool's do (see park.go).
 		ToolGate: approvalGate(r.tools),
+		// saige refuses a schema the provider cannot enforce
+		// (types.ErrInvalidModelConfig) rather than drop it, and every
+		// decorator around the model (retry, the fallback chain, a
+		// continuation's replay) forwards that it can.
+		ResponseSchema: r.schema,
 	}
 	if t.Budget != nil {
 		b := t.Budget
