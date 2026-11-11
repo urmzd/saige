@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.45.0 (2026-11-11)
+
+### Breaking
+
+- **flow**: move the GitHub and cron connectors, membership and egress into saige (#142) ([563147b](https://github.com/urmzd/saige/commit/563147b689293565ee027d2c3b3a6c4b2d102b72))
+
+### Features
+
+- **flow**: a host chooses which session verbs a turn is offered (#150) ([f3072a8](https://github.com/urmzd/saige/commit/f3072a8d1954a0ba5394ff3fcafd9f21d51fc50f))
+- **flow**: one streamed message for a run tree (#149) ([4724c39](https://github.com/urmzd/saige/commit/4724c39ad145bd97f527aedd3b40dfc36e2986c2))
+- **flow**: an agent's spec may constrain its answer to a JSON schema (#148) ([7779d87](https://github.com/urmzd/saige/commit/7779d87a265c7f4f517d681651ee8ffb3b1192b0))
+- **flow**: the Slack connector hears buttons and shortcuts (#144) ([f098ab4](https://github.com/urmzd/saige/commit/f098ab4293d3bf05aa0bf25fcc88e678e20c8e07))
+- **flow**: Socket Mode for the Slack connector (#143) ([80ffade](https://github.com/urmzd/saige/commit/80ffadef725950dfae1c70df33761961e28b316c))
+- **flow**: move the Slack connector into saige (#141) ([e1d5da3](https://github.com/urmzd/saige/commit/e1d5da3045a626257ff0a1cd74dfcd1e6e01eeda))
+- **flow**: move the event runtime and the durable turn into saige (#140) ([9eb9a7d](https://github.com/urmzd/saige/commit/9eb9a7dbf96ba1ec7573a246c422511c8ec8bb47))
+- **sandbox**: move the sandbox into saige (#139) ([6d017cd](https://github.com/urmzd/saige/commit/6d017cd3234dfcdb94eadda4320c99f7b1e532e1))
+- **durable**: move the durable engine into saige (#138) ([d03ddb5](https://github.com/urmzd/saige/commit/d03ddb5cd7c034f171ee1881e0518fa0838cece4))
+
+### Bug Fixes
+
+- **flow**: a park is announced after its questions are recorded (#152) ([630c4ff](https://github.com/urmzd/saige/commit/630c4ff809a22ea89c6d9f636c6befa0e17f938b))
+
+### Refactoring
+
+- **durable**: build the anchor engine on orchagent/durable (#137) ([c09795c](https://github.com/urmzd/saige/commit/c09795ca4fcb1692633b656039213edf58eac93a))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.44.0...v0.45.0)
+
+
 ## 0.44.0 (2026-10-30)
 
 ### Features
