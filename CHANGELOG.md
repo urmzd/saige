@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.45.1 (2026-11-18)
+
+### Bug Fixes
+
+- **durable**: a redelivered run the worker is executing costs no attempt (#156) ([09e6aae](https://github.com/urmzd/saige/commit/09e6aae3199bf04482839fccd8827b60a1efffd8))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.45.0...v0.45.1)
+
+
 ## 0.45.0 (2026-11-11)
 
 ### Breaking
