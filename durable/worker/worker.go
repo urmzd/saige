@@ -15,6 +15,7 @@ import (
 	"math/rand/v2"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/urmzd/saige/durable/ledger"
@@ -140,6 +141,22 @@ type Worker struct {
 	q      queue.Queue
 	deltas queue.DeltaLog // nil when q lacks the capability
 	opts   options
+
+	// executing holds the attempt this worker is running for each run id,
+	// from its claim to its outcome. A queue can deliver a run this worker
+	// still holds (its lease lapsed); see enter.
+	mu        sync.Mutex
+	executing map[string]*execution
+}
+
+// execution is one claimed attempt in flight on this worker.
+type execution struct {
+	attempt int
+	cancel  context.CancelFunc
+	done    chan struct{} // closed once the attempt has written its outcome
+	// superseded is set once a later attempt owns the run: by the heartbeat's
+	// fencing verdict, or by that attempt arriving on this same worker.
+	superseded atomic.Bool
 }
 
 // New composes a worker over any Ledger and Queue implementation. The
@@ -166,7 +183,7 @@ func New(lgr ledger.Ledger, q queue.Queue, opts ...Option) *Worker {
 		o.logger = slog.Default()
 	}
 	deltas, _ := q.(queue.DeltaLog)
-	return &Worker{lgr: lgr, q: q, deltas: deltas, opts: o}
+	return &Worker{lgr: lgr, q: q, deltas: deltas, opts: o, executing: make(map[string]*execution)}
 }
 
 // Run blocks, consuming runs until ctx is done. It starts Concurrency claim
@@ -233,6 +250,31 @@ func (w *Worker) claimLoop(ctx context.Context) {
 // terminal results are discarded and re-executed).
 func (w *Worker) process(ctx context.Context, it queue.Item) {
 	outCtx := context.WithoutCancel(ctx)
+
+	execCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	exec := &execution{attempt: it.Attempt, cancel: cancel, done: make(chan struct{})}
+
+	// Heartbeat from the claim until execution finishes, so the lease also
+	// holds while this attempt waits for one it supersedes. run.ErrSuperseded
+	// cancels the execution context: the zombie learns it lost and stops.
+	hbStop := make(chan struct{})
+	hbDone := make(chan struct{})
+	go w.heartbeat(execCtx, exec, it, hbStop, hbDone)
+	stopHeartbeat := sync.OnceFunc(func() {
+		close(hbStop)
+		<-hbDone
+	})
+	defer stopHeartbeat()
+
+	if !w.enter(execCtx, exec, it.RunID) {
+		// Shutdown, or a later attempt took the run while this one waited:
+		// nothing ran, so nothing is charged. Release is fenced, so it is a
+		// no-op for a claim that is no longer ours.
+		w.release(outCtx, it, 0, false)
+		return
+	}
+	defer w.leave(exec, it.RunID)
 
 	r, records, err := w.lgr.Load(ctx, it.RunID)
 	switch {
@@ -301,18 +343,9 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	}
 
 	frame := replay.NewFrame(it.RunID, it.Attempt, w.lgr, w.opts.codec, records, w.deltas)
-	execCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Heartbeat until execution finishes. run.ErrSuperseded cancels the
-	// execution context: the zombie learns it lost and stops.
-	hbStop := make(chan struct{})
-	hbDone := make(chan struct{})
-	go w.heartbeat(execCtx, cancel, it, hbStop, hbDone)
 
 	out, err := invoke(replay.WithFrame(execCtx, frame), fn, r.Input)
-	close(hbStop)
-	<-hbDone
+	stopHeartbeat()
 
 	// Outcome, on the cancellation-detached context. Order matters:
 	// sentinels before ctx.Err() — a run that parked or finished during
@@ -332,6 +365,13 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	case errors.Is(err, run.ErrNonDeterministic) || run.IsNonRetryable(err):
 		w.completeFailed(outCtx, it, err.Error())
 		w.settle(outCtx, it)
+	case exec.superseded.Load():
+		// A later attempt owns the run and replays what this one recorded.
+		// The queue verbs are fenced against this attempt, but the terminal
+		// write is not: charging the cancellation as the run's last failure
+		// would fail a run its successor is still executing.
+		w.opts.logger.Info("durable/worker: attempt superseded; leaving the run to its successor",
+			"run_id", it.RunID, "attempt", it.Attempt, "error", err)
 	case execCtx.Err() != nil && ctx.Err() != nil:
 		// Worker shutdown interrupted the run: hand it straight back,
 		// burning no budget — interruption is not a failure of the code.
@@ -348,11 +388,58 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	}
 }
 
+// enter makes exec the attempt this worker is executing for runID, and
+// reports false when it must not run.
+//
+// The queue can deliver a run this worker is still executing: its lease
+// lapsed (a stalled heartbeat, a clock step) and a free claim slot took the
+// redelivery. That claim raised the attempt, so the earlier one is already
+// fenced out: its queue verbs get run.ErrSuperseded and it can never settle.
+// Running both would execute the body alongside itself; handing the new claim
+// back to wait would wait on an attempt that cannot let go, and whose
+// heartbeat may be the very thing that stalled. So the new attempt delivers
+// the verdict the heartbeat would have: it cancels the earlier attempt, waits
+// for it to unwind while its own heartbeat holds the lease, and then replays.
+// The wait ends early when ctx does: shutdown, or this attempt superseded in
+// turn.
+func (w *Worker) enter(ctx context.Context, exec *execution, runID string) bool {
+	for {
+		w.mu.Lock()
+		prev := w.executing[runID]
+		if prev == nil {
+			w.executing[runID] = exec
+			w.mu.Unlock()
+			return true
+		}
+		w.mu.Unlock()
+		if prev.attempt > exec.attempt {
+			return false // a later attempt got in first: this one is the zombie
+		}
+		prev.superseded.Store(true)
+		prev.cancel()
+		select {
+		case <-prev.done:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// leave ends exec's hold on runID and wakes an attempt waiting in enter.
+func (w *Worker) leave(exec *execution, runID string) {
+	w.mu.Lock()
+	if w.executing[runID] == exec {
+		delete(w.executing, runID)
+	}
+	w.mu.Unlock()
+	close(exec.done)
+}
+
 // heartbeat renews the item's lease every heartbeatEvery until stop closes.
 // run.ErrSuperseded cancels execution — the fencing verdict that another
 // attempt owns the run now. Other errors are logged and retried: a transient
 // queue hiccup must not kill a healthy run.
-func (w *Worker) heartbeat(ctx context.Context, cancel context.CancelFunc, it queue.Item, stop <-chan struct{}, done chan<- struct{}) {
+func (w *Worker) heartbeat(ctx context.Context, exec *execution, it queue.Item, stop <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 	t := time.NewTicker(w.opts.heartbeatEvery)
 	defer t.Stop()
@@ -366,7 +453,8 @@ func (w *Worker) heartbeat(ctx context.Context, cancel context.CancelFunc, it qu
 		}
 		if _, err := w.q.Heartbeat(ctx, it, w.opts.leaseTTL); err != nil {
 			if errors.Is(err, run.ErrSuperseded) {
-				cancel()
+				exec.superseded.Store(true)
+				exec.cancel()
 				return
 			}
 			w.opts.logger.Warn("durable/worker: heartbeat failed; will retry",
