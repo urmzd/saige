@@ -157,6 +157,9 @@ type execution struct {
 	// superseded is set once a later attempt owns the run: by the heartbeat's
 	// fencing verdict, or by that attempt arriving on this same worker.
 	superseded atomic.Bool
+	// cancelledAt is when a later attempt on this worker first cancelled this
+	// one. Guarded by Worker.mu.
+	cancelledAt time.Time
 }
 
 // New composes a worker over any Ledger and Queue implementation. The
@@ -242,7 +245,13 @@ func (w *Worker) claimLoop(ctx context.Context) {
 // process drives one claimed item through the outcome protocol. Every path
 // ends in exactly one queue verb — Settle for terminal and parked runs,
 // Release for retries and shutdown — and lease expiry covers a worker that
-// dies mid-flight.
+// dies mid-flight. That holds for a superseded attempt too: the queue refuses
+// its verb (it is fenced by the attempt), but a queue wrapper that tracks what
+// this process holds still sees the claim end.
+//
+// Every blocking call between the claim and the outcome runs on the attempt's
+// own context, so an attempt that is cancelled (superseded, or the worker
+// stopping) unwinds wherever it is.
 //
 // Outcome verbs run on a context detached from cancellation: a worker
 // shutting down mid-outcome must still persist the outcome, or graceful
@@ -267,16 +276,17 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	})
 	defer stopHeartbeat()
 
-	if !w.enter(execCtx, exec, it.RunID) {
-		// Shutdown, or a later attempt took the run while this one waited:
-		// nothing ran, so nothing is charged. Release is fenced, so it is a
-		// no-op for a claim that is no longer ours.
-		w.release(outCtx, it, 0, false)
+	if retry, ok := w.enter(execCtx, exec, it.RunID); !ok {
+		// Shutdown, a later attempt took the run while this one waited, or
+		// the earlier attempt has not unwound: nothing ran, so nothing is
+		// charged. Release is fenced, so it is a no-op for a claim that is no
+		// longer ours.
+		w.release(outCtx, it, retry, false)
 		return
 	}
 	defer w.leave(exec, it.RunID)
 
-	r, records, err := w.lgr.Load(ctx, it.RunID)
+	r, records, err := w.lgr.Load(execCtx, it.RunID)
 	switch {
 	case errors.Is(err, run.ErrNotFound):
 		// Queue entry without a ledger row: flow without truth is noise.
@@ -289,6 +299,10 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 		// the run — hand it back without burning budget.
 		if ctx.Err() != nil {
 			w.release(outCtx, it, 0, false)
+			return
+		}
+		if exec.superseded.Load() {
+			w.releaseSuperseded(outCtx, it)
 			return
 		}
 		w.opts.logger.Warn("durable/worker: load failed; releasing",
@@ -336,7 +350,7 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	// Best-effort — deltas are advisory flow, never truth.
 	if w.deltas != nil {
 		divider := run.Delta{RunID: it.RunID, Attempt: it.Attempt, Kind: run.DeltaAttempt}
-		if aerr := w.deltas.Append(ctx, divider); aerr != nil {
+		if aerr := w.deltas.Append(execCtx, divider); aerr != nil {
 			w.opts.logger.Warn("durable/worker: attempt divider append failed",
 				"run_id", it.RunID, "attempt", it.Attempt, "error", aerr)
 		}
@@ -372,6 +386,7 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 		// would fail a run its successor is still executing.
 		w.opts.logger.Info("durable/worker: attempt superseded; leaving the run to its successor",
 			"run_id", it.RunID, "attempt", it.Attempt, "error", err)
+		w.releaseSuperseded(outCtx, it)
 	case execCtx.Err() != nil && ctx.Err() != nil:
 		// Worker shutdown interrupted the run: hand it straight back,
 		// burning no budget — interruption is not a failure of the code.
@@ -388,40 +403,66 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	}
 }
 
-// enter makes exec the attempt this worker is executing for runID, and
-// reports false when it must not run.
+// enter makes exec the attempt this worker is executing for runID. When it
+// reports false the attempt must not run, and the claim goes back uncharged
+// after the returned delay.
 //
 // The queue can deliver a run this worker is still executing: its lease
 // lapsed (a stalled heartbeat, a clock step) and a free claim slot took the
 // redelivery. That claim raised the attempt, so the earlier one is already
 // fenced out: its queue verbs get run.ErrSuperseded and it can never settle.
-// Running both would execute the body alongside itself; handing the new claim
-// back to wait would wait on an attempt that cannot let go, and whose
-// heartbeat may be the very thing that stalled. So the new attempt delivers
-// the verdict the heartbeat would have: it cancels the earlier attempt, waits
-// for it to unwind while its own heartbeat holds the lease, and then replays.
-// The wait ends early when ctx does: shutdown, or this attempt superseded in
-// turn.
-func (w *Worker) enter(ctx context.Context, exec *execution, runID string) bool {
+// Running both would execute the body alongside itself, and the earlier
+// attempt's heartbeat may be the very thing that stalled. So the new attempt
+// delivers the verdict the heartbeat would have: it cancels the earlier
+// attempt and waits for it to unwind while its own heartbeat holds the lease,
+// then replays.
+//
+// The wait is bounded. A body that ignores cancellation would otherwise hold
+// this claim slot for as long as it runs. Once the earlier attempt has had
+// one heartbeat interval since it was cancelled, the claim is handed back to
+// return one interval later: the slot is free at once, each later redelivery
+// is turned around without waiting, and the run resumes on the first
+// delivery after the earlier attempt has gone. None of this is charged.
+func (w *Worker) enter(ctx context.Context, exec *execution, runID string) (retry time.Duration, ok bool) {
 	for {
 		w.mu.Lock()
 		prev := w.executing[runID]
 		if prev == nil {
 			w.executing[runID] = exec
 			w.mu.Unlock()
-			return true
+			return 0, true
 		}
-		w.mu.Unlock()
 		if prev.attempt > exec.attempt {
-			return false // a later attempt got in first: this one is the zombie
+			w.mu.Unlock()
+			return 0, false // a later attempt got in first: this one is the zombie
 		}
+		if prev.cancelledAt.IsZero() {
+			prev.cancelledAt = time.Now()
+		}
+		grace := time.Until(prev.cancelledAt.Add(w.opts.heartbeatEvery))
+		w.mu.Unlock()
+
 		prev.superseded.Store(true)
 		prev.cancel()
+		if grace <= 0 {
+			select {
+			case <-prev.done:
+				continue
+			default:
+			}
+			w.opts.logger.Warn("durable/worker: superseded attempt has not stopped; handing the redelivery back",
+				"run_id", runID, "attempt", exec.attempt, "superseded_attempt", prev.attempt)
+			return w.opts.heartbeatEvery, false
+		}
+		timer := time.NewTimer(grace)
 		select {
 		case <-prev.done:
+		case <-timer.C:
 		case <-ctx.Done():
-			return false
+			timer.Stop()
+			return 0, false
 		}
+		timer.Stop()
 	}
 }
 
@@ -534,6 +575,16 @@ func (w *Worker) release(ctx context.Context, it queue.Item, delay time.Duration
 		w.opts.logger.Warn("durable/worker: release failed",
 			"run_id", it.RunID, "attempt", it.Attempt, "error", err)
 	}
+}
+
+// releaseSuperseded ends a superseded attempt's claim. With a successor the
+// queue refuses the verb, which is fenced by the attempt, so the successor's
+// claim is untouched and nothing is charged. A heartbeat also reports
+// run.ErrSuperseded for a lease that lapsed with no successor yet: there the
+// release lands, and it is charged as the expiry reclaim it replaces would
+// have been. It never writes a terminal result; the next claim decides that.
+func (w *Worker) releaseSuperseded(ctx context.Context, it queue.Item) {
+	w.release(ctx, it, w.opts.backoff(it.Failures+1), true)
 }
 
 // invoke executes the workflow function with panic recovery: a panicking
