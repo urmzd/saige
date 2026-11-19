@@ -45,17 +45,17 @@ Embeddings follow the same split. Anthropic has no embedding API, so a RAG setup
 
 | Concept | One line | Guide |
 | --- | --- | --- |
-| Agent | The streaming loop: model turn, tool calls, results, repeat | [agent/README.md](../../agent/README.md) |
+| Agent | The streaming loop: model turn, tool calls, results, repeat | [agent/README.md](https://github.com/urmzd/saige/blob/main/agent/README.md) |
 | Parts | A message is an ordered list of typed parts (text, media with a `Source`, tool calls, citations); output streams as part deltas | [parts.md](../guides/parts.md) |
-| Adapter | `types.Provider` implementation for one serving API | [agent/README.md](../../agent/README.md#provider-interface) |
+| Adapter | `types.Provider` implementation for one serving API | [agent/README.md](https://github.com/urmzd/saige/blob/main/agent/README.md#provider-interface) |
 | Catalog and presets | Models, endpoints and offerings (a model on an endpoint, with its parameters, modalities, pricing and tiers), and named chains, as data | [catalog.md](../reference/catalog.md) |
 | Modality conversion | Media the serving model cannot take is rejected by default, or converted per attempt by a permitted action | [modality-conversion.md](../guides/modality-conversion.md) |
 | Dials | Model-neutral settings compiled per attempt | [dials.md](../guides/dials.md) |
 | Tools | Client tools, server tools, parallelism and tool choice | [tool-calling.md](tool-calling.md), [func-tools.md](../guides/func-tools.md) |
 | Delegation | Handoffs and sub-agents | [delegation.md](../guides/delegation.md), [orchestration-policies.md](orchestration-policies.md) |
 | Approvals | Gates, markers, grants and denial limits | [approval-policy.md](../guides/approval-policy.md) |
-| RAG | Ingest, chunk, embed, hybrid search, citations | [rag/README.md](../../rag/README.md) |
-| Knowledge graph | Entity and relation extraction as a RAG backend | [rag/knowledge/README.md](../../rag/knowledge/README.md) |
-| Evals | Scorers, gates, comparisons, live harness | [eval/README.md](../../eval/README.md) |
+| RAG | Ingest, chunk, embed, hybrid search, citations | [rag/README.md](https://github.com/urmzd/saige/blob/main/rag/README.md) |
+| Knowledge graph | Entity and relation extraction as a RAG backend | [rag/knowledge/README.md](https://github.com/urmzd/saige/blob/main/rag/knowledge/README.md) |
+| Evals | Scorers, gates, comparisons, live harness | [eval/README.md](https://github.com/urmzd/saige/blob/main/eval/README.md) |
 | Durable runs | Resume after a crash, saved approvals, budget receipts | [durable-execution.md](durable-execution.md) |
 | Deployment | One Postgres 18 with pgvector and pg_search | [deployment.md](../guides/deployment.md) |

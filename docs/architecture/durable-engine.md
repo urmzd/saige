@@ -43,7 +43,7 @@ Optional powers are capability interfaces discovered by type assertion, never wi
 
 ## Deltas and Dividers
 
-Activities can `Emit` streaming deltas (progress, token streams). Deltas persist on the queue side, in the `DeltaLog`, because they are flow, not truth: losing them loses observability history, never correctness. The framework writes attempt dividers (`DeltaAttempt`) at each claim and seal dividers (`DeltaSeal`) at each checkpoint, so consumers can split superseded partial output from live tail and sealed history. Checkpointed activities never re-stream: replay hits the memo and user code never runs. `Client.Watch` tails a run's stream; `PriorDeltas` exposes earlier attempts' output for provider-side resume. The consumer algorithm is specified in [replay.md](replay.md).
+Activities can `Emit` streaming deltas (progress, token streams). Deltas persist on the queue side, in the `DeltaLog`, because they are flow, not truth: losing them loses observability history, never correctness. The framework writes attempt dividers (`DeltaAttempt`) at each claim and seal dividers (`DeltaSeal`) at each checkpoint, so consumers can split superseded partial output from live tail and sealed history. Checkpointed activities never re-stream: replay hits the memo and user code never runs. `Client.Watch` tails a run's stream; `PriorDeltas` exposes earlier attempts' output for provider-side resume. The consumer algorithm is specified in [replay design](durable-replay.md).
 
 ## Wait as Absence
 
@@ -51,7 +51,7 @@ Activities can `Emit` streaming deltas (progress, token streams). Deltas persist
 
 ## Versioning Stance
 
-Record identity is `name#occurrence`: keys follow the activity name, not the call site, and a call made inside another wrapped call is scoped under its parent's key (`process-order#0/charge-payment#0`), so a memoized parent cannot desynchronize its siblings' occurrence counters. Code rolls forward across releases with no version, patch, or pinning API; checkpoints stay valid when other, differently-named calls are inserted, removed, or reordered; detected divergence fails loudly with `run.ErrNonDeterministic` (terminal, no retry burn). Every record also stores the codec content type that produced it, and replay verifies it on each memo hit, failing terminally on mismatch. A breaking input/output change is a rename (`charge-payment.v2`). See [replay.md](replay.md) for the full rules.
+Record identity is `name#occurrence`: keys follow the activity name, not the call site, and a call made inside another wrapped call is scoped under its parent's key (`process-order#0/charge-payment#0`), so a memoized parent cannot desynchronize its siblings' occurrence counters. Code rolls forward across releases with no version, patch, or pinning API; checkpoints stay valid when other, differently-named calls are inserted, removed, or reordered; detected divergence fails loudly with `run.ErrNonDeterministic` (terminal, no retry burn). Every record also stores the codec content type that produced it, and replay verifies it on each memo hit, failing terminally on mismatch. A breaking input/output change is a rename (`charge-payment.v2`). See [replay design](durable-replay.md) for the full rules.
 
 ## Adoption Is Monotone
 

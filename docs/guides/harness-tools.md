@@ -33,7 +33,7 @@ An agent has no tools unless you add them. `WithHarnessTools` is the one-call wa
 | `fetch_url` | `web` | read | no | Fetch an http or https URL as text |
 | `scratch_write`, `scratch_read`, `scratch_search` | always | write, read, read | no | The run's scratch workspace, separate from the root |
 
-The file tools come from [`tools/fs`](../../tools/fs/README.md), `execute_code` and the sandboxes from [`tools/exec`](../../tools/exec/README.md), and `fetch_url` from [`tools/fetch`](../../tools/fetch/README.md). The scratch tools are [`agent/workspace`](../../agent/workspace) tools.
+The file tools come from [`tools/fs`](https://github.com/urmzd/saige/blob/main/tools/fs/README.md), `execute_code` and the sandboxes from [`tools/exec`](https://github.com/urmzd/saige/blob/main/tools/exec/README.md), and `fetch_url` from [`tools/fetch`](https://github.com/urmzd/saige/blob/main/tools/fetch/README.md). The scratch tools are [`agent/workspace`](https://github.com/urmzd/saige/tree/main/agent/workspace) tools.
 
 ### execute_code
 
@@ -183,5 +183,5 @@ saige agent run - --tools harness --approve allow "Run the tests and summarize f
 ## Related
 
 - [Approval policy and grants](approval-policy.md)
-- [`tools/exec`](../../tools/exec/README.md), [`tools/fs`](../../tools/fs/README.md), [`tools/fetch`](../../tools/fetch/README.md)
-- [Root README](../../README.md)
+- [`tools/exec`](https://github.com/urmzd/saige/blob/main/tools/exec/README.md), [`tools/fs`](https://github.com/urmzd/saige/blob/main/tools/fs/README.md), [`tools/fetch`](https://github.com/urmzd/saige/blob/main/tools/fetch/README.md)
+- [Root README](https://github.com/urmzd/saige/blob/main/README.md)
