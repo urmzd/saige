@@ -57,6 +57,9 @@ func TestAdaptiveThinkingEncodingAndManualSchemaConflict(t *testing.T) {
 	if params.Thinking.OfAdaptive == nil || string(params.OutputConfig.Effort) != "high" {
 		t.Fatalf("bad adaptive config: %+v", params)
 	}
+	if got := params.Thinking.OfAdaptive.Display; got != sdk.ThinkingConfigAdaptiveDisplaySummarized {
+		t.Fatalf("adaptive thinking display = %q, want summarized so thinking text streams", got)
+	}
 	manual := must.Get(New(Config{APIKey: "test", Model: "claude-sonnet-4-5"}, WithThinking(1024)))
 	_, err := manual.Stream(context.Background(), types.Request{Schema: &types.ParameterSchema{Type: "object"}})
 	if !errors.Is(err, types.ErrInvalidModelConfig) {
