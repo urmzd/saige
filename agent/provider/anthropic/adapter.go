@@ -185,7 +185,12 @@ func (a *Adapter) applyParams(p *anthropic.MessageNewParams) {
 
 	thinkingOn := a.thinking != nil
 	if a.reasoningEffort != nil {
-		p.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}}
+		// Newer models omit thinking text unless a summary is asked for: the
+		// stream then carries a signature and no words, and a caller that shows
+		// reasoning has nothing to show.
+		p.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{
+			Display: anthropic.ThinkingConfigAdaptiveDisplaySummarized,
+		}}
 		p.OutputConfig.Effort = anthropic.OutputConfigEffort(*a.reasoningEffort)
 	}
 	if thinkingOn {
