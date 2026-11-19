@@ -43,7 +43,7 @@ The BM25 index lives with the rows it indexes. Inserts, `ReplaceDocument`, and `
 
 The index `idx_rag_variant_bm25` covers `rag_variant (id, text, section_heading, document_title)`. A BM25 index covers one table, so each variant row keeps a copy of its section heading and document title, written when the variant is inserted. Databases created before these columns existed are upgraded by `RunMigrations`: it adds the columns, copies the heading and title onto every variant, and rebuilds the index once. The rebuild reads the whole table, so on a large deployment run that migration in a maintenance window.
 
-Structured keyword queries (`types.WithKeywordQuery`, see the [rag README](../../rag/README.md#keyword-queries)) compile to pg_search 0.26 query builders with every value bound as a parameter:
+Structured keyword queries (`types.WithKeywordQuery`, see the [rag README](https://github.com/urmzd/saige/blob/main/rag/README.md#keyword-queries)) compile to pg_search 0.26 query builders with every value bound as a parameter:
 
 | `types.KeywordQuery` | pg_search |
 | --- | --- |

@@ -6,3 +6,7 @@ bin/
 /cmd/saige/saige
 /cmd/saige-mcp/saige-mcp
 .fastembed_cache/
+
+# Zensical documentation build
+/site/
+/.cache/

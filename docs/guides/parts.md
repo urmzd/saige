@@ -424,7 +424,7 @@ The wire format carries deltas between processes as envelopes, `{"v":2,"kind":"p
 
 Write with `types.NewEncoder(types.EncodeOptions{})`, or `{Version: 1}` for a client that reads only version 1. Read with `types.NewDecoder()`, which accepts both versions and upgrades version 1 envelopes to part deltas. Use one encoder and one decoder per stream: both keep state.
 
-`saige serve` streams version 2 and names it in the `Saige-Wire-Version` header. A version 1 client adds `?wire=1` or `Accept: application/vnd.saige.events+json;v=1`. Media over the inline limit in a run's output is stored in the session and sent as its `saige-artifact://` ref, downloadable from `GET /v1/sessions/{sid}/artifacts/{sha256}`. A turn's input is `{"parts": [...]}` in the part codec; upload media first with `POST /v1/sessions/{sid}/artifacts` and send the ref it returns. See the [CLI reference](../../cmd/saige/README.md).
+`saige serve` streams version 2 and names it in the `Saige-Wire-Version` header. A version 1 client adds `?wire=1` or `Accept: application/vnd.saige.events+json;v=1`. Media over the inline limit in a run's output is stored in the session and sent as its `saige-artifact://` ref, downloadable from `GET /v1/sessions/{sid}/artifacts/{sha256}`. A turn's input is `{"parts": [...]}` in the part codec; upload media first with `POST /v1/sessions/{sid}/artifacts` and send the ref it returns. See the [CLI reference](https://github.com/urmzd/saige/blob/main/cmd/saige/README.md).
 
 ## Persistence and externalized media
 

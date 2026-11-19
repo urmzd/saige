@@ -53,7 +53,7 @@ Build agents, supply their context and memory, and evaluate the results through 
 
 | Requirement | When |
 | --- | --- |
-| Go 1.26.9 or newer | Library use and `go install` |
+| Go 1.26.11 or newer | Library use and `go install` |
 | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_CLOUD_PROJECT`) or `GOOGLE_API_KEY`, or a local [Ollama](https://ollama.com) | Model-backed agent calls and live evals |
 | PostgreSQL 18 with pgvector and pg_search | Postgres-backed retrieval, memory, conversation trees and durable runs |
 
@@ -395,7 +395,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [Docs index](docs/README.md)
+- [Saige documentation](https://docs.urmzd.com/saige/) · [All guides and decisions](docs/guide-index.md)
 - [Go API reference](https://pkg.go.dev/github.com/urmzd/saige)
 - [agent](agent/README.md): adapters, deltas, tools, sub-agents, conversation tree, testing
 - [rag](rag/README.md): chunking, retrieval, reranking, HyDE, tool bindings

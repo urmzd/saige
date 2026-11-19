@@ -80,6 +80,6 @@ The model's text and tool arguments, tool and skill output, and gates cannot cre
 Records are read only from system messages, which only the agent loop writes.
 State is per conversation. A sub-agent inherits the policy but starts with no grants.
 
-`saige serve` configures every session with a policy. A client attaches a grant to an approval in the interrupt body, and `--deny-after` sets the denial limit. See the [CLI reference](../../cmd/saige/README.md).
+`saige serve` configures every session with a policy. A client attaches a grant to an approval in the interrupt body, and `--deny-after` sets the denial limit. See the [CLI reference](https://github.com/urmzd/saige/blob/main/cmd/saige/README.md).
 
-See [`examples/agent/approval-grants`](../../examples/agent/approval-grants/).
+See [`examples/agent/approval-grants`](https://github.com/urmzd/saige/tree/main/examples/agent/approval-grants).

@@ -1,0 +1,43 @@
+[project]
+site_name = "Saige"
+site_description = "Build, operate and evaluate agents in Go."
+site_url = "https://docs.urmzd.com/saige/"
+repo_url = "https://github.com/urmzd/saige"
+repo_name = "urmzd/saige"
+nav = [
+  { "Run your first tool call" = "README.md" },
+  { "Build an agent" = [
+    { "Core concepts" = "architecture/concepts.md" },
+    { "Models and presets" = "reference/catalog.md" },
+    { "Typed tools" = "guides/func-tools.md" },
+    { "Messages and streams" = "guides/parts.md" },
+    { "Agent definitions" = "guides/agent-definitions.md" },
+    { "Delegation" = "guides/delegation.md" },
+  ] },
+  { "Operate a run" = [
+    { "Approval policies" = "guides/approval-policy.md" },
+    { "Memory" = "guides/memory.md" },
+    { "Durable execution" = "architecture/durable-execution.md" },
+    { "Deployment" = "guides/deployment.md" },
+    { "Observability" = "guides/observability.md" },
+    { "Upgrade notes" = "guides/upgrading.md" },
+  ] },
+  { "All guides and decisions" = "guide-index.md" },
+  { "All project guides" = "https://docs.urmzd.com/" },
+]
+
+[project.theme]
+features = ["content.code.copy", "navigation.footer", "navigation.top", "search.highlight"]
+font = false
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"

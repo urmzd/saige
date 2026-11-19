@@ -510,4 +510,4 @@ The CLI no longer starts an interactive TUI. The SDK `agent/tui` package remains
 | `saige kg search/ingest` | `saige knowledge search/ingest --backend kg` |
 | `saige kg graph/node` | `saige knowledge graph export/neighbors` |
 
-The old root commands are removed. `agent run` defaults to minimal streaming output and no ad hoc tools; pass `--tools readonly` for file access, or `--approve allow` to authorize approval-marked tools. `--trace` reports definition loading, session restoration and execution on stderr. Session files are independent of ACP/server sessions. See the [CLI reference](../../cmd/saige/README.md#agent-runs-and-sessions).
+The old root commands are removed. `agent run` defaults to minimal streaming output and no ad hoc tools; pass `--tools readonly` for file access, or `--approve allow` to authorize approval-marked tools. `--trace` reports definition loading, session restoration and execution on stderr. Session files are independent of ACP/server sessions. See the [CLI reference](https://github.com/urmzd/saige/blob/main/cmd/saige/README.md#agent-runs-and-sessions).

@@ -89,4 +89,4 @@ tool := triage.Tool()
 - The version hashes the prompt, the system prompt, both schemas, the output mode and the configuration hash. The configuration hash is `AIConfig.ConfigHash`, else the preset's configuration key (a `preset.Bundle` reports one), else the preset name and catalog revision, else the provider name and model.
 - `Tool()` declares the read capability and reports the AIFunc version, so the tree and eval provenance record it like a Func version.
 
-See [`examples/agent/func-tools`](../../examples/agent/func-tools/).
+See [`examples/agent/func-tools`](https://github.com/urmzd/saige/tree/main/examples/agent/func-tools).

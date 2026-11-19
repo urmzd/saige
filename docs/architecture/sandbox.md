@@ -168,7 +168,7 @@ A Prometheus or OpenTelemetry recorder replaces the in-memory one without any ca
 ## Validated Paths
 
 - `go test -race ./sandbox/...` runs the `isolatetest` suite against `isolate/local` and, where a Docker daemon is reachable, `isolate/docker` (runc; `SANDBOX_DOCKER_TEST_RUNTIME=runsc` runs it under gVisor, as CI does), and an end-to-end egress test (a sandbox on an internal network, the gate in a container, two upstreams on a second network). It covers sandbox confinement (traversal, list-leak), workspace confinement (symlink escapes through linked directories and files), NGAC semantics (attribute inheritance, multi-policy-class conjunction, prohibition override), the pools (bounded concurrency, FIFO backlog, `ErrFull`, drain on scale-down, retention, `Close`) and policy-gated spawning.
-- [`examples/sandbox`](../../examples/sandbox/) composes a control plane, deploys a service with a policy, and shows a write outside the tool's area denied.
+- [`examples/sandbox`](https://github.com/urmzd/saige/tree/main/examples/sandbox) composes a control plane, deploys a service with a policy, and shows a write outside the tool's area denied.
 
 ## Roadmap
 

@@ -7,7 +7,8 @@ Combines three packages: agent (streaming AI agent loop over messages of typed p
 ## Docs
 
 - [README](README.md): Overview, requirements, installation, quick start (CLI, smallest agent, typed tool, structured output, dials, RAG on Postgres), concepts
-- [docs/README.md](docs/README.md): Index of every guide
+- [docs/README.md](docs/README.md): Run a tool call with a local test model
+- [docs/guide-index.md](docs/guide-index.md): Index of every guide
 - [docs/architecture/concepts.md](docs/architecture/concepts.md): How the pieces fit; vendors, runtimes, serving APIs, models and saige adapters
 - [agent/README.md](agent/README.md): Agent framework: adapters, deltas, tools, sub-agents, markers, conversation tree, RLHF feedback, TUI, testing
 - [rag/knowledge/README.md](rag/knowledge/README.md): Knowledge graph SDK: graph interface, hybrid search, deduplication, PostgreSQL backend
