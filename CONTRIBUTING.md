@@ -60,3 +60,5 @@ uvx --from zensical==0.1.2 zensical build
 ```
 
 The preview command prints its local address. The build writes the static site to `site/`. Edit the Markdown in `docs/` and the navigation in `zensical.toml`.
+
+Pull requests to `main` build the site in strict mode. Merging to `main` publishes the result through this repository’s GitHub Pages workflow to [the Saige guide](https://docs.urmzd.com/saige/).
