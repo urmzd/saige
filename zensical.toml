@@ -23,6 +23,7 @@ nav = [
     { "Upgrade notes" = "guides/upgrading.md" },
   ] },
   { "All guides and decisions" = "guide-index.md" },
+  { "All project guides" = "https://docs.urmzd.com/" },
 ]
 
 [project.theme]
