@@ -1,4 +1,6 @@
-.claude/
+!.claude/
+.claude/*
+!.claude/skills/
 bin/
 /saige
 /saige-mcp
