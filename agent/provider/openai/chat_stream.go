@@ -270,7 +270,7 @@ func (s *chatState) finishParts() {
 //
 //nolint:gocyclo // a single pass over a stream or loop state; splitting it would scatter shared state
 func (a *Adapter) consumeStream(stream chatChunkStream, structured bool) <-chan types.Delta {
-	model := string(a.model)
+	model, providerName := string(a.model), a.Name()
 	maxTokens := 0
 	if a.params.maxTokens != nil {
 		maxTokens = int(*a.params.maxTokens)
@@ -359,7 +359,7 @@ func (a *Adapter) consumeStream(stream chatChunkStream, structured bool) <-chan 
 		case failure != nil:
 			out <- types.ErrorDelta{Error: failure}
 		case err != nil:
-			out <- types.ErrorDelta{Error: classifyOpenAIError(model, err, !s.emitted)}
+			out <- types.ErrorDelta{Error: a.classify(err, !s.emitted)}
 		case s.finishReason == "":
 			out <- types.ErrorDelta{Error: streamcheck.StreamError(providerName, model, streamcheck.ErrIncompleteStream, !s.emitted)}
 		case types.IsContentFilterFinishReason(s.finishReason):

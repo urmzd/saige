@@ -1,3 +1,4 @@
 [
-{"path":"presets.default.chain[0]","code":"signed_reasoning_failover","message":"the primary signs its reasoning, so a tool loop it starts cannot fail over to another entry","severity":"warning"}
+{"path":"presets.default.chain[0]","code":"signed_reasoning_failover","message":"the primary signs its reasoning, so a tool loop it starts cannot fail over to another entry","severity":"warning"},
+{"path":"presets.default.chain[4]","code":"smaller_context_window","message":"context window 131072 is smaller than the primary's 1000000; long conversations cannot fail over here","severity":"warning"}
 ]

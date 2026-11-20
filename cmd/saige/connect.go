@@ -86,12 +86,16 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		return hostedEmbedder(emb.Embed), emb, nil
 
 	case providerVertex, providerGoogle:
+		var dims []googleProvider.EmbedderOption
+		if embedModel == geminiEmbedding2 {
+			dims = append(dims, googleProvider.WithEmbedDimensions(geminiEmbedding2Dims))
+		}
 		if name == providerVertex || provider.VertexEnabled(os.Getenv) {
 			v := provider.ResolveVertex(&provider.Vertex{}, os.Getenv)
 			if v.Project == "" {
 				return nil, nil, fmt.Errorf("%s is required for vertex embeddings", provider.EnvCloudProject)
 			}
-			emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{Model: agenttypes.ModelID(embedModel)}, googleProvider.WithEmbedVertex(v.Project, v.Location))
+			emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{Model: agenttypes.ModelID(embedModel)}, append(dims, googleProvider.WithEmbedVertex(v.Project, v.Location))...)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -101,7 +105,7 @@ func resolveEmbedder(ctx context.Context, cf *commonFlags) (ragtypes.VariantEmbe
 		if apiKey == "" {
 			return nil, nil, fmt.Errorf("GOOGLE_API_KEY is required")
 		}
-		emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)})
+		emb, err := googleProvider.NewEmbedder(ctx, googleProvider.Config{APIKey: apiKey, Model: agenttypes.ModelID(embedModel)}, dims...)
 		if err != nil {
 			return nil, nil, err
 		}

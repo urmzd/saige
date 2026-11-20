@@ -83,7 +83,35 @@ Model fields: `extends` (a model template; chains up to four deep, cycles reject
 | `inherit_offerings` | Another endpoint whose offerings this one copies for every model it has no explicit offering for. |
 | `overrides` | An offering patch applied to every offering on this endpoint. |
 
-The embedded catalog declares `anthropic`, `openai-chat`, `openai-responses`, `google-gemini`, `google-vertex` and `ollama`. The primary endpoints are `anthropic`, `openai-chat`, `google-gemini` and `ollama`.
+The embedded catalog declares `anthropic`, `openai-chat`, `openai-responses`, `google-gemini`, `google-vertex`, `fireworks`, `groq` and `ollama`. The primary endpoints are `anthropic`, `openai-chat`, `google-gemini`, `fireworks`, `groq` and `ollama`.
+
+### Hosted vendors
+
+A vendor needs no adapter of its own when its endpoint speaks an API an adapter already serves. An endpoint with surface `openai.compatible` that is `primary` for a vendor makes that vendor buildable: `provider.Build` serves its models through the OpenAI Chat Completions adapter with the endpoint's `transport.base_url` and the key its `auth.secret` names. The adapter reports the vendor's name, and capabilities come from the vendor's own rows. The embedded `fireworks` endpoint is declared this way:
+
+```json
+"fireworks": {
+  "surface": "openai.compatible", "serves": ["fireworks"], "primary": true,
+  "auth": { "type": "api_key", "secret": "env:FIREWORKS_API_KEY" },
+  "transport": { "base_url": "https://api.fireworks.ai/inference/v1" },
+  "default_offering_template": "baseline.fireworks"
+}
+```
+
+Fireworks models are keyed by their short ID, `fireworks/kimi-k3p1-pro` for `accounts/fireworks/models/kimi-k3p1-pro`. The API resolves the short ID, so the same string is the catalog key and the wire ID. The catalog lists the open models Fireworks serves serverless, each with the reasoning efforts, sampling parameters and image input that model accepts. A model the catalog does not list, such as a dedicated deployment, gets the `baseline.fireworks` offering: pass its full `accounts/...` ID.
+
+```
+saige --model fireworks/kimi-k3p1-pro agent run - "question"
+saige --provider fireworks agent run - "question"     # the fireworks preset
+```
+
+The `groq` endpoint is declared the same way, with `GROQ_API_KEY` and `https://api.groq.com/openai/v1`. Groq's model IDs carry their publisher, so the catalog key keeps it after the vendor: `groq/openai/gpt-oss-120b`, `groq/qwen/qwen3.8-27b`. Only the leading `groq/` is removed before the request, where `--provider openai --base-url https://api.groq.com/openai/v1 --model openai/gpt-oss-120b` loses the `openai/` the API needs.
+
+```
+saige --model groq/openai/gpt-oss-120b agent run - "question"
+```
+
+Another OpenAI-compatible host is added the same way in a catalog layer, with no code change. A project catalog cannot do it, since `transport`, `auth` and `primary` are outside its allowlist.
 
 ### Offerings
 
@@ -448,19 +476,21 @@ saige catalog reconcile               # compare provider model lists with the ca
 saige catalog migrate --write FILE    # convert a version 1 layer to version 2
 ```
 
-The CLI picks `--preset` first, then `--model` (a one-entry chain from the offering's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama; with Ollama running but no chat model pulled, it says to run `ollama pull qwen3.5:4b`. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
+The CLI picks `--preset` first, then `--model` (a one-entry chain from the offering's defaults), then `--provider` alone (the preset of that name), then `default_preset`. Without `--preset` or `--model`, the CLI runs one vendor: the first entry of `default_preset` that has credentials, or for the local Ollama entry, a server that answers. The shipped order is Anthropic, OpenAI, Google, Fireworks, Groq, then Ollama, and each vendor's entry is its cheapest current model. With no key set and Ollama not running, the CLI says which variables to set or to start Ollama; with Ollama running but no chat model pulled, it says to run `ollama pull qwen3.5:4b`. Cross-vendor failover is opt-in: `--preset default` runs the whole chain.
 
 The shipped presets:
 
 | Preset | Chain |
 | --- | --- |
-| `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, then a local qwen3.5:4b (or another pulled model) |
-| `anthropic`, `openai`, `google` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite |
-| `anthropic-quality`, `openai-quality`, `google-quality` | claude-sonnet-5-5, gpt-6.1-sol, gemini-3.8-flash |
+| `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, Fireworks glm-5p3-flash, Groq gpt-oss-20b, then a local qwen3.5:4b (or another pulled model) |
+| `anthropic`, `openai`, `google`, `fireworks`, `groq` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, glm-5p3-flash, gpt-oss-20b |
+| `anthropic-quality`, `openai-quality`, `google-quality`, `fireworks-quality`, `groq-quality` | claude-sonnet-5-5, gpt-6.2-sol, gemini-4-hydrogen, kimi-k3p1-pro, gpt-oss-120b |
 | `vertex` | gemini-3.1-flash-lite through Vertex AI |
 | `ollama` | a local qwen3.5:4b, or another pulled model |
 
 `--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
+
+An Anthropic entry needs no `ANTHROPIC_API_KEY` when the Anthropic SDK can authenticate by itself: after `ant auth login`, with `ANTHROPIC_AUTH_TOKEN`, or with workload identity federation. `provider.AnthropicLogin` reports whether one of them is present, and the CLI then detects Anthropic as it does with a key. The key wins when both are set, and an entry with a `base_url` always needs a key, so a login is never sent to a gateway.
 
 `--base-url` applies to the entries of the selected provider: `--provider` when given, otherwise the one provider the chain uses. On a chain that spans several vendors without `--provider` it is an error, never ignored.
 
@@ -477,7 +507,7 @@ saige catalog reconcile --ignore-file .github/catalog-ignore.txt --write agent/p
 saige --format json catalog reconcile                    # machine-readable report
 ```
 
-A provider is checked when its credentials are set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. The report lists:
+A provider is checked when its credentials are set: `ANTHROPIC_API_KEY` or an Anthropic login (below), `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. Fireworks is not reconciled: its list endpoint returns full `accounts/...` IDs, which the short catalog keys do not match, so its rows are checked by hand. Groq is not reconciled either. The report lists:
 
 | Finding | Meaning | Drift |
 | --- | --- | --- |

@@ -67,8 +67,9 @@ type Config struct {
 	// Model is the provider's model identifier. A "provider/" prefix naming a
 	// known provider is accepted and removed.
 	Model types.ModelID
-	// APIKey overrides the environment. Ollama needs none and rejects one,
-	// since its adapter sends no key. OpenAI with a
+	// APIKey overrides the environment. Anthropic runs without one when the
+	// SDK can authenticate by itself (see AnthropicLogin). Ollama needs
+	// none and rejects one, since its adapter sends no key. OpenAI with a
 	// BaseURL may also run without one, for compatible servers that do not
 	// check keys.
 	APIKey string
@@ -106,6 +107,12 @@ type Config struct {
 	// and the location then defaults to "global". Vertex authenticates with
 	// Application Default Credentials, so no API key is read.
 	Vertex *Vertex
+	// Surface is the API surface of the endpoint that serves Provider, for
+	// a vendor without an adapter of its own, such as models hosted behind
+	// an OpenAI-compatible API (types.SurfaceOpenAICompatible). Empty reads
+	// the vendor's primary endpoint from the installed catalog, which also
+	// supplies the base URL and the key variable when they are not set.
+	Surface string
 	// Getenv reads the environment. Nil uses os.Getenv.
 	Getenv func(string) string
 	// Conversion is how parts the model cannot take natively are fitted to
@@ -195,14 +202,57 @@ func Infer(model string) (provider types.ProviderName, bare string, err error) {
 		if name := knownProvider(p); name != "" {
 			return name, rest, nil
 		}
+		if v := types.ProviderName(strings.ToLower(strings.TrimSpace(p))); hosted(v) {
+			return v, rest, nil
+		}
 	}
-	if p, ok := catalog.InferProvider(model); ok && knownProvider(string(p)) != "" {
+	if p, ok := catalog.InferProvider(model); ok && (knownProvider(string(p)) != "" || hosted(p)) {
 		return p, model, nil
 	}
 	if strings.Contains(model, ":") {
 		return Ollama, model, nil
 	}
 	return "", model, fmt.Errorf("%w: cannot infer a provider for model %q; set Config.Provider", ErrUnknownProvider, model)
+}
+
+// host is how a vendor without an adapter of its own is reached: the
+// adapter that speaks its endpoint's API, and what the catalog says about
+// the endpoint.
+type host struct {
+	adapter types.ProviderName
+	baseURL string
+	keyEnv  string
+}
+
+// hosted reports whether the installed catalog serves a vendor through an
+// endpoint one of the adapters speaks.
+func hosted(vendor types.ProviderName) bool {
+	_, ok := hostOf(vendor, "")
+	return ok
+}
+
+// hostOf resolves the adapter and endpoint for a vendor that is not an
+// adapter name. surface overrides the catalog endpoint's. Only the
+// OpenAI-compatible surface is served this way: the OpenAI adapter is the
+// one that can report another vendor's name.
+func hostOf(vendor types.ProviderName, surface string) (host, bool) {
+	var h host
+	if _, ep, ok := catalog.VendorEndpoint(vendor); ok {
+		if surface == "" {
+			surface = ep.Surface
+		}
+		if t := ep.Transport; t != nil && !strings.HasPrefix(t.BaseURL, "env:") {
+			h.baseURL = t.BaseURL
+		}
+		if a := ep.Auth; a != nil {
+			h.keyEnv, _ = strings.CutPrefix(a.Secret, "env:")
+		}
+	}
+	if surface != types.SurfaceOpenAICompatible {
+		return host{}, false
+	}
+	h.adapter = OpenAI
+	return h, true
 }
 
 func knownProvider(name string) types.ProviderName {
@@ -222,26 +272,45 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	name, model := knownProvider(string(cfg.Provider)), string(cfg.Model)
-	switch {
-	case cfg.Provider != "" && name == "":
-		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, cfg.Provider)
-	case name == "":
+	// vendor is the catalog namespace the model belongs to, and name the
+	// adapter that serves it. They differ for a vendor hosted behind
+	// another API, such as Fireworks behind the OpenAI-compatible one.
+	vendor, model := types.ProviderName(strings.ToLower(strings.TrimSpace(string(cfg.Provider)))), string(cfg.Model)
+	if vendor == "" {
 		var err error
-		if name, model, err = Infer(model); err != nil {
+		if vendor, model, err = Infer(model); err != nil {
 			return nil, err
 		}
-	default:
-		if p, rest, ok := strings.Cut(model, "/"); ok && knownProvider(p) == name && rest != "" {
-			model = rest
+	} else if p, rest, ok := strings.Cut(model, "/"); ok && strings.EqualFold(p, string(vendor)) && rest != "" {
+		model = rest
+	}
+	name := knownProvider(string(vendor))
+	var via *host
+	if name == "" {
+		h, ok := hostOf(vendor, cfg.Surface)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, cfg.Provider)
+		}
+		via, name = &h, h.adapter
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = h.baseURL
 		}
 	}
 	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("provider %s: a model is required", name)
+		return nil, fmt.Errorf("provider %s: a model is required", vendor)
 	}
 
-	caps := catalog.MustLookup(name, model)
-	key, vertex, err := credentialsFor(caps, name, model, cfg, getenv)
+	caps := catalog.MustLookup(vendor, model)
+	var (
+		key    string
+		vertex *Vertex
+		err    error
+	)
+	if via != nil {
+		key, err = hostKey(*via, vendor, model, cfg, getenv)
+	} else {
+		key, vertex, err = credentialsFor(caps, name, model, cfg, getenv)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +336,7 @@ func Build(ctx context.Context, cfg Config) (types.Provider, error) {
 	case Anthropic:
 		p, err = buildAnthropic(cfg, model, key, caps)
 	case OpenAI:
-		p, err = buildOpenAI(cfg, model, key, caps)
+		p, err = buildOpenAI(cfg, model, key, caps, vendor)
 	case Google:
 		p, err = buildGoogle(ctx, cfg, model, key, vertex, caps)
 	case Ollama:
@@ -329,11 +398,35 @@ func credentialsFor(caps types.ModelCapabilities, name types.ProviderName, model
 		}
 		key = getenv(env)
 	}
+	if key == "" && name == Anthropic && cfg.BaseURL == "" && AnthropicLogin(getenv) {
+		// The SDK authenticates from an `ant auth login` profile, an auth
+		// token or workload identity. A gateway named by BaseURL still
+		// needs a key, so a login is never sent to another host.
+		return "", nil, nil
+	}
 	if key == "" && name != Ollama && (name != OpenAI || cfg.BaseURL == "") {
+		hint := strings.Join(APIKeyEnv[name], " or ")
+		if name == Anthropic {
+			hint += ", or run `ant auth login`"
+		}
 		return "", nil, &types.ProviderError{Provider: string(name), Model: model, Kind: types.ErrorKindAuth,
-			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, strings.Join(APIKeyEnv[name], " or "))}
+			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, hint)}
 	}
 	return key, nil, nil
+}
+
+// hostKey resolves the API key for a hosted vendor: the configured key, or
+// the variable its catalog endpoint names. An endpoint that names none runs
+// without a key.
+func hostKey(h host, vendor types.ProviderName, model string, cfg Config, getenv func(string) string) (string, error) {
+	if cfg.APIKey != "" || h.keyEnv == "" {
+		return cfg.APIKey, nil
+	}
+	if key := getenv(h.keyEnv); key != "" {
+		return key, nil
+	}
+	return "", &types.ProviderError{Provider: string(vendor), Model: model, Kind: types.ErrorKindAuth,
+		Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, h.keyEnv)}
 }
 
 // unsupported rejects a control the adapter has no option for.
@@ -417,9 +510,12 @@ func buildAnthropic(cfg Config, model, key string, caps types.ModelCapabilities)
 	return anthropic.New(anthropic.Config{APIKey: key, Model: types.ModelID(model)}, opts...)
 }
 
-func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities) (types.Provider, error) {
+func buildOpenAI(cfg Config, model, key string, caps types.ModelCapabilities, vendor types.ProviderName) (types.Provider, error) {
 	o := cfg.Options
 	var opts []openai.Option
+	if vendor != OpenAI {
+		opts = append(opts, openai.WithProviderName(string(vendor)))
+	}
 	if cfg.BaseURL != "" {
 		opts = append(opts, openai.WithBaseURL(cfg.BaseURL))
 	}

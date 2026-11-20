@@ -224,6 +224,19 @@ func SurfaceProvider(surface string) (types.ProviderName, bool) {
 	return "", false
 }
 
+// VendorEndpoint returns the primary endpoint that serves a vendor's models
+// in the installed catalog, and its name. The bool is false when no endpoint
+// is primary for the vendor.
+func VendorEndpoint(vendor types.ProviderName) (string, EndpointSpec, bool) {
+	cat := Active()
+	for _, name := range sortedKeys(cat.Endpoints) {
+		if ep := cat.Endpoints[name]; ep.Primary && slices.Contains(ep.Serves, vendor) {
+			return name, ep, true
+		}
+	}
+	return "", EndpointSpec{}, false
+}
+
 // KnownSurfaces lists the built-in endpoint surfaces.
 func KnownSurfaces() []string {
 	return []string{types.SurfaceAnthropicMessages, types.SurfaceOpenAIChat, types.SurfaceOpenAIResponses,

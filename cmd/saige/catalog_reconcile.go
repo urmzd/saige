@@ -455,6 +455,9 @@ func catalogProvider(name string) types.ProviderName {
 func reconcileCredentials(name string, getenv func(string) string) (string, bool) {
 	switch name {
 	case providerAnthropic, providerOpenAI:
+		if name == providerAnthropic && provider.AnthropicLogin(getenv) {
+			return "", true
+		}
 		if env := provider.APIKeyEnv[types.ProviderName(name)][0]; getenv(env) == "" {
 			return env + " is not set", false
 		}

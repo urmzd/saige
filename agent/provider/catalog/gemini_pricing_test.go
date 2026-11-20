@@ -83,7 +83,6 @@ func TestGeminiUnlistedStaysUnpriced(t *testing.T) {
 		{"google-gemini", "gemini-3.5-flash"},
 		{"google-gemini", "gemini-3-pro"},
 		{"google-gemini", "gemini-3.1-flash"},
-		{"google-gemini", "gemini-embedding-2"},
 	} {
 		o, ok := LookupOffering(tc.endpoint, "google", tc.model)
 		if ok && !o.Pricing.IsZero() {

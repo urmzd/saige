@@ -17,6 +17,7 @@ type Embedder struct {
 	client   *genai.Client
 	model    string
 	taskType string
+	dims     int32
 	backend  backend
 }
 
@@ -28,6 +29,15 @@ type EmbedderOption func(*Embedder)
 // context's embed purpose.
 func WithTaskType(taskType string) EmbedderOption {
 	return func(e *Embedder) { e.taskType = taskType }
+}
+
+// WithEmbedDimensions asks the model for vectors of n dimensions, which
+// models with a variable output size accept (gemini-embedding-2 takes 128 to
+// 3072 and returns 3072 by default). Zero keeps the model's default. Vectors
+// of different sizes are not comparable: a store keeps the size it was built
+// with.
+func WithEmbedDimensions(n int) EmbedderOption {
+	return func(e *Embedder) { e.dims = int32(n) } //nolint:gosec // a vector size, far below the int32 range
 }
 
 // WithEmbedHTTPClient sets the HTTP client the embedder's SDK client uses.
@@ -99,8 +109,11 @@ func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 	g.SetLimit(10)
 
 	var cfg *genai.EmbedContentConfig
-	if tt := e.taskTypeFor(ctx); tt != "" {
+	if tt := e.taskTypeFor(ctx); tt != "" || e.dims > 0 {
 		cfg = &genai.EmbedContentConfig{TaskType: tt}
+		if e.dims > 0 {
+			cfg.OutputDimensionality = &e.dims
+		}
 	}
 	for i, text := range texts {
 		g.Go(func() error {

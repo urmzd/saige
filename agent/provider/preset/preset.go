@@ -337,6 +337,9 @@ func credentials(e catalog.ResolvedEntry, getenv func(string) string) (string, b
 			return "", false
 		}
 	}
+	if e.Provider == provider.Anthropic && e.BaseURL == "" && provider.AnthropicLogin(getenv) {
+		return "", false
+	}
 	return "", len(provider.APIKeyEnv[e.Provider]) > 0
 }
 
@@ -347,12 +350,19 @@ func credentialHint(e catalog.ResolvedEntry) string {
 	if e.Provider == provider.Google && e.Vertex != nil {
 		return "set " + provider.EnvCloudProject + " (vertex)"
 	}
-	return "set " + strings.Join(provider.APIKeyEnv[e.Provider], " or ")
+	hint := "set " + strings.Join(provider.APIKeyEnv[e.Provider], " or ")
+	if e.Provider == provider.Anthropic {
+		hint += ", or run `ant auth login`"
+	}
+	return hint
 }
 
 func config(e catalog.ResolvedEntry, key string, o Options) provider.Config {
 	cfg := provider.Config{Provider: e.Provider, Model: e.Model, APIKey: key, BaseURL: e.BaseURL,
 		HTTPClient: o.HTTPClient, Options: e.Options.Clone(), ServerTools: append([]types.ServerTool(nil), e.ServerTools...), Getenv: o.Getenv}
+	if o := e.Caps.Offering; o != nil {
+		cfg.Surface = o.Endpoint.Surface
+	}
 	for _, l := range e.Dials {
 		// An empty, non-nil list tells Build the layers are resolved, so the
 		// model's dial defaults are not added twice.

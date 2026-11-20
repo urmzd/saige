@@ -236,29 +236,6 @@ func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, stru
 			if chunk.Message.Thinking != "" || chunk.Message.Content != "" || len(chunk.Message.ToolCalls) > 0 {
 				emitted = true
 			}
-			if chunk.Done {
-				done = true
-				closeThink()
-				closeText()
-				// Emit usage delta from the final chunk.
-				ud := types.UsageDelta{Cumulative: true,
-					PromptTokens:     chunk.PromptEvalCount,
-					CompletionTokens: chunk.EvalCount,
-					TotalTokens:      chunk.PromptEvalCount + chunk.EvalCount,
-					ResponseModel:    chunk.Model,
-				}
-				if chunk.DoneReason != "" {
-					ud.FinishReasons = []string{chunk.DoneReason}
-				} else {
-					ud.FinishReasons = []string{"stop"}
-				}
-				out <- ud
-				if structured && types.IsTruncationFinishReason(chunk.DoneReason) {
-					failure = streamcheck.Truncated("ollama", model, chunk.DoneReason, chunk.EvalCount, 0)
-				}
-				continue
-			}
-
 			// Reasoning from a thinking model (the think field).
 			if chunk.Message.Thinking != "" {
 				if think < 0 {
@@ -295,6 +272,27 @@ func (a *Adapter) translateDeltas(ctx context.Context, rx <-chan ChatChunk, stru
 						out <- types.PartDelta{Index: i, Args: string(raw)}
 					}
 					out <- types.PartEnd{Index: i, Part: types.ToolCallPart{ID: id, Name: tc.Function.Name, Arguments: args}}
+				}
+			}
+			if chunk.Done {
+				done = true
+				closeThink()
+				closeText()
+				// Emit usage delta from the final chunk.
+				ud := types.UsageDelta{Cumulative: true,
+					PromptTokens:     chunk.PromptEvalCount,
+					CompletionTokens: chunk.EvalCount,
+					TotalTokens:      chunk.PromptEvalCount + chunk.EvalCount,
+					ResponseModel:    chunk.Model,
+				}
+				if chunk.DoneReason != "" {
+					ud.FinishReasons = []string{chunk.DoneReason}
+				} else {
+					ud.FinishReasons = []string{"stop"}
+				}
+				out <- ud
+				if structured && types.IsTruncationFinishReason(chunk.DoneReason) {
+					failure = streamcheck.Truncated("ollama", model, chunk.DoneReason, chunk.EvalCount, 0)
 				}
 			}
 		}

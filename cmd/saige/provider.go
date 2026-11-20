@@ -19,10 +19,22 @@ import (
 	"github.com/urmzd/saige/agent/types"
 )
 
+// geminiEmbedding2 is the Gemini API's current embedding model. The CLI asks
+// it for geminiEmbedding2Dims dimensions, the size text-embedding-004
+// produced, which also fits a pgvector HNSW index (2000 dimensions at most;
+// the model's own default is 3072).
+const (
+	geminiEmbedding2     = "gemini-embedding-2"
+	geminiEmbedding2Dims = 768
+)
+
+// defaultEmbedModels is the embedding model per provider when --embed-model
+// is not given. The Gemini API retired text-embedding-004, which Vertex AI
+// still serves, so the two Google surfaces differ.
 var defaultEmbedModels = map[string]string{
 	providerAnthropic: "",
 	providerOpenAI:    "text-embedding-3-small",
-	providerGoogle:    "text-embedding-004",
+	providerGoogle:    geminiEmbedding2,
 	providerVertex:    "text-embedding-004",
 	providerOllama:    "nomic-embed-text",
 }
@@ -86,7 +98,7 @@ func (cf *commonFlags) resolvedProvider() string {
 	if *cf.provider != "" {
 		return *cf.provider
 	}
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+	if os.Getenv("ANTHROPIC_API_KEY") != "" || provider.AnthropicLogin(os.Getenv) {
 		return providerAnthropic
 	}
 	if os.Getenv("OPENAI_API_KEY") != "" {

@@ -1,5 +1,23 @@
 # Upgrading to this release
 
+## New models, and Fireworks and Groq as hosted vendors
+
+The embedded catalog (revision `2026-11-20.2`) adds claude-fable-5-2 and claude-mythos-5-2, gpt-6.1-terra, gpt-6.2-sol and gpt-6.2-astra, the four Gemini 4 models (hydrogen, neon, argon, carbon) and gemini-embedding-2, priced as of 2026-11-20. It also adds a `fireworks` vendor with 14 open chat models and one embedding model that Fireworks serves serverless, and a `groq` vendor with gpt-oss-120b, gpt-oss-20b and qwen3.8-27b. See [hosted vendors](../reference/catalog.md#hosted-vendors).
+
+What changes for existing callers:
+
+| Change | Effect |
+| --- | --- |
+| `openai-quality` runs gpt-6.2-sol, at the same list price as gpt-6.1-sol | gpt-6.2-sol rejects reasoning effort `max`: a preset layer that sets it on `openai-quality` now fails validation. Use `xhigh`. |
+| gpt-6.1-sol, gpt-6-astra, claude-fable-5-1, claude-mythos-5-1, gemini-embedding-001 and text-embedding-004 set `superseded_by` | A preset that names one gets a `superseded` warning, which `catalog validate --strict` treats as a failure. |
+| The `default` preset gains Fireworks and Groq entries between Google and Ollama | With only `FIREWORKS_API_KEY` or `GROQ_API_KEY` set, the CLI now runs glm-5p3-flash on Fireworks or gpt-oss-20b on Groq where it ran a local Ollama model. |
+| The Ollama adapter reads tool calls on the final stream chunk | Ollama 0.40 sends a model's tool calls with `done: true` (seen with gpt-oss:20b). The adapter dropped them, so a turn ended with an empty answer and no error. No change is needed in callers. |
+| A bare model name can infer a hosted vendor | `provider.Infer("kimi-k3")` returns `fireworks`. `provider.Build` accepts `Provider: "fireworks"` and the `fireworks/<model>` form, and reads `FIREWORKS_API_KEY`. |
+| `google-quality` runs gemini-4-hydrogen | Its list price is $1.50 / $7.50 per million tokens, twice what gemini-3.8-flash costs until 2027-01-01, when the two match. Name gemini-3.8-flash in your own preset to keep it. |
+| The CLI's default Google embedding model is gemini-embedding-2 at 768 dimensions, on the Gemini API only | The Gemini API retired text-embedding-004. A store built with it must be ingested again: the vector size is the same, but vectors from two models are not comparable. Vertex AI still serves text-embedding-004 and keeps it as its default. |
+| Anthropic entries run without `ANTHROPIC_API_KEY` after `ant auth login` | `provider.Build`, `preset.Build` and the CLI accept an Anthropic model when `provider.AnthropicLogin` finds a profile, `ANTHROPIC_AUTH_TOKEN` or workload identity federation. `ANTHROPIC_API_KEY` still wins. An entry with a `base_url` still needs a key. |
+| `openai.WithProviderName`, `provider.Config.Surface` and `google.WithEmbedDimensions` are new | Additive. Existing constructors are unchanged. |
+
 ## The GitHub connector, cron, membership and egress move into saige
 
 `github.com/urmzd/orchagent/flow/{connectors/github,connectors/cron,membership,egress}` are now under `github.com/urmzd/saige/flow/`. Change the import prefix. Two breaking changes come with the GitHub connector: agents never approve a pull request, so `PrepareReview` takes `(Review, []ContextFile)` and refuses `APPROVE` with `ErrNoApproval`, and `Config.AllowReviewApproval` and `Config.AllowReviewApprovalFor` are gone. The Jira and webhook connectors, the author tools and the dispatcher did not move. New: `flow/credential`, the seam a connector's API client takes its token through (`credential.Client(src, connector, subject, nil)`).

@@ -13,7 +13,7 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/` | Streaming agent loop, tool dispatch, sub-agents, handoffs, durable runs, provider adapters |
 | `agent/types/` | Sealed types: Message and its typed parts (text, media with a `Source`, tool calls and results, citations, refusals, metadata parts), part deltas, the wire codec, Tool/RichTool, Provider and `Request`, typed IDs and `Target`, Cache, StepRunner |
 | `agent/tree/` | Conversation tree with branching, compaction, WAL, feedback leaf nodes |
-| `agent/provider/` | Adapters implementing `types.Provider`: Anthropic (Messages), OpenAI (Chat Completions, Responses), Google (Gemini API, Vertex AI) and the local Ollama runtime; `provider.Build` factory |
+| `agent/provider/` | Adapters implementing `types.Provider`: Anthropic (Messages), OpenAI (Chat Completions, Responses), Google (Gemini API, Vertex AI) and the local Ollama runtime; `provider.Build` factory, which also serves a vendor hosted behind an OpenAI-compatible endpoint (Fireworks) |
 | `agent/provider/cache/` | Response-cache decorator: memoizes Stream by deterministic request hash |
 | `agent/provider/retry/`, `agent/provider/fallback/` | Retry with backoff and Retry-After; ordered fallback across adapters |
 | `agent/provider/router/` | Routing sessions over complete model configurations: sticky and affinity policies, route locks, classified failover |
