@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.46.1 (2026-11-20)
+
+### Bug Fixes
+
+- **flow**: a write the surface refuses as undeliverable is not retried (#171) ([dd9e7a9](https://github.com/urmzd/saige/commit/dd9e7a9dda3494e084fa18f3c5ab8c93d0fc5f89))
+
+### Misc
+
+- publish the guide through docs.urmzd.com (#170) ([80e24cd](https://github.com/urmzd/saige/commit/80e24cd4a7cf1233db9987f8d7920905ca8b8385))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.46.0...v0.46.1)
+
+
 ## 0.46.0 (2026-11-20)
 
 ### Features
