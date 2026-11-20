@@ -4,6 +4,7 @@ site_description = "Build, operate and evaluate agents in Go."
 site_url = "https://docs.urmzd.com/saige/"
 repo_url = "https://github.com/urmzd/saige"
 repo_name = "urmzd/saige"
+extra_css = ["/brand/zensical.css"]
 nav = [
   { "Run your first tool call" = "README.md" },
   { "Build an agent" = [
@@ -27,6 +28,8 @@ nav = [
 ]
 
 [project.theme]
+logo = "/brand/logo-mark.svg"
+favicon = "/brand/favicon.svg"
 features = ["content.code.copy", "navigation.footer", "navigation.top", "search.highlight"]
 font = false
 
