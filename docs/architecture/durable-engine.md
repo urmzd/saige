@@ -25,7 +25,15 @@ Nothing below the root imports it, and adapters are invisible to all of it.
 
 ## Dependencies
 
-`durable`, `run`, `ledger`, `queue`, `replay` and `worker` import only the standard library. The Postgres adapters under `durable/adapters/postgres` are the only engine packages that import pgx, so a program that never imports them never links it.
+`durable`, `run`, `ledger`, `queue`, `replay` and `worker` import only the standard library. Each adapter keeps its dependency to itself: `durable/adapters/postgres` imports pgx and `durable/adapters/file` imports `golang.org/x/sys` for advisory locks, so a program that never imports an adapter never links its dependency.
+
+## Concurrent wrapped calls
+
+A wrapped call's children nest under the key its context carries, not under a stack the frame keeps, so calls may run at once on separate goroutines and finish in any order: each records under its own key, and replay finds each by key. Calls that run at once under one parent need distinct names (an agent names a tool step by its tool call's ID). Two concurrent calls of one name would take occurrences in the order they start, which replay cannot reproduce. `replay.ActiveKey(ctx)` is the key a call executes under; `IdempotencyKey(ctx)` builds on it.
+
+## The File Adapters
+
+**adapters/file** runs a ledger and a queue on one private directory, for the runs of one machine. `fileledger` gives each run a directory named by the SHA-256 of its ID, holding `run.json` (replaced by an atomic rename under the directory's lock when the run completes) and `records/`, one file per record published with `link(2)`, which fails when the file exists: write-once for any number of concurrent writers in any number of processes. `filequeue` keeps each run's entry as `queue.json` in the same directory. Its leases are time leases with `queue.Memory`'s semantics, and a claimer also holds an advisory lock on the run's `lease.lock` for as long as it holds the lease: a lease whose lock is free is treated as lapsed, so a crashed process gives its runs back at once instead of after the TTL. Claim scans every entry, so the queue suits one machine, not a fleet. Both pass the conformance suites.
 
 ## The Postgres Adapters
 
@@ -39,7 +47,11 @@ Optional powers are capability interfaces discovered by type assertion, never wi
 
 - `queue.DeltaLog`: `queue.Memory` and `pgqueue.DeltaQueue` implement it, and a backend without it simply makes `Emit` a no-op and skips dividers. The worker discovers it once, at construction; the client asserts per call inside `Client.Watch` and returns an error when the queue lacks it.
 - `ledger.RunGetter`: a point read of one run (`GetRun`) without its records. `Handle.Result` polls with it when present and falls back to `Load` (which prefetches the full record history on every poll) when not. Implement it on custom ledgers.
-- `ledger.PrefixReader`: a run's records whose keys start with literal prefixes (`RecordsWithPrefix`), for a poll that wants a few small records (an event's arrival, a stop request) without reading every other one. `ledger.Memory` and `pgledger` implement it, and `ledgertest.Run` exercises it whenever a ledger does.
+- `ledger.PrefixReader`: a run's records whose keys start with literal prefixes (`RecordsWithPrefix`), for a poll that wants a few small records (an event's arrival, a stop request) without reading every other one. `ledger.Memory`, `pgledger` and `fileledger` implement it, and `ledgertest.Run` exercises it whenever a ledger does.
+- `ledger.RunLister` (`Runs`, every run without records) and `ledger.Deleter` (`Delete`, a run and its records): `ledger.Memory` and `fileledger` implement them.
+- `queue.Targeted` (`ClaimRun`, lease one named run now, whatever its delay) and `queue.LeaseProber` (`Leased`, whether a live holder has it): `queue.Memory` and `filequeue` implement them. `worker.RunOne(ctx, runID)` uses `Targeted` to execute one run in the calling process and return with its outcome in the ledger.
+
+`Client.Cancel(ctx, runID, reason)` ends a run before it finishes: it completes as failed with `run.ErrCancelled`, so `run.Cancelled(r)` tells a cancellation from a failure without a new status.
 
 ## Deltas and Dividers
 
@@ -62,5 +74,4 @@ Outside a run, every wrapped function is a plain Go call: `Activity` and `Step` 
 - Distributed activities (activities executed by a different worker than the run's)
 - Forking and child runs as client-side compositions (`ParentRunID` and record-key namespaces are the reserved seams)
 - Durable timers
-- Multi-goroutine workflow bodies (v1 workflow bodies are single-goroutine; the frame is mutex-guarded so violations surface as loud determinism errors, not corruption)
 - Wrapping codecs (encryption, claim-check) behind `run.Codec`

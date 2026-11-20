@@ -2,6 +2,7 @@ package anchor
 
 import (
 	agenttypes "github.com/urmzd/saige/agent/types"
+	"github.com/urmzd/saige/durable/queue"
 	"github.com/urmzd/saige/durable/run"
 )
 
@@ -18,6 +19,13 @@ func init() {
 	agenttypes.RegisterWireSentinel("durable.anchor.conflict", ErrConflict)
 	agenttypes.RegisterWireSentinel("durable.anchor.failed", ErrFailed)
 	agenttypes.RegisterWireSentinel("durable.anchor.indeterminate", ErrIndeterminate)
+	agenttypes.RegisterWireSentinel("durable.anchor.busy", ErrBusy)
+	agenttypes.RegisterWireSentinel("durable.anchor.no_notifier", ErrNoNotifier)
+	agenttypes.RegisterWireSentinel("durable.anchor.signal", ErrSignal)
+	agenttypes.RegisterWireSentinel("durable.anchor.unsupported", ErrUnsupported)
+	agenttypes.RegisterWireSentinel("durable.queue.leased", queue.ErrLeased)
+	agenttypes.RegisterWireSentinel("durable.queue.not_queued", queue.ErrNotQueued)
+	agenttypes.RegisterWireSentinel("durable.run.cancelled", run.ErrCancelled)
 
 	agenttypes.RegisterWireSentinel("durable.run.already_recorded", run.ErrAlreadyRecorded)
 	agenttypes.RegisterWireSentinel("durable.run.already_terminal", run.ErrAlreadyTerminal)

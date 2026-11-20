@@ -36,7 +36,7 @@ func IdempotencyKey(ctx context.Context) string {
 	if !ok {
 		return ""
 	}
-	key := f.ActiveKey()
+	key := replay.ActiveKey(ctx)
 	if key == "" {
 		return ""
 	}

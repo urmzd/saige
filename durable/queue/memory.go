@@ -73,8 +73,10 @@ type Memory struct {
 }
 
 var (
-	_ Queue    = (*Memory)(nil)
-	_ DeltaLog = (*Memory)(nil)
+	_ Queue       = (*Memory)(nil)
+	_ DeltaLog    = (*Memory)(nil)
+	_ Targeted    = (*Memory)(nil)
+	_ LeaseProber = (*Memory)(nil)
 )
 
 // NewMemory returns an empty in-process queue and delta log.
@@ -409,4 +411,35 @@ func (s *memoryStream) Recv(ctx context.Context) (run.Delta, Cursor, error) {
 		case <-wake:
 		}
 	}
+}
+
+// ClaimRun implements the Targeted capability.
+func (m *Memory) ClaimRun(ctx context.Context, runID string, ttl time.Duration) (Item, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return Item{}, time.Time{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[runID]
+	now := time.Now()
+	switch {
+	case !ok || e.state == memSettled:
+		return Item{}, time.Time{}, fmt.Errorf("queue: claim %q: %w", runID, ErrNotQueued)
+	case e.state == memLeased && e.deadline.After(now):
+		return Item{}, time.Time{}, fmt.Errorf("queue: claim %q: %w", runID, ErrLeased)
+	case e.state == memLeased:
+		e.failures++ // the previous execution lapsed
+	}
+	e.attempt++
+	e.state = memLeased
+	e.deadline = now.Add(ttl)
+	return Item{RunID: runID, Attempt: e.attempt, Failures: e.failures}, e.deadline, nil
+}
+
+// Leased implements the LeaseProber capability.
+func (m *Memory) Leased(ctx context.Context, runID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[runID]
+	return ok && e.state == memLeased && e.deadline.After(time.Now()), nil
 }

@@ -26,7 +26,7 @@ func TestAwaitWakesOnReply(t *testing.T) {
 	dir := t.TempDir()
 	waiter := &Engine{Directory: dir, ApprovalTTL: time.Hour, Notifier: n}
 	host := &Engine{Directory: dir, ApprovalTTL: time.Hour, Notifier: n}
-	suspendedRun(t, waiter, "run")
+	startRun(t, waiter, "run")
 	in := question("run")
 	if _, err := host.Router().Post(ctx, in); !errors.Is(err, types.ErrSuspended) {
 		t.Fatalf("Post = %v", err)
@@ -67,14 +67,20 @@ func TestAwaitWakesOnAppendAndCancel(t *testing.T) {
 	n := notify.NewMemory(0)
 	defer n.Close(ctx)
 	e := &Engine{Directory: t.TempDir(), ApprovalTTL: time.Hour, Notifier: n}
-	suspendedRun(t, e, "run")
+	startRun(t, e, "run")
+	if _, err := e.Router().Post(ctx, question("run")); !errors.Is(err, types.ErrSuspended) {
+		t.Fatalf("Post = %v", err)
+	}
 	s, _ := e.Inspect("run")
-	if Resumable(s) {
-		t.Fatal("suspended run without a reply is resumable")
+	if s.Status != statusSuspended || Resumable(s) {
+		t.Fatalf("suspended run without a reply: status %s, resumable %v", s.Status, Resumable(s))
 	}
 
 	done := make(chan error, 1)
-	go func() { _, err := e.Await(ctx, "run", Resumable); done <- err }()
+	go func() {
+		_, err := e.Await(ctx, "run", func(s State) bool { return len(s.Inputs) == 1 })
+		done <- err
+	}()
 	time.Sleep(20 * time.Millisecond)
 	if err := e.Append("run", "v1", "msg-1", []types.Message{types.UserMsg(types.Text("more"))}); err != nil {
 		t.Fatal(err)
@@ -125,7 +131,7 @@ func (failingNotifier) Publish(context.Context, string, []byte) error {
 
 func TestSignalFailureKeepsChange(t *testing.T) {
 	e := &Engine{Directory: t.TempDir(), ApprovalTTL: time.Hour, Notifier: failingNotifier{}}
-	suspendedRun(t, e, "run")
+	startRun(t, e, "run")
 	err := e.Append("run", "v1", "k", []types.Message{types.UserMsg(types.Text("x"))})
 	if !errors.Is(err, ErrSignal) {
 		t.Fatalf("Append = %v, want ErrSignal", err)

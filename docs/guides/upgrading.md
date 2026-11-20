@@ -1,5 +1,24 @@
 # Upgrading to this release
 
+## One durable engine: the local engine runs on it
+
+`agent/durable/local` is now `agent/durable/anchor` on the durable engine's new file ledger and file queue (`durable/adapters/file`). Its API is the same, with these changes:
+
+- Run directories an earlier release wrote are migrated once, the first time an engine opens the directory, and each keeps its snapshot as `state.json.migrated`. Runs in flight resume, with one limit: an interrupt a tool posted from inside its own step is asked again.
+- `State` is derived from the run's records. `History` lists the records as events (`anchor.Events` renders them), not the old free-form log. `State.ReconciledReceipts` and `Step.Idempotent` are gone, and `Version` is 2. To rebuild a readable log from any run, call `anchor.Events(run, records)`.
+- A step that fails is retried by running the run again only when it is idempotent. Any other failure fails the run: a failed run cannot be resumed.
+- The error sentinels are anchor's (`local.ErrBusy` is `anchor.ErrBusy`), with anchor's wire codes. The `durable.local.*` wire codes are gone, and `local.SignalChannel` is `saige.durable`.
+- `Resumable` reports a run that can make progress now: not finished, not idle, and waiting on no reply or reconciliation.
+
+anchor gained what local had. Workflows registered with `Open()` take `Append` and longer input. anchor also gained `Cancel`, `List`, `Delete`, `Leased`, `Await` (with `Engine.Notifier`), `RunHere` (execute a run in the calling process) and retry of idempotent steps. Tool calls of one model response now run at once in anchor: step records are keyed by name, and finish order no longer matters.
+
+The durable engine gained:
+
+- `worker.RunOne`;
+- `Client.Cancel` with `run.ErrCancelled` and `run.Cancelled`;
+- the optional capabilities `ledger.RunLister`, `ledger.Deleter`, `queue.Targeted` and `queue.LeaseProber`;
+- `replay.ActiveKey(ctx)`, which replaces `Frame.ActiveKey()`, because a wrapped call's nesting now travels in its context.
+
 ## The GitHub connector, cron, membership and egress move into saige
 
 `github.com/urmzd/orchagent/flow/{connectors/github,connectors/cron,membership,egress}` are now under `github.com/urmzd/saige/flow/`. Change the import prefix. Two breaking changes come with the GitHub connector: agents never approve a pull request, so `PrepareReview` takes `(Review, []ContextFile)` and refuses `APPROVE` with `ErrNoApproval`, and `Config.AllowReviewApproval` and `Config.AllowReviewApprovalFor` are gone. The Jira and webhook connectors, the author tools and the dispatcher did not move. New: `flow/credential`, the seam a connector's API client takes its token through (`credential.Client(src, connector, subject, nil)`).

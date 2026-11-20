@@ -46,9 +46,10 @@ var (
 	_ types.BudgetReservationRunner = (*runner)(nil)
 )
 
-// ConcurrentSteps is false: record keys follow call order, so steps must run
-// one at a time.
-func (r *runner) ConcurrentSteps() bool { return false }
+// ConcurrentSteps is true: a step's records are keyed by its name (a tool
+// call's ID, say) under the step that encloses it, so independent steps can
+// run at once and finish in any order, and replay finds each by its key.
+func (r *runner) ConcurrentSteps() bool { return true }
 
 // SharedBudgetOnly is true: recovery receipts belong to the run's budget.
 func (r *runner) SharedBudgetOnly() bool { return true }
@@ -56,7 +57,10 @@ func (r *runner) SharedBudgetOnly() bool { return true }
 // RunStep executes or replays a named step. A recorded result returns without
 // calling fn. A step that started on an earlier attempt and left no result is
 // uncertain: the run parks with ErrIndeterminate until Reconcile resolves it,
-// and fn does not run again unless the host permits a retry.
+// and fn does not run again unless the host permits a retry. A step marked
+// idempotent (types.IdempotentStep) is retried instead: an earlier attempt
+// that left no result runs again in a new round, and a failure on this
+// attempt is returned to be retried with the run.
 //
 // While fn runs, the tool context carries the step's anchor idempotency key
 // under types.ToolContextIdempotencyKey.
@@ -129,6 +133,11 @@ func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Conte
 			return types.StepResult{}, err
 		case !uncertain:
 			return types.StepResult{}, err
+		case types.IdempotentStep(ctx):
+			if liveErr != nil {
+				return types.StepResult{}, &retryable{err: liveErr}
+			}
+			continue // a new round; repeating the step is safe
 		}
 		retry, err := r.uncertain(ctx, name, liveErr)
 		if err != nil || !retry.permit {
@@ -282,3 +291,10 @@ func (r *runner) Reply(ctx context.Context, reply types.InterruptReply) error {
 func (r *runner) Pending(ctx context.Context, _ string) ([]types.Interrupt, error) {
 	return r.e.Router().Pending(ctx, r.runID)
 }
+
+// retryable marks a step failure the run should be retried for rather than
+// failed or parked: an idempotent step that failed on this attempt.
+type retryable struct{ err error }
+
+func (e *retryable) Error() string { return e.err.Error() }
+func (e *retryable) Unwrap() error { return e.err }

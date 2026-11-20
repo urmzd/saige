@@ -340,7 +340,10 @@ func sameReply(stored run.Record, p replyPayload) error {
 // Decide answers approval interruptID of run id. key is the reply's
 // idempotency key. The host authenticates the decision maker.
 func (e *Engine) Decide(ctx context.Context, id, interruptID, key string, decision types.ApprovalDecision) error {
-	return e.reply(ctx, id, types.InterruptReply{ID: interruptID, IdempotencyKey: key, Decision: decision})
+	if err := e.reply(ctx, id, types.InterruptReply{ID: interruptID, IdempotencyKey: key, Decision: decision}); err != nil {
+		return err
+	}
+	return e.signal(ctx, Signal{RunID: id, Kind: SignalReply, ID: interruptID})
 }
 
 // Router is the host-side types.InterruptRouter for runs of one engine.
@@ -433,7 +436,10 @@ func (rt *Router) Reply(ctx context.Context, reply types.InterruptReply) error {
 			return err
 		}
 	}
-	return rt.Engine.reply(ctx, runID, reply)
+	if err := rt.Engine.reply(ctx, runID, reply); err != nil {
+		return err
+	}
+	return rt.Engine.signal(ctx, Signal{RunID: runID, Kind: SignalReply, ID: reply.ID})
 }
 
 // owner finds the unfinished run holding interrupt id.
@@ -500,10 +506,27 @@ type State struct {
 	Workflow string
 	Status   run.RunStatus
 	Error    string
+	// Cancelled says the run was ended by Cancel; Status is failed.
+	Cancelled bool
+	// Idle says an open run (Open) answered all its input and waits for
+	// more. Its Status stays pending.
+	Idle bool
 	// Pending lists unanswered, unexpired interrupts, oldest first.
 	Pending []types.Interrupt
 	// Uncertain lists steps that wait for Reconcile.
 	Uncertain []Uncertain
+	// Steps lists the run's top-level steps by name, Interrupts every
+	// interrupt with its reply, and Inputs its input log.
+	Steps      []StepState
+	Interrupts []InterruptState
+	Inputs     []Input
+	// Final is the latest answer: the run's result, or for an open run the
+	// answer to its last answered segment.
+	Final *types.AssistantMessage
+	// History is the run's records rendered as events, oldest first.
+	History     []Event
+	CreatedAt   time.Time
+	CompletedAt time.Time
 }
 
 // Uncertain is a step whose outcome is unknown.
@@ -520,7 +543,9 @@ func (e *Engine) Inspect(ctx context.Context, id string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	return inspect(r, records, time.Now()), nil
+	s := inspect(r, records, time.Now())
+	detail(&s, r, records, e.isOpen(r.Name))
+	return s, nil
 }
 
 // inspect derives the run state from its records. Records that fail to

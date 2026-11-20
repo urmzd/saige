@@ -37,6 +37,8 @@ var (
 	_ Ledger       = (*Memory)(nil)
 	_ RunGetter    = (*Memory)(nil)
 	_ PrefixReader = (*Memory)(nil)
+	_ Deleter      = (*Memory)(nil)
+	_ RunLister    = (*Memory)(nil)
 )
 
 // NewMemory returns an empty in-process ledger.
@@ -213,4 +215,27 @@ func cloneBytes(b []byte) []byte {
 		return nil
 	}
 	return append([]byte(nil), b...)
+}
+
+// Delete implements the Deleter capability: the run and its records go.
+func (m *Memory) Delete(ctx context.Context, runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.runs[runID]; !ok {
+		return fmt.Errorf("ledger: delete %q: %w", runID, run.ErrNotFound)
+	}
+	delete(m.runs, runID)
+	delete(m.records, runID)
+	return nil
+}
+
+// Runs implements the RunLister capability: deep copies, in no order.
+func (m *Memory) Runs(ctx context.Context) ([]run.Run, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]run.Run, 0, len(m.runs))
+	for _, r := range m.runs {
+		out = append(out, cloneRun(*r))
+	}
+	return out, nil
 }

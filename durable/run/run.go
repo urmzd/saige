@@ -14,6 +14,7 @@ package run
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -174,4 +175,14 @@ var (
 
 	// ErrMaxAttempts reports a run that exhausted its retry budget.
 	ErrMaxAttempts = errors.New("durable: max attempts exhausted")
+
+	// ErrCancelled is the error a cancelled run completes with: a failed
+	// run whose Error starts with this message (see Cancelled).
+	ErrCancelled = errors.New("durable: run cancelled")
 )
+
+// Cancelled reports whether r was ended by a cancellation rather than a
+// failure of its own.
+func Cancelled(r Run) bool {
+	return r.Status == StatusFailed && strings.HasPrefix(r.Error, ErrCancelled.Error())
+}

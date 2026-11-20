@@ -1,44 +1,81 @@
-// Package local implements durable, resumable runs on a local filesystem.
-// A nonblocking process lock gives each run one owner. Atomic, synced snapshots
-// record each attempt before execution and each result before publication.
-// It requires a filesystem with reliable advisory locks and atomic rename.
+// Package local runs durable, resumable agent runs on one machine, in a
+// private directory. It is the durable engine (github.com/urmzd/saige/durable)
+// with its file ledger and file queue, and agent runs on it through
+// agent/durable/anchor: every model call and tool execution is a memoized
+// step, a crashed run resumes at its first unrecorded step, and a step that
+// may have taken effect without a recorded result waits for Reconcile.
+//
+// Run executes a run in the calling process. One process at a time executes
+// a run: another gets ErrBusy, and a crashed process gives its runs back at
+// once. Each run is an open conversation: Append (or a Run with longer
+// input) adds messages the run answers after the earlier ones.
+//
+// The directory needs a filesystem with reliable advisory locks and atomic
+// rename and link. Run directories written by earlier releases (one
+// state.json each) are migrated once, the first time the engine opens the
+// directory; each keeps its old snapshot as state.json.migrated.
 package local
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"math"
 	"os"
-	"path/filepath"
-	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/urmzd/saige/durable/adapters/file/fileledger"
+	"github.com/urmzd/saige/durable/adapters/file/filequeue"
+	"github.com/urmzd/saige/durable/run"
+	"github.com/urmzd/saige/durable/worker"
+
 	"github.com/urmzd/saige/agent"
+	"github.com/urmzd/saige/agent/durable/anchor"
 	"github.com/urmzd/saige/agent/internal/durablecodec"
 	"github.com/urmzd/saige/agent/types"
 )
 
-const (
-	statusRunning   = "running"
-	statusCancelled = "cancelled"
-	statusCompleted = "completed"
-	statusFailed    = "failed"
-	statusSuspended = "suspended"
-	statusReady     = "ready"
+// Engine errors. They are anchor's, so an error from either engine matches.
+var (
+	ErrBusy          = anchor.ErrBusy
+	ErrIndeterminate = anchor.ErrIndeterminate
+	ErrConflict      = anchor.ErrConflict
+	ErrClosed        = anchor.ErrClosed
+	ErrNoNotifier    = anchor.ErrNoNotifier
+	ErrSignal        = anchor.ErrSignal
 )
 
-// Engine errors.
-var (
-	ErrBusy          = errors.New("durable run already has a worker")
-	ErrIndeterminate = errors.New("attempt outcome requires reconciliation")
-	ErrConflict      = errors.New("durable run identity or decision conflict")
-	ErrClosed        = errors.New("durable run cancelled or completed")
+// Run statuses, as State reports them.
+const (
+	statusReady     = "ready"     // has work: new input, or a reply since it suspended
+	statusRunning   = "running"   // a process executes it now
+	statusSuspended = "suspended" // waits for a decision or a reply
+	statusCompleted = "completed" // answered all its input
+	statusFailed    = "failed"    // failed, or waits for Reconcile
+	statusCancelled = "cancelled" // ended by Cancel
 )
+
+// SignalChannel is the notifier channel an Engine with a Notifier announces
+// changes on. Signal and its kinds are anchor's.
+const SignalChannel = anchor.SignalChannel
+
+// Signal kinds.
+const (
+	SignalReply  = anchor.SignalReply
+	SignalInput  = anchor.SignalInput
+	SignalCancel = anchor.SignalCancel
+	SignalRun    = anchor.SignalRun
+)
+
+// Signal is the payload published on SignalChannel.
+type Signal = anchor.Signal
+
+// workflowPrefix names the workflow a revision's runs belong to.
+const workflowPrefix = "saige.durable.local/"
 
 // Factory must return a fresh agent and fresh budget for every replay. The
 // revision binds its model profiles, tool implementations and policy settings.
@@ -47,90 +84,94 @@ type Factory func() *agent.Agent
 
 // Engine runs durable agent runs on files in a private directory.
 type Engine struct {
-	Directory   string
+	Directory string
+	// ApprovalTTL is the expiry of an approval or interrupt posted without
+	// its own deadline. Zero means 24 hours.
 	ApprovalTTL time.Duration
 	// Notifier, when set, announces replies, appended input, cancellation
 	// and finished runs on SignalChannel, so Await in this or another
-	// process wakes without polling. Nil changes nothing else.
+	// process wakes without polling.
 	Notifier types.Notifier
+
+	mu        sync.Mutex
+	core      *anchor.Engine
+	queue     *filequeue.Queue
+	workflows map[string]*anchor.Workflow
+	factories sync.Map // run ID -> Factory, while Run executes the run here
 }
 
 // New uses a host-owned private directory. A zero TTL defaults to 24 hours.
 func New(directory string) *Engine { return &Engine{Directory: directory, ApprovalTTL: 24 * time.Hour} }
 
-// Step is the recorded outcome of one durable step.
-type Step struct {
-	Status      string    `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
-	Result      []byte    `json:"result,omitempty"` // durablecodec record; parts keep their media bytes
-	Error       string    `json:"error,omitempty"`
-	// Idempotent records that the step ran an idempotent tool
-	// (types.IdempotentStep), so an attempt without a known outcome is
-	// repeated instead of waiting for Reconcile.
-	Idempotent bool `json:"idempotent,omitempty"`
+// open builds the engine on the directory the first time it is used, and
+// migrates run directories an earlier release wrote.
+func (e *Engine) open() (*anchor.Engine, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.core == nil {
+		if e.Directory == "" {
+			return nil, errors.New("directory required")
+		}
+		lgr, err := fileledger.New(e.Directory)
+		if err != nil {
+			return nil, err
+		}
+		q, err := filequeue.New(e.Directory)
+		if err != nil {
+			return nil, err
+		}
+		if err := migrate(e.Directory, lgr, q); err != nil {
+			return nil, err
+		}
+		e.core, e.queue, e.workflows = anchor.New(lgr, q), q, map[string]*anchor.Workflow{}
+		e.core.MaxAttempts = math.MaxInt32 // a local run is retried by running it again
+	}
+	e.core.ApprovalTTL, e.core.Notifier = e.ttl(), e.Notifier
+	return e.core, nil
 }
 
-// Interrupt is a pending or decided approval or interrupt of a run.
-type Interrupt struct {
-	Request     types.ApprovalRequest   `json:"request"`
-	CreatedAt   time.Time               `json:"created_at"`
-	ExpiresAt   time.Time               `json:"expires_at"`
-	Decision    *types.ApprovalDecision `json:"decision,omitempty"`
-	DecisionKey string                  `json:"decision_key,omitempty"`
-	DecidedAt   time.Time               `json:"decided_at,omitempty"`
-	// Posted holds an interrupt raised through an InterruptRouter. It is nil
-	// for approvals raised through ResolveApproval, which use Request.
-	Posted *types.Interrupt `json:"posted,omitempty"`
-	// Answer is the free-form reply to a clarification or input interrupt.
-	Answer json.RawMessage `json:"answer,omitempty"`
+func (e *Engine) ttl() time.Duration {
+	if e.ApprovalTTL <= 0 {
+		return 24 * time.Hour
+	}
+	return e.ApprovalTTL
 }
 
-// Event is one entry of a run's event log, part of a State snapshot. Do
-// not put credentials in input, tool arguments, or approval messages.
-type Event struct {
-	Sequence int       `json:"sequence"`
-	At       time.Time `json:"at"`
-	Kind     string    `json:"kind"`
-	ID       string    `json:"id,omitempty"`
+// workflow returns the open workflow of revision, registering it once.
+func (e *Engine) workflow(revision string) (*anchor.Engine, *anchor.Workflow, error) {
+	core, err := e.open()
+	if err != nil {
+		return nil, nil, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	w, ok := e.workflows[revision]
+	if !ok {
+		w = core.Register(workflowPrefix+revision, func(runID string) *agent.Agent {
+			f, ok := e.factories.Load(runID)
+			if !ok {
+				return nil
+			}
+			return f.(Factory)()
+		}, anchor.Open())
+		e.workflows[revision] = w
+	}
+	return core, w, nil
 }
 
-// State is a detached inspection snapshot. Input and step Result are
-// durablecodec records.
-type State struct {
-	History            []Event               `json:"history"`
-	ReconciledReceipts []types.BudgetReceipt `json:"reconciled_receipts,omitempty"`
-	Version            int                   `json:"version"`
-	RunID              string                `json:"run_id"`
-	Revision           string                `json:"revision"`
-	Status             string                `json:"status"`
-	Input              []byte                `json:"input"`            // first input segment, a durablecodec record
-	Inputs             []InputSegment        `json:"inputs,omitempty"` // later segments, in append order
-	Steps              map[string]Step       `json:"steps"`
-	Interrupts         map[string]Interrupt  `json:"interrupts"`
-	UpdatedAt          time.Time             `json:"updated_at"`
-	Error              string                `json:"error,omitempty"`
-}
-
-type runner struct {
-	mu       sync.Mutex
-	state    State
-	path     string
-	ttl      time.Duration
-	poisoned error
-	notifier types.Notifier
-}
-
-// Run owns a worker lease only for this call. ErrSuspended means pending
-// approvals are saved; call Decide and then Run with the same identity/input.
-// A crash during an operation leaves an indeterminate attempt. Run will not
-// repeat it until Reconcile supplies its result or explicitly permits retry.
+// Run executes the run in this process and returns when it answers its
+// input or stops for the host. ErrSuspended means pending approvals are
+// saved; call Decide and then Run with the same identity. A crash during an
+// operation leaves an indeterminate attempt: Run returns ErrIndeterminate
+// and does not repeat it until Reconcile supplies its result or explicitly
+// permits a retry. Another process executing the run now is ErrBusy.
 //
 // The run's input is an append-only log. input must agree with the log
 // message by message: a prefix of the log (including nil) resumes the logged
 // input, and a longer input appends its extra messages as a new segment that
 // runs after the earlier ones finish. A message that differs from the log
-// returns ErrConflict. Append adds a segment without running it.
+// returns ErrConflict, as does a revision other than the run's. Append adds
+// a segment without running it.
 func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, input []types.Message) (*types.AssistantMessage, error) {
 	if id == "" || revision == "" || factory == nil {
 		return nil, errors.New("run ID, revision and factory are required")
@@ -138,336 +179,136 @@ func (e *Engine) Run(ctx context.Context, id, revision string, factory Factory, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, release, err := e.acquire(id)
+	core, w, err := e.workflow(revision)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
-	state, err := readState(path)
-	if errors.Is(err, os.ErrNotExist) {
-		raw, encErr := encode(input)
-		if encErr != nil {
-			return nil, encErr
+	if _, running := e.factories.LoadOrStore(id, factory); running {
+		return nil, ErrBusy // this process executes it now
+	}
+	defer e.factories.Delete(id)
+	final, err := core.RunHere(ctx, w, id, input, worker.WithLogger(quiet))
+	if errors.Is(err, anchor.ErrFailed) {
+		// Report what the run failed with, as earlier releases did.
+		if s, ierr := core.Inspect(ctx, id); ierr == nil && s.Error != "" {
+			return nil, fmt.Errorf("%w: %s", anchor.ErrFailed, s.Error)
 		}
-		state = State{Version: 1, RunID: id, Revision: revision, Status: statusReady, Input: raw, Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}
-	} else if err != nil {
-		return nil, err
 	}
-	if state.RunID != id || state.Revision != revision {
-		return nil, ErrConflict
-	}
-	if state.Status == statusCancelled {
-		return nil, ErrClosed
-	}
-	segments, err := reconcileInput(&state, input)
-	if err != nil {
-		return nil, err
-	}
-	r := &runner{state: state, path: path, ttl: e.ApprovalTTL, notifier: e.Notifier}
-	if r.ttl <= 0 {
-		r.ttl = 24 * time.Hour
-	}
-	// Build the agent before recording the run as running, so a
-	// configuration error is saved as failed instead of an in-progress run.
-	a, err := prepare(factory, state.ReconciledReceipts)
-	if err != nil {
-		r.state.Status = statusFailed
-		r.state.Error = err.Error()
-		r.note("run.failed", id)
-		if saveErr := r.save(); saveErr != nil {
-			return nil, errors.Join(err, saveErr)
-		}
-		return nil, err
-	}
-	r.state.Status = statusRunning
-	r.state.Error = ""
-	r.note("run.started", id)
-	if err := r.save(); err != nil {
-		return nil, err
-	}
-	result, runErr := runSegments(ctx, a, r, segments)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	switch {
-	case errors.Is(runErr, types.ErrSuspended):
-		r.state.Status = statusSuspended
-	case runErr != nil:
-		r.state.Status = statusFailed
-	default:
-		r.state.Status = statusCompleted
-	}
-	r.state.Error = ""
-	if runErr != nil {
-		r.state.Error = runErr.Error()
-	}
-	r.note("run."+r.state.Status, id)
-	if err := r.save(); err != nil {
-		return nil, err
-	}
-	if err := signal(ctx, e.Notifier, Signal{RunID: id, Kind: SignalRun, ID: r.state.Status}); err != nil {
-		return result, errors.Join(runErr, err)
-	}
-	return result, runErr
+	return final, err
 }
 
-// prepare builds a fresh agent and restores reconciled budget receipts.
-func prepare(factory Factory, receipts []types.BudgetReceipt) (*agent.Agent, error) {
-	a := factory()
-	if a == nil {
-		return nil, errors.New("factory returned nil agent")
-	}
-	if b := a.Budget(); b != nil {
-		for _, receipt := range receipts {
-			if err := b.Restore(receipt); err != nil {
-				return nil, fmt.Errorf("restore budget receipt: %w", err)
-			}
-		}
-	}
-	return a, nil
-}
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-func (r *runner) ConcurrentSteps() bool { return true }
-
-func (r *runner) SharedBudgetOnly() bool { return true }
-
-func (r *runner) RunStep(ctx context.Context, name string, fn func(context.Context) (types.StepResult, error)) (types.StepResult, error) {
-	r.mu.Lock()
-	if r.poisoned != nil {
-		err := r.poisoned
-		r.mu.Unlock()
-		return types.StepResult{}, err
-	}
-	if s, ok := r.state.Steps[name]; ok && (s.Status == statusCompleted || !s.Idempotent) {
-		r.mu.Unlock()
-		if s.Status != statusCompleted {
-			return types.StepResult{}, fmt.Errorf("%w: %s: %s", ErrIndeterminate, name, s.Error)
-		}
-		var result types.StepResult
-		err := decode(s.Result, &result)
-		return result, err
-	}
-	if err := ctx.Err(); err != nil {
-		r.mu.Unlock()
-		return types.StepResult{}, err
-	}
-	if _, ok := r.state.Steps[name]; ok {
-		r.note("step.repeated", name) // an idempotent step without an outcome
-	}
-	s := Step{Status: statusRunning, StartedAt: time.Now().UTC(), Idempotent: types.IdempotentStep(ctx)}
-	r.state.Steps[name] = s
-	r.note("step.started", name)
-	if err := r.save(); err != nil {
-		r.mu.Unlock()
-		return types.StepResult{}, err
-	}
-	r.mu.Unlock()
-	result, err := safeStep(ctx, fn)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if errors.Is(err, types.ErrSuspended) || errors.Is(err, types.ErrBudgetAdmission) {
-		delete(r.state.Steps, name)
-		r.note("step.not-dispatched", name)
-		if saveErr := r.save(); saveErr != nil {
-			return types.StepResult{}, saveErr
-		}
-		return types.StepResult{}, err
-	}
-	s.CompletedAt = time.Now().UTC()
-	s.Status = statusCompleted
-	if errors.Is(err, context.Canceled) && truncatedLLM(result) {
-		// A stopped provider call that returns its committed partial turn has
-		// a known outcome: the partial message is the step's result. Record
-		// it as completed so a later Run replays it instead of requiring
-		// Reconcile, and still report the stop to this caller. Any other
-		// error leaves the step indeterminate so it can be reconciled.
-		encoded, encodeErr := encode(result)
-		if encodeErr == nil {
-			s.Result = encoded
-			r.state.Steps[name] = s
-			r.note("step.truncated", name)
-			if saveErr := r.save(); saveErr != nil {
-				return types.StepResult{}, saveErr
-			}
-			var detached types.StepResult
-			if decodeErr := decode(s.Result, &detached); decodeErr != nil {
-				return types.StepResult{}, decodeErr
-			}
-			return detached, err
-		}
-	}
-	encoded, encodeErr := encode(result)
-	s.Result = encoded
-	if encodeErr != nil {
-		// Keep the pre-dispatch reservation if the result cannot be serialized.
-		s.Result = r.state.Steps[name].Result
-	}
-	if err == nil {
-		err = encodeErr
-	}
+// check reads the run and refuses a revision other than its own.
+func (e *Engine) check(ctx context.Context, id, revision string) (*anchor.Engine, anchor.State, error) {
+	core, err := e.open()
 	if err != nil {
-		s.Status = "indeterminate"
-		s.Error = err.Error()
+		return nil, anchor.State{}, err
 	}
-	r.note("step."+s.Status, name)
-
-	r.state.Steps[name] = s
-	if saveErr := r.save(); saveErr != nil {
-		return types.StepResult{}, saveErr
-	}
+	s, err := core.Inspect(ctx, id)
 	if err != nil {
-		return types.StepResult{}, err
+		return nil, anchor.State{}, notExist(err)
 	}
-	// Decode the committed value so callers do not share producer-owned maps.
-	var detached types.StepResult
-	if err := decode(s.Result, &detached); err != nil {
-		return types.StepResult{}, err
+	if s.Workflow != workflowPrefix+revision {
+		return nil, anchor.State{}, ErrConflict
 	}
-	return detached, nil
+	return core, s, nil
 }
 
-func safeStep(ctx context.Context, fn func(context.Context) (types.StepResult, error)) (result types.StepResult, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("step panic: %v", p)
-		}
-	}()
-	return fn(ctx)
-}
-
-func (r *runner) ResolveApproval(ctx context.Context, req types.ApprovalRequest) (types.ApprovalDecision, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return types.ApprovalDecision{}, err
-	}
-	if r.poisoned != nil {
-		return types.ApprovalDecision{}, r.poisoned
-	}
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return types.ApprovalDecision{}, err
-	}
-	if pending, ok := r.state.Interrupts[req.ID]; ok {
-		old, _ := json.Marshal(pending.Request)
-		if !bytes.Equal(raw, old) {
-			return types.ApprovalDecision{}, ErrConflict
-		}
-		if pending.Decision != nil {
-			raw, err := json.Marshal(pending.Decision)
-			if err != nil {
-				return types.ApprovalDecision{}, err
-			}
-			var copy types.ApprovalDecision
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.UseNumber()
-			err = decoder.Decode(&copy)
-			return copy, err
-		}
-		if !time.Now().Before(pending.ExpiresAt) {
-			return types.ApprovalDecision{}, fmt.Errorf("%w: approval expired", ErrClosed)
-		}
-		return types.ApprovalDecision{}, types.ErrSuspended
-	}
-	var detached types.ApprovalRequest
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&detached); err != nil {
-		return types.ApprovalDecision{}, err
-	}
-	now := time.Now().UTC()
-	r.state.Interrupts[req.ID] = Interrupt{Request: detached, CreatedAt: now, ExpiresAt: now.Add(r.ttl)}
-	r.note("approval.requested", req.ID)
-	if err := r.save(); err != nil {
-		return types.ApprovalDecision{}, err
-	}
-	return types.ApprovalDecision{}, types.ErrSuspended
-}
-
-// Inspect reads an atomic, detached snapshot without acquiring a worker lease.
-// A Status of running does not prove a worker is alive: after a crash it
-// stays running until the next Run. Use Leased to tell the two apart.
-func (e *Engine) Inspect(id string) (State, error) { return readState(e.path(id)) }
-
-// Leased reports whether a worker currently holds the run's lease. A run whose
-// state says running but which is not leased was orphaned by a crash and
-// needs Run (and possibly Reconcile) to continue. The probe takes the lease
-// for an instant, so a Run starting at that moment can see ErrBusy. A run
-// that was never started returns an error matching os.ErrNotExist.
-func (e *Engine) Leased(id string) (bool, error) {
-	if _, err := readState(e.path(id)); err != nil {
-		return false, err
-	}
-	_, release, err := e.acquire(id)
-	if errors.Is(err, ErrBusy) {
+// leased reports whether a process executes the run now.
+func (e *Engine) leased(ctx context.Context, id string) (bool, error) {
+	if _, running := e.factories.Load(id); running {
 		return true, nil
 	}
+	core, err := e.open()
 	if err != nil {
 		return false, err
 	}
-	release()
-	return false, nil
+	leased, err := core.Leased(ctx, id)
+	return leased, notExist(err)
+}
+
+// Append adds messages to a run's input log without running it. The next Run
+// executes them after the logged input finishes. key makes the call
+// idempotent: repeating it with the same messages is a no-op, and with
+// different messages returns ErrConflict. A cancelled run returns ErrClosed,
+// and a run with a live worker returns ErrBusy.
+func (e *Engine) Append(id, revision, key string, msgs []types.Message) error {
+	ctx := context.Background()
+	core, s, err := e.check(ctx, id, revision)
+	if err != nil {
+		return err
+	}
+	if s.Cancelled {
+		return ErrClosed
+	}
+	if leased, err := e.leased(ctx, id); err != nil {
+		return err
+	} else if leased {
+		return ErrBusy
+	}
+	return core.Append(ctx, id, key, msgs)
+}
+
+// Inspect reads a snapshot of the run. A run that was never started returns
+// an error matching os.ErrNotExist.
+func (e *Engine) Inspect(id string) (State, error) {
+	core, err := e.open()
+	if err != nil {
+		return State{}, err
+	}
+	s, err := core.Inspect(context.Background(), id)
+	if err != nil {
+		return State{}, notExist(err)
+	}
+	return e.state(s), nil
+}
+
+// Leased reports whether a worker currently executes the run. A run that was
+// never started returns an error matching os.ErrNotExist.
+func (e *Engine) Leased(id string) (bool, error) {
+	if _, err := e.Inspect(id); err != nil {
+		return false, err
+	}
+	return e.leased(context.Background(), id)
 }
 
 // List returns the state of every run under the engine directory for which
-// keep returns true (every run when keep is nil), ordered by run ID. It reads
-// snapshots without leases, like Inspect, so a run being written may show its
-// previous snapshot. Directories without a readable snapshot are skipped.
+// keep returns true (every run when keep is nil), ordered by run ID.
 func (e *Engine) List(keep func(State) bool) ([]State, error) {
-	if e.Directory == "" {
-		return nil, errors.New("directory required")
+	core, err := e.open()
+	if err != nil {
+		return nil, err
 	}
-	entries, err := os.ReadDir(e.Directory)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	runs, err := core.List(context.Background(), func(s anchor.State) bool { return strings.HasPrefix(s.Workflow, workflowPrefix) })
 	if err != nil {
 		return nil, err
 	}
 	var out []State
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		s, err := readState(filepath.Join(e.Directory, entry.Name(), "state.json"))
-		if err != nil {
-			continue
-		}
-		if keep == nil || keep(s) {
-			out = append(out, s)
+	for _, s := range runs {
+		st := e.state(s)
+		if keep == nil || keep(st) {
+			out = append(out, st)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RunID < out[j].RunID })
 	return out, nil
 }
 
-// Delete removes a finished run's directory, including its inputs, step
-// results and approval records. It takes the worker lease, so it fails with
-// ErrBusy while a worker runs. Only completed, cancelled and failed runs can
-// be deleted; cancel a suspended run first. A stale revision returns
-// ErrConflict.
+// Delete removes a finished run: completed, cancelled or failed. It fails
+// with ErrBusy while a worker runs it, and with ErrConflict for a run that
+// still has work (cancel a suspended run first) or a stale revision.
 func (e *Engine) Delete(id, revision string) error {
-	// Check first so deleting an unknown run does not create its directory.
-	if _, err := readState(e.path(id)); err != nil {
-		return err
-	}
-	path, release, err := e.acquire(id)
+	ctx := context.Background()
+	core, _, err := e.check(ctx, id, revision)
 	if err != nil {
 		return err
 	}
-	defer release()
-	s, err := readState(path)
-	if err != nil {
+	if leased, err := e.leased(ctx, id); err != nil {
 		return err
+	} else if leased {
+		return ErrBusy
 	}
-	if s.RunID != id || s.Revision != revision {
-		return ErrConflict
-	}
-	switch s.Status {
-	case statusCompleted, statusCancelled, statusFailed:
-	default:
-		return fmt.Errorf("%w: run is %s", ErrConflict, s.Status)
-	}
-	return os.RemoveAll(filepath.Dir(path))
+	return core.Delete(ctx, id)
 }
 
 // Decide accepts one authenticated host decision. key is its idempotency key.
@@ -475,242 +316,151 @@ func (e *Engine) Delete(id, revision string) error {
 // An unknown interrupt matches types.ErrInterruptNotFound and an expired one
 // matches types.ErrInterruptExpired as well as ErrClosed.
 func (e *Engine) Decide(id, revision, interruptID, key string, decision types.ApprovalDecision) error {
-	err := e.update(id, revision, func(s *State) error {
-		return applyReply(s, types.InterruptReply{ID: interruptID, IdempotencyKey: key, Decision: decision})
-	})
+	ctx := context.Background()
+	core, _, err := e.check(ctx, id, revision)
 	if err != nil {
 		return err
 	}
-	return signal(context.Background(), e.Notifier, Signal{RunID: id, Kind: SignalReply, ID: interruptID})
+	return core.Decide(ctx, id, interruptID, key, decision)
 }
 
-// applyReply records a reply on s. Replaying the same reply under the same
-// key is a no-op; any other reply to a decided interrupt is ErrConflict.
-func applyReply(s *State, reply types.InterruptReply) error {
-	if reply.IdempotencyKey == "" {
-		return errors.New("decision idempotency key required")
+// Cancel prevents future resumes. A currently running run returns ErrBusy;
+// its owner must cancel the Run context first, then cancel here. Cancelling a
+// cancelled run is a no-op, and a completed one returns ErrClosed.
+func (e *Engine) Cancel(id, revision string) error {
+	ctx := context.Background()
+	core, s, err := e.check(ctx, id, revision)
+	if err != nil {
+		return err
 	}
-	if s.Status == statusCompleted || s.Status == statusCancelled {
+	switch {
+	case s.Cancelled:
+		return nil
+	case s.Idle, s.Status == run.StatusSucceeded:
 		return ErrClosed
 	}
-	p, ok := s.Interrupts[reply.ID]
-	if !ok {
-		return fmt.Errorf("%w: %s", types.ErrInterruptNotFound, reply.ID)
-	}
-	if p.Decision != nil {
-		a, _ := json.Marshal(p.Decision)
-		b, err := json.Marshal(reply.Decision)
-		if err == nil && reply.IdempotencyKey == p.DecisionKey && bytes.Equal(a, b) && bytes.Equal(compactJSON(p.Answer), compactJSON(reply.Answer)) {
-			return nil
-		}
-		if p.DecisionKey == expiredReplyKey && reply.IdempotencyKey != expiredReplyKey {
-			// The denial was recorded by expiry, not by a host reply.
-			return fmt.Errorf("%w: %w", ErrClosed, types.ErrInterruptExpired)
-		}
-		return ErrConflict
-	}
-	now := time.Now().UTC()
-	if !now.Before(p.ExpiresAt) {
-		return fmt.Errorf("%w: %w", ErrClosed, types.ErrInterruptExpired)
-	}
-	decision := reply.Decision
-	p.Decision = &decision
-	p.DecisionKey = reply.IdempotencyKey
-	p.DecidedAt = now
-	if len(reply.Answer) > 0 {
-		p.Answer = append(json.RawMessage(nil), reply.Answer...)
-	}
-	s.Interrupts[reply.ID] = p
-	s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: now, Kind: "approval.decided", ID: reply.ID})
-	return nil
-}
-
-// Cancel prevents future resumes. A currently leased run returns ErrBusy; its
-// owner must cancel the Run context first, then commit cancellation here.
-func (e *Engine) Cancel(id, revision string) error {
-	err := e.update(id, revision, func(s *State) error {
-		if s.Status == statusCompleted {
-			return ErrClosed
-		}
-		if s.Status == statusCancelled {
-			return nil
-		}
-		s.Status = statusCancelled
-		s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: time.Now().UTC(), Kind: "run.cancelled", ID: id})
-		return nil
-	})
-	if err != nil {
+	if leased, err := e.leased(ctx, id); err != nil {
 		return err
+	} else if leased {
+		return ErrBusy
 	}
-	return signal(context.Background(), e.Notifier, Signal{RunID: id, Kind: SignalCancel})
+	return core.Cancel(ctx, id, "")
 }
 
 // Reconcile resolves an uncertain operation after the host checks its external
 // effect. A supplied result is memoized; nil explicitly permits another attempt.
 // No automatic retry is safe for an operation with an unknown side effect.
 func (e *Engine) Reconcile(id, revision, name string, result *types.StepResult) error {
-	return e.update(id, revision, func(s *State) error {
-		step, ok := s.Steps[name]
-		if !ok || step.Status == statusCompleted {
-			return ErrConflict
-		}
-		var prior types.StepResult
-		if len(step.Result) > 0 {
-			if err := decode(step.Result, &prior); err != nil {
-				return err
-			}
-		}
-		s.History = append(s.History, Event{Sequence: len(s.History) + 1, At: time.Now().UTC(), Kind: "step.reconciled", ID: name})
-		if s.Status == statusCancelled || s.Status == statusCompleted {
-			return ErrClosed
-		}
-		if result == nil {
-			if prior.Receipt != nil {
-				s.ReconciledReceipts = append(s.ReconciledReceipts, *prior.Receipt)
-			}
-			delete(s.Steps, name)
-			return nil
-		}
-		copy := *result
-		if copy.Receipt == nil {
-			copy.Receipt = prior.Receipt
-		}
-		raw, err := encode(copy)
-		if err != nil {
-			return err
-		}
-		step.Status = statusCompleted
-		step.Result = raw
-		step.Error = ""
-		step.CompletedAt = time.Now().UTC()
-		s.Steps[name] = step
-		return nil
+	ctx := context.Background()
+	core, _, err := e.check(ctx, id, revision)
+	if err != nil {
+		return err
+	}
+	return core.Reconcile(ctx, id, name, result)
+}
+
+// Await blocks until ready reports true for the run's state, reading the
+// state again each time a signal for the run arrives. It checks once after
+// subscribing, so a change made before the call is not missed, and waits
+// for a run that does not exist yet. It needs Engine.Notifier; every process
+// that changes the run must use a notifier that reaches this one.
+//
+// A worker that serves input from other processes waits with Resumable:
+//
+//	for {
+//		if _, err := engine.Await(ctx, id, local.Resumable); err != nil {
+//			return err
+//		}
+//		_, err := engine.Run(ctx, id, revision, factory, nil)
+//		// handle err; ErrSuspended waits for the next reply
+//	}
+func (e *Engine) Await(ctx context.Context, id string, ready func(State) bool) (State, error) {
+	if e.Notifier == nil {
+		return State{}, ErrNoNotifier
+	}
+	if ready == nil {
+		return State{}, errors.New("await requires a ready function")
+	}
+	core, err := e.open()
+	if err != nil {
+		return State{}, err
+	}
+	var out State
+	_, err = core.Await(ctx, id, func(s anchor.State) bool {
+		out = e.state(s)
+		return ready(out)
 	})
+	return out, err
 }
 
-func (e *Engine) update(id, revision string, fn func(*State) error) error {
-	path, release, err := e.acquire(id)
+// Resumable reports whether Run has work to do on s: the run has new input,
+// or it suspended and every interrupt it waits on has a reply since.
+func Resumable(s State) bool { return s.Status == statusReady }
+
+// Router is the host-side types.InterruptRouter for runs of one engine.
+type Router struct {
+	Engine *Engine
+	// RunID limits Reply to one run. When empty, Reply searches every
+	// unfinished run and fails with ErrConflict if more than one holds the
+	// interrupt ID.
+	RunID string
+}
+
+var _ types.InterruptRouter = (*Router)(nil)
+
+// Router returns a host-side interrupt router for the engine's runs.
+func (e *Engine) Router() *Router { return &Router{Engine: e} }
+
+func (rt *Router) router() (*anchor.Router, error) {
+	core, err := rt.Engine.open()
+	if err != nil {
+		return nil, err
+	}
+	return &anchor.Router{Engine: core, RunID: rt.RunID}, nil
+}
+
+// Post records an interrupt on the run named by in.RunID from outside a
+// worker. It returns types.ErrSuspended until a reply arrives, and the stored
+// reply once one has.
+func (rt *Router) Post(ctx context.Context, in types.Interrupt) (<-chan types.InterruptReply, error) {
+	r, err := rt.router()
+	if err != nil {
+		return nil, err
+	}
+	return r.Post(ctx, in)
+}
+
+// Reply records a decision or answer. It is idempotent by (ID,
+// IdempotencyKey): the same reply again is a no-op, and a different reply to
+// a decided interrupt returns ErrConflict. An unknown ID matches
+// types.ErrInterruptNotFound and a late reply matches
+// types.ErrInterruptExpired. The next Run of the owning run picks it up.
+func (rt *Router) Reply(ctx context.Context, reply types.InterruptReply) error {
+	r, err := rt.router()
 	if err != nil {
 		return err
 	}
-	defer release()
-	s, err := readState(path)
-	if err != nil {
-		return err
-	}
-	if s.RunID != id || s.Revision != revision {
-		return ErrConflict
-	}
-	if err := fn(&s); err != nil {
-		return err
-	}
-	r := runner{state: s, path: path}
-	return r.save()
+	return r.Reply(ctx, reply)
 }
 
-func (e *Engine) path(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return filepath.Join(e.Directory, hex.EncodeToString(sum[:]), "state.json")
-}
-func (e *Engine) acquire(id string) (string, func(), error) {
-	if e.Directory == "" || id == "" {
-		return "", nil, errors.New("directory and run ID required")
+// Pending lists unanswered, unexpired interrupts of runID, oldest first.
+func (rt *Router) Pending(ctx context.Context, runID string) ([]types.Interrupt, error) {
+	r, err := rt.router()
+	if err != nil {
+		return nil, err
 	}
-	path := e.path(id)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil { // #nosec G703 -- host-selected root plus a SHA-256 run ID, never an input path.
-		return "", nil, err
-	}
-	release, err := lock(filepath.Join(filepath.Dir(path), "worker.lock"))
-	return path, release, err
+	return r.Pending(ctx, runID)
 }
 
-func readState(path string) (State, error) {
-	var s State
-	raw, err := os.ReadFile(path) // #nosec G304 -- path is derived from the host directory and a SHA-256 run ID.
-	if err != nil {
-		return s, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&s); err != nil {
-		return s, err
-	}
-	if s.Version != 1 || s.Steps == nil || s.Interrupts == nil {
-		return s, errors.New("invalid durable state")
-	}
-	return s, nil
-}
-func (r *runner) save() error {
-	if r.poisoned != nil {
-		return r.poisoned
-	}
-	r.state.UpdatedAt = time.Now().UTC()
-	raw, err := json.MarshalIndent(r.state, "", "  ")
-	if err == nil {
-		err = atomicWrite(r.path, raw)
-	}
-	if err != nil {
-		r.poisoned = err
+// notExist makes an unknown run match os.ErrNotExist, as earlier releases'
+// errors did, as well as run.ErrNotFound.
+func notExist(err error) error {
+	if errors.Is(err, run.ErrNotFound) && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %w", os.ErrNotExist, err)
 	}
 	return err
 }
-func atomicWrite(path string, raw []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".snapshot-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	if _, err = f.Write(raw); err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return dir.Sync()
-}
 
-// encode and decode go through durablecodec, which records messages and
-// parts in a versioned form and reads the records earlier releases wrote.
 func encode(v any) ([]byte, error) { return durablecodec.Encode(v) }
 
 func decode(raw []byte, v any) error { return durablecodec.Decode(raw, v) }
-
-func (r *runner) note(kind, id string) {
-	r.state.History = append(r.state.History, Event{Sequence: len(r.state.History) + 1, At: time.Now().UTC(), Kind: kind, ID: id})
-}
-
-// RecordReservation commits recovery accounting before the external request.
-func (r *runner) RecordReservation(ctx context.Context, name string, receipt types.BudgetReceipt) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if r.poisoned != nil {
-		return r.poisoned
-	}
-	step, ok := r.state.Steps[name]
-	if !ok || step.Status != statusRunning {
-		return ErrConflict
-	}
-	raw, err := encode(types.StepResult{Receipt: &receipt})
-	if err != nil {
-		return err
-	}
-	step.Result = raw
-	r.state.Steps[name] = step
-	r.note("budget.reserved", name)
-	return r.save()
-}

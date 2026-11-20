@@ -11,6 +11,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -81,4 +82,26 @@ type Queue interface {
 	// Settle removes the run from the queue entirely: after a terminal
 	// Complete, or when a run parks. Fenced by it.Attempt.
 	Settle(ctx context.Context, it Item) error
+}
+
+// Errors of the optional queue capabilities.
+var (
+	// ErrLeased reports a run another holder leases.
+	ErrLeased = errors.New("queue: run is leased")
+	// ErrNotQueued reports a run the queue holds no claimable entry for.
+	ErrNotQueued = errors.New("queue: run is not queued")
+)
+
+// Targeted is an optional capability: leasing one named run now, whatever
+// its delay, so a host can execute it in its own process. A run another
+// holder leases is ErrLeased; a run that is not queued is ErrNotQueued. A
+// lapsed lease is reclaimed, charging the run a failure, as Claim does.
+type Targeted interface {
+	ClaimRun(ctx context.Context, runID string, ttl time.Duration) (Item, time.Time, error)
+}
+
+// LeaseProber is an optional capability: whether a live holder leases a run
+// now. It is a snapshot: the answer can change as soon as it returns.
+type LeaseProber interface {
+	Leased(ctx context.Context, runID string) (bool, error)
 }

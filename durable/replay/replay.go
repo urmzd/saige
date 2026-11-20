@@ -24,10 +24,12 @@ import (
 )
 
 // Frame is the replay state of one claimed attempt. It is built once per
-// claim and carried through user code inside context.Context. The workflow
-// body is single-goroutine in v1; the frame is nonetheless mutex-guarded so
-// violations stay memory-safe and surface as loud determinism errors, never
-// corruption.
+// claim and carried through user code inside context.Context. Wrapped calls
+// may run at once on separate goroutines: each nests under the key its
+// context carries, and the frame is mutex-guarded. Calls that run at once
+// under one parent need distinct names (a tool call's ID, say): two
+// concurrent calls of one name would take occurrences in whichever order
+// they start, which replay cannot reproduce.
 type Frame struct {
 	runID   string
 	attempt int
@@ -39,7 +41,6 @@ type Frame struct {
 	memo     map[string]run.Record
 	consumed map[string]bool
 	counts   map[string]int
-	active   []string // stack of record keys currently executing (nested calls)
 }
 
 // NewFrame builds the frame for one claimed attempt from the run's records
@@ -73,18 +74,6 @@ func (f *Frame) Attempt() int { return f.attempt }
 // Codec is the codec this frame decodes and encodes records with.
 func (f *Frame) Codec() run.Codec { return f.codec }
 
-// ActiveKey returns the record key currently executing, or "" outside a
-// wrapped call. Combined with the run ID it is the idempotency key handed to
-// downstream systems: "{runID}:{key}".
-func (f *Frame) ActiveKey() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.active) == 0 {
-		return ""
-	}
-	return f.active[len(f.active)-1]
-}
-
 // Unconsumed returns record keys that were never reached by the time the
 // workflow returned — typically calls removed by a code change. Advisory:
 // the worker logs them; the computed result stands.
@@ -109,15 +98,14 @@ func (f *Frame) Unconsumed() []string {
 // children's calls never happen on replay — if children shared the parent's
 // counter space, every later same-name call would silently shift by the
 // skipped occurrences. Scoping makes the skipped subtree self-contained.
-func (f *Frame) nextKey(kind run.Kind, name, userKey string) string {
+func (f *Frame) nextKey(ctx context.Context, kind run.Kind, name, userKey string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	prefix := ""
-	if n := len(f.active); n > 0 {
-		// The innermost active key already embeds its full ancestry
-		// ("a#0/b#1"), so it alone is the prefix — joining the stack
-		// would double every ancestor segment.
-		prefix = f.active[n-1] + "/"
+	if parent := ActiveKey(ctx); parent != "" {
+		// The active key already embeds its full ancestry ("a#0/b#1"), so
+		// it alone is the prefix.
+		prefix = parent + "/"
 	}
 	if userKey != "" {
 		return prefix + "k:" + userKey
@@ -136,7 +124,7 @@ func (f *Frame) nextKey(kind run.Kind, name, userKey string) string {
 // marshaled (hashed for activities; nil for steps and events). fn is nil for
 // events — an event is a read, and its absence parks the run.
 func (f *Frame) Do(ctx context.Context, kind run.Kind, name, userKey string, input []byte, fn func(context.Context) ([]byte, error)) ([]byte, error) {
-	key := f.nextKey(kind, name, userKey)
+	key := f.nextKey(ctx, kind, name, userKey)
 
 	inputHash := ""
 	if kind == run.KindActivity {
@@ -158,10 +146,8 @@ func (f *Frame) Do(ctx context.Context, kind run.Kind, name, userKey string, inp
 		return nil, fmt.Errorf("replay: event %q (%s) has no record: %w", name, key, run.ErrParked)
 	}
 
-	// Frontier: execute for real.
-	f.push(key)
-	out, err := fn(ctx)
-	f.pop()
+	// Frontier: execute for real, with nested calls scoped under key.
+	out, err := fn(withActive(ctx, key))
 
 	if err != nil {
 		if !run.IsNonRetryable(err) {
@@ -264,7 +250,7 @@ func (f *Frame) Emit(ctx context.Context, payload []byte) error {
 		return nil
 	}
 	return f.deltas.Append(ctx, run.Delta{
-		RunID: f.runID, RecordKey: f.ActiveKey(), Attempt: f.attempt,
+		RunID: f.runID, RecordKey: ActiveKey(ctx), Attempt: f.attempt,
 		Kind: run.DeltaUser, Payload: payload,
 	})
 }
@@ -276,7 +262,7 @@ func (f *Frame) PriorDeltas(ctx context.Context) ([][]byte, error) {
 	if f.deltas == nil {
 		return nil, nil
 	}
-	key := f.ActiveKey()
+	key := ActiveKey(ctx)
 	var out [][]byte
 	cursor := queue.Cursor("")
 	for {
@@ -306,18 +292,4 @@ func (f *Frame) seal(ctx context.Context, key string) {
 	_ = f.deltas.Append(ctx, run.Delta{
 		RunID: f.runID, RecordKey: key, Attempt: f.attempt, Kind: run.DeltaSeal,
 	})
-}
-
-func (f *Frame) push(key string) {
-	f.mu.Lock()
-	f.active = append(f.active, key)
-	f.mu.Unlock()
-}
-
-func (f *Frame) pop() {
-	f.mu.Lock()
-	if n := len(f.active); n > 0 {
-		f.active = f.active[:n-1]
-	}
-	f.mu.Unlock()
 }

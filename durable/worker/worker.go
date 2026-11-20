@@ -194,6 +194,25 @@ func (w *Worker) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// RunOne executes run runID in this process now and returns when its
+// attempt has an outcome: completed, parked, released for a retry, or
+// failed. The queue must implement queue.Targeted; RunOne returns its claim
+// error (queue.ErrLeased for a run another worker holds, queue.ErrNotQueued
+// for one that is not queued) without executing anything. The outcome is in
+// the ledger, as for a run any worker executed. When the attempt failed and
+// the run was released for another one, RunOne returns the attempt's error.
+func (w *Worker) RunOne(ctx context.Context, runID string) error {
+	t, ok := w.q.(queue.Targeted)
+	if !ok {
+		return errors.New("durable/worker: RunOne needs a queue with the queue.Targeted capability")
+	}
+	it, _, err := t.ClaimRun(ctx, runID, w.opts.leaseTTL)
+	if err != nil {
+		return err
+	}
+	return w.process(ctx, it)
+}
+
 // claimLoop is one claim slot: claim, process, repeat until ctx is done.
 func (w *Worker) claimLoop(ctx context.Context) {
 	for {
@@ -218,7 +237,7 @@ func (w *Worker) claimLoop(ctx context.Context) {
 			w.release(context.WithoutCancel(ctx), it, 0, false)
 			return
 		}
-		w.process(ctx, it)
+		_ = w.process(ctx, it) // the outcome is in the ledger
 	}
 }
 
@@ -231,7 +250,10 @@ func (w *Worker) claimLoop(ctx context.Context) {
 // shutting down mid-outcome must still persist the outcome, or graceful
 // shutdown degrades into a crash (leases wait out their TTL, computed
 // terminal results are discarded and re-executed).
-func (w *Worker) process(ctx context.Context, it queue.Item) {
+// process executes one claimed attempt. It returns the attempt's error when
+// the run was released for another attempt, and nil for every other
+// outcome, which is in the ledger.
+func (w *Worker) process(ctx context.Context, it queue.Item) error {
 	outCtx := context.WithoutCancel(ctx)
 
 	r, records, err := w.lgr.Load(ctx, it.RunID)
@@ -241,25 +263,25 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 		w.opts.logger.Warn("durable/worker: claimed run has no ledger row; settling",
 			"run_id", it.RunID, "attempt", it.Attempt)
 		w.settle(outCtx, it)
-		return
+		return nil
 	case err != nil:
 		// A load aborted by shutdown is an interruption, not a failure of
 		// the run — hand it back without burning budget.
 		if ctx.Err() != nil {
 			w.release(outCtx, it, 0, false)
-			return
+			return nil
 		}
 		w.opts.logger.Warn("durable/worker: load failed; releasing",
 			"run_id", it.RunID, "attempt", it.Attempt, "error", err)
 		w.release(outCtx, it, w.opts.backoff(it.Failures+1), true)
-		return
+		return nil
 	}
 
 	// Lost-settle repair: a previous attempt completed the run but died
 	// before settling. The ledger already holds the truth; clear the queue.
 	if r.Status.Terminal() {
 		w.settle(outCtx, it)
-		return
+		return nil
 	}
 
 	maxFailures := r.MaxAttempts
@@ -274,7 +296,7 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 	if it.Failures >= maxFailures {
 		w.completeFailed(outCtx, it, run.ErrMaxAttempts.Error())
 		w.settle(outCtx, it)
-		return
+		return nil
 	}
 
 	fn, ok := w.opts.registry.Lookup(r.Name)
@@ -284,10 +306,10 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 		if it.Failures+1 >= maxFailures {
 			w.completeFailed(outCtx, it, "unknown workflow "+r.Name)
 			w.settle(outCtx, it)
-			return
+			return nil
 		}
 		w.release(outCtx, it, w.opts.backoff(it.Failures+1), true)
-		return
+		return nil
 	}
 
 	// Attempt divider: consumers split superseded partial streams here.
@@ -342,10 +364,12 @@ func (w *Worker) process(ctx context.Context, it queue.Item) {
 		if it.Failures+1 >= maxFailures {
 			w.completeFailed(outCtx, it, run.ErrMaxAttempts.Error()+": "+err.Error())
 			w.settle(outCtx, it)
-			return
+			return nil
 		}
 		w.release(outCtx, it, w.opts.backoff(it.Failures+1), true)
+		return err
 	}
+	return nil
 }
 
 // heartbeat renews the item's lease every heartbeatEvery until stop closes.

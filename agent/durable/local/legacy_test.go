@@ -13,8 +13,9 @@ import (
 	"github.com/urmzd/saige/agent/durable/internal/legacyrun"
 )
 
-// TestLegacyJournalResumes resumes a run the release before typed parts
-// recorded and left suspended on an approval.
+// TestLegacyJournalResumes migrates a run the release before typed parts
+// recorded in its snapshot format and left suspended on an approval, then
+// resumes it on the durable engine.
 func TestLegacyJournalResumes(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -75,12 +76,19 @@ func TestLegacyJournalResumes(t *testing.T) {
 	for _, p := range legacyrun.Check(&c, final) {
 		t.Error(p)
 	}
-	// The steps the resumed run recorded are in the current format, and the
-	// recorded run replays from the mixed journal without new work.
-	matches, _ := filepath.Glob(filepath.Join(dir, "*", "state.json"))
-	if len(matches) != 1 {
-		t.Fatalf("state files = %v", matches)
+	// The snapshot was migrated once into the engine's records and kept
+	// beside them, and the recorded run replays without new work.
+	if left, _ := filepath.Glob(filepath.Join(dir, "*", "state.json")); len(left) != 0 {
+		t.Fatalf("snapshots left unmigrated: %v", left)
 	}
+	if kept, _ := filepath.Glob(filepath.Join(dir, "*", "state.json.migrated")); len(kept) != 1 {
+		t.Fatalf("migrated snapshots = %v", kept)
+	}
+	if runs, _ := filepath.Glob(filepath.Join(dir, "*", "run.json")); len(runs) != 1 {
+		t.Fatalf("ledger runs = %v", runs)
+	}
+	// A second engine on the directory finds nothing left to migrate.
+	engine = New(dir)
 	var again legacyrun.Counters
 	if _, err := engine.Run(ctx, legacyrun.RunID, "v1", func() *agent.Agent { return legacyrun.Agent(&again) }, nil); err != nil {
 		t.Fatal(err)

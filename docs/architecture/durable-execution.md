@@ -1,14 +1,15 @@
 # Durable execution
 
-Two engines make a run durable. `agent/durable/local` keeps runs on one machine's filesystem.
-`agent/durable/anchor` runs them on a anchor ledger and queue, such as Postgres tables; see [the anchor engine](#the-anchor-engine).
-Most of this page describes the local engine. The contracts for approvals, uncertain steps and budget receipts are the same in both.
+One engine makes a run durable: saige's [durable engine](durable-engine.md), a ledger of records, a queue of fenced leases and a worker that replays a run to its first unrecorded step.
+`agent/durable/anchor` runs agents on it with any ledger and queue, such as Postgres tables; see [the anchor engine](#the-anchor-engine).
+`agent/durable/local` is anchor on the engine's file ledger and file queue in one private directory, for runs on one machine.
+Most of this page describes the local engine. The contracts for approvals, uncertain steps and budget receipts are the same in both, because the code is the same.
 
 ## The local engine
 
 `agent/durable/local` saves a run between worker invocations.
 A run has one process owner at a time. Different run IDs can execute independently.
-The engine requires Unix and a private local filesystem with reliable advisory locks and atomic rename.
+The engine requires Unix and a private local filesystem with reliable advisory locks, atomic rename and link.
 It does not provide remote scheduling or an atomic transaction with an external service.
 
 ### Start, decide, and resume
@@ -98,11 +99,12 @@ Without a notifier, the engine behaves as before and `Await` returns `local.ErrN
 ### Execution and recovery
 
 Each provider call and regular tool call has a stable step name.
-The engine saves a started record before calling it, then saves the result before returning it.
-Completed steps replay from disk. They do not call the provider or tool again.
+The engine records the start of a step before calling it, then records the result before returning it.
+Completed steps replay from their records. They do not call the provider or tool again.
+The tool calls of one model response run at once and may finish in any order: each step's records are keyed by its name (the tool call's ID), so a run that stops part way replays the finished calls and runs only the rest.
 A pending approval returns immediately from its call; independent sibling steps can finish.
 The parent model turn resumes only after all tool results are available.
-The run returns `ErrSuspended` and releases its process lock after that batch drains.
+The run returns `ErrSuspended` and releases its lease after that batch drains.
 This permits other runs to use workers while the host waits for a decision.
 
 | Event | Saved evidence | Recovery action |
@@ -115,8 +117,8 @@ This permits other runs to use workers while the host waits for a decision.
 | Tool returns an ordinary error | Saved tool error result | Replay the error for the model to handle |
 | Tool panics | Indeterminate step | Check whether the tool already changed external state |
 | Process exits during an idempotent tool step | Started record marked idempotent | The local engine runs the step again (`agent.Idempotent`, `types.IdempotentTool`) |
-| Snapshot write fails | Runner is stopped | Release the worker; inspect the last complete snapshot before recovery |
-| Second worker uses the same run | Existing process lock | Return `ErrBusy`; do not start another execution |
+| A record write fails | The attempt stops; what was recorded stands | Run again; replay starts from the records |
+| Second worker uses the same run | A live lease on the run | Return `ErrBusy`; do not start another execution |
 | Pending approval expires | Original request and expiry | Reject it; cancel or create a new run with current authorization |
 
 Use `Reconcile(runID, revision, stepName, &knownResult)` after confirming the external outcome.
@@ -127,7 +129,7 @@ No local journal can guarantee exactly-once effects across an unrelated API.
 
 `Cancel` prevents future resumes. If the run is active, cancel its context first and wait for it to release ownership.
 Cancellation cannot undo a completed external write.
-The local lock releases when a process exits; it has no network lease timeout.
+A local run's lease carries a lock its process holds, so it ends when the process exits, before the lease's deadline.
 
 ### Budget admission and usage
 
@@ -159,7 +161,7 @@ Do not hold a worker asleep for a long retry delay; reschedule it in the host qu
 A provider retry wrapper must not hide billable attempts from a strict budget policy.
 
 Set request and tool deadlines. A tool that ignores context can delay the batch and worker release.
-A crash releases the process lock, but leaves uncertain external operations for reconciliation.
+A crash releases the run's lease, but leaves uncertain external operations for reconciliation.
 The library cannot recover from process termination or resource exhaustion inside the same process.
 Use process or container limits when tools need stronger isolation.
 
@@ -173,15 +175,15 @@ If a policy needs time, randomness, or an external read, version or checkpoint t
 
 ### Files, traces, and deployment limits
 
-Each run uses a SHA-256 directory name containing `state.json` and `worker.lock`.
-`state.json` is a versioned recovery snapshot. It includes steps, interrupts, receipts, and ordered event metadata.
+Each run uses a SHA-256 directory name. The ledger keeps `run.json` and `records/`, one write-once file per record; the queue keeps `queue.json`; `ledger.lock`, `queue.lock` and `lease.lock` coordinate processes.
 Input and result fields contain base64 records: gob envelopes with a format version, holding messages and tool output in the shared part codec with their media bytes. Records written before typed parts are still read and upgraded on replay, so a run in flight across an upgrade resumes.
-The snapshot is not the public JSON conversation trace. Use `tree.Print` for that separate export.
-State files use mode 0600 and new run directories use mode 0700.
+A run directory an earlier release wrote, with one `state.json` snapshot, is migrated once, the first time an engine opens the directory: its steps, interrupts, replies and input segments become records, and the snapshot stays as `state.json.migrated`.
+`State` is derived from the records. Its `History` is the records rendered as events (`anchor.Events`), not the free-form log the snapshot kept.
+The records are not the public JSON conversation trace. Use `tree.Print` for that separate export.
+Files use mode 0600 and new run directories use mode 0700.
 Protect the parent directory, retain required audit records, and remove secrets from application inputs.
 The engine does not provide encryption, a retention service, or a portable export format.
-Each update rewrites the snapshot. Large or long-running workloads need a different storage backend.
-`Engine.List` reads every run's snapshot, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
+`Engine.List` reads every run, `Engine.Leased` tells a live worker from a run orphaned by a crash, and `Engine.Delete` removes a finished run.
 
 ## The anchor engine
 
@@ -235,26 +237,27 @@ A tool that returns an error is a recorded result, not an uncertain step. A pani
 
 | Feature | `agent/durable/local` | `agent/durable/anchor` |
 | --- | --- | --- |
-| Storage | Private directory, one file per run | Any anchor ledger and queue; Postgres tables in production |
-| Workers | One process lock per run | Any number of workers; fenced, time-bounded leases |
+| Storage | Private directory: the engine's file ledger and file queue | Any ledger and queue; Postgres tables in production |
+| Workers | `Run` executes in the calling process; one process at a time | Any number of workers; fenced, time-bounded leases; `RunHere` executes in the calling process |
 | Agent per run | Factory passed to `Run` | Factory passed to `Register`, called with the run ID |
 | Approvals and interrupts | `Decide`, `Router`, `Inspect` | `Decide`, `Router`, `Inspect`; the run parks off the queue |
 | Uncertain steps | `ErrIndeterminate`, then `Reconcile` | `ErrIndeterminate`, then `Reconcile` |
 | Budget reservations before dispatch | Saved with the run | Saved as a step record |
-| Tool steps | Concurrent within a batch | Sequential |
-| Input log and `Append` | Yes | No; a run has one input |
+| Tool steps | Concurrent within a batch | Concurrent within a batch |
+| Input log and `Append` | Yes; every run is open | For workflows registered with `Open()` |
+| `Cancel`, `List`, `Delete`, `Leased`, `Await` | Yes | Yes, where the ledger and queue support them |
 | Revision binding | Revision passed to every call | Workflow name |
 
 | Boundary | Exists now | Required for distributed workers |
 | --- | --- | --- |
-| Run ownership | Local OS process lock | Shared lease, fencing token, expired-owner recovery |
+| Run ownership | File lease with a process lock | Shared lease, fencing token, expired-owner recovery |
 | Accounting | Shared in-process reservations, saved per-run receipts | Transactional cross-worker ledger and account-level limits |
 | Scheduling | Host calls `Run` | Queue, retry policy, fairness, backpressure, worker admission |
 | Approvals | Saved requests and decisions | Authenticated decision API and resume queue |
-| Storage | Synced atomic local snapshots | Transactional journal, bounded retention, schema migration |
+| Storage | Synced write-once record files | Transactional journal, bounded retention, schema migration |
 | Routing | In-memory sticky session | Persisted profile and configuration revision |
 | External tools | Host-owned objects and services | Idempotency keys, sandbox isolation, effect reconciliation |
 
 Kubernetes can place and restart workers. It does not replace these contracts.
-Do not use this local lock as a distributed lease on a shared network filesystem.
+Do not use the file queue as a distributed lease on a shared network filesystem.
 The anchor engine supplies the shared lease, fencing, queue and transactional record store. Account-level limits across runs remain host accounting.

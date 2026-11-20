@@ -37,12 +37,13 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `agent/cache/memcache/` | In-memory LRU `types.Cache[V]` with TTL |
 | `agent/notify/` | In-memory `types.Notifier`, subscriber fan-out, `Listen` triggers, and `Cache`, a local level kept coherent through a notifier |
 | `agent/batch/` | Batch jobs over `types.BatchProvider`: durable runner and job stores, local fallback, coalescer for evals |
-| `agent/durable/local/` | Local durable engine: resumable runs, saved approvals and reconciliation on one machine |
-| `agent/durable/anchor/` | Agent runs on the durable engine: each model call and tool execution a memoized step, on any ledger and queue, such as Postgres tables |
+| `agent/durable/local/` | Durable runs on one machine: anchor on the file ledger and file queue in a private directory, executed in the calling process; migrates run directories of earlier releases |
+| `agent/durable/anchor/` | Agent runs on the durable engine: each model call and tool execution a memoized step (tool calls run at once), on any ledger and queue; open runs with `Append`, `Cancel`, `List`, `Delete`, `Leased`, `Await`, `RunHere` |
 | `durable/` | The durable engine: `Activity`, `Step`, `Event`, `Emit`, `Client`, `Start`/`Exec`; code survives crashes by replaying from the ledger |
 | `durable/run/`, `durable/ledger/`, `durable/queue/` | Leaf types and sentinel errors; the ledger (durable truth) and queue (fenced, time-bounded claims) interfaces, each with a `Memory` implementation and a conformance suite (`ledgertest`, `queuetest`) |
 | `durable/replay/`, `durable/worker/` | Memoized re-execution of a run (`Frame`); the worker that claims, replays to the frontier and persists one outcome per claim, plus the janitor |
 | `durable/adapters/postgres/` | `pgledger` and `pgqueue` on tables the host owns (validate, never migrate), `pgkit` (`Apply` under an advisory lock, `Listener` for LISTEN/NOTIFY) |
+| `durable/adapters/file/` | `fileledger` (one directory per run, write-once record files via link) and `filequeue` (time leases plus a lease lock, so a crashed process frees its runs at once) on a private directory |
 | `sandbox/workspace/`, `sandbox/ngac/`, `sandbox/sandbox/` | The shared workspace (`Local` on `os.Root`); the NGAC policy machine; the enforcement point that decides every workspace operation and spawn under the tool's name |
 | `sandbox/tool/`, `sandbox/task/`, `sandbox/node/`, `sandbox/node/inproc/` | The tool unit, its `Runtime` and `Registry`; the task; execution nodes and the in-process node factory |
 | `sandbox/controlplane/` | Composition root: deployments as bounded in-process pools (`Deploy`, `Scale`, `Submit`, `Result`) |
@@ -180,7 +181,9 @@ Angular conventional commits enforced by gitit:
 
 ## Durable engine rules
 
-- Keep the package DAG one way: `run` imports only the standard library; `ledger` and `queue` import `run`; the root `durable` never imports `worker` or an adapter; nothing below the root imports it. Only `durable/adapters/postgres` imports pgx.
+- Keep the package DAG one way: `run` imports only the standard library; `ledger` and `queue` import `run`; the root `durable` never imports `worker` or an adapter; nothing below the root imports it. Only the adapters import anything outside the standard library (pgx, `golang.org/x/sys`).
+- One durable engine. Agent runs go through `agent/durable/anchor` on `durable/`; do not add a second store or step runner beside it.
+- Wrapped calls may run at once: their nesting travels in the context. Calls that run at once under one parent need distinct names.
 - Adapters validate, never migrate: no adapter runs DDL on its own. `RecommendedDDL` returns a string; `pgkit.Apply` runs only what its caller passes.
 - Never widen `Ledger` or `Queue` for one backend: optional powers are capability interfaces found by type assertion (`queue.DeltaLog`, `ledger.RunGetter`, `ledger.PrefixReader`).
 - Every ledger and queue backend passes `ledgertest.Run` or `queuetest.Run` from its own tests.

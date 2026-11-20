@@ -17,7 +17,6 @@ import (
 	p2 "github.com/urmzd/saige/agent/definition"
 	p3 "github.com/urmzd/saige/agent/definition/bind"
 	p4 "github.com/urmzd/saige/agent/durable/anchor"
-	p5 "github.com/urmzd/saige/agent/durable/local"
 	p6 "github.com/urmzd/saige/agent/mcp"
 	p7 "github.com/urmzd/saige/agent/memory"
 	p8 "github.com/urmzd/saige/agent/memory/pgstore"
@@ -36,6 +35,7 @@ import (
 	p21 "github.com/urmzd/saige/agent/tree"
 	types "github.com/urmzd/saige/agent/types"
 	p23 "github.com/urmzd/saige/agent/workspace"
+	dqueue "github.com/urmzd/saige/durable/queue"
 	p41 "github.com/urmzd/saige/durable/run"
 	p24 "github.com/urmzd/saige/eval"
 	p25 "github.com/urmzd/saige/eval/harness"
@@ -132,13 +132,11 @@ func sentinels() []sentinel {
 		{"agent/durable/anchor", "ErrClosed", p4.ErrClosed},
 		{"agent/durable/anchor", "ErrConflict", p4.ErrConflict},
 		{"agent/durable/anchor", "ErrFailed", p4.ErrFailed},
+		{"agent/durable/anchor", "ErrBusy", p4.ErrBusy},
 		{"agent/durable/anchor", "ErrIndeterminate", p4.ErrIndeterminate},
-		{"agent/durable/local", "ErrBusy", p5.ErrBusy},
-		{"agent/durable/local", "ErrClosed", p5.ErrClosed},
-		{"agent/durable/local", "ErrConflict", p5.ErrConflict},
-		{"agent/durable/local", "ErrIndeterminate", p5.ErrIndeterminate},
-		{"agent/durable/local", "ErrNoNotifier", p5.ErrNoNotifier},
-		{"agent/durable/local", "ErrSignal", p5.ErrSignal},
+		{"agent/durable/anchor", "ErrNoNotifier", p4.ErrNoNotifier},
+		{"agent/durable/anchor", "ErrSignal", p4.ErrSignal},
+		{"agent/durable/anchor", "ErrUnsupported", p4.ErrUnsupported},
 		{"agent/mcp", "ErrBlockedAddress", p6.ErrBlockedAddress},
 		{"agent/mcp", "ErrUnsupportedSchema", p6.ErrUnsupportedSchema},
 		{"agent/memory", "ErrKindNotAllowed", p7.ErrKindNotAllowed},
@@ -240,7 +238,10 @@ func sentinels() []sentinel {
 		{"agent/workspace", "ErrInvalidRef", p23.ErrInvalidRef},
 		{"agent/workspace", "ErrNotFound", p23.ErrNotFound},
 		{"agent/workspace", "ErrReadOnly", p23.ErrReadOnly},
+		{"durable/queue", "ErrLeased", dqueue.ErrLeased},
+		{"durable/queue", "ErrNotQueued", dqueue.ErrNotQueued},
 		{"durable/run", "ErrAlreadyRecorded", p41.ErrAlreadyRecorded},
+		{"durable/run", "ErrCancelled", p41.ErrCancelled},
 		{"durable/run", "ErrAlreadyTerminal", p41.ErrAlreadyTerminal},
 		{"durable/run", "ErrMaxAttempts", p41.ErrMaxAttempts},
 		{"durable/run", "ErrNonDeterministic", p41.ErrNonDeterministic},

@@ -31,7 +31,7 @@ Part of [saige](../README.md). Import path: `github.com/urmzd/saige/durable`. sa
 go get github.com/urmzd/saige
 ```
 
-The Postgres adapters (`durable/adapters/postgres/pgledger`, `pgqueue`, `pgkit`) are packages in the same module; Go only links the ones you import.
+The adapters are packages in the same module, and Go only links the ones you import: Postgres (`durable/adapters/postgres/pgledger`, `pgqueue`, `pgkit`) for any number of workers, and a private directory (`durable/adapters/file/fileledger`, `filequeue`) for the runs of one machine.
 
 ## Quick Start
 

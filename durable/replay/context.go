@@ -18,3 +18,20 @@ func FromContext(ctx context.Context) (*Frame, bool) {
 	f, ok := ctx.Value(ctxKey{}).(*Frame)
 	return f, ok
 }
+
+type activeKey struct{}
+
+// withActive returns a context whose wrapped calls nest under key.
+func withActive(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, activeKey{}, key)
+}
+
+// ActiveKey returns the record key of the wrapped call ctx is executing
+// inside, or "" outside one. Combined with the run ID it is the idempotency
+// key handed to downstream systems: "{runID}:{key}". The key travels in the
+// context, so wrapped calls running at once on separate goroutines each see
+// their own.
+func ActiveKey(ctx context.Context) string {
+	key, _ := ctx.Value(activeKey{}).(string)
+	return key
+}

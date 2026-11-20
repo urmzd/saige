@@ -78,3 +78,17 @@ type RunGetter interface {
 type PrefixReader interface {
 	RecordsWithPrefix(ctx context.Context, runID string, prefixes ...string) ([]run.Record, error)
 }
+
+// Deleter is an optional capability: removing a run and every record of it,
+// whatever its status. Which runs may go is the caller's policy; a host that
+// deletes a run another process is executing loses that execution's
+// outcome. An unknown run is run.ErrNotFound. Discovered by type assertion.
+type Deleter interface {
+	Delete(ctx context.Context, runID string) error
+}
+
+// RunLister is an optional capability: every run the ledger holds, in no
+// particular order, without their records. Discovered by type assertion.
+type RunLister interface {
+	Runs(ctx context.Context) ([]run.Run, error)
+}

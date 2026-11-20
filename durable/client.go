@@ -131,6 +131,23 @@ func Exec[I, O any](ctx context.Context, c *Client, a *ActivityFn[I, O], in I, o
 	return h.Result(ctx)
 }
 
+// Cancel ends run runID before it finishes: the run completes as failed with
+// run.ErrCancelled, and reason after it when given. A run that already
+// finished is run.ErrAlreadyTerminal. An attempt executing the run when it
+// is cancelled may finish its current call, but its outcome is refused: the
+// first terminal write wins. The queue entry is cleared by the next worker
+// that claims it.
+func (c *Client) Cancel(ctx context.Context, runID, reason string) error {
+	msg := run.ErrCancelled.Error()
+	if reason != "" {
+		msg += ": " + reason
+	}
+	if err := c.lgr.Complete(ctx, runID, 0, run.Result{Status: run.StatusFailed, Error: msg}); err != nil {
+		return fmt.Errorf("durable: cancel %s: %w", runID, err)
+	}
+	return nil
+}
+
 // HandleFor re-attaches to an existing run — after a process restart, or
 // from a different process entirely.
 func HandleFor[O any](c *Client, runID string) *Handle[O] {

@@ -3,8 +3,6 @@ package local
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,144 +93,6 @@ func TestSuspendReleaseResumeAndReplay(t *testing.T) {
 	}
 	if writes.Load() != 1 || reads.Load() != 1 || calls.Load() != 2 {
 		t.Fatal("replayed effects")
-	}
-}
-func TestUncertainAttemptNeedsReconciliation(t *testing.T) {
-	e := New(t.TempDir())
-	path, release, err := e.acquire("run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &runner{path: path, state: State{Version: 1, RunID: "run", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
-	_, err = r.RunStep(context.Background(), "write", func(context.Context) (types.StepResult, error) { panic("after external write") })
-	if err == nil {
-		t.Fatal("panic hidden")
-	}
-	_, err = r.RunStep(context.Background(), "write", func(context.Context) (types.StepResult, error) {
-		t.Fatal("repeated uncertain write")
-		return types.StepResult{}, nil
-	})
-	if !errors.Is(err, ErrIndeterminate) {
-		t.Fatal(err)
-	}
-	release()
-	result := types.StepResult{Kind: types.StepKindTool, ToolResult: "verified written", ToolParts: []types.ToolOutputPart{types.Image(types.Bytes(types.MediaPNG, []byte{1, 2}))}}
-	if err := e.Reconcile("run", "v1", "write", &result); err != nil {
-		t.Fatal(err)
-	}
-	saved, err := e.Inspect("run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var restored types.StepResult
-	if err := decode(saved.Steps["write"].Result, &restored); err != nil {
-		t.Fatal(err)
-	}
-	if restored.ToolParts[0].(types.ImagePart).Source.Inline[1] != 2 {
-		t.Fatal("lost bytes")
-	}
-}
-func TestWorkerLockAcrossProcesses(t *testing.T) {
-	if path := os.Getenv("SAIGE_LOCK_PROBE"); path != "" {
-		_, err := lock(path)
-		if !errors.Is(err, ErrBusy) {
-			os.Exit(2)
-		}
-		return
-	}
-	path := t.TempDir() + "/worker.lock"
-	release, err := lock(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestWorkerLockAcrossProcesses$")
-	cmd.Env = append(os.Environ(), "SAIGE_LOCK_PROBE="+path)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %v", output, err)
-	}
-}
-func TestApprovalExpiryAndCancellation(t *testing.T) {
-	e := New(t.TempDir())
-	path, release, err := e.acquire("run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &runner{path: path, ttl: time.Hour, state: State{Version: 1, RunID: "run", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
-	req := types.ApprovalRequest{ID: "approval", ToolCall: types.ToolCallPart{ID: "call", Arguments: map[string]any{"integer": 9007199254740993}}}
-	if _, err := r.ResolveApproval(context.Background(), req); !errors.Is(err, types.ErrSuspended) {
-		t.Fatal(err)
-	}
-	p := r.state.Interrupts[req.ID]
-	p.ExpiresAt = time.Now().Add(-time.Second)
-	r.state.Interrupts[req.ID] = p
-	if err := r.save(); err != nil {
-		t.Fatal(err)
-	}
-	release()
-	if err := e.Decide("run", "v1", req.ID, "key", types.ApprovalDecision{Approved: true}); !errors.Is(err, ErrClosed) {
-		t.Fatal(err)
-	}
-	if err := e.Cancel("run", "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.Decide("run", "v1", req.ID, "key", types.ApprovalDecision{Approved: true}); !errors.Is(err, ErrClosed) {
-		t.Fatal(err)
-	}
-}
-
-func TestProcessCrashDoesNotRepeatUncertainStep(t *testing.T) {
-	if dir := os.Getenv("SAIGE_CRASH_PROBE"); dir != "" {
-		e := New(dir)
-		path, release, err := e.acquire("crash")
-		if err != nil {
-			os.Exit(2)
-		}
-		defer release()
-		r := &runner{path: path, state: State{Version: 1, RunID: "crash", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
-		_, _ = r.RunStep(context.Background(), "side-effect", func(ctx context.Context) (types.StepResult, error) {
-			receipt := types.BudgetReceipt{ID: "crashed-attempt", Cost: types.USD(.25), Usage: types.TokenUsage{Requests: 1, InputTokens: 100}, Uncertain: true}
-			if err := r.RecordReservation(ctx, "side-effect", receipt); err != nil {
-				os.Exit(4)
-			}
-			os.Exit(17)
-			return types.StepResult{}, nil
-		})
-		os.Exit(3)
-	}
-	dir := t.TempDir()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestProcessCrashDoesNotRepeatUncertainStep$")
-	cmd.Env = append(os.Environ(), "SAIGE_CRASH_PROBE="+dir)
-	if err := cmd.Run(); err == nil {
-		t.Fatal("helper did not crash")
-	}
-	e := New(dir)
-	if leased, err := e.Leased("crash"); err != nil || leased {
-		t.Fatalf("crashed run leased=%v err=%v, want an unleased orphan", leased, err)
-	}
-	path, release, err := e.acquire("crash")
-	if err != nil {
-		t.Fatal("crash did not release lease", err)
-	}
-	defer release()
-	state, err := e.Inspect("crash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pending types.StepResult
-	if err := decode(state.Steps["side-effect"].Result, &pending); err != nil {
-		t.Fatal(err)
-	}
-	if pending.Receipt == nil || pending.Receipt.Cost != types.USD(.25) || !pending.Receipt.Uncertain {
-		t.Fatalf("lost crash accounting: %+v", pending.Receipt)
-	}
-	r := &runner{path: path, state: state}
-	_, err = r.RunStep(context.Background(), "side-effect", func(context.Context) (types.StepResult, error) {
-		t.Fatal("repeated external effect")
-		return types.StepResult{}, nil
-	})
-	if !errors.Is(err, ErrIndeterminate) {
-		t.Fatal(err)
 	}
 }
 
@@ -364,29 +224,6 @@ func TestIndependentChildBudgetFailsBeforeChildDispatch(t *testing.T) {
 	_, err := e.Run(context.Background(), "separate", "v1", factory, []types.Message{types.UserMsg(types.Text("go"))})
 	if err == nil || childCalls.Load() != 0 {
 		t.Fatalf("independent child dispatched: %d, err=%v", childCalls.Load(), err)
-	}
-}
-
-func TestIdempotentAttemptRepeats(t *testing.T) {
-	e := New(t.TempDir())
-	path, release, err := e.acquire("run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	r := &runner{path: path, state: State{Version: 1, RunID: "run", Revision: "v1", Steps: map[string]Step{}, Interrupts: map[string]Interrupt{}}}
-	ctx := types.WithIdempotentStep(context.Background())
-	if _, err := r.RunStep(ctx, "put", func(context.Context) (types.StepResult, error) { panic("crash mid-call") }); err == nil {
-		t.Fatal("panic hidden")
-	}
-	res, err := r.RunStep(ctx, "put", func(context.Context) (types.StepResult, error) {
-		return types.StepResult{Kind: types.StepKindTool, ToolResult: "stored"}, nil
-	})
-	if err != nil || res.ToolResult != "stored" {
-		t.Fatalf("idempotent step not repeated: %v %+v", err, res)
-	}
-	if !r.state.Steps["put"].Idempotent || r.state.Steps["put"].Status != statusCompleted {
-		t.Fatalf("step = %+v", r.state.Steps["put"])
 	}
 }
 
