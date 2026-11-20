@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.45.2 (2026-11-20)
+
+### Bug Fixes
+
+- **anthropic**: ask for summarized thinking with adaptive effort (#157) ([dddcc83](https://github.com/urmzd/saige/commit/dddcc831692c1a0c9fca99c860181aa34d54327c))
+
+### Misc
+
+- teach a first tool call in a searchable Saige guide (#158) ([fac987f](https://github.com/urmzd/saige/commit/fac987fe84f1011af0d6d9d5c381d70afde1964c))
+- **deps**: bump cloud.google.com/go/auth from 0.24.1 to 0.24.4 (#153) ([75a84b9](https://github.com/urmzd/saige/commit/75a84b9a98320400870c69e217d7a9731dd0fa99))
+- **deps**: bump github.com/bmatcuk/doublestar/v4 from 4.10.3 to 4.10.4 (#135) ([38d93fb](https://github.com/urmzd/saige/commit/38d93fb47170136b4f5ee0811f16b1d9be2e55cb))
+- **deps**: bump github.com/spf13/pflag from 1.0.10 to 1.1.0 (#155) ([d799798](https://github.com/urmzd/saige/commit/d79979802d39cb015bd10d012ca48e74966a7d30))
+- **deps**: bump github.com/openai/openai-go/v3 from 3.78.0 to 3.98.0 (#154) ([93f4852](https://github.com/urmzd/saige/commit/93f48528d40630231cf44bae8e509a49f200772e))
+- **deps**: bump github.com/anthropics/anthropic-sdk-go (#126) ([9da4fe6](https://github.com/urmzd/saige/commit/9da4fe6d63d4faf646f6eff5079feb45f9872f6b))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.45.1...v0.45.2)
+
+
 ## 0.45.1 (2026-11-18)
 
 ### Bug Fixes
