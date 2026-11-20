@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 )
 
 // Message is a response as its stream folds: the root's content, and under
@@ -50,9 +51,15 @@ type Folder struct {
 // folded is one message as it folds: the root's, or a lane's.
 type folded struct {
 	lane    Lane
-	content []Content
-	// input is the input_json_delta text of each open block.
-	input map[int]string
+	content []foldedBlock
+}
+
+// A foldedBlock owns the fragments for one index. Builders are pointers so
+// growing the content slice never copies a live strings.Builder.
+type foldedBlock struct {
+	Block
+	text, thinking *strings.Builder
+	input          json.RawMessage
 }
 
 // NewFolder returns an empty folder.
@@ -115,39 +122,64 @@ func (m *folded) add(e Event) {
 			return
 		}
 		for len(m.content) <= v.Index {
-			m.content = append(m.content, Content{})
+			m.content = append(m.content, foldedBlock{})
 		}
-		m.content[v.Index] = Content{Block: v.ContentBlock}
-		delete(m.input, v.Index)
+		block := v.ContentBlock
+		block.Citations = slices.Clip(block.Citations)
+		m.content[v.Index] = foldedBlock{Block: block}
 	case ContentBlockDelta:
 		if v.Index < 0 || v.Index >= len(m.content) {
 			return
 		}
-		m.delta(&m.content[v.Index].Block, v.Index, v.Delta)
+		m.content[v.Index].delta(v.Delta)
 	case ContentBlockStop:
-		if in, ok := m.input[v.Index]; ok && v.Index < len(m.content) {
-			m.content[v.Index].Input = json.RawMessage(in)
-			delete(m.input, v.Index)
+		if v.Index < 0 || v.Index >= len(m.content) {
+			return
+		}
+		b := &m.content[v.Index]
+		if b.input != nil {
+			b.Input = b.input
+			b.input = nil
+		}
+		b.text, b.thinking = nil, nil
+	}
+}
+
+func (b *foldedBlock) delta(d BlockDelta) {
+	switch d.Type {
+	case deltaText:
+		b.Text = appendFragment(&b.text, b.Text, d.Text)
+	case deltaThinking:
+		b.Thinking = appendFragment(&b.thinking, b.Thinking, d.Thinking)
+	case deltaInputJSON:
+		// A present, empty fragment replaces the initial input at stop.
+		if b.input == nil {
+			b.input = json.RawMessage{}
+		}
+		b.input = append(b.input, d.PartialJSON...)
+	case deltaCitations:
+		if d.Citation != nil {
+			b.Citations = append(b.Citations, *d.Citation)
 		}
 	}
 }
 
-func (m *folded) delta(b *Block, i int, d BlockDelta) {
-	switch d.Type {
-	case deltaText:
-		b.Text += d.Text
-	case deltaThinking:
-		b.Thinking += d.Thinking
-	case deltaInputJSON:
-		if m.input == nil {
-			m.input = map[int]string{}
-		}
-		m.input[i] += d.PartialJSON
-	case deltaCitations:
-		if d.Citation != nil {
-			b.Citations = append(slices.Clip(b.Citations), *d.Citation)
-		}
+// A single fragment is already immutable. For subsequent fragments, append
+// into a growing buffer; earlier Message snapshots keep their original prefix.
+func appendFragment(buf **strings.Builder, current, fragment string) string {
+	if fragment == "" {
+		return current
 	}
+	if current == "" {
+		return fragment
+	}
+	if *buf == nil {
+		*buf = new(strings.Builder)
+		(*buf).Grow(len(current) + len(fragment))
+		(*buf).WriteString(current)
+	}
+	(*buf).WriteString(fragment)
+	return (*buf).String()
 }
 
 // Message is what has been folded, with lanes down to depth: 0 is the root
@@ -172,9 +204,10 @@ func (f *Folder) Message(depth int) Message {
 
 // content copies a message's blocks, with each call's status and the lanes
 // under its agent calls down to depth.
-func (f *Folder) content(in []Content, depth int, seen map[string]bool) []Content {
+func (f *Folder) content(in []foldedBlock, depth int, seen map[string]bool) []Content {
 	out := make([]Content, len(in))
-	for i, c := range in {
+	for i, block := range in {
+		c := Content{Block: block.Block}
 		c.Citations = slices.Clone(c.Citations)
 		c.Input = slices.Clone(c.Input)
 		c.Content = cloneResult(c.Content)

@@ -761,6 +761,13 @@ func (a *Agent) FeedbackSummary() []FeedbackEntry {
 	return entries
 }
 
+// Prompt starts a run with one user text message on the active branch.
+// Pass the stream to CollectText for the final answer, or consume its deltas
+// to handle live events. Use Invoke for media, multiple messages or an explicit branch.
+func (a *Agent) Prompt(ctx context.Context, text string) *EventStream {
+	return a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(text))})
+}
+
 // Invoke starts the agent loop on the active branch and returns a stream of deltas.
 // Input messages are appended as child nodes and all responses are persisted to the tree.
 //

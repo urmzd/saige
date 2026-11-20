@@ -38,3 +38,35 @@ func TestABlockIsWrittenAsAnthropicWritesIt(t *testing.T) {
 		t.Fatalf("content = %s, read back %+v, %v", got, back, err)
 	}
 }
+
+// Interleaved streams can grow the block slice while a text builder is in
+// use. Live snapshots retain their prefix and expose tool input only at stop.
+func TestFolderSnapshotsWhileStreaming(t *testing.T) {
+	f := NewFolder()
+	f.Add(ContentBlockStart{ContentBlock: Block{Type: BlockText, Text: "a"}})
+	f.Add(ContentBlockDelta{Delta: BlockDelta{Type: deltaText, Text: "b"}})
+	f.Add(ContentBlockStart{Index: 1, ContentBlock: Block{Type: BlockThinking, Thinking: "x"}})
+	f.Add(ContentBlockDelta{Index: 1, Delta: BlockDelta{Type: deltaThinking, Thinking: "y"}})
+	f.Add(ContentBlockStart{Index: 2, ContentBlock: Block{Type: BlockServerToolUse, Input: json.RawMessage("{}")}})
+	f.Add(ContentBlockDelta{Index: 2, Delta: BlockDelta{Type: deltaInputJSON, PartialJSON: `{"a":`}})
+	before := f.Message(0)
+
+	f.Add(ContentBlockDelta{Delta: BlockDelta{Type: deltaText, Text: "c"}})
+	f.Add(ContentBlockDelta{Index: 1, Delta: BlockDelta{Type: deltaThinking, Thinking: "z"}})
+	f.Add(ContentBlockDelta{Index: 2, Delta: BlockDelta{Type: deltaInputJSON, PartialJSON: "1}"}})
+	f.Add(ContentBlockStop{Index: 2})
+	after := f.Message(0)
+	if before.Content[0].Text != "ab" || before.Content[1].Thinking != "xy" || string(before.Content[2].Input) != "{}" {
+		t.Fatalf("early snapshot changed: %+v", before.Content)
+	}
+	if after.Content[0].Text != "abc" || after.Content[1].Thinking != "xyz" || string(after.Content[2].Input) != `{"a":1}` {
+		t.Fatalf("later snapshot: %+v", after.Content)
+	}
+
+	f.Add(ContentBlockStart{Index: 2, ContentBlock: Block{Type: BlockServerToolUse, Input: json.RawMessage("{}")}})
+	f.Add(ContentBlockDelta{Index: 2, Delta: BlockDelta{Type: deltaInputJSON}})
+	f.Add(ContentBlockStop{Index: 2})
+	if in := f.Message(0).Content[2].Input; in == nil || len(in) != 0 {
+		t.Fatalf("empty fragment should replace the initial input, got %q", in)
+	}
+}

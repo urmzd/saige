@@ -26,7 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("Is 2^61 - 1 prime? Answer yes or no."))}))
+	text, err := agent.CollectText(a.Prompt(ctx, "Is 2^61 - 1 prime? Answer yes or no."))
 	if err != nil {
 		log.Fatal(err)
 	}
