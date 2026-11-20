@@ -73,7 +73,8 @@ type Filesystem struct {
 	MaxBytes int64
 	// ContinueOnError keeps walking after a file or directory fails. Fetch
 	// then returns the documents that succeeded together with the joined
-	// per-path errors.
+	// per-path errors, each a *types.SyncError naming its path (a
+	// directory's path ends with the separator).
 	ContinueOnError bool
 
 	// Include, when set, keeps only files whose path relative to Dir (with
@@ -119,10 +120,13 @@ func (s *Filesystem) FetchWithSkips(ctx context.Context) ([]types.RawDocument, [
 	limit := effectiveLimit(s.MaxBytes)
 	ignores := ignoreSet{}
 
-	// fail records err and keeps walking under ContinueOnError, or aborts.
-	fail := func(err error) error {
+	// fail records err against the path it concerns and keeps walking under
+	// ContinueOnError, or aborts. Recorded errors are *types.SyncError so a
+	// sync can tell which URIs failed; a directory's URI ends with the path
+	// separator and covers every path under it.
+	fail := func(p string, dir bool, err error) error {
 		if s.ContinueOnError {
-			errs = append(errs, err)
+			errs = append(errs, failedPath(p, dir, err))
 			return nil
 		}
 		return err
@@ -142,14 +146,14 @@ func (s *Filesystem) FetchWithSkips(ctx context.Context) ([]types.RawDocument, [
 		}
 		if err != nil {
 			if info != nil && info.IsDir() && s.ContinueOnError {
-				errs = append(errs, err)
+				errs = append(errs, failedPath(p, true, err))
 				return filepath.SkipDir
 			}
-			return fail(err)
+			return fail(p, info != nil && info.IsDir(), err)
 		}
 		rel, err := filepath.Rel(s.Dir, p)
 		if err != nil {
-			return fail(err)
+			return fail(p, info.IsDir(), err)
 		}
 		rel = filepath.ToSlash(rel)
 		isDir := info.IsDir()
@@ -164,18 +168,18 @@ func (s *Filesystem) FetchWithSkips(ctx context.Context) ([]types.RawDocument, [
 			}
 			if !s.NoIgnoreFiles {
 				if err := ignores.load(p, rel, limit); err != nil {
-					return fail(err)
+					return fail(p, true, err)
 				}
 			}
 			return nil
 		}
 		if limit >= 0 && info.Size() > limit {
-			return fail(fmt.Errorf("read %s: %w: %d bytes exceeds %d", p, ErrTooLarge, info.Size(), limit))
+			return fail(p, false, fmt.Errorf("read %s: %w: %d bytes exceeds %d", p, ErrTooLarge, info.Size(), limit))
 		}
 
 		data, err := readFile(p, limit)
 		if err != nil {
-			return fail(fmt.Errorf("read %s: %w", p, err))
+			return fail(p, false, fmt.Errorf("read %s: %w", p, err))
 		}
 
 		docs = append(docs, types.RawDocument{
@@ -191,6 +195,16 @@ func (s *Filesystem) FetchWithSkips(ctx context.Context) ([]types.RawDocument, [
 		return nil, nil, err
 	}
 	return docs, skipped, errors.Join(errs...)
+}
+
+// failedPath attributes err to the path p, so SyncSource can report it and
+// keep the stored documents under it from being pruned. A directory's URI
+// ends with the path separator, covering every path under it.
+func failedPath(p string, dir bool, err error) error {
+	if dir && !strings.HasSuffix(p, string(filepath.Separator)) {
+		p += string(filepath.Separator)
+	}
+	return &types.SyncError{SourceURI: p, Err: err}
 }
 
 // skipReason returns the rule that skips rel, a slash-separated path below

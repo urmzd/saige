@@ -30,17 +30,24 @@ func searchArgs(opts *types.SearchOptions) (group *string, limit int, validAt *t
 }
 
 // SearchByEmbedding searches for facts using HNSW vector similarity on
-// entity embeddings. Each matched entity contributes at most Limit of its
-// newest edges, and at most Limit facts are returned.
+// entity embeddings. A fact scores as its most similar endpoint entity; ties
+// between facts of one entity are broken by how well the fact text matches
+// opts.Query (ts_rank, any term), then by recency. Each matched entity
+// contributes at most Limit edges, and at most Limit facts are returned.
 func (s *Store) SearchByEmbedding(ctx context.Context, embedding []float32, opts *types.SearchOptions) ([]types.ScoredFact, error) {
 	group, limit, validAt := searchArgs(opts)
-	return s.queryFacts(ctx, searchEmbeddingSQL, []any{pgvector.NewVector(embedding), group, limit, validAt})
+	var query string
+	if opts != nil {
+		query = opts.Query
+	}
+	return s.queryFacts(ctx, searchEmbeddingSQL, []any{pgvector.NewVector(embedding), group, limit, validAt, query})
 }
 
 // SearchByText searches for facts using Postgres full-text search (ts_rank)
-// on entity name and summary and on the fact text and relation type. Each
-// matched entity contributes at most Limit of its newest edges, and at most
-// Limit facts are returned.
+// on entity name and summary and on the fact text and relation type. A
+// document matches when it contains any query term; ts_rank ranks documents
+// matching more terms higher. Each matched entity contributes at most Limit
+// edges, best fact-text match first, and at most Limit facts are returned.
 func (s *Store) SearchByText(ctx context.Context, queryText string, opts *types.SearchOptions) ([]types.ScoredFact, error) {
 	group, limit, validAt := searchArgs(opts)
 	return s.queryFacts(ctx, searchTextSQL, []any{queryText, group, limit, validAt})

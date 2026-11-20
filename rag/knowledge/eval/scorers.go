@@ -21,112 +21,60 @@ const (
 )
 
 // EntityRecallScorer computes the fraction of expected entities that were extracted.
-// Matching is case-insensitive on (Name, Type) pairs.
+// Matching is case-insensitive on (Name, Type) pairs, and both sides are
+// deduplicated by that key first, so a repeated entity counts once. With no
+// expected entities the score has no signal and Score{} is returned.
 func EntityRecallScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("entity_recall", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		extracted, expected, err := extractEntityPair(obs)
 		if err != nil || expected == nil {
 			return topeval.Score{}, err
 		}
-		if len(expected) == 0 {
-			return topeval.Score{Name: "entity_recall", Value: 1.0}, nil
-		}
-
-		extractedSet := make(map[string]struct{}, len(extracted))
-		for _, e := range extracted {
-			extractedSet[entityKey(e.Name, e.Type)] = struct{}{}
-		}
-
-		var found int
-		for _, e := range expected {
-			if _, ok := extractedSet[entityKey(e.Name, e.Type)]; ok {
-				found++
-			}
-		}
-		return topeval.Score{Name: "entity_recall", Value: float64(found) / float64(len(expected))}, nil
+		return setScore("entity_recall", entityKeys(expected), entityKeys(extracted)), nil
 	})
 }
 
 // EntityPrecisionScorer computes the fraction of extracted entities that match expected.
+// Keys are deduplicated as in EntityRecallScorer. With no extracted entities
+// the score has no signal and Score{} is returned.
 func EntityPrecisionScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("entity_precision", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		extracted, expected, err := extractEntityPair(obs)
 		if err != nil || expected == nil {
 			return topeval.Score{}, err
 		}
-		if len(extracted) == 0 {
-			return topeval.Score{Name: "entity_precision", Value: 1.0}, nil
-		}
-
-		expectedSet := make(map[string]struct{}, len(expected))
-		for _, e := range expected {
-			expectedSet[entityKey(e.Name, e.Type)] = struct{}{}
-		}
-
-		var found int
-		for _, e := range extracted {
-			if _, ok := expectedSet[entityKey(e.Name, e.Type)]; ok {
-				found++
-			}
-		}
-		return topeval.Score{Name: "entity_precision", Value: float64(found) / float64(len(extracted))}, nil
+		return setScore("entity_precision", entityKeys(extracted), entityKeys(expected)), nil
 	})
 }
 
 // RelationRecallScorer computes the fraction of expected relations that were extracted.
-// Matching is case-insensitive on (Source, Target, Type).
+// Matching is case-insensitive on (Source, Target, Type), with both sides
+// deduplicated by that key. With no expected relations Score{} is returned.
 func RelationRecallScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("relation_recall", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		extracted, expected, err := extractRelationPair(obs)
 		if err != nil || expected == nil {
 			return topeval.Score{}, err
 		}
-		if len(expected) == 0 {
-			return topeval.Score{Name: "relation_recall", Value: 1.0}, nil
-		}
-
-		extractedSet := make(map[string]struct{}, len(extracted))
-		for _, r := range extracted {
-			extractedSet[relationKey(r.Source, r.Target, r.Type)] = struct{}{}
-		}
-
-		var found int
-		for _, r := range expected {
-			if _, ok := extractedSet[relationKey(r.Source, r.Target, r.Type)]; ok {
-				found++
-			}
-		}
-		return topeval.Score{Name: "relation_recall", Value: float64(found) / float64(len(expected))}, nil
+		return setScore("relation_recall", relationKeys(expected), relationKeys(extracted)), nil
 	})
 }
 
 // RelationPrecisionScorer computes the fraction of extracted relations that match expected.
+// Keys are deduplicated as in RelationRecallScorer. With no extracted
+// relations Score{} is returned.
 func RelationPrecisionScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("relation_precision", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		extracted, expected, err := extractRelationPair(obs)
 		if err != nil || expected == nil {
 			return topeval.Score{}, err
 		}
-		if len(extracted) == 0 {
-			return topeval.Score{Name: "relation_precision", Value: 1.0}, nil
-		}
-
-		expectedSet := make(map[string]struct{}, len(expected))
-		for _, r := range expected {
-			expectedSet[relationKey(r.Source, r.Target, r.Type)] = struct{}{}
-		}
-
-		var found int
-		for _, r := range extracted {
-			if _, ok := expectedSet[relationKey(r.Source, r.Target, r.Type)]; ok {
-				found++
-			}
-		}
-		return topeval.Score{Name: "relation_precision", Value: float64(found) / float64(len(extracted))}, nil
+		return setScore("relation_precision", relationKeys(extracted), relationKeys(expected)), nil
 	})
 }
 
 // FactSearchRecallScorer computes the fraction of relevant fact UUIDs found by search.
+// Relevant UUIDs are deduplicated. With no relevant UUIDs Score{} is returned.
 func FactSearchRecallScorer() topeval.Scorer {
 	return topeval.NewScorerFunc("fact_search_recall", func(_ context.Context, obs topeval.Observation) (topeval.Score, error) {
 		var facts []kgtypes.Fact
@@ -145,23 +93,48 @@ func FactSearchRecallScorer() topeval.Scorer {
 				return topeval.Score{}, err
 			}
 		}
-		if len(relevantUUIDs) == 0 {
-			return topeval.Score{Name: "fact_search_recall", Value: 1.0}, nil
-		}
 
-		foundSet := make(map[string]struct{}, len(facts))
+		found := make(map[string]struct{}, len(facts))
 		for _, f := range facts {
-			foundSet[f.UUID] = struct{}{}
+			found[f.UUID] = struct{}{}
 		}
-
-		var found int
-		for _, uuid := range relevantUUIDs {
-			if _, ok := foundSet[uuid]; ok {
-				found++
-			}
+		relevant := make(map[string]struct{}, len(relevantUUIDs))
+		for _, id := range relevantUUIDs {
+			relevant[id] = struct{}{}
 		}
-		return topeval.Score{Name: "fact_search_recall", Value: float64(found) / float64(len(relevantUUIDs))}, nil
+		return setScore("fact_search_recall", relevant, found), nil
 	})
+}
+
+// setScore returns |denominator ∩ other| / |denominator| under name, or the
+// no-signal Score{} when denominator is empty.
+func setScore(name string, denominator, other map[string]struct{}) topeval.Score {
+	if len(denominator) == 0 {
+		return topeval.Score{}
+	}
+	var hits int
+	for k := range denominator {
+		if _, ok := other[k]; ok {
+			hits++
+		}
+	}
+	return topeval.Score{Name: name, Value: float64(hits) / float64(len(denominator))}
+}
+
+func entityKeys(ents []kgtypes.ExtractedEntity) map[string]struct{} {
+	out := make(map[string]struct{}, len(ents))
+	for _, e := range ents {
+		out[entityKey(e.Name, e.Type)] = struct{}{}
+	}
+	return out
+}
+
+func relationKeys(rels []kgtypes.ExtractedRelation) map[string]struct{} {
+	out := make(map[string]struct{}, len(rels))
+	for _, r := range rels {
+		out[relationKey(r.Source, r.Target, r.Type)] = struct{}{}
+	}
+	return out
 }
 
 func entityKey(name, typ string) string {

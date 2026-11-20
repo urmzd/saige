@@ -144,9 +144,14 @@ func withOverrides(overrides map[string]float64, base func(string) float64) func
 }
 
 // rankCeiling is the fused rank score of a hit ranked first in every list.
+// Empty lists cannot rank anything first, so they add nothing; counting them
+// would raise the ceiling and make MinScore drop every hit.
 func rankCeiling(lists []types.RankedList, k int, weight func(string) float64) float64 {
 	total := 0.0
 	for _, l := range lists {
+		if len(l.Hits) == 0 {
+			continue
+		}
 		total += weight(l.Retriever)
 	}
 	return total / float64(k+1)
@@ -260,9 +265,16 @@ func fuse(lists []types.RankedList, k int, weight func(string) float64) []types.
 		if w <= 0 {
 			continue
 		}
+		// A key seen twice in one list (one variant behind several graph
+		// facts, two children of one expanded section) votes once, at its
+		// best rank. Otherwise one list could outvote every other list.
+		voted := make(map[string]bool, len(list.Hits))
 		for rank, hit := range list.Hits {
 			key := Key(&hit)
-			scores[key] += w / float64(k+rank+1)
+			if !voted[key] {
+				voted[key] = true
+				scores[key] += w / float64(k+rank+1)
+			}
 			existing, ok := hits[key]
 			if !ok {
 				hits[key] = hit

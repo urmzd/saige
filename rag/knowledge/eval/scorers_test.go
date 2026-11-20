@@ -126,3 +126,77 @@ func TestFactSearchRecall(t *testing.T) {
 	// Found f1, f3 out of f1, f3, f4 → 2/3
 	assertClose(t, "fact_recall", score.Value, 2.0/3.0, 0.001)
 }
+
+func TestEmptyDenominatorsHaveNoSignal(t *testing.T) {
+	emptyRels, _ := json.Marshal([]kgtypes.ExtractedRelation{})
+	someRels, _ := json.Marshal([]kgtypes.ExtractedRelation{{Source: "a", Target: "b", Type: "t"}})
+	emptyIDs, _ := json.Marshal([]string{})
+	facts, _ := json.Marshal([]kgtypes.Fact{{UUID: "f1"}})
+
+	tests := []struct {
+		name   string
+		scorer topeval.Scorer
+		obs    topeval.Observation
+	}{
+		{"entity recall, no expected", EntityRecallScorer(),
+			makeEntityObs([]kgtypes.ExtractedEntity{{Name: "A", Type: "T"}}, []kgtypes.ExtractedEntity{})},
+		{"entity precision, no extracted", EntityPrecisionScorer(),
+			makeEntityObs([]kgtypes.ExtractedEntity{}, []kgtypes.ExtractedEntity{{Name: "A", Type: "T"}})},
+		{"relation recall, no expected", RelationRecallScorer(), topeval.Observation{Annotations: map[string]json.RawMessage{
+			AnnotationExtractedRelations: someRels, AnnotationExpectedRelations: emptyRels}}},
+		{"relation precision, no extracted", RelationPrecisionScorer(), topeval.Observation{Annotations: map[string]json.RawMessage{
+			AnnotationExtractedRelations: emptyRels, AnnotationExpectedRelations: someRels}}},
+		{"fact recall, no relevant", FactSearchRecallScorer(), topeval.Observation{Annotations: map[string]json.RawMessage{
+			AnnotationSearchedFacts: facts, AnnotationRelevantFacts: emptyIDs}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score, err := tt.scorer.Score(context.Background(), tt.obs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if score.Name != "" || score.Value != 0 {
+				t.Errorf("score = %+v, want no-signal Score{}", score)
+			}
+		})
+	}
+}
+
+func TestScorersDeduplicateByKey(t *testing.T) {
+	// "Alice" extracted three times must not inflate precision or recall.
+	extracted := []kgtypes.ExtractedEntity{
+		{Name: "Alice", Type: "Person"},
+		{Name: "alice", Type: "person"},
+		{Name: "ALICE", Type: "Person"},
+		{Name: "Bob", Type: "Person"},
+	}
+	expected := []kgtypes.ExtractedEntity{
+		{Name: "Alice", Type: "Person"},
+		{Name: "Alice", Type: "Person"},
+		{Name: "Carol", Type: "Person"},
+	}
+	obs := makeEntityObs(extracted, expected)
+
+	precision, err := EntityPrecisionScorer().Score(context.Background(), obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unique extracted {alice, bob}, 1 matches → 1/2.
+	assertClose(t, "entity_precision", precision.Value, 0.5, 0.001)
+
+	recall, err := EntityRecallScorer().Score(context.Background(), obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unique expected {alice, carol}, 1 found → 1/2.
+	assertClose(t, "entity_recall", recall.Value, 0.5, 0.001)
+
+	facts, _ := json.Marshal([]kgtypes.Fact{{UUID: "f1"}})
+	relevant, _ := json.Marshal([]string{"f1", "f1", "f2"})
+	fs, err := FactSearchRecallScorer().Score(context.Background(), topeval.Observation{Annotations: map[string]json.RawMessage{
+		AnnotationSearchedFacts: facts, AnnotationRelevantFacts: relevant}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertClose(t, "fact_search_recall", fs.Value, 0.5, 0.001)
+}

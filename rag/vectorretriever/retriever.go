@@ -42,5 +42,9 @@ func (r *VectorRetriever) Retrieve(ctx context.Context, query string, opts *type
 	return hits, nil
 }
 
+// Dense reports true: the retriever matches by embedding similarity, so it
+// receives HyDE's hypothetical queries (see types.DenseRetriever).
+func (r *VectorRetriever) Dense() bool { return true }
+
 // Name reports "vector", implementing types.Named.
 func (r *VectorRetriever) Name() string { return "vector" }

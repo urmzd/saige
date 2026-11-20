@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,6 +156,10 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 
 	// entityUUIDs maps extracted entity name → stored UUID
 	entityUUIDs := make(map[string]string, len(extractedEntities))
+	// normalizedUUIDs maps fuzzy.Normalize(name) → stored UUID, the fallback
+	// for relations whose endpoints differ from the entity name only in case,
+	// spacing or punctuation.
+	normalizedUUIDs := make(map[string]string, len(extractedEntities))
 	storedUUIDs := make([]string, 0, len(extractedEntities))
 	stored := make(map[string]bool, len(extractedEntities))
 	responseEntities := make([]types.Entity, 0, len(extractedEntities))
@@ -165,7 +170,8 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 		if embeddings != nil {
 			embedding = embeddings[i]
 		}
-		resolvedUUID, err := e.deduplicateAndUpsertEntity(ctx, input.GroupID, &ent, embedding)
+		resolvedUUID, lookupErrs, err := e.deduplicateAndUpsertEntity(ctx, input.GroupID, &ent, embedding)
+		partial = append(partial, lookupErrs...)
 		if err != nil {
 			partial = append(partial, fmt.Errorf("upsert entity %s: %w", ent.Name, err))
 			continue
@@ -175,6 +181,11 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 			storedUUIDs = append(storedUUIDs, resolvedUUID)
 		}
 		entityUUIDs[ent.Name] = resolvedUUID
+		if key := fuzzy.Normalize(ent.Name); key != "" {
+			if _, taken := normalizedUUIDs[key]; !taken {
+				normalizedUUIDs[key] = resolvedUUID
+			}
+		}
 		responseEntities = append(responseEntities, types.Entity{
 			UUID: resolvedUUID, Name: ent.Name, Type: ent.Type, Summary: ent.Summary,
 		})
@@ -197,12 +208,18 @@ func (e *GraphEngine) IngestEpisode(ctx context.Context, input *types.EpisodeInp
 	responseRelations := make([]types.Relation, 0, len(extractedRelations))
 
 	for _, rel := range extractedRelations {
-		srcUUID, ok := entityUUIDs[rel.Source]
-		if !ok {
-			continue
-		}
-		tgtUUID, ok := entityUUIDs[rel.Target]
-		if !ok {
+		srcUUID, srcOK := resolveEndpoint(entityUUIDs, normalizedUUIDs, rel.Source)
+		tgtUUID, tgtOK := resolveEndpoint(entityUUIDs, normalizedUUIDs, rel.Target)
+		if !srcOK || !tgtOK {
+			var missing []string
+			if !srcOK {
+				missing = append(missing, fmt.Sprintf("source %q", rel.Source))
+			}
+			if !tgtOK {
+				missing = append(missing, fmt.Sprintf("target %q", rel.Target))
+			}
+			partial = append(partial, fmt.Errorf("relation %s %q->%q dropped: %s not among stored entities",
+				rel.Type, rel.Source, rel.Target, strings.Join(missing, " and ")))
 			continue
 		}
 
@@ -363,43 +380,77 @@ func (e *GraphEngine) embedEntities(ctx context.Context, ents []types.ExtractedE
 	return vecs, nil
 }
 
+// resolveEndpoint finds the stored UUID for a relation endpoint: by the
+// exact extracted entity name first, then by its normalized form.
+func resolveEndpoint(exact, normalized map[string]string, name string) (string, bool) {
+	if id, ok := exact[name]; ok {
+		return id, true
+	}
+	key := fuzzy.Normalize(name)
+	if key == "" {
+		return "", false
+	}
+	id, ok := normalized[key]
+	return id, ok
+}
+
 // deduplicateAndUpsertEntity performs fuzzy entity deduplication then upserts.
 // Dedup candidates are scoped to groupID when the store supports it, so
-// entities never merge across tenant groups.
-func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID string, ent *types.ExtractedEntity, embedding []float32) (string, error) {
+// entities never merge across tenant groups. A fuzzy merge also requires the
+// same entity type and passes fuzzy.IsFuzzyMatch's guards.
+//
+// A failed dedup lookup does not stop the upsert; it is returned in
+// lookupErrs so the caller reports the episode as partial (the entity may
+// then be a duplicate). err is the upsert's own failure.
+func (e *GraphEngine) deduplicateAndUpsertEntity(ctx context.Context, groupID string, ent *types.ExtractedEntity, embedding []float32) (id string, lookupErrs []error, err error) {
 	ent.GroupID = groupID
 
 	// Try exact match first (handled by UpsertEntity's name+type check)
 	existing, err := e.findEntitiesByNameType(ctx, groupID, ent.Name, ent.Type)
-	if err == nil && len(existing) > 0 {
+	if err != nil {
+		lookupErrs = append(lookupErrs, fmt.Errorf("find entity %s by name and type: %w", ent.Name, err))
+	} else if len(existing) > 0 {
 		// Exact match: upsert will update summary/embedding
-		return e.store.UpsertEntity(ctx, ent, embedding)
+		id, err = e.store.UpsertEntity(ctx, ent, embedding)
+		return id, lookupErrs, err
 	}
 
 	// Try fuzzy match: find candidates with similar names
 	candidates, err := e.findEntitiesByFuzzyName(ctx, groupID, ent.Name, 10)
-	if err == nil {
-		for _, candidate := range candidates {
-			if fuzzy.IsFuzzyMatch(ent.Name, candidate.Name, FuzzyMatchThreshold) {
-				// Fuzzy match found: update the existing entity with new data.
-				// The candidate's name and type are kept so the upsert hits the
-				// existing row instead of inserting a second node.
-				e.logger.Info("fuzzy entity merge",
-					"new", ent.Name, "existing", candidate.Name,
-					"similarity", fuzzy.Similarity(ent.Name, candidate.Name))
-				merged := &types.ExtractedEntity{
-					Name:    candidate.Name,
-					Type:    candidate.Type,
-					Summary: ent.Summary, // use newer summary
-					GroupID: groupID,
-				}
-				return e.store.UpsertEntity(ctx, merged, embedding)
-			}
+	if err != nil {
+		lookupErrs = append(lookupErrs, fmt.Errorf("find fuzzy candidates for entity %s: %w", ent.Name, err))
+	}
+	for _, candidate := range candidates {
+		if !sameEntityType(candidate.Type, ent.Type) {
+			continue
 		}
+		if !fuzzy.IsFuzzyMatch(ent.Name, candidate.Name, FuzzyMatchThreshold) {
+			continue
+		}
+		// Fuzzy match found: update the existing entity with new data.
+		// The candidate's name and type are kept so the upsert hits the
+		// existing row instead of inserting a second node.
+		e.logger.Info("fuzzy entity merge",
+			"new", ent.Name, "existing", candidate.Name,
+			"similarity", fuzzy.Similarity(ent.Name, candidate.Name))
+		merged := &types.ExtractedEntity{
+			Name:    candidate.Name,
+			Type:    candidate.Type,
+			Summary: ent.Summary, // use newer summary
+			GroupID: groupID,
+		}
+		id, err = e.store.UpsertEntity(ctx, merged, embedding)
+		return id, lookupErrs, err
 	}
 
 	// No match: create new entity
-	return e.store.UpsertEntity(ctx, ent, embedding)
+	id, err = e.store.UpsertEntity(ctx, ent, embedding)
+	return id, lookupErrs, err
+}
+
+// sameEntityType compares entity types ignoring case and punctuation.
+func sameEntityType(a, b string) bool {
+	return fuzzy.Normalize(a) == fuzzy.Normalize(b)
 }
 
 // findEntitiesByNameType uses group-scoped lookup when the store supports it,
@@ -526,6 +577,7 @@ func (e *GraphEngine) SearchFacts(ctx context.Context, query string, opts ...typ
 	if o.Limit <= 0 {
 		o.Limit = DefaultSearchLimit
 	}
+	o.Query = query
 	limit := o.Limit
 
 	// Run vector search and full-text search
@@ -623,6 +675,39 @@ func (e *GraphEngine) GetGraph(ctx context.Context, limit int64) (*types.GraphDa
 // GetNode returns a node with its neighbors and edges at the requested depth.
 func (e *GraphEngine) GetNode(ctx context.Context, id string, depth int) (*types.NodeDetail, error) {
 	return e.store.GetNode(ctx, id, depth)
+}
+
+// GetGraphInGroup implements types.GroupScopedGraphReader by delegating to
+// the store. It returns types.ErrGroupScopeUnsupported when the store cannot
+// filter by group.
+func (e *GraphEngine) GetGraphInGroup(ctx context.Context, groupID string, limit int64) (*types.GraphData, error) {
+	gs, err := e.groupScopedReader()
+	if err != nil {
+		return nil, err
+	}
+	return gs.GetGraphInGroup(ctx, groupID, limit)
+}
+
+// GetNodeInGroup implements types.GroupScopedGraphReader by delegating to
+// the store. It returns types.ErrGroupScopeUnsupported when the store cannot
+// filter by group.
+func (e *GraphEngine) GetNodeInGroup(ctx context.Context, groupID, id string, depth int) (*types.NodeDetail, error) {
+	gs, err := e.groupScopedReader()
+	if err != nil {
+		return nil, err
+	}
+	return gs.GetNodeInGroup(ctx, groupID, id, depth)
+}
+
+func (e *GraphEngine) groupScopedReader() (types.GroupScopedGraphReader, error) {
+	if e.store == nil {
+		return nil, types.ErrStoreNotReady
+	}
+	gs, ok := e.store.(types.GroupScopedGraphReader)
+	if !ok {
+		return nil, fmt.Errorf("store %T: %w", e.store, types.ErrGroupScopeUnsupported)
+	}
+	return gs, nil
 }
 
 // GetFactProvenance returns the episodes that sourced a given fact, oldest

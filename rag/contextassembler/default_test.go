@@ -2,9 +2,11 @@ package contextassembler_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/urmzd/saige/rag/contextassembler"
+	"github.com/urmzd/saige/rag/tokenizer"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -46,5 +48,38 @@ func TestDefaultAssemblerDropsRepeatedText(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDefaultAssemblerSkipsOversizedHit(t *testing.T) {
+	hits := []types.SearchHit{
+		{Variant: types.ContentVariant{UUID: "big", Text: strings.Repeat("token ", 600)}},
+		{Variant: types.ContentVariant{UUID: "small", Text: "a short passage"}},
+	}
+	a := &contextassembler.DefaultAssembler{MaxTokens: 500}
+	result, err := a.Assemble(context.Background(), "q", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Blocks) != 1 || result.Blocks[0].Text != "a short passage" {
+		t.Fatalf("blocks = %+v, want only the small hit", result.Blocks)
+	}
+}
+
+func TestDefaultAssemblerBudgetCoversWholePrompt(t *testing.T) {
+	hits := []types.SearchHit{
+		{Variant: types.ContentVariant{UUID: "a", Text: "alpha"}, Provenance: types.Provenance{SourceURI: "https://example.com/a/very/long/source/path"}},
+		{Variant: types.ContentVariant{UUID: "b", Text: "beta"}, Provenance: types.Provenance{SourceURI: "https://example.com/another/long/source/path"}},
+	}
+	a := &contextassembler.DefaultAssembler{MaxTokens: 40}
+	result, err := a.Assemble(context.Background(), "q", hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := tokenizer.CountTokens(result.Prompt); n > 40 {
+		t.Errorf("prompt is %d tokens, budget 40", n)
+	}
+	if len(result.Blocks) == 0 || result.TokenCount > 40 {
+		t.Errorf("blocks = %d, TokenCount = %d; want at least one block within 40", len(result.Blocks), result.TokenCount)
 	}
 }

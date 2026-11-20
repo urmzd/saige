@@ -39,6 +39,7 @@ var (
 	_ ragtypes.GraphEpisodeDeleter           = (*observedGraph)(nil)
 	_ ragtypes.GraphDocumentDeleter          = (*observedGraph)(nil)
 	_ ragtypes.GraphDocumentDeletionReporter = (*observedGraph)(nil)
+	_ types.GroupScopedGraphReader           = (*observedGraph)(nil)
 )
 
 // Observe wraps g so episode ingest, fact search, and deletion open spans on
@@ -120,6 +121,25 @@ func (o *observedGraph) SupportsDocumentDeletion() bool {
 		return r.SupportsDocumentDeletion()
 	}
 	return true
+}
+
+// GetGraphInGroup forwards types.GroupScopedGraphReader so wrapping never
+// downgrades a scoped read to an unscoped one.
+func (o *observedGraph) GetGraphInGroup(ctx context.Context, groupID string, limit int64) (*types.GraphData, error) {
+	gs, ok := o.Graph.(types.GroupScopedGraphReader)
+	if !ok {
+		return nil, types.ErrGroupScopeUnsupported
+	}
+	return gs.GetGraphInGroup(ctx, groupID, limit)
+}
+
+// GetNodeInGroup forwards types.GroupScopedGraphReader.
+func (o *observedGraph) GetNodeInGroup(ctx context.Context, groupID, id string, depth int) (*types.NodeDetail, error) {
+	gs, ok := o.Graph.(types.GroupScopedGraphReader)
+	if !ok {
+		return nil, types.ErrGroupScopeUnsupported
+	}
+	return gs.GetNodeInGroup(ctx, groupID, id, depth)
 }
 
 func end(span ragtypes.Span, err error) {

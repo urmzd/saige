@@ -10,6 +10,9 @@ var entityUpsertSQL string
 //go:embed sql/entity_get.sql
 var entityGetSQL string
 
+//go:embed sql/entity_get_group.sql
+var entityGetGroupSQL string
+
 //go:embed sql/entity_find_by_name_type.sql
 var entityFindByNameTypeSQL string
 

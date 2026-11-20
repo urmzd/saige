@@ -9,7 +9,10 @@ func TestNormalize(t *testing.T) {
 	}{
 		{"Hello World", "helloworld"},
 		{"  spaces  ", "spaces"},
-		{"special!@#chars$%^", "specialchars"},
+		{"special!@#chars$%^", "special#chars"},
+		{"C++", "c++"},
+		{"C#", "c#"},
+		{"!!!", ""},
 		{"MiXeD CaSe 123", "mixedcase123"},
 		{"", ""},
 		{"日本語", "日本語"},
@@ -86,7 +89,19 @@ func TestIsFuzzyMatch(t *testing.T) {
 		{"John Smith", "Jon Smith", 0.8, true},
 		{"apple", "orange", 0.8, false},
 		{"abc", "xyz", 0.8, false},
-		{"abc", "abd", 0.5, true},
+		{"abcd", "abce", 0.5, true},
+		// Regressions: names that look alike but are distinct entities.
+		{"C++", "C", 0.5, false},
+		{"C#", "C", 0.5, false},
+		{"C++", "C#", 0.5, false},
+		{"iPhone 14", "iPhone 15", 0.8, false},
+		{"Model 3", "Model S", 0.8, false},
+		{"Windows 10", "Windows 11", 0.8, false},
+		{"!!!", "???", 0.0, false},
+		{"", "", 0.0, false},
+		{"abc", "abd", 0.5, false}, // too short for a fuzzy match
+		{"Go", "go", 0.8, true},    // identical after normalizing
+		{"iPhone 14", "iphone14", 0.8, true},
 	}
 
 	for _, tt := range tests {

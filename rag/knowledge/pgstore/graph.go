@@ -8,9 +8,22 @@ import (
 	"github.com/urmzd/saige/rag/knowledge/types"
 )
 
-// GetGraph returns all active relations with their entities for visualization.
+var _ types.GroupScopedGraphReader = (*Store)(nil)
+
+// GetGraph returns active relations of every group with their entities for
+// visualization, newest first, at most limit edges.
 func (s *Store) GetGraph(ctx context.Context, limit int64) (*types.GraphData, error) {
-	rows, err := s.pool.Query(ctx, graphGetSQL, limit)
+	return s.getGraph(ctx, nil, limit)
+}
+
+// GetGraphInGroup is GetGraph limited to one group (types.GroupScopedGraphReader).
+func (s *Store) GetGraphInGroup(ctx context.Context, groupID string, limit int64) (*types.GraphData, error) {
+	return s.getGraph(ctx, &groupID, limit)
+}
+
+// getGraph reads active relations, newest first; a nil group reads every group.
+func (s *Store) getGraph(ctx context.Context, group *string, limit int64) (*types.GraphData, error) {
+	rows, err := s.pool.Query(ctx, graphGetSQL, limit, group)
 	if err != nil {
 		return nil, err
 	}
@@ -67,11 +80,30 @@ func (s *Store) GetGraph(ctx context.Context, limit int64) (*types.GraphData, er
 // WithTraversalLimits) and then sets NodeDetail.Truncated. A failed hop
 // query fails the call instead of returning a silently partial graph.
 func (s *Store) GetNode(ctx context.Context, id string, depth int) (*types.NodeDetail, error) {
+	return s.getNode(ctx, nil, id, depth)
+}
+
+// GetNodeInGroup is GetNode limited to one group
+// (types.GroupScopedGraphReader): the root must belong to the group, else
+// types.ErrNodeNotFound, and only the group's relations are traversed.
+func (s *Store) GetNodeInGroup(ctx context.Context, groupID, id string, depth int) (*types.NodeDetail, error) {
+	return s.getNode(ctx, &groupID, id, depth)
+}
+
+func (s *Store) getNode(ctx context.Context, group *string, id string, depth int) (*types.NodeDetail, error) {
 	if depth < 1 {
 		depth = 1
 	}
 
-	entity, err := s.GetEntity(ctx, id)
+	var (
+		entity *types.Entity
+		err    error
+	)
+	if group == nil {
+		entity, err = s.GetEntity(ctx, id)
+	} else {
+		entity, err = s.getEntityInGroup(ctx, *group, id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +121,7 @@ func (s *Store) GetNode(ctx context.Context, id string, depth int) (*types.NodeD
 
 	for d := 0; d < depth && len(frontier) > 0 && !truncated; d++ {
 		remaining := s.maxEdges - len(allEdges)
-		edges, nodes, err := s.neighborsOf(ctx, frontier, seenEdges, remaining+1)
+		edges, nodes, err := s.neighborsOf(ctx, group, frontier, seenEdges, remaining+1)
 		if err != nil {
 			return nil, fmt.Errorf("get node %s: hop %d: %w", id, d+1, err)
 		}
@@ -131,13 +163,14 @@ func (s *Store) GetNode(ctx context.Context, id string, depth int) (*types.NodeD
 
 // neighborsOf returns up to limit active edges touching any frontier entity,
 // newest first, with the nodes at both ends keyed by UUID. Edges already in
-// seen are excluded so they do not count against the limit again.
-func (s *Store) neighborsOf(ctx context.Context, frontier []string, seen map[string]bool, limit int) ([]types.GraphEdge, map[string]types.GraphNode, error) {
+// seen are excluded so they do not count against the limit again. A non-nil
+// group limits the edges to that group.
+func (s *Store) neighborsOf(ctx context.Context, group *string, frontier []string, seen map[string]bool, limit int) ([]types.GraphEdge, map[string]types.GraphNode, error) {
 	exclude := make([]string, 0, len(seen))
 	for id := range seen {
 		exclude = append(exclude, id)
 	}
-	rows, err := s.pool.Query(ctx, relationNeighborsBatchSQL, frontier, limit, exclude)
+	rows, err := s.pool.Query(ctx, relationNeighborsBatchSQL, frontier, limit, exclude, group)
 	if err != nil {
 		return nil, nil, err
 	}

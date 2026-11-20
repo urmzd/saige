@@ -2,6 +2,7 @@ package contextassembler_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -100,5 +101,35 @@ func TestCompressingAssemblerTokenLimit(t *testing.T) {
 
 	if result.TokenCount > 100 {
 		t.Errorf("expected token count <= 100, got %d", result.TokenCount)
+	}
+}
+
+type flakyLLM struct{}
+
+func (flakyLLM) Generate(_ context.Context, prompt string) (string, error) {
+	switch {
+	case strings.Contains(prompt, "fails"):
+		return "", errors.New("rate limited")
+	case strings.Contains(prompt, "irrelevant"):
+		return " n/a.\n", nil
+	}
+	return "kept", nil
+}
+
+func TestCompressingAssemblerDegradesPerHit(t *testing.T) {
+	hits := []types.SearchHit{
+		{Variant: types.ContentVariant{UUID: "1", Text: "this call fails"}},
+		{Variant: types.ContentVariant{UUID: "2", Text: "irrelevant text"}},
+		{Variant: types.ContentVariant{UUID: "3", Text: "useful text"}},
+	}
+	result, err := contextassembler.NewCompressing(flakyLLM{}, 4096).Assemble(context.Background(), "q", hits)
+	if !errors.Is(err, types.ErrPartialSearch) {
+		t.Fatalf("err = %v, want partial", err)
+	}
+	if result == nil || len(result.Blocks) != 2 {
+		t.Fatalf("result = %+v, want 2 blocks", result)
+	}
+	if result.Blocks[0].Text != "this call fails" || result.Blocks[1].Text != "kept" {
+		t.Errorf("blocks = %q, %q; want original text for the failed call, then the compressed one", result.Blocks[0].Text, result.Blocks[1].Text)
 	}
 }
