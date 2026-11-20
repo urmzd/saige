@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/connector"
 	"github.com/urmzd/saige/flow/connectors"
 	"github.com/urmzd/saige/flow/deliverystate"
 	"github.com/urmzd/saige/flow/event"
@@ -128,8 +129,11 @@ func TestCompletedReviewSurvivesReplicaChangeAndLostDeliveryCommit(t *testing.T)
 	_ = api.SeedContext(ref, snapshot)
 	c, _ := New(cfg)
 	env.Run = "r2"
-	if err := c.Deliver(ctx, target, env); err == nil {
-		t.Fatal("stale review published")
+	// A review of a head that has since moved can never be posted: the
+	// refusal is undeliverable, so its delivery is retired, not retried
+	// against the API until the head comes back.
+	if err := c.Deliver(ctx, target, env); !errors.Is(err, connector.ErrUndeliverable) {
+		t.Fatalf("a stale review answered %v, want it refused as undeliverable", err)
 	}
 	if len(api.SubmittedReviews()) != 1 {
 		t.Fatal("stale review altered remote reviews")

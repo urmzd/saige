@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/connector"
 	"github.com/urmzd/saige/flow/connectors/internal/render"
 	"github.com/urmzd/saige/flow/connectors/internal/sink"
+	"github.com/urmzd/saige/flow/deliverystate"
 	"github.com/urmzd/saige/flow/event"
 )
 
@@ -26,6 +28,15 @@ type fakeSurface struct {
 	ops     []string
 	next    int
 	failN   int // fail the next N calls
+	// failWith is what a failed call answers, errSurface when nil.
+	failWith error
+}
+
+func (f *fakeSurface) failure() error {
+	if f.failWith != nil {
+		return f.failWith
+	}
+	return errSurface
 }
 
 func newFakeSurface() *fakeSurface {
@@ -40,7 +51,7 @@ func (f *fakeSurface) Create(_ context.Context, target address.Address, body str
 	if f.failN > 0 {
 		f.failN--
 		f.ops = append(f.ops, "create!")
-		return "", errSurface
+		return "", f.failure()
 	}
 	f.next++
 	handle := "m" + string(rune('0'+f.next))
@@ -56,7 +67,7 @@ func (f *fakeSurface) Update(_ context.Context, _ address.Address, handle, body 
 	if f.failN > 0 {
 		f.failN--
 		f.ops = append(f.ops, "update!")
-		return errSurface
+		return f.failure()
 	}
 	if _, ok := f.bodies[handle]; !ok {
 		return errors.New("no such message")
@@ -328,6 +339,36 @@ func TestAFailedWriteIsRetriedRatherThanLosingTheAnswer(t *testing.T) {
 	}
 	if body := surface.body(handle); !strings.Contains(body, "(done)") {
 		t.Errorf("body = %q, want the retried terminal state", body)
+	}
+}
+
+// A write the surface refuses as undeliverable is reported once and never
+// tried again: no flush calls the surface for it, however many run.
+func TestAnUndeliverableWriteIsNotRetried(t *testing.T) {
+	refused := fmt.Errorf("%w: the reviewed head changed", connector.ErrUndeliverable)
+	for name, build := range map[string]func(*fakeSurface) *sink.Engine{
+		"in memory": func(s *fakeSurface) *sink.Engine { return sink.New(s, layout, sink.WithInterval(0)) },
+		"with durable state": func(s *fakeSurface) *sink.Engine {
+			return sink.New(s, layout, sink.WithState(deliverystate.NewMemory(), "github:client1"), sink.WithInterval(0))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			surface := newFakeSurface()
+			surface.failN, surface.failWith = 100, refused
+			eng := build(surface)
+			ctx := context.Background()
+			if err := eng.Deliver(ctx, target, ev(1, event.TypeCompleted, "")); !errors.Is(err, connector.ErrUndeliverable) {
+				t.Fatalf("Deliver error = %v, want the refusal", err)
+			}
+			for range 5 {
+				if err := eng.Flush(ctx); err != nil {
+					t.Fatalf("Flush after a refused write: %v", err)
+				}
+			}
+			if calls := surface.calls(); len(calls) != 1 {
+				t.Fatalf("the surface was called %d times (%v), want the one refused create", len(calls), calls)
+			}
+		})
 	}
 }
 

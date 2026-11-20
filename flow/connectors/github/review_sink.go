@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/connector"
 	"github.com/urmzd/saige/flow/connectors"
 	"github.com/urmzd/saige/flow/connectors/internal/render"
 )
@@ -99,7 +100,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		}
 	}
 	if pinned == "" {
-		return "", fmt.Errorf("github: native review needs a pinned PR head")
+		return "", fmt.Errorf("%w: github: native review needs a pinned PR head", connector.ErrUndeliverable)
 	}
 	marker := reviewMarker(view, pinned)
 	for page := 1; page <= 10; page++ {
@@ -126,7 +127,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 			return "", err
 		}
 		if got.Subject.Head.SHA != pinned {
-			return "", fmt.Errorf("github: reviewed head changed; refusing stale review")
+			return "", fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
 		}
 		files = append(files, got.Files...)
 		if got.NextPage == 0 {
@@ -141,7 +142,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		return "none", nil
 	}
 	if review.CommitID != pinned {
-		return "", fmt.Errorf("github: review commit differs from pinned PR head")
+		return "", fmt.Errorf("%w: github: review commit differs from pinned PR head", connector.ErrUndeliverable)
 	}
 	review, err = PrepareReview(review, files)
 	if err != nil {
