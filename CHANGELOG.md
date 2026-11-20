@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.0 (2026-11-20)
+
+### Features
+
+- **catalog**: add the latest models, Fireworks and Groq as hosted vendors (#168) ([0c05b1b](https://github.com/urmzd/saige/commit/0c05b1bd9a0f1f649c39662d768000cfcc08f4e0))
+
+### Misc
+
+- scope the verify skill to the saige repo (#169) ([30e8b60](https://github.com/urmzd/saige/commit/30e8b60cac8361c8773ed0633fee9976a119e2f9))
+- apply the shared guide typography and project mark (#159) ([6a4675f](https://github.com/urmzd/saige/commit/6a4675ff7b39f75a776c7d61defcd9b6df97bc19))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.45.2...v0.46.0)
+
+
 ## 0.45.2 (2026-11-20)
 
 ### Bug Fixes
