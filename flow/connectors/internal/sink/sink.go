@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/connector"
 	"github.com/urmzd/saige/flow/connectors/internal/render"
 	"github.com/urmzd/saige/flow/deliverystate"
 	"github.com/urmzd/saige/flow/event"
@@ -332,6 +333,13 @@ func (eng *Engine) due(st *state, v render.View) bool {
 // delivery or Flush retries. That is the only error policy that is compatible
 // with at-least-once: a dropped edit would leave the surface showing a prefix of
 // the answer forever.
+//
+// One failure is not retried: a surface that answers connector.ErrUndeliverable
+// has said no retry can succeed (a review of a commit that is no longer the
+// pull request's head, an address the connector cannot reach). The error is
+// returned once, for the delivery to be retired, and the state is no longer
+// dirty, so Flush leaves it alone. Retrying it instead calls the surface's API
+// on every flush for as long as the process lives.
 func (eng *Engine) write(ctx context.Context, st *state, v render.View) error {
 	body := eng.render(v)
 	if body == "" {
@@ -346,10 +354,12 @@ func (eng *Engine) write(ctx context.Context, st *state, v render.View) error {
 	if st.handle == "" {
 		handle, err := eng.surface.Create(ctx, st.target, body)
 		if err != nil {
+			retire(st, err)
 			return fmt.Errorf("sink: create message for run %s on %s: %w", v.RunID, st.target, err)
 		}
 		st.handle = handle
 	} else if err := eng.surface.Update(ctx, st.target, st.handle, body); err != nil {
+		retire(st, err)
 		return fmt.Errorf("sink: update message %s for run %s on %s: %w", st.handle, v.RunID, st.target, err)
 	}
 
@@ -363,6 +373,13 @@ func (eng *Engine) write(ctx context.Context, st *state, v render.View) error {
 	_, st.afterPending = eng.surface.(AfterDelivery)
 	st.lastFlush = eng.now()
 	return nil
+}
+
+// retire stops the retries of a write the surface refused as undeliverable.
+func retire(st *state, err error) {
+	if errors.Is(err, connector.ErrUndeliverable) {
+		st.dirty = false
+	}
 }
 
 func (eng *Engine) finish(ctx context.Context, st *state) error {
