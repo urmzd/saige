@@ -88,7 +88,7 @@ func (a *Adapter) ListModels(ctx context.Context) ([]catalog.RemoteModel, error)
 		out = append(out, rm)
 	}
 	if err := pager.Err(); err != nil {
-		return nil, classifyOpenAIError(string(a.model), err, true)
+		return nil, a.classify(err, true)
 	}
 	return out, nil
 }

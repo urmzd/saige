@@ -32,6 +32,7 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("FIREWORKS_API_KEY", "")
 	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
 }
 

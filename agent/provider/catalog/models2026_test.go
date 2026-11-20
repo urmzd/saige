@@ -118,7 +118,8 @@ func TestDefaultPresets(t *testing.T) {
 	c := Default()
 	want := map[types.PresetName]types.ModelID{
 		"anthropic": "claude-haiku-5-5", "openai": "gpt-6-luna", "google": "gemini-3.1-flash-lite",
-		"anthropic-quality": "claude-sonnet-5-5", "openai-quality": "gpt-6.1-sol", "google-quality": "gemini-3.8-flash",
+		"anthropic-quality": "claude-sonnet-5-5", "openai-quality": "gpt-6.2-sol", "google-quality": "gemini-3.8-flash",
+		"fireworks": "glm-5p3-flash", "fireworks-quality": "kimi-k3p1-pro",
 		"vertex": "gemini-3.1-flash-lite",
 	}
 	for name, model := range want {

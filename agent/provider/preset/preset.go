@@ -353,6 +353,9 @@ func credentialHint(e catalog.ResolvedEntry) string {
 func config(e catalog.ResolvedEntry, key string, o Options) provider.Config {
 	cfg := provider.Config{Provider: e.Provider, Model: e.Model, APIKey: key, BaseURL: e.BaseURL,
 		HTTPClient: o.HTTPClient, Options: e.Options.Clone(), ServerTools: append([]types.ServerTool(nil), e.ServerTools...), Getenv: o.Getenv}
+	if o := e.Caps.Offering; o != nil {
+		cfg.Surface = o.Endpoint.Surface
+	}
 	for _, l := range e.Dials {
 		// An empty, non-nil list tells Build the layers are resolved, so the
 		// model's dial defaults are not added twice.

@@ -39,6 +39,7 @@ type Option func(*config)
 
 type config struct {
 	baseURL     string
+	name        string
 	maxRetries  *int
 	requestOpts []option.RequestOption
 	params      genParams
@@ -87,6 +88,14 @@ type genParams struct {
 // capabilities resolve to the conservative baseline.
 func WithBaseURL(url string) Option {
 	return func(c *config) { c.baseURL = url }
+}
+
+// WithProviderName names the vendor whose models a compatible server hosts,
+// such as "fireworks". The adapter then reports that name, resolves the
+// model's capabilities under it in the catalog, and puts it on its errors.
+// Empty keeps "openai".
+func WithProviderName(name string) Option {
+	return func(c *config) { c.name = name }
 }
 
 // WithMaxRetries sets how many times the SDK itself retries a failed request.
@@ -170,6 +179,8 @@ type Adapter struct {
 	client openai.Client
 	model  openai.ChatModel
 	params genParams
+	// name is the vendor set with WithProviderName, empty for OpenAI.
+	name string
 }
 
 // Config names the account and model an adapter or embedder serves.
@@ -196,6 +207,7 @@ func New(cfg Config, opts ...Option) (*Adapter, error) {
 		client: openai.NewClient(c.clientOptions(cfg.APIKey, new(int))...),
 		model:  openai.ChatModel(cfg.Model),
 		params: c.params,
+		name:   c.name,
 	}, nil
 }
 
@@ -249,7 +261,7 @@ func (a *Adapter) EffectiveOptions() types.RequestOptions {
 }
 
 // Name implements types.NamedProvider.
-func (a *Adapter) Name() string { return providerName }
+func (a *Adapter) Name() string { return cmp.Or(a.name, providerName) }
 
 // Model implements types.ModelProvider.
 func (a *Adapter) Model() string { return string(a.model) }
@@ -372,7 +384,7 @@ func (a *Adapter) chatParams(req types.Request) (*Adapter, openai.ChatCompletion
 // model against the shared catalog so callers can check whether a flag (e.g.
 // reasoning) is supported before building a request that would be rejected.
 func (a *Adapter) Capabilities() types.ModelCapabilities {
-	return catalog.MustLookup(providerName, string(a.model))
+	return catalog.MustLookup(types.ProviderName(a.Name()), string(a.model))
 }
 
 func toOpenAITools(defs []types.ToolDef) []openai.ChatCompletionToolUnionParam {
@@ -457,6 +469,17 @@ func closeObjects(node map[string]any) bool {
 
 func propertyToSchema(p types.PropertyDef) map[string]any {
 	return p.JSONSchema()
+}
+
+// classify is classifyOpenAIError under the adapter's own name, so an error
+// from a compatible server names the vendor that returned it.
+func (a *Adapter) classify(err error, beforeOutput bool) error {
+	out := classifyOpenAIError(string(a.model), err, beforeOutput)
+	var pe *types.ProviderError
+	if a.name != "" && errors.As(out, &pe) {
+		pe.Provider = a.name
+	}
+	return out
 }
 
 // classifyOpenAIError maps an error to a ProviderError. An HTTP API error is
