@@ -61,15 +61,6 @@ uvx --from zensical==0.1.2 zensical build
 
 The preview command prints its local address. The build writes the static site to `site/`. Edit the Markdown in `docs/` and the navigation in `zensical.toml`.
 
-For a preview with the shared typefaces, logo and colors, build the site first and clone [the account site](https://github.com/urmzd/urmzd.github.io) alongside this checkout. From the Saige root, mount both directories under a temporary local server.
-
-```sh
-preview_dir=$(mktemp -d)
-ln -s "$PWD/site" "$preview_dir/saige"
-ln -s "$PWD/../urmzd.github.io/public/brand" "$preview_dir/brand"
-python3 -m http.server 8000 --bind 127.0.0.1 --directory "$preview_dir"
-```
-
-Open `http://127.0.0.1:8000/saige/` to see the same paths used in production.
+To see the shared typefaces, logo and colors locally under `/saige/`, follow [Preview a guide with the shared brand](https://github.com/urmzd/urmzd.github.io#preview-a-guide-with-the-shared-brand) after building the site.
 
 Pull requests to `main` build the site in strict mode. Merging to `main` publishes the result through this repository’s GitHub Pages workflow to [the Saige guide](https://docs.urmzd.com/saige/).
