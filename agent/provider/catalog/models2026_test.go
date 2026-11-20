@@ -120,6 +120,7 @@ func TestDefaultPresets(t *testing.T) {
 		"anthropic": "claude-haiku-5-5", "openai": "gpt-6-luna", "google": "gemini-3.1-flash-lite",
 		"anthropic-quality": "claude-sonnet-5-5", "openai-quality": "gpt-6.2-sol", "google-quality": "gemini-4-hydrogen",
 		"fireworks": "glm-5p3-flash", "fireworks-quality": "kimi-k3p1-pro",
+		"groq": "openai/gpt-oss-20b", "groq-quality": "openai/gpt-oss-120b",
 		"vertex": "gemini-3.1-flash-lite",
 	}
 	for name, model := range want {

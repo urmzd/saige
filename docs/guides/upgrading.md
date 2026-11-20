@@ -1,8 +1,8 @@
 # Upgrading to this release
 
-## New models, and Fireworks as a hosted vendor
+## New models, and Fireworks and Groq as hosted vendors
 
-The embedded catalog (revision `2026-11-20.1`) adds claude-fable-5-2 and claude-mythos-5-2, gpt-6.1-terra, gpt-6.2-sol and gpt-6.2-astra, the four Gemini 4 models (hydrogen, neon, argon, carbon) and gemini-embedding-2, priced as of 2026-11-20. It also adds a `fireworks` vendor with 14 open chat models and one embedding model that Fireworks serves serverless. See [hosted vendors](../reference/catalog.md#hosted-vendors).
+The embedded catalog (revision `2026-11-20.2`) adds claude-fable-5-2 and claude-mythos-5-2, gpt-6.1-terra, gpt-6.2-sol and gpt-6.2-astra, the four Gemini 4 models (hydrogen, neon, argon, carbon) and gemini-embedding-2, priced as of 2026-11-20. It also adds a `fireworks` vendor with 14 open chat models and one embedding model that Fireworks serves serverless, and a `groq` vendor with gpt-oss-120b, gpt-oss-20b and qwen3.8-27b. See [hosted vendors](../reference/catalog.md#hosted-vendors).
 
 What changes for existing callers:
 
@@ -10,7 +10,8 @@ What changes for existing callers:
 | --- | --- |
 | `openai-quality` runs gpt-6.2-sol, at the same list price as gpt-6.1-sol | gpt-6.2-sol rejects reasoning effort `max`: a preset layer that sets it on `openai-quality` now fails validation. Use `xhigh`. |
 | gpt-6.1-sol, gpt-6-astra, claude-fable-5-1, claude-mythos-5-1, gemini-embedding-001 and text-embedding-004 set `superseded_by` | A preset that names one gets a `superseded` warning, which `catalog validate --strict` treats as a failure. |
-| The `default` preset gains a Fireworks entry between Google and Ollama | With only `FIREWORKS_API_KEY` set, the CLI now runs glm-5p3-flash on Fireworks where it ran a local Ollama model. |
+| The `default` preset gains Fireworks and Groq entries between Google and Ollama | With only `FIREWORKS_API_KEY` or `GROQ_API_KEY` set, the CLI now runs glm-5p3-flash on Fireworks or gpt-oss-20b on Groq where it ran a local Ollama model. |
+| The Ollama adapter reads tool calls on the final stream chunk | Ollama 0.40 sends a model's tool calls with `done: true` (seen with gpt-oss:20b). The adapter dropped them, so a turn ended with an empty answer and no error. No change is needed in callers. |
 | A bare model name can infer a hosted vendor | `provider.Infer("kimi-k3")` returns `fireworks`. `provider.Build` accepts `Provider: "fireworks"` and the `fireworks/<model>` form, and reads `FIREWORKS_API_KEY`. |
 | `google-quality` runs gemini-4-hydrogen | Its list price is $1.50 / $7.50 per million tokens, twice what gemini-3.8-flash costs until 2027-01-01, when the two match. Name gemini-3.8-flash in your own preset to keep it. |
 | The CLI's default Google embedding model is gemini-embedding-2 at 768 dimensions, on the Gemini API only | The Gemini API retired text-embedding-004. A store built with it must be ingested again: the vector size is the same, but vectors from two models are not comparable. Vertex AI still serves text-embedding-004 and keeps it as its default. |

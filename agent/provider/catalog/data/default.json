@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 2,
-  "revision": "2026-11-20.1",
+  "revision": "2026-11-20.2",
   "model_templates": {
     "anthropic.base": {
       "limits": {
@@ -60,6 +60,21 @@
       "limits": {
         "context_window": 1000000,
         "max_output_tokens": 65536
+      }
+    },
+    "groq.text": {
+      "modalities": {
+        "in": [
+          "text"
+        ]
+      }
+    },
+    "groq.vision": {
+      "modalities": {
+        "in": [
+          "text",
+          "image"
+        ]
       }
     },
     "ollama.local": {
@@ -533,6 +548,30 @@
     "google/text-embedding-005": {
       "extends": "embedding"
     },
+    "groq/openai/gpt-oss-120b": {
+      "extends": "groq.text",
+      "tier": "standard",
+      "limits": {
+        "context_window": 131072,
+        "max_output_tokens": 65536
+      }
+    },
+    "groq/openai/gpt-oss-20b": {
+      "extends": "groq.text",
+      "tier": "economy",
+      "limits": {
+        "context_window": 131072,
+        "max_output_tokens": 65536
+      }
+    },
+    "groq/qwen/qwen3.8-27b": {
+      "extends": "groq.vision",
+      "tier": "standard",
+      "limits": {
+        "context_window": 131072,
+        "max_output_tokens": 16384
+      }
+    },
     "ollama/all-minilm": {
       "extends": "embedding"
     },
@@ -974,6 +1013,26 @@
       "default_offering_template": "baseline.google",
       "inherit_offerings": "google-gemini"
     },
+    "groq": {
+      "surface": "openai.compatible",
+      "serves": [
+        "groq"
+      ],
+      "primary": true,
+      "auth": {
+        "type": "api_key",
+        "secret": "env:GROQ_API_KEY"
+      },
+      "transport": {
+        "base_url": "https://api.groq.com/openai/v1"
+      },
+      "files": {
+        "uri_schemes": [
+          "https"
+        ]
+      },
+      "default_offering_template": "baseline.groq"
+    },
     "ollama": {
       "surface": "ollama.native",
       "serves": [
@@ -1223,6 +1282,12 @@
       ],
       "notes": [
         "unrecognised Gemini model: thinking and pricing not assumed"
+      ]
+    },
+    "baseline.groq": {
+      "extends": "groq.chat",
+      "notes": [
+        "unrecognised Groq model: reasoning, vision and pricing not assumed"
       ]
     },
     "baseline.ollama": {
@@ -1516,6 +1581,82 @@
         "thought signatures must round-trip or multi-turn function calling degrades",
         "unpriced in this table: set Pricing via Register before enforcing a budget"
       ]
+    },
+    "groq.chat": {
+      "extends": "tool_use",
+      "add_features": [
+        "structured_output"
+      ],
+      "params": {
+        "frequency_penalty": {
+          "allowed": true
+        },
+        "max_output_tokens": {
+          "allowed": true
+        },
+        "parallel_tools": {
+          "allowed": true
+        },
+        "presence_penalty": {
+          "allowed": true
+        },
+        "seed": {
+          "allowed": true
+        },
+        "stop": {
+          "allowed": true
+        },
+        "temperature": {
+          "allowed": true
+        },
+        "top_p": {
+          "allowed": true
+        }
+      },
+      "modalities": {
+        "in": {
+          "audio": null,
+          "document": null,
+          "file": null,
+          "image": {
+            "media": [
+              "image/jpeg",
+              "image/png"
+            ],
+            "sources": [
+              "inline",
+              "uri"
+            ],
+            "max_bytes": 20971520,
+            "max_count": 3
+          },
+          "video": null
+        },
+        "tool_result": {
+          "image": "follow_up_user"
+        }
+      },
+      "structured_output": "native",
+      "notes": [
+        "served through the Groq OpenAI-compatible Chat Completions API",
+        "reasoning is returned in a reasoning field, which the chat adapter does not surface"
+      ]
+    },
+    "groq.reasoning": {
+      "extends": "groq.chat",
+      "add_features": [
+        "reasoning"
+      ],
+      "params": {
+        "reasoning.effort": {
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "allowed": true
+        }
+      }
     },
     "ollama.local": {
       "features": [
@@ -5406,6 +5547,79 @@
         "as_of": "2026-11-20",
         "source": "vendor list price"
       }
+    },
+    {
+      "model": "groq/openai/gpt-oss-120b",
+      "endpoint": "groq",
+      "extends": "groq.reasoning",
+      "params": {
+        "reasoning.effort": {
+          "required": true
+        }
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.6,
+        "cached_input_per_mtok": 0.075,
+        "as_of": "2026-11-20",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "OpenAI gpt-oss-120b",
+        "reasoning effort is low, medium or high; none is rejected by the API",
+        "a forced tool_choice (required or named) fails the request with tool_use_failed when the model answers without calling the tool"
+      ]
+    },
+    {
+      "model": "groq/openai/gpt-oss-20b",
+      "endpoint": "groq",
+      "extends": "groq.reasoning",
+      "params": {
+        "reasoning.effort": {
+          "required": true
+        }
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.075,
+        "output_per_mtok": 0.3,
+        "cached_input_per_mtok": 0.037,
+        "as_of": "2026-11-20",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "OpenAI gpt-oss-20b",
+        "reasoning effort is low, medium or high; none is rejected by the API",
+        "a forced tool_choice (required or named) fails the request with tool_use_failed when the model answers without calling the tool"
+      ]
+    },
+    {
+      "model": "groq/qwen/qwen3.8-27b",
+      "endpoint": "groq",
+      "extends": "groq.reasoning",
+      "params": {
+        "reasoning.effort": {
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "pricing": {
+        "currency": "USD",
+        "input_per_mtok": 0.8,
+        "output_per_mtok": 4,
+        "as_of": "2026-11-20",
+        "source": "vendor list price"
+      },
+      "notes": [
+        "Alibaba Qwen 3.8 27B (preview)",
+        "reasoning is off unless an effort is set",
+        "each image counts as 2,048 tokens"
+      ]
     }
   ],
   "presets": {
@@ -5430,7 +5644,7 @@
       ]
     },
     "default": {
-      "description": "The cheapest current model of each vendor: Anthropic, OpenAI, Google, Fireworks, then a local Ollama model. Without --preset the CLI runs only the first one available; naming this preset fails over across all of them",
+      "description": "The cheapest current model of each vendor: Anthropic, OpenAI, Google, Fireworks, Groq, then a local Ollama model. Without --preset the CLI runs only the first one available; naming this preset fails over across all of them",
       "chain": [
         {
           "id": "anthropic",
@@ -5454,6 +5668,12 @@
           "id": "fireworks",
           "provider": "fireworks",
           "model": "glm-5p3-flash",
+          "optional": true
+        },
+        {
+          "id": "groq",
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
           "optional": true
         },
         {
@@ -5505,6 +5725,26 @@
           "id": "primary",
           "provider": "google",
           "model": "gemini-4-hydrogen"
+        }
+      ]
+    },
+    "groq": {
+      "description": "Groq only, its cheapest open model",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b"
+        }
+      ]
+    },
+    "groq-quality": {
+      "description": "Groq only, its larger open model",
+      "chain": [
+        {
+          "id": "primary",
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b"
         }
       ]
     },

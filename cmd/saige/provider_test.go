@@ -33,6 +33,7 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
 	t.Setenv("FIREWORKS_API_KEY", "")
+	t.Setenv("GROQ_API_KEY", "")
 	// No Anthropic login either: an `ant auth login` profile on the
 	// machine running the tests must not count as a credential.
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
