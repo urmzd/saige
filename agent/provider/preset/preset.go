@@ -337,6 +337,9 @@ func credentials(e catalog.ResolvedEntry, getenv func(string) string) (string, b
 			return "", false
 		}
 	}
+	if e.Provider == provider.Anthropic && e.BaseURL == "" && provider.AnthropicLogin(getenv) {
+		return "", false
+	}
 	return "", len(provider.APIKeyEnv[e.Provider]) > 0
 }
 
@@ -347,7 +350,11 @@ func credentialHint(e catalog.ResolvedEntry) string {
 	if e.Provider == provider.Google && e.Vertex != nil {
 		return "set " + provider.EnvCloudProject + " (vertex)"
 	}
-	return "set " + strings.Join(provider.APIKeyEnv[e.Provider], " or ")
+	hint := "set " + strings.Join(provider.APIKeyEnv[e.Provider], " or ")
+	if e.Provider == provider.Anthropic {
+		hint += ", or run `ant auth login`"
+	}
+	return hint
 }
 
 func config(e catalog.ResolvedEntry, key string, o Options) provider.Config {

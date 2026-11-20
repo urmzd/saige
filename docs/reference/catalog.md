@@ -478,11 +478,13 @@ The shipped presets:
 | --- | --- |
 | `default` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, Fireworks glm-5p3-flash, then a local qwen3.5:4b (or another pulled model) |
 | `anthropic`, `openai`, `google`, `fireworks` | claude-haiku-5-5, gpt-6-luna, gemini-3.1-flash-lite, glm-5p3-flash |
-| `anthropic-quality`, `openai-quality`, `google-quality`, `fireworks-quality` | claude-sonnet-5-5, gpt-6.2-sol, gemini-3.8-flash, kimi-k3p1-pro |
+| `anthropic-quality`, `openai-quality`, `google-quality`, `fireworks-quality` | claude-sonnet-5-5, gpt-6.2-sol, gemini-4-hydrogen, kimi-k3p1-pro |
 | `vertex` | gemini-3.1-flash-lite through Vertex AI |
 | `ollama` | a local qwen3.5:4b, or another pulled model |
 
 `--provider vertex` runs the `vertex` preset, or with `--model` a one-entry Google chain served through Vertex AI. When `GOOGLE_GENAI_USE_VERTEXAI=true` and neither the Anthropic nor the OpenAI key is set, the CLI detects `vertex` as the provider, and `--embed-provider` defaults to it as well.
+
+An Anthropic entry needs no `ANTHROPIC_API_KEY` when the Anthropic SDK can authenticate by itself: after `ant auth login`, with `ANTHROPIC_AUTH_TOKEN`, or with workload identity federation. `provider.AnthropicLogin` reports whether one of them is present, and the CLI then detects Anthropic as it does with a key. The key wins when both are set, and an entry with a `base_url` always needs a key, so a login is never sent to a gateway.
 
 `--base-url` applies to the entries of the selected provider: `--provider` when given, otherwise the one provider the chain uses. On a chain that spans several vendors without `--provider` it is an error, never ignored.
 
@@ -499,7 +501,7 @@ saige catalog reconcile --ignore-file .github/catalog-ignore.txt --write agent/p
 saige --format json catalog reconcile                    # machine-readable report
 ```
 
-A provider is checked when its credentials are set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. Fireworks is not reconciled: its list endpoint returns full `accounts/...` IDs, which the short catalog keys do not match, so its rows are checked by hand. The report lists:
+A provider is checked when its credentials are set: `ANTHROPIC_API_KEY` or an Anthropic login (below), `OPENAI_API_KEY`, and for Google either `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) or `GOOGLE_GENAI_USE_VERTEXAI=true` with `GOOGLE_CLOUD_PROJECT`. A provider without credentials is reported as skipped. Fireworks is not reconciled: its list endpoint returns full `accounts/...` IDs, which the short catalog keys do not match, so its rows are checked by hand. The report lists:
 
 | Finding | Meaning | Drift |
 | --- | --- | --- |

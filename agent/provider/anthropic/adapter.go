@@ -170,7 +170,12 @@ func New(cfg Config, opts ...Option) (*Adapter, error) {
 	if a.maxTokens <= 0 {
 		return nil, fmt.Errorf("%w: anthropic: max tokens must be positive", types.ErrInvalidConfig)
 	}
-	clientOpts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
+	// Without a key the SDK resolves the credential itself: an auth token,
+	// workload identity, or the profile `ant auth login` wrote.
+	var clientOpts []option.RequestOption
+	if cfg.APIKey != "" {
+		clientOpts = append(clientOpts, option.WithAPIKey(cfg.APIKey))
+	}
 	if a.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(a.baseURL))
 	}

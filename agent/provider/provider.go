@@ -67,8 +67,9 @@ type Config struct {
 	// Model is the provider's model identifier. A "provider/" prefix naming a
 	// known provider is accepted and removed.
 	Model types.ModelID
-	// APIKey overrides the environment. Ollama needs none and rejects one,
-	// since its adapter sends no key. OpenAI with a
+	// APIKey overrides the environment. Anthropic runs without one when the
+	// SDK can authenticate by itself (see AnthropicLogin). Ollama needs
+	// none and rejects one, since its adapter sends no key. OpenAI with a
 	// BaseURL may also run without one, for compatible servers that do not
 	// check keys.
 	APIKey string
@@ -397,9 +398,19 @@ func credentialsFor(caps types.ModelCapabilities, name types.ProviderName, model
 		}
 		key = getenv(env)
 	}
+	if key == "" && name == Anthropic && cfg.BaseURL == "" && AnthropicLogin(getenv) {
+		// The SDK authenticates from an `ant auth login` profile, an auth
+		// token or workload identity. A gateway named by BaseURL still
+		// needs a key, so a login is never sent to another host.
+		return "", nil, nil
+	}
 	if key == "" && name != Ollama && (name != OpenAI || cfg.BaseURL == "") {
+		hint := strings.Join(APIKeyEnv[name], " or ")
+		if name == Anthropic {
+			hint += ", or run `ant auth login`"
+		}
 		return "", nil, &types.ProviderError{Provider: string(name), Model: model, Kind: types.ErrorKindAuth,
-			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, strings.Join(APIKeyEnv[name], " or "))}
+			Err: fmt.Errorf("%w: no API key: set Config.APIKey or %s", types.ErrAuth, hint)}
 	}
 	return key, nil, nil
 }

@@ -33,6 +33,12 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
 	t.Setenv("FIREWORKS_API_KEY", "")
+	// No Anthropic login either: an `ant auth login` profile on the
+	// machine running the tests must not count as a credential.
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_PROFILE", "")
+	t.Setenv("ANTHROPIC_FEDERATION_RULE_ID", "")
+	t.Setenv("ANTHROPIC_CONFIG_DIR", t.TempDir())
 	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
 }
 

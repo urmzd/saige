@@ -43,8 +43,10 @@ func TestEmbedderTaskTypeAndErrors(t *testing.T) {
 		status        int
 		body          string
 		wantTask      string
+		wantDims      float64
 		wantTransient bool
 	}{
+		{name: "dimensions", opts: []EmbedderOption{WithEmbedDimensions(768)}, status: 200, body: ok, wantDims: 768},
 		{name: "query purpose", purpose: types.PurposeQuery, status: 200, body: ok, wantTask: "RETRIEVAL_QUERY"},
 		{name: "document purpose", purpose: types.PurposeDocument, status: 200, body: ok, wantTask: "RETRIEVAL_DOCUMENT"},
 		{name: "no purpose sends none", status: 200, body: ok},
@@ -81,6 +83,9 @@ func TestEmbedderTaskTypeAndErrors(t *testing.T) {
 			got, _ := reqs[0].(map[string]any)["taskType"].(string)
 			if got != tt.wantTask {
 				t.Fatalf("taskType = %q, want %q (body %v)", got, tt.wantTask, seen[0])
+			}
+			if dims, _ := reqs[0].(map[string]any)["outputDimensionality"].(float64); dims != tt.wantDims {
+				t.Fatalf("outputDimensionality = %v, want %v (body %v)", dims, tt.wantDims, seen[0])
 			}
 		})
 	}
