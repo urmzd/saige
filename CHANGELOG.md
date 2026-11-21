@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.48.0 (2026-11-21)
+
+### Features
+
+- **agent**: Prompt runs one text message, with an offline quickstart (#161) ([9301120](https://github.com/urmzd/saige/commit/930112046568680d8609d6718fc6706aa83fd9f2))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.47.0...v0.48.0)
+
+
 ## 0.46.1 (2026-11-20)
 
 ### Bug Fixes
