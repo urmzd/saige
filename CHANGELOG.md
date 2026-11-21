@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.47.0 (2026-11-21)
+
+### Features
+
+- **isolation**: a request may choose its image, and a leaser warms one ahead (#173) ([bcab4ff](https://github.com/urmzd/saige/commit/bcab4ff0ddddf3105e896f5d5523ce6f0d0e5bae))
+
+### Bug Fixes
+
+- **mention**: drop the comma after a removed first address (#174) ([d9a04ba](https://github.com/urmzd/saige/commit/d9a04ba68d6965726be6f7f43306adce1b8f0761))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.46.2...v0.47.0)
+
+
 ## 0.46.1 (2026-11-20)
 
 ### Bug Fixes
