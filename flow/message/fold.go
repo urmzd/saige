@@ -176,9 +176,9 @@ func appendFragment(buf **strings.Builder, current, fragment string) string {
 	if *buf == nil {
 		*buf = new(strings.Builder)
 		(*buf).Grow(len(current) + len(fragment))
-		(*buf).WriteString(current)
+		_, _ = (*buf).WriteString(current) // a strings.Builder write never fails
 	}
-	(*buf).WriteString(fragment)
+	_, _ = (*buf).WriteString(fragment)
 	return (*buf).String()
 }
 
