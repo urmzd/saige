@@ -37,7 +37,7 @@ func TestFindReturnsTheFirstTokenTheSetAccepts(t *testing.T) {
 	}
 }
 
-func TestStrippingRemovesEveryMentionOfTheTaggedAgentAndNoOther(t *testing.T) {
+func TestStrippingTakesOutOnlyTheAddressAndKeepsTheWholeMessage(t *testing.T) {
 	tests := []struct {
 		name  string
 		text  string
@@ -63,16 +63,16 @@ func TestStrippingRemovesEveryMentionOfTheTaggedAgentAndNoOther(t *testing.T) {
 			want:  "summarize this",
 		},
 		{
-			name:  "mid sentence leaves one space",
+			name:  "a mention inside a sentence stays where it was written",
 			text:  "please ask @docs-bot to summarize",
 			agent: "docs-bot",
-			want:  "please ask to summarize",
+			want:  "please ask @docs-bot to summarize",
 		},
 		{
-			name:  "every occurrence goes",
+			name:  "only the address goes: later mentions are part of the message",
 			text:  "@docs-bot summarize, then @docs-bot post it and cc @docs-bot",
 			agent: "docs-bot",
-			want:  "summarize, then post it and cc",
+			want:  "summarize, then @docs-bot post it and cc @docs-bot",
 		},
 		{
 			name:  "other mentions survive untouched",
@@ -81,16 +81,16 @@ func TestStrippingRemovesEveryMentionOfTheTaggedAgentAndNoOther(t *testing.T) {
 			want:  "ask @urmzd and @triage about it",
 		},
 		{
-			name:  "mention at end of text",
+			name:  "a mention at the end of the text stays",
 			text:  "who can help with this @docs-bot",
 			agent: "docs-bot",
-			want:  "who can help with this",
+			want:  "who can help with this @docs-bot",
 		},
 		{
-			name:  "punctuation around the mention is kept",
+			name:  "a mention inside punctuation stays",
 			text:  "(@docs-bot) please look",
 			agent: "docs-bot",
-			want:  "() please look",
+			want:  "(@docs-bot) please look",
 		},
 		{
 			name:  "an email address is not a mention",
@@ -99,16 +99,22 @@ func TestStrippingRemovesEveryMentionOfTheTaggedAgentAndNoOther(t *testing.T) {
 			want:  "mail urmzd@example.com about it",
 		},
 		{
-			name:  "blockquote structure is preserved",
+			name:  "a mention that opens a later paragraph stays, with the quote above it",
 			text:  "> the build broke\n\n@docs-bot why?",
 			agent: "docs-bot",
-			want:  "> the build broke\n\nwhy?",
+			want:  "> the build broke\n\n@docs-bot why?",
 		},
 		{
 			name:  "indentation and code fences are not reflowed",
 			text:  "@docs-bot fix:\n\n```go\n\tif err != nil {\n\t\treturn err\n\t}\n```",
 			agent: "docs-bot",
 			want:  "fix:\n\n```go\n\tif err != nil {\n\t\treturn err\n\t}\n```",
+		},
+		{
+			name:  "a name quoted in code calls nobody and is left alone",
+			text:  "run `@docs-bot help` to see the commands",
+			agent: "docs-bot",
+			want:  "run `@docs-bot help` to see the commands",
 		},
 		{
 			name:  "text with no mention is returned unchanged",
