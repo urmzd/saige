@@ -61,10 +61,10 @@ func (p *Pool) initLocked() {
 
 // Identity returns a stable key for the connection a spec describes: SHA-256
 // over the transport fields, the header names with a hash of their values,
-// the allowlist and the prefix. Two specs with the same identity share one
+// the allowlist, the tool pins and the prefix. Two specs with the same identity share one
 // session in a Pool.
 //
-// The allowlist is part of the key on purpose: two agents restricted to
+// The allowlist and pins are part of the key on purpose: two agents restricted to
 // different tool subsets must never share a session and its tool list.
 //
 // Policy fields (Gate, credentials, HTTPClient, retries, limits, timeouts and
@@ -81,11 +81,16 @@ func (s ServerSpec) Identity() string {
 	sort.Strings(headers)
 	allowed := append([]string(nil), s.AllowedTools...)
 	sort.Strings(allowed)
+	pins := make([]string, 0, len(s.PinnedTools))
+	for name, fp := range s.PinnedTools {
+		pins = append(pins, name+"="+fp)
+	}
+	sort.Strings(pins)
 	raw, _ := json.Marshal(struct {
 		Name, Command, WorkDir, URL, Prefix string
-		Args, Env, Headers, Allowed         []string
+		Args, Env, Headers, Allowed, Pins   []string
 		TrustHints                          bool
-	}{s.Name, s.Command, s.WorkDir, s.URL, s.prefix(), s.Args, s.Env, headers, allowed, s.TrustHints})
+	}{s.Name, s.Command, s.WorkDir, s.URL, s.prefix(), s.Args, s.Env, headers, allowed, pins, s.TrustHints})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

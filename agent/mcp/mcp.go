@@ -131,6 +131,15 @@ type ServerSpec struct {
 	// Empty imports everything advertised, which for a remote server means
 	// trusting a list that can change between connections.
 	AllowedTools []string
+	// PinnedTools maps remote tool names (before prefixing) to the
+	// fingerprint each was approved with, as Catalog.Fingerprints records it.
+	// When set, only a tool whose current name, description and input schema
+	// still match its pin is imported. A tool the server added, or one it
+	// rewrote under the same name, is withheld until it is pinned again: a
+	// changed description is how a server that was trusted once turns
+	// hostile. Calls to a withheld tool are refused locally. PinDrift reports
+	// what was withheld. Empty imports tools without checking them.
+	PinnedTools map[string]string
 	// Gate is applied to this server's tools. Compose it into the agent's gate
 	// via Pool.Gate. nil means no server-specific policy.
 	Gate types.ToolGate
@@ -403,6 +412,9 @@ func (c *Client) Tools(ctx context.Context) ([]types.Tool, error) {
 		if len(allowed) > 0 && !allowed[t.Name] {
 			continue
 		}
+		if !c.pinned(t) {
+			continue
+		}
 		st := &serverTool{
 			client:     c,
 			remote:     t.Name,
@@ -625,8 +637,37 @@ func (c *Client) offers(remote string) bool {
 	if c.catalog == nil {
 		return !c.withdrawn[remote]
 	}
-	_, ok := c.byName[remote]
-	return ok
+	t, ok := c.byName[remote]
+	return ok && c.pinned(t)
+}
+
+// pinned reports whether a catalog tool may be imported under the spec's
+// pins. Without pins every tool may.
+func (c *Client) pinned(t CatalogTool) bool {
+	if len(c.spec.PinnedTools) == 0 {
+		return true
+	}
+	want, ok := c.spec.PinnedTools[t.Name]
+	return ok && want == t.Fingerprint
+}
+
+// PinDrift compares the server's current catalog with the spec's pins:
+// tools added since pinning, pinned tools no longer listed, and tools whose
+// fingerprint changed. Added and changed tools are the ones Tools withholds.
+// Without pins it reports no drift.
+func (c *Client) PinDrift(ctx context.Context) (CatalogDrift, error) {
+	if len(c.spec.PinnedTools) == 0 {
+		return CatalogDrift{}, nil
+	}
+	cat, err := c.Catalog(ctx)
+	if err != nil {
+		return CatalogDrift{}, err
+	}
+	pinned := Catalog{Server: cat.Server}
+	for name, fp := range c.spec.PinnedTools {
+		pinned.Tools = append(pinned.Tools, CatalogTool{Name: name, Fingerprint: fp})
+	}
+	return DiffCatalogs(pinned, cat), nil
 }
 
 // isIdempotent reports whether a remote tool may be repeated after an
