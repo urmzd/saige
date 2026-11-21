@@ -23,7 +23,7 @@ type HTTP struct {
 	MaxBytes int64
 	// ContinueOnError keeps fetching the remaining URLs after one fails. Fetch
 	// then returns the documents that succeeded together with the joined
-	// per-URL errors.
+	// per-URL errors, each a *types.SyncError naming its URL.
 	ContinueOnError bool
 }
 
@@ -49,7 +49,9 @@ func (s *HTTP) Fetch(ctx context.Context) ([]types.RawDocument, error) {
 			if !s.ContinueOnError || ctx.Err() != nil {
 				return nil, err
 			}
-			errs = append(errs, err)
+			// Attribute the failure to its URL so a sync can report it and
+			// keep that URL's stored document from being pruned.
+			errs = append(errs, &types.SyncError{SourceURI: url, Err: err})
 			continue
 		}
 		docs = append(docs, doc)

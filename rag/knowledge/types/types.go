@@ -30,6 +30,11 @@ var (
 	// it wrapped together with a usable IngestResult; callers can detect it
 	// with errors.Is(err, ErrPartialEpisode).
 	ErrPartialEpisode = errors.New("partial episode ingest")
+
+	// ErrGroupScopeUnsupported indicates a group-scoped read was asked of a
+	// graph or store that cannot filter by group. It is returned instead of
+	// an unscoped read, which would expose other groups' data.
+	ErrGroupScopeUnsupported = errors.New("group-scoped graph reads not supported")
 )
 
 // --- Graph interface (high-level, orchestrated) ---
@@ -124,12 +129,27 @@ type GroupScopedStore interface {
 	FindEntitiesByFuzzyNameInGroup(ctx context.Context, groupID, name string, limit int) ([]Entity, error)
 }
 
+// GroupScopedGraphReader is an optional Graph/Store extension that reads
+// the graph within one tenant group. groupID is matched exactly: "" is the
+// default group, not every group. GetNodeInGroup returns ErrNodeNotFound
+// for an entity outside the group. Callers that hold a group must use it
+// instead of GetGraph and GetNode, which read every group, and must fail
+// rather than fall back when the graph does not implement it
+// (ErrGroupScopeUnsupported).
+type GroupScopedGraphReader interface {
+	GetGraphInGroup(ctx context.Context, groupID string, limit int64) (*GraphData, error)
+	GetNodeInGroup(ctx context.Context, groupID, id string, depth int) (*NodeDetail, error)
+}
+
 // --- Search options ---
 
 // SearchOptions holds parsed search options.
 type SearchOptions struct {
 	GroupID string
 	Limit   int
+	// Query is the query text. The engine sets it for every store search,
+	// so an embedding search can also rank facts by their text.
+	Query string
 	// ValidAt, when set, returns the relations that were valid at that
 	// instant (valid_at <= t and not yet invalidated at t) instead of the
 	// currently valid ones.

@@ -74,3 +74,10 @@ func TestBuildExtractionPrompt_JSONFormat(t *testing.T) {
 		t.Error("prompt should contain relations JSON key")
 	}
 }
+
+func TestBuildExtractionPrompt_EndpointsMustBeListedEntities(t *testing.T) {
+	prompt := BuildExtractionPrompt("Alice works at Acme", nil)
+	if !strings.Contains(prompt, `must be the exact "name" of an entity listed in "entities"`) {
+		t.Error("prompt must require relation source/target to name listed entities")
+	}
+}

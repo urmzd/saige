@@ -12,7 +12,8 @@ func BuildExtractionPrompt(text string, ont *types.Ontology) string {
 	var b strings.Builder
 	b.WriteString(`Extract entities and relationships from this text. Return ONLY valid JSON with no extra text:
 {"entities": [{"name": "...", "type": "...", "summary": "..."}],
- "relations": [{"source": "...", "target": "...", "type": "...", "fact": "..."}]}`)
+ "relations": [{"source": "...", "target": "...", "type": "...", "fact": "..."}]}
+Every relation's "source" and "target" must be the exact "name" of an entity listed in "entities".`)
 
 	if ont != nil && (len(ont.EntityTypes) > 0 || len(ont.RelationTypes) > 0) {
 		b.WriteString("\n\nKnown entity types: ")

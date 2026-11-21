@@ -12,4 +12,5 @@ func init() {
 	agenttypes.RegisterWireSentinel("rag.knowledge.node_not_found", ErrNodeNotFound)
 	agenttypes.RegisterWireSentinel("rag.knowledge.partial_episode", ErrPartialEpisode)
 	agenttypes.RegisterWireSentinel("rag.knowledge.store_not_ready", ErrStoreNotReady)
+	agenttypes.RegisterWireSentinel("rag.knowledge.group_scope_unsupported", ErrGroupScopeUnsupported)
 }

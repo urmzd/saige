@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,11 +332,102 @@ func TestIngestEpisode_RelationSkippedWhenEntityMissing(t *testing.T) {
 	eng := New(WithStore(newMockStore()), WithExtractor(ext))
 	result, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "test"})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// The dropped relation must be reported, not silently discarded.
+	if !errors.Is(err, types.ErrPartialEpisode) {
+		t.Fatalf("err = %v, want ErrPartialEpisode for the unmatched target", err)
+	}
+	if !strings.Contains(err.Error(), `target "Bob"`) {
+		t.Errorf("err = %v, want it to name the unmatched target", err)
 	}
 	if len(result.EpisodicEdges) != 0 {
 		t.Errorf("relations = %d, want 0 (target entity missing)", len(result.EpisodicEdges))
+	}
+}
+
+func TestIngestEpisode_RelationEndpointMatchedByNormalizedName(t *testing.T) {
+	ext := &mockExtractor{
+		entities: []types.ExtractedEntity{
+			{Name: "Alice Smith", Type: "Person"},
+			{Name: "Acme Corp.", Type: "Organization"},
+		},
+		relations: []types.ExtractedRelation{
+			{Source: "alice smith", Target: "Acme Corp", Type: "works_at", Fact: "Alice works at Acme"},
+		},
+	}
+	eng := New(WithStore(newMockStore()), WithExtractor(ext))
+	result, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.EpisodicEdges) != 1 {
+		t.Fatalf("relations = %d, want 1 matched by normalized name", len(result.EpisodicEdges))
+	}
+	edge := result.EpisodicEdges[0]
+	if edge.SourceUUID != "entity-Alice Smith" || edge.TargetUUID != "entity-Acme Corp." {
+		t.Errorf("edge = %s->%s, want entity-Alice Smith->entity-Acme Corp.", edge.SourceUUID, edge.TargetUUID)
+	}
+}
+
+func TestIngestEpisode_FuzzyMergeGuards(t *testing.T) {
+	tests := []struct {
+		name      string
+		existing  types.Entity
+		incoming  types.ExtractedEntity
+		wantMerge bool
+	}{
+		{"C++ vs C", types.Entity{UUID: "e1", Name: "C", Type: "Language"}, types.ExtractedEntity{Name: "C++", Type: "Language"}, false},
+		{"iPhone 14 vs 15", types.Entity{UUID: "e1", Name: "iPhone 14", Type: "Product"}, types.ExtractedEntity{Name: "iPhone 15", Type: "Product"}, false},
+		{"Model 3 vs Model S", types.Entity{UUID: "e1", Name: "Model 3", Type: "Product"}, types.ExtractedEntity{Name: "Model S", Type: "Product"}, false},
+		{"punctuation only", types.Entity{UUID: "e1", Name: "???", Type: "Thing"}, types.ExtractedEntity{Name: "!!!", Type: "Thing"}, false},
+		{"different type", types.Entity{UUID: "e1", Name: "Jordan Smith", Type: "Person"}, types.ExtractedEntity{Name: "Jordan Smith Co", Type: "Organization"}, false},
+		{"same name different type", types.Entity{UUID: "e1", Name: "Amazon", Type: "River"}, types.ExtractedEntity{Name: "amazon", Type: "Organization"}, false},
+		{"same type typo", types.Entity{UUID: "e1", Name: "John Smith", Type: "Person"}, types.ExtractedEntity{Name: "Jon Smith", Type: "Person"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockStore()
+			store.findByFuzzyName = func(context.Context, string, int) ([]types.Entity, error) {
+				return []types.Entity{tt.existing}, nil
+			}
+			var upserted string
+			store.upsertEntityFunc = func(_ context.Context, ent *types.ExtractedEntity, _ []float32) (string, error) {
+				upserted = ent.Name
+				return "id", nil
+			}
+			eng := New(WithStore(store), WithExtractor(&mockExtractor{entities: []types.ExtractedEntity{tt.incoming}}))
+			if _, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x"}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			merged := upserted == tt.existing.Name
+			if merged != tt.wantMerge {
+				t.Errorf("upserted %q: merged = %v, want %v", upserted, merged, tt.wantMerge)
+			}
+		})
+	}
+}
+
+func TestIngestEpisode_DedupLookupErrorsArePartial(t *testing.T) {
+	store := newMockStore()
+	store.findByNameType = func(context.Context, string, string) ([]types.Entity, error) {
+		return nil, errors.New("name lookup down")
+	}
+	store.findByFuzzyName = func(context.Context, string, int) ([]types.Entity, error) {
+		return nil, errors.New("fuzzy lookup down")
+	}
+	eng := New(WithStore(store), WithExtractor(&mockExtractor{
+		entities: []types.ExtractedEntity{{Name: "Alice", Type: "Person"}},
+	}))
+	result, err := eng.IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x"})
+	if !errors.Is(err, types.ErrPartialEpisode) {
+		t.Fatalf("err = %v, want ErrPartialEpisode", err)
+	}
+	for _, want := range []string{"name lookup down", "fuzzy lookup down"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
+	}
+	if result == nil || len(result.EntityNodes) != 1 {
+		t.Fatalf("result = %+v, want the entity still stored", result)
 	}
 }
 
@@ -920,5 +1012,67 @@ func TestSupportsDocumentDeletion(t *testing.T) {
 				t.Errorf("DeleteDocumentEpisodes() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// groupGraphStore is a mockStore that also reads the graph per group.
+type groupGraphStore struct {
+	*mockStore
+	gotGroup string
+}
+
+func (s *groupGraphStore) GetGraphInGroup(_ context.Context, groupID string, _ int64) (*types.GraphData, error) {
+	s.gotGroup = groupID
+	return &types.GraphData{}, nil
+}
+
+func (s *groupGraphStore) GetNodeInGroup(_ context.Context, groupID, _ string, _ int) (*types.NodeDetail, error) {
+	s.gotGroup = groupID
+	return nil, types.ErrNodeNotFound
+}
+
+func TestGroupScopedGraphReads(t *testing.T) {
+	scoped := &groupGraphStore{mockStore: newMockStore()}
+	eng := New(WithStore(scoped))
+	if _, err := eng.GetGraphInGroup(context.Background(), "tenant-a", 10); err != nil {
+		t.Fatal(err)
+	}
+	if scoped.gotGroup != "tenant-a" {
+		t.Errorf("store saw group %q, want tenant-a", scoped.gotGroup)
+	}
+	if _, err := eng.GetNodeInGroup(context.Background(), "tenant-b", "x", 1); !errors.Is(err, types.ErrNodeNotFound) {
+		t.Errorf("err = %v, want ErrNodeNotFound", err)
+	}
+	if scoped.gotGroup != "tenant-b" {
+		t.Errorf("store saw group %q, want tenant-b", scoped.gotGroup)
+	}
+
+	// A store that cannot scope must fail closed, never read every group.
+	plain := New(WithStore(newMockStore()))
+	if _, err := plain.GetGraphInGroup(context.Background(), "tenant-a", 10); !errors.Is(err, types.ErrGroupScopeUnsupported) {
+		t.Errorf("GetGraphInGroup err = %v, want ErrGroupScopeUnsupported", err)
+	}
+	if _, err := plain.GetNodeInGroup(context.Background(), "tenant-a", "x", 1); !errors.Is(err, types.ErrGroupScopeUnsupported) {
+		t.Errorf("GetNodeInGroup err = %v, want ErrGroupScopeUnsupported", err)
+	}
+}
+
+func TestSearchFactsPassesQueryToStore(t *testing.T) {
+	store := newMockStore()
+	var embQuery, textQuery string
+	store.searchEmbeddingFn = func(_ context.Context, _ []float32, o *types.SearchOptions) ([]types.ScoredFact, error) {
+		embQuery = o.Query
+		return nil, nil
+	}
+	store.searchTextFn = func(_ context.Context, _ string, o *types.SearchOptions) ([]types.ScoredFact, error) {
+		textQuery = o.Query
+		return nil, nil
+	}
+	eng := New(WithStore(store), WithEmbedder(&mockEmbedder{}))
+	if _, err := eng.SearchFacts(context.Background(), "who works at acme"); err != nil {
+		t.Fatal(err)
+	}
+	if embQuery != "who works at acme" || textQuery != "who works at acme" {
+		t.Errorf("store queries = %q / %q, want the query text for fact ranking", embQuery, textQuery)
 	}
 }

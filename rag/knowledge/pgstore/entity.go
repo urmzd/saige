@@ -45,6 +45,19 @@ func (s *Store) GetEntity(ctx context.Context, id string) (*types.Entity, error)
 	return &e, nil
 }
 
+// getEntityInGroup is GetEntity for an entity that must belong to groupID.
+func (s *Store) getEntityInGroup(ctx context.Context, groupID, id string) (*types.Entity, error) {
+	var e types.Entity
+	err := s.pool.QueryRow(ctx, entityGetGroupSQL, id, groupID).Scan(&e.UUID, &e.Name, &e.Type, &e.Summary)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("%w: %s", types.ErrNodeNotFound, id)
+		}
+		return nil, err
+	}
+	return &e, nil
+}
+
 // FindEntitiesByNameType finds entities with exact name+type match.
 func (s *Store) FindEntitiesByNameType(ctx context.Context, name, entityType string) ([]types.Entity, error) {
 	rows, err := s.pool.Query(ctx, entityFindByNameTypeSQL, name, entityType)

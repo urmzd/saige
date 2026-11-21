@@ -488,12 +488,14 @@ func (s *safeStore) UpsertEntity(ctx context.Context, e *types.ExtractedEntity, 
 	return s.mockStore.UpsertEntity(ctx, e, v)
 }
 
-func TestIngestEpisode_FuzzyMergeAcrossTypesReusesExistingEntity(t *testing.T) {
+// A fuzzy merge requires the same entity type; TestIngestEpisode_FuzzyMergeGuards
+// covers the cross-type case, which must not merge.
+func TestIngestEpisode_FuzzyMergeSameTypeReusesExistingEntity(t *testing.T) {
 	store := newGroupScopedMockStore()
 	existing := types.Entity{UUID: "acme-uuid", Name: "Acme Corporation", Type: "Company"}
 	store.byGroup["g"] = map[string]types.Entity{"Acme Corporation|Company": existing}
 
-	ext := &mockExtractor{entities: []types.ExtractedEntity{{Name: "Acme Corporaton", Type: "Organization", Summary: "newer"}}}
+	ext := &mockExtractor{entities: []types.ExtractedEntity{{Name: "Acme Corporaton", Type: "company", Summary: "newer"}}}
 	result, err := New(WithStore(store), WithExtractor(ext)).
 		IngestEpisode(context.Background(), &types.EpisodeInput{Body: "x", GroupID: "g"})
 	if err != nil {

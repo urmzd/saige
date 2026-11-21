@@ -93,7 +93,8 @@ func TestHyDEPartialFailures(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "one failure keeps the rest", llm: &scriptedLLM{replies: []string{"answer"}, failOn: map[int]bool{1: true}}, want: 3, wantErr: true},
+		{name: "one failure keeps the rest", llm: &scriptedLLM{replies: []string{"a1", "a2", "a3"}, failOn: map[int]bool{1: true}}, want: 3, wantErr: true},
+		{name: "identical hypotheticals collapse", llm: &scriptedLLM{replies: []string{"same"}}, want: 2},
 		{name: "all fail keeps raw query", llm: &scriptedLLM{replies: []string{"x"}, failOn: map[int]bool{0: true, 1: true, 2: true}}, want: 1, wantErr: true},
 		{name: "blank hypotheticals dropped", llm: &scriptedLLM{replies: []string{"  \n", "answer"}}, want: 2},
 	}

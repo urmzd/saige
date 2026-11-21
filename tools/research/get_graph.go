@@ -11,12 +11,20 @@ import (
 
 // GetGraphTool implements types.Tool for knowledge graph visualization.
 type GetGraphTool struct {
-	graph kgtypes.Graph
+	graph   kgtypes.Graph
+	groupID string
 }
 
 // NewGetGraphTool returns a tool that reads a node and its neighbors from g.
 func NewGetGraphTool(g kgtypes.Graph) *GetGraphTool {
 	return &GetGraphTool{graph: g}
+}
+
+// WithGroupID limits the tool to one graph group. The graph must implement
+// kgtypes.GroupScopedGraphReader; otherwise Execute fails instead of reading
+// every group.
+func (t *GetGraphTool) WithGroupID(id string) *GetGraphTool {
+	return &GetGraphTool{graph: t.graph, groupID: id}
 }
 
 // Definition implements types.Tool.
@@ -41,7 +49,7 @@ func (t *GetGraphTool) Execute(ctx context.Context, args map[string]any) (string
 		limit = int64(l)
 	}
 
-	data, err := t.graph.GetGraph(ctx, limit)
+	data, err := t.read(ctx, limit)
 	if err != nil {
 		return "", fmt.Errorf("get_knowledge_graph: %w", err)
 	}
@@ -51,4 +59,16 @@ func (t *GetGraphTool) Execute(ctx context.Context, args map[string]any) (string
 		return "Knowledge graph is empty.", nil
 	}
 	return text, nil
+}
+
+// read returns the graph, scoped to the tool's group when one is set.
+func (t *GetGraphTool) read(ctx context.Context, limit int64) (*kgtypes.GraphData, error) {
+	if t.groupID == "" {
+		return t.graph.GetGraph(ctx, limit)
+	}
+	gs, ok := t.graph.(kgtypes.GroupScopedGraphReader)
+	if !ok {
+		return nil, fmt.Errorf("graph %T: %w", t.graph, kgtypes.ErrGroupScopeUnsupported)
+	}
+	return gs.GetGraphInGroup(ctx, t.groupID, limit)
 }

@@ -19,9 +19,12 @@ import (
 // ln2 is the natural logarithm of 2, used for half-life exponential decay.
 const ln2 = 0.6931471805599453
 
-// applyRecency multiplies each hit's fused score by an exponential time-decay
-// factor blended by the configured weight. It is a no-op unless WithRecency
-// supplied a positive half-life, preserving the default (recency-free) ranking.
+// applyRecency lowers each hit's score by an exponential time-decay factor
+// blended by the configured weight: score - weight*(1-decay)*|score|. For a
+// positive score that is score*(1-weight+weight*decay). Using |score| keeps
+// older hits lower when scores are negative (z-score fusion, cross-encoder
+// logits), where multiplying would pull them up toward zero. It is a no-op
+// unless WithRecency supplied a positive half-life.
 func applyRecency(hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) {
 	if cfg.RecencyHalfLife <= 0 {
 		return
@@ -40,7 +43,7 @@ func applyRecency(hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) {
 	halfLife := float64(cfg.RecencyHalfLife)
 	for i := range hits {
 		recency := recencyFactor(hits[i].Timestamp, now, halfLife)
-		hits[i].Score = (1-weight)*hits[i].Score + weight*hits[i].Score*recency
+		hits[i].Score -= weight * (1 - recency) * math.Abs(hits[i].Score)
 	}
 }
 
@@ -109,7 +112,7 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 	}
 
 	// Step 2: Retrieve a candidate pool from every retriever for every query.
-	candidateK := candidatePoolSize(cfg, p.cfg.Reranker != nil)
+	candidateK := candidatePoolSize(cfg, p.cfg.Reranker != nil, len(p.cfg.Retrievers)*len(queries) > 1)
 	searchOpts := &ragtypes.SearchOptions{
 		ContentTypes:    cfg.ContentTypes,
 		Limit:           candidateK,
@@ -141,10 +144,23 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 			ragtypes.Attr(ragtypes.AttrCandidates, len(merged)))
 		reranked, err := p.cfg.Reranker.Rerank(stageCtx, query, merged)
 		endSpan(stage, err)
-		if err != nil {
-			return nil, fmt.Errorf("rerank: %w", err)
+		switch {
+		case err == nil:
+			merged = reranked
+			// A reranker that rescores hits discards the recency blended
+			// into the fused scores, so blend it into the new scores.
+			if r, ok := p.cfg.Reranker.(ragtypes.ScoringReranker); ok && r.ReplacesScores() && cfg.RecencyHalfLife > 0 {
+				applyRecency(merged, cfg)
+				sortByScore(merged)
+			}
+		case ctx.Err() != nil:
+			return nil, fmt.Errorf("rerank: %w", errors.Join(ctx.Err(), err))
+		default:
+			// Like a failed retriever, a failed reranker degrades the
+			// search: the fused order stands and the error is reported.
+			p.cfg.Logger.WarnContext(ctx, "rerank failed; keeping fused order", "error", err)
+			partial = append(partial, fmt.Errorf("rerank: %w", err))
 		}
-		merged = reranked
 	}
 	if cfg.Limit > 0 && len(merged) > cfg.Limit {
 		merged = merged[:cfg.Limit]
@@ -175,12 +191,18 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 		assembler := p.cfg.ContextAssembler
 		if assembler == nil {
 			assembler = &contextassembler.DefaultAssembler{MaxTokens: cfg.MaxTokens}
+		} else if b, ok := assembler.(maxTokenSetter); ok && cfg.MaxTokens > 0 {
+			// A per-search budget applies to a configured assembler too.
+			assembler = b.WithMaxTokens(cfg.MaxTokens)
 		}
 		stageCtx, stage := p.cfg.Observer.StartSpan(ctx, ragtypes.SpanAssemble)
 		assembled, err := assembler.Assemble(stageCtx, query, merged)
 		endSpan(stage, err)
 		if err != nil {
-			return nil, fmt.Errorf("assemble context: %w", err)
+			if !errors.Is(err, ragtypes.ErrPartialSearch) || assembled == nil {
+				return nil, fmt.Errorf("assemble context: %w", err)
+			}
+			partial = append(partial, fmt.Errorf("assemble context: %w", err))
 		}
 		result.Context = assembled
 	}
@@ -191,15 +213,23 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 	return result, nil
 }
 
-// candidatePoolSize returns how many fused candidates a search keeps before
-// the final cut to cfg.Limit. Rerankers only reorder what they receive, so
-// with a reranker the default pool is several times the page size.
-func candidatePoolSize(cfg *ragtypes.SearchConfig, reranking bool) int {
+// candidatePoolSize returns how many hits each retriever is asked for and
+// how many fused candidates a search keeps before the final cut to
+// cfg.Limit. Rerankers only reorder what they receive, so with a reranker the
+// default pool is several times the page size. Fusing several lists also
+// needs depth: a passage ranked 12th by two retrievers should beat one ranked
+// 1st by a single retriever, which it cannot if each list stops at the page
+// size.
+func candidatePoolSize(cfg *ragtypes.SearchConfig, reranking, fusing bool) int {
 	k := cfg.CandidateK
 	if k <= 0 {
-		k = cfg.Limit
-		if reranking {
+		switch {
+		case reranking:
 			k = max(4*cfg.Limit, 20)
+		case fusing:
+			k = max(2*cfg.Limit, 20)
+		default:
+			k = cfg.Limit
 		}
 	}
 	return max(k, cfg.Limit)
@@ -214,46 +244,70 @@ func candidatePoolSize(cfg *ragtypes.SearchConfig, reranking bool) int {
 //
 // The returned lists hold one entry per successful retrieval, so their count
 // is the number of ranked lists that fusion combines. The stats hold one
-// entry per pair, successful or not, in retriever then query order.
+// entry per pair, successful or not, in retriever then query order. Pairs
+// skipped for hypothetical queries (see ragtypes.HypotheticalExpander) have
+// no entry.
 func (p *pipelineImpl) retrieveAll(ctx context.Context, queries []string, searchOpts *ragtypes.SearchOptions) (lists []ragtypes.RankedList, stats []ragtypes.RetrievalStat, partialErr, err error) {
-	totalPairs := len(p.cfg.Retrievers) * len(queries)
+	// Hypothetical answer passages (HyDE) only help retrievers that compare
+	// meaning. Sent to a lexical or graph retriever they would match the
+	// invented wording and outvote the user's query in fusion, so those
+	// retrievers get the original query only.
+	hypothetical := false
+	if h, ok := p.cfg.QueryTransformer.(ragtypes.HypotheticalExpander); ok {
+		hypothetical = h.HypotheticalQueries()
+	}
+	type pair struct{ ri, qi int }
+	var pairs []pair
+	for ri, retriever := range p.cfg.Retrievers {
+		dense := false
+		if d, ok := retriever.(ragtypes.DenseRetriever); ok {
+			dense = d.Dense()
+		}
+		for qi := range queries {
+			if qi > 0 && hypothetical && !dense {
+				continue
+			}
+			pairs = append(pairs, pair{ri, qi})
+		}
+	}
+
+	totalPairs := len(pairs)
 	allLists := make([]ragtypes.RankedList, totalPairs)
 	stats = make([]ragtypes.RetrievalStat, totalPairs)
 	retrieveErrs := make([]error, totalPairs)
 	failed := make([]bool, totalPairs)
 
 	var wg sync.WaitGroup
-	for ri, retriever := range p.cfg.Retrievers {
-		name := p.names[ri]
-		for qi, q := range queries {
-			idx := ri*len(queries) + qi
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				callCtx, span := p.cfg.Observer.StartSpan(ctx, ragtypes.SpanRetrieve,
-					ragtypes.Attr(ragtypes.AttrRetriever, name),
-					ragtypes.Attr(ragtypes.AttrQueryIndex, qi))
-				start := time.Now()
-				hits, err := retriever.Retrieve(callCtx, q, searchOpts)
-				elapsed := time.Since(start)
-				span.SetAttributes(ragtypes.Attr(ragtypes.AttrHits, len(hits)))
-				endSpan(span, err)
-				p.cfg.Observer.RecordRetrieval(ctx, ragtypes.RetrievalRecord{
-					Retriever: name, Hits: len(hits), Duration: elapsed, Err: err,
-				})
-				stats[idx] = ragtypes.RetrievalStat{Retriever: name, QueryIndex: qi, Hits: len(hits), Duration: elapsed}
-				if err != nil {
-					stats[idx].Error = err.Error()
-					retrieveErrs[idx] = fmt.Errorf("retriever %s query %d: %w", name, qi, err)
-					if !errors.Is(err, ragtypes.ErrPartialSearch) {
-						stats[idx].Hits = 0
-						failed[idx] = true
-						return
-					}
+	for idx, pr := range pairs {
+		retriever := p.cfg.Retrievers[pr.ri]
+		name := p.names[pr.ri]
+		qi, q := pr.qi, queries[pr.qi]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			callCtx, span := p.cfg.Observer.StartSpan(ctx, ragtypes.SpanRetrieve,
+				ragtypes.Attr(ragtypes.AttrRetriever, name),
+				ragtypes.Attr(ragtypes.AttrQueryIndex, qi))
+			start := time.Now()
+			hits, err := retriever.Retrieve(callCtx, q, searchOpts)
+			elapsed := time.Since(start)
+			span.SetAttributes(ragtypes.Attr(ragtypes.AttrHits, len(hits)))
+			endSpan(span, err)
+			p.cfg.Observer.RecordRetrieval(ctx, ragtypes.RetrievalRecord{
+				Retriever: name, Hits: len(hits), Duration: elapsed, Err: err,
+			})
+			stats[idx] = ragtypes.RetrievalStat{Retriever: name, QueryIndex: qi, Hits: len(hits), Duration: elapsed}
+			if err != nil {
+				stats[idx].Error = err.Error()
+				retrieveErrs[idx] = fmt.Errorf("retriever %s query %d: %w", name, qi, err)
+				if !errors.Is(err, ragtypes.ErrPartialSearch) {
+					stats[idx].Hits = 0
+					failed[idx] = true
+					return
 				}
-				allLists[idx] = ragtypes.RankedList{Retriever: name, QueryIndex: qi, Hits: hits}
-			}()
-		}
+			}
+			allLists[idx] = ragtypes.RankedList{Retriever: name, QueryIndex: qi, Hits: hits}
+		}()
 	}
 	wg.Wait()
 
@@ -294,12 +348,7 @@ func (p *pipelineImpl) fuse(lists []ragtypes.RankedList, cfg *ragtypes.SearchCon
 	// Optional time-decay recency blending (opt-in via WithRecency).
 	applyRecency(merged, cfg)
 
-	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].Score != merged[j].Score {
-			return merged[i].Score > merged[j].Score
-		}
-		return merged[i].Variant.UUID < merged[j].Variant.UUID
-	})
+	sortByScore(merged)
 
 	if cfg.DedupContent {
 		merged = dedupByContent(merged)
@@ -472,4 +521,21 @@ func sectionText(sec *ragtypes.Section) string {
 		}
 	}
 	return strings.Join(texts, "\n\n")
+}
+
+// maxTokenSetter is implemented by assemblers that accept a per-search
+// token budget (ragtypes.WithContextAssembly).
+type maxTokenSetter interface {
+	WithMaxTokens(maxTokens int) ragtypes.ContextAssembler
+}
+
+// sortByScore orders hits by descending score, breaking ties by variant UUID
+// so equal scores rank the same way on every search.
+func sortByScore(hits []ragtypes.SearchHit) {
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		return hits[i].Variant.UUID < hits[j].Variant.UUID
+	})
 }

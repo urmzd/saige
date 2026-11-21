@@ -29,6 +29,10 @@ func NewCrossEncoder(scorer Scorer) *CrossEncoderReranker {
 	return &CrossEncoderReranker{scorer: scorer}
 }
 
+// ReplacesScores reports true: Rerank sets each hit's Score to the
+// cross-encoder score (see types.ScoringReranker).
+func (r *CrossEncoderReranker) ReplacesScores() bool { return true }
+
 // Rerank scores each hit against the query using the cross-encoder and sorts by score.
 func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, hits []types.SearchHit) ([]types.SearchHit, error) {
 	if len(hits) == 0 {

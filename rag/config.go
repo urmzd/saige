@@ -60,6 +60,8 @@ type Config struct {
 	crossEncoderScore reranker.Scorer
 	parentContext     bool
 	compressionLLM    ragtypes.LLM
+	noChunker         bool
+	noKeyword         bool
 }
 
 type hydeConfig struct {
@@ -222,6 +224,19 @@ func WithRecursiveChunker(maxTokens, overlap int) Option {
 	}
 }
 
+// WithoutChunker stores each section whole. By default a pipeline with
+// embedders chunks with chunker.DefaultConfig (512 tokens, 50 overlap).
+func WithoutChunker() Option {
+	return func(c *Config) { c.noChunker = true }
+}
+
+// WithoutKeywordSearch keeps a pipeline vector-only. By default, when no
+// retrievers are given and the store implements ragtypes.KeywordSearcher,
+// keyword search is fused with vector search as if WithBM25 were set.
+func WithoutKeywordSearch() Option {
+	return func(c *Config) { c.noKeyword = true }
+}
+
 // WithSemanticChunker sets a semantic chunker that splits by embedding similarity.
 // Requires Embedders to be set.
 func WithSemanticChunker(threshold float64, minTokens, maxTokens int) Option {
@@ -241,7 +256,9 @@ func WithHyDE(llm ragtypes.LLM, numHypothetical int) Option {
 	}
 }
 
-// WithMMR sets an MMR diversity reranker. Lambda controls relevance vs diversity (higher = more relevance).
+// WithMMR sets an MMR diversity reranker. Lambda controls relevance vs
+// diversity (higher = more relevance). With WithCrossEncoder too, MMR runs
+// after the cross-encoder, over its order.
 func WithMMR(lambda float64) Option {
 	return func(c *Config) { c.mmrLambda = lambda }
 }
@@ -251,7 +268,10 @@ func WithCrossEncoder(scorer reranker.Scorer) Option {
 	return func(c *Config) { c.crossEncoderScore = scorer }
 }
 
-// WithParentContext wraps each retriever to expand hits with full parent section text.
+// WithParentContext wraps each retriever to expand hits with full parent
+// section text. The built-in chunkers put each chunk after a section's first
+// in a section of its own, so on chunked text this expands nothing; use
+// ragtypes.WithNeighborWindow to show the chunks around a hit instead.
 func WithParentContext() Option {
 	return func(c *Config) { c.parentContext = true }
 }
@@ -283,12 +303,18 @@ func New(cfg Config, opts ...Option) (ragtypes.Pipeline, error) {
 		cfg.GraphNamespace = cfg.Scope
 	}
 
-	// Auto-wire chunker from convenience options.
+	// Auto-wire chunker from convenience options. A pipeline that embeds
+	// gets the recursive chunker by default (512 tokens, 50 overlap):
+	// unchunked documents would be embedded whole and cut off at the
+	// embedder's input limit.
 	if cfg.Chunker == nil {
-		if cfg.semanticChunker != nil && cfg.Embedders != nil {
+		switch {
+		case cfg.semanticChunker != nil && cfg.Embedders != nil:
 			cfg.Chunker = chunker.NewSemantic(cfg.Embedders, cfg.semanticChunker)
-		} else if cfg.recursiveChunker != nil {
+		case cfg.recursiveChunker != nil:
 			cfg.Chunker = chunker.NewRecursive(cfg.recursiveChunker)
+		case cfg.Embedders != nil && !cfg.noChunker:
+			cfg.Chunker = chunker.NewRecursive(chunker.DefaultConfig())
 		}
 	}
 
@@ -300,11 +326,18 @@ func New(cfg Config, opts ...Option) (ragtypes.Pipeline, error) {
 		})
 	}
 
-	// Auto-wire reranker from convenience options.
+	// Auto-wire reranker from convenience options. With both, relevance
+	// first, then diversity over the relevance order.
 	if cfg.Reranker == nil {
-		if cfg.crossEncoderScore != nil {
+		switch {
+		case cfg.crossEncoderScore != nil && cfg.mmrLambda > 0:
+			cfg.Reranker = reranker.Chain{
+				reranker.NewCrossEncoder(cfg.crossEncoderScore),
+				reranker.NewMMR(cfg.mmrLambda),
+			}
+		case cfg.crossEncoderScore != nil:
 			cfg.Reranker = reranker.NewCrossEncoder(cfg.crossEncoderScore)
-		} else if cfg.mmrLambda > 0 {
+		case cfg.mmrLambda > 0:
 			cfg.Reranker = reranker.NewMMR(cfg.mmrLambda)
 		}
 	}
@@ -320,6 +353,15 @@ func New(cfg Config, opts ...Option) (ragtypes.Pipeline, error) {
 	// Auto-create a VectorRetriever if no explicit retrievers but embedders are set.
 	if len(retrievers) == 0 && cfg.Embedders != nil {
 		retrievers = []ragtypes.Retriever{vectorretriever.New(cfg.Store, cfg.Embedders)}
+	}
+
+	// Hybrid by default: when the retrievers are automatic and the store
+	// keeps a keyword index, exact terms (IDs, error codes, names) that
+	// embeddings miss are searched lexically too.
+	if cfg.bm25Config == nil && len(cfg.Retrievers) == 0 && !cfg.noKeyword {
+		if _, ok := ragtypes.AsStore[ragtypes.KeywordSearcher](cfg.Store); ok {
+			cfg.bm25Config = bm25retriever.DefaultConfig()
+		}
 	}
 
 	// Add BM25 retriever if configured.

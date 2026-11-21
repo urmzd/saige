@@ -31,10 +31,12 @@ func NewMMR(lambda float64) *MMRReranker {
 //
 // Relevance is each hit's Score min-max normalized to [0,1] across the input,
 // so it is on the same scale as the cosine similarity used for redundancy
-// whatever scale the scores came from (for example small RRF values). A hit
-// without an embedding, or whose embedding cannot be compared, counts as fully
-// redundant with any already selected hit, so it never jumps ahead of a
-// comparable hit only because its similarity is unknown.
+// whatever scale the scores came from (for example small RRF values). When a
+// pair of hits cannot be compared (one lacks an embedding, as keyword and
+// graph hits often do, or their lengths differ), their similarity is taken
+// as the mean similarity of the comparable pairs in the input: a typical
+// value, so such a hit neither jumps ahead for being unknown nor is buried
+// as if it duplicated every selected hit. With no comparable pair it is 0.
 //
 // Rerank returns a new slice in MMR order. The input slice is not modified
 // and every hit keeps its original Score.
@@ -44,6 +46,7 @@ func (r *MMRReranker) Rerank(_ context.Context, _ string, hits []types.SearchHit
 	}
 
 	relevance := normalizedScores(hits)
+	unknownSim := meanSimilarity(hits)
 	selected := make([]int, 0, len(hits))
 	remaining := make([]int, len(hits))
 	for i := range remaining {
@@ -59,7 +62,7 @@ func (r *MMRReranker) Rerank(_ context.Context, _ string, hits []types.SearchHit
 			for si, s := range selected {
 				sim, ok := similarity(hits[ri].Variant.Embedding, hits[s].Variant.Embedding)
 				if !ok {
-					sim = 1
+					sim = unknownSim
 				}
 				if si == 0 || sim > maxSim {
 					maxSim = sim
@@ -82,6 +85,24 @@ func (r *MMRReranker) Rerank(_ context.Context, _ string, hits []types.SearchHit
 		result[i] = hits[idx]
 	}
 	return result, nil
+}
+
+// meanSimilarity is the mean cosine similarity over every comparable pair of
+// hits, or 0 when no pair is comparable.
+func meanSimilarity(hits []types.SearchHit) float64 {
+	total, n := 0.0, 0
+	for i := range hits {
+		for j := i + 1; j < len(hits); j++ {
+			if sim, ok := similarity(hits[i].Variant.Embedding, hits[j].Variant.Embedding); ok {
+				total += sim
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return total / float64(n)
 }
 
 // normalizedScores min-max scales hit scores to [0,1]. Equal scores all map
