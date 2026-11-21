@@ -63,6 +63,18 @@ func TestStrippingTakesOutOnlyTheAddressAndKeepsTheWholeMessage(t *testing.T) {
 			want:  "summarize this",
 		},
 		{
+			name:  "a comma after the dropped first name goes with it",
+			text:  "@docs-bot, @triage review",
+			agent: "docs-bot",
+			want:  "@triage review",
+		},
+		{
+			name:  "a comma before the dropped later name goes with it",
+			text:  "@triage, @docs-bot review",
+			agent: "docs-bot",
+			want:  "@triage review",
+		},
+		{
 			name:  "a mention inside a sentence stays where it was written",
 			text:  "please ask @docs-bot to summarize",
 			agent: "docs-bot",

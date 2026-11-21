@@ -246,7 +246,13 @@ func strip(text string, spans []span, agent string) string {
 			prev = s.end
 			continue
 		}
-		b.WriteString(text[prev:s.end])
+		if b.Len() == 0 {
+			// The first name kept opens the address: the gap after a dropped
+			// name before it, such as ", ", is not the person's text.
+			b.WriteString(text[s.start:s.end])
+		} else {
+			b.WriteString(text[prev:s.end])
+		}
 		prev = s.end
 	}
 	if prev == 0 {
