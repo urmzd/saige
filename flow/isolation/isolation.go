@@ -156,6 +156,11 @@ type Request struct {
 	// Like Tenant and Run it never chooses an instance: it is granted to
 	// the lease, not written into what the pool warms by.
 	Egress []string
+	// Image is the workload's root filesystem for this run, in place of
+	// the Leaser's own. Empty is the Leaser's. Unlike the fields above it
+	// chooses the instance: a pool keeps warm instances per image, so pin
+	// it by digest (repo@sha256:...) for every host to run the same bytes.
+	Image string
 }
 
 // Leaser starts an instance for one run. The caller owns it and Closes it,
