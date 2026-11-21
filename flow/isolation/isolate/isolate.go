@@ -33,7 +33,8 @@ import (
 
 // Config is what every instance a Leaser leases is started with.
 type Config struct {
-	// Image is the workload's root filesystem. Required.
+	// Image is the workload's root filesystem. Required. A request's own
+	// Image replaces it for that lease.
 	Image string
 	// ConnectorsImage is the connectors compartment's; empty is Image.
 	ConnectorsImage string
@@ -99,8 +100,12 @@ func New(d isolate.Driver, cfg Config) (*Leaser, error) {
 
 // spec is the sandbox spec for a run's request.
 func (l *Leaser) spec(req isolation.Request) isolate.Spec {
+	image := l.cfg.Image
+	if req.Image != "" {
+		image = req.Image
+	}
 	s := isolate.Spec{
-		Image:     l.cfg.Image,
+		Image:     image,
 		Resources: l.cfg.Resources,
 		Labels:    l.cfg.Labels,
 	}
@@ -139,6 +144,14 @@ func (l *Leaser) Lease(ctx context.Context, req isolation.Request) (isolation.In
 		}
 	}
 	return inst, nil
+}
+
+// Warm starts keeping instances warm for req's spec (its image and whether
+// it has connectors) before any run leases one, so the first run of a new
+// image does not wait for a start. It validates the spec; the starts happen
+// in the background, within the pool's Max.
+func (l *Leaser) Warm(req isolation.Request) error {
+	return l.pool.Warm(l.spec(req))
 }
 
 // Granted returns the request the grant id (an egress decision's Grant)
