@@ -93,6 +93,24 @@ if err := drift.Within(0, "search", "fetch"); err != nil {
 }
 ```
 
+### Pinning approved tools
+
+A server you approved once can rewrite a tool's description later to carry instructions to the model.
+Set `ServerSpec.PinnedTools` to the fingerprints you approved, and the client imports only tools that still match them.
+A tool the server added or rewrote is withheld, and a call to it is refused locally, as for a removed tool.
+`Client.PinDrift` reports what was withheld, so a host can show it and ask before pinning again.
+
+```go
+cat, _ := client.Catalog(ctx)
+spec.PinnedTools = cat.Fingerprints() // record on first approval, store with the config
+
+drift, _ := pinned.PinDrift(ctx)
+// drift.Added: new tools, drift.Changed: rewritten tools, both withheld
+```
+
+Annotations are not part of the fingerprint, so a pin does not catch a changed `readOnlyHint` or `idempotentHint`.
+Leave `TrustHints` off for servers you pin unless you also trust their hints.
+
 ## Input schemas
 
 A tool's input schema is converted to a `ParameterSchema` when the tool is imported.
