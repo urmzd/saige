@@ -1,5 +1,6 @@
-// Package mention finds the agent a human tagged, removes the mention from the
-// text the agent will read, and reads everything else the text refers to.
+// Package mention finds the agents a human tagged, takes the address off the
+// text the agent will read while keeping the rest of the message whole, and
+// reads everything else the text refers to.
 //
 // Every trigger faces the same two questions ("who was tagged?" and "what is
 // left once the tag is removed?") and every native surface encodes a mention
@@ -10,10 +11,13 @@
 // stripping rules (mid-sentence mentions, repeated mentions, the trailing colon
 // people type after a name) in one tested place instead of three.
 //
-// Stripping matters more than it looks. Text arrives as "@docs-bot summarize
-// this" and the agent must be prompted with "summarize this": leaving its own
-// name in makes the model answer as if it were being addressed in the third
-// person, and leaving the raw <@U08BOT> in leaks an opaque id into the prompt.
+// A mention may sit anywhere in a message, and the whole message is what the
+// agent reads. Text that arrives as "@docs-bot summarize this" is prompted as
+// "summarize this": the name in front is only the address. Text that arrives
+// as "could @docs-bot take a look?" is prompted as written, because cutting
+// the name out leaves "could take a look?", words the person never wrote. A
+// connector still normalizes native markup first, so no raw <@U08BOT> reaches
+// a prompt. A name quoted in code (`@docs-bot help`) calls nobody.
 //
 // # References
 //
@@ -189,8 +193,14 @@ type span struct{ start, end int }
 // in "(@docs-bot)" and "cc:@docs-bot".
 func scan(text string) []span {
 	var spans []span
+	code := codeSpans(text)
 	for i := 0; i < len(text); i++ {
 		if text[i] != '@' {
+			continue
+		}
+		// A name inside code is quoted, not called: "run `@docs-bot help`"
+		// shows a command and asks nobody.
+		if within(code, i) {
 			continue
 		}
 		if i > 0 && nameRune(rune(text[i-1])) {
@@ -209,40 +219,57 @@ func scan(text string) []span {
 	return spans
 }
 
-// strip removes the spans naming agent and repairs the whitespace they leave.
+// strip takes out the mention of agent that addresses the text, and leaves
+// every other one where the person wrote it.
 //
-// The repair is deliberately local: one space where a removal sat between two
-// spaces, and no global reflow. Reflowing would corrupt the code blocks, tables
-// and indentation that arrive in a real GitHub comment, and the agent reads that
-// text verbatim.
+// A mention that opens the text is a form of address: "@docs-bot summarize
+// this" asks "summarize this", and the name in front adds nothing the agent
+// needs. A mention anywhere else is part of a sentence. Cut out, "could
+// @docs-bot take a look?" becomes "could take a look?" and "cc @a and @b, both
+// of you review" becomes "cc and , both of you review": the agent is handed
+// words the person never wrote. So the whole message is kept, and only the
+// address goes. Who was mentioned is said beside the text, never by editing it.
+//
+// Nothing else is touched: no reflow, which would corrupt the code blocks,
+// tables and indentation of a real GitHub comment.
 func strip(text string, spans []span, agent string) string {
+	// The address is the run of mentions that opens the text: "@fiber
+	// @docs-bot summarize" addresses two, and each is taken out in turn.
 	var b strings.Builder
-	b.Grow(len(text))
-	prev := 0
-	addressed := false
+	prev, lead := 0, true
 	for _, s := range spans {
-		if !strings.EqualFold(text[s.start+1:s.end], agent) {
+		if !lead || !addressGap(text[prev:s.start]) {
+			break
+		}
+		if strings.EqualFold(text[s.start+1:s.end], agent) {
+			// Drop it with the gap before it; what follows keeps its own.
+			prev = s.end
 			continue
 		}
-		if strings.TrimSpace(text[:s.start]) == "" {
-			addressed = true
-		}
-		b.WriteString(text[prev:s.start])
+		b.WriteString(text[prev:s.end])
 		prev = s.end
-		// Collapse "left <mention> right" to "left right" by consuming the
-		// following space, but only when a space precedes the mention too;
-		// otherwise the mention opened a line and its leading whitespace is
-		// trimmed instead.
-		if s.start > 0 && isSpace(text[s.start-1]) && prev < len(text) && isSpace(text[prev]) {
-			prev++
+	}
+	if prev == 0 {
+		return strings.TrimSpace(text)
+	}
+	rest := text[prev:]
+	if strings.TrimSpace(b.String()) == "" {
+		// Nobody else is addressed: the punctuation after the name goes too.
+		return trimAddress(strings.TrimSpace(rest))
+	}
+	return strings.TrimSpace(b.String() + rest)
+}
+
+// addressGap reports what may sit between the mentions that open a text and
+// still leave them one address: nothing, or spaces and the commas people put
+// between names.
+func addressGap(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isSpace(s[i]) && s[i] != ',' {
+			return false
 		}
 	}
-	b.WriteString(text[prev:])
-	out := strings.TrimSpace(b.String())
-	if addressed {
-		out = trimAddress(out)
-	}
-	return out
+	return true
 }
 
 // trimAddress trims the punctuation left when a mention was used as a form of

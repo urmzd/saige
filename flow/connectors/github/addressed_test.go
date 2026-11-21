@@ -67,18 +67,19 @@ func TestACommentToTheAppThatNamesNoAgentIsPublishedNamingNone(t *testing.T) {
 	}
 }
 
-// An agent the comment names is mentioned, wherever the app is mentioned,
-// and the app's mention leaves the text as the agent's does.
+// An agent the comment names is mentioned, wherever the app is mentioned.
+// The mentions that open the comment are its address and are taken out, the
+// app's as the agent's; one written later is part of the message and stays.
 func TestAnAgentNamedBesideTheAppIsMentioned(t *testing.T) {
 	c, tags := addressed(t)
-	for delivery, body := range map[string]string{
-		"d-first": "@fiber @docs-bot summarize",
-		"d-after": "@docs-bot summarize, @fiber",
+	for body, want := range map[string]string{
+		"@fiber @docs-bot summarize":  "summarize",
+		"@docs-bot summarize, @fiber": "summarize, @fiber",
 	} {
-		serve(t, c, "issue_comment", delivery, comment(body))
+		serve(t, c, "issue_comment", "d-"+want, comment(body))
 		r := request(t, receive(t, tags))
-		if !slices.Equal(r.Mentions, []string{"docs-bot"}) || !strings.HasPrefix(r.Text, "summarize") || strings.Contains(r.Text, "@") {
-			t.Fatalf("%q published %v with %q, want docs-bot without either mention", body, r.Mentions, r.Text)
+		if !slices.Equal(r.Mentions, []string{"docs-bot"}) || r.Text != want {
+			t.Fatalf("%q published %v with %q, want docs-bot with %q", body, r.Mentions, r.Text, want)
 		}
 	}
 }
@@ -113,7 +114,11 @@ func TestEveryHumanEventAddressedToTheAppIsPublished(t *testing.T) {
 		raw, _ := json.Marshal(body)
 		serve(t, c, name, "d-"+name, string(raw))
 		r := request(t, receive(t, tags))
-		if len(r.Mentions) != 0 || !strings.HasSuffix(r.Text, "does this look right?") || strings.Contains(r.Text, "@fiber") {
+		// A comment or review opens with the app's mention, which is its
+		// address and goes. An issue or pull request puts its title first, so
+		// the mention is inside the text and the whole of it is kept.
+		titled := name == "issues" || name == "pull_request"
+		if len(r.Mentions) != 0 || !strings.HasSuffix(r.Text, "does this look right?") || strings.Contains(r.Text, "@fiber") != titled {
 			t.Fatalf("%s published %v with %q", name, r.Mentions, r.Text)
 		}
 	}

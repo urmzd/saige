@@ -37,7 +37,9 @@ const (
 // Request is what an ingress event asks of an agent. Every ingress body that
 // can start a run embeds it.
 type Request struct {
-	// Text is the request, with any agent mention already taken out.
+	// Text is the request as the person wrote it, whole. The mentions that
+	// open it are its address and are taken out; one inside a sentence stays
+	// where it was written. Mentions says who was named.
 	Text string `json:"text"`
 	// Actor raised the event.
 	Actor Actor `json:"actor,omitzero"`

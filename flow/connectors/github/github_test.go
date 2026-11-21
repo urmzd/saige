@@ -134,9 +134,9 @@ func TestIssueCommentPublishesAnEventOnTheIssue(t *testing.T) {
 	if !slices.Equal(r.Mentions, []string{"docs-bot"}) {
 		t.Errorf("Mentions = %v, want docs-bot once", r.Mentions)
 	}
-	want := "can summarize what changed here, and check the retry path too?"
+	want := "can @docs-bot summarize what changed here, and @docs-bot check the retry path too?"
 	if r.Text != want {
-		t.Errorf("Text = %q, want %q with both mentions stripped", r.Text, want)
+		t.Errorf("Text = %q, want %q, the whole comment as written", r.Text, want)
 	}
 	if want := "github://urmzd/fiber/issues/42"; e.Channel != want || e.Source != want {
 		t.Errorf("Channel, Source = %q, %q, want %q", e.Channel, e.Source, want)

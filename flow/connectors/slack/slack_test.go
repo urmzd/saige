@@ -138,9 +138,10 @@ func TestAppMentionPublishesAMessageNamingTheAgentItMentioned(t *testing.T) {
 	if want := []string{"docs-bot"}; !slices.Equal(b.Mentions, want) {
 		t.Errorf("Mentions = %v, want %v", b.Mentions, want)
 	}
-	// The mention is gone, the link is its label, the other human survives as a
-	// mention, and the entity is decoded.
-	want := "hey can you summarize the design doc for @U0HUMAN2? <3"
+	// The whole message is kept: the agent's mention stays where it was
+	// written, the link is its label, the other human survives as a mention,
+	// and the entity is decoded.
+	want := "hey @docs-bot can you summarize the design doc for @U0HUMAN2? <3"
 	if b.Text != want {
 		t.Errorf("Text = %q, want %q", b.Text, want)
 	}
