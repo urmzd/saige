@@ -2,6 +2,7 @@ package tree
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/urmzd/saige/agent/types"
 )
@@ -25,18 +26,23 @@ func (t *Tree) Flatten(toNodeID types.NodeID) ([]types.Message, error) {
 }
 
 func (t *Tree) flattenUnlocked(toNodeID types.NodeID) ([]types.Message, error) {
-	path, err := t.pathUnlocked(toNodeID)
-	if err != nil {
-		return nil, err
+	// Depth is a capacity hint; parent links determine the actual history.
+	capacity := 0
+	if tip := t.nodes[toNodeID]; tip != nil {
+		capacity = min(max(tip.Depth, 0), len(t.nodes)-1) + 1
 	}
-
-	messages := make([]types.Message, 0, len(path))
-	for _, nid := range path {
-		node := t.nodes[nid]
+	messages := make([]types.Message, 0, capacity)
+	for id := toNodeID; id != ""; {
+		node, err := t.getNode(id)
+		if err != nil {
+			return nil, err
+		}
 		if node.State != types.NodeArchived {
 			messages = append(messages, node.Message)
 		}
+		id = node.ParentID
 	}
+	slices.Reverse(messages)
 	return messages, nil
 }
 

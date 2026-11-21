@@ -141,7 +141,7 @@ func runAgentTurn(ctx context.Context, a *agentsdk.Agent, question string, out t
 }
 
 func runAskTraced(ctx context.Context, a *agentsdk.Agent, question string, out tui.Output, allow bool, o agentRunOptions) error {
-	stream := a.Invoke(ctx, []types.Message{types.UserMsg(types.Text(question))})
+	stream := a.Prompt(ctx, question)
 	deltas := stream.Deltas()
 	if o.trace {
 		forwarded := make(chan types.Delta)
