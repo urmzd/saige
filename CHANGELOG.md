@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.2 (2026-11-21)
+
+### Bug Fixes
+
+- **mention**: a mention anywhere asks, and the whole message is kept (#172) ([5f09e57](https://github.com/urmzd/saige/commit/5f09e572dbf39963d7b5b608ae835078e57638cb))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.46.1...v0.46.2)
+
+
 ## 0.46.1 (2026-11-20)
 
 ### Bug Fixes
