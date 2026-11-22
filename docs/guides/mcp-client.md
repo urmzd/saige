@@ -99,7 +99,40 @@ A tool's input schema is converted to a `ParameterSchema` when the tool is impor
 Local `#/$defs/<name>` references, which pydantic and similar generators emit for shared shapes, are inlined first with `InlineDefs`, keeping keywords written beside a `$ref`.
 A property written as `anyOf` or `oneOf` of one schema and `{"type": "null"}` becomes that schema, nullable.
 A schema `InlineDefs` refuses (a remote or recursive reference, one that names no definition, more than `MaxInlinedRefs` expansions) still imports approximately, with the reference read as a string, so one odd tool never breaks a server's import.
-A host that would rather refuse such a tool calls `InlineDefs` itself: every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
+A host that would rather refuse such a tool calls `ParseInputSchema` itself.
+It returns a schema that accepts the same arguments as the input, or an error.
+
+| Accepted | Notes |
+|---|---|
+| Local `$defs` references | Only annotations may sit beside a `$ref` |
+| `allOf` of one schema | Merged into the property, as pydantic 2.0 to 2.8 write a described reference. `nullable` may not sit on either side |
+| A nullable property | `anyOf` of one schema and null; `oneOf` of the same when the schema rejects null; a type list of one type and null; `"nullable": true` |
+| One type per property | Every property needs a type |
+| String enums | A null member counts only where the type allows null |
+| A string `const` | Read as an enum of one value. An `enum` beside it must hold it |
+| Annotations | `title`, `description`, `default`, `examples`, `format`, `$comment`, `$schema`, `deprecated`, `readOnly`, `writeOnly` |
+
+Two keywords are read more loosely than JSON Schema 2020-12 reads them:
+
+- `additionalProperties: false` is read as `true`, so the model may send a key the server then rejects. zod writes it on every object.
+- `"nullable": true` allows null, as OpenAPI 3.0 and saige's own `PropertyDef` encoding read it. JSON Schema ignores the keyword.
+
+Everything else is refused, for example:
+
+- other unions, an `allOf` of several schemas, and `type`, `enum`, `const` or `nullable` beside a union
+- a keyword set both beside a union or `allOf` and inside it, with different values
+- any other keyword: `pattern`, `minimum`, `$id`, or `additionalProperties` as a schema (a Go map)
+- a property with no type, nesting deeper than `MaxSchemaDepth`, and a root that is not a non-nullable object
+
+Common real shapes that are refused: zod 4 `z.number().int()` (it adds `minimum` and `maximum`), Go `uint` fields (`minimum: 0`), Go maps, and Go `any` fields (schema `true`).
+Every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
+
+```go
+params, _, err := mcp.ParseInputSchema(tool.InputSchema)
+if errors.Is(err, mcp.ErrUnsupportedSchema) {
+    return fmt.Errorf("tool %s: %w", tool.Name, err) // offer nothing rather than a schema that means something else
+}
+```
 
 ## Names and trust
 
