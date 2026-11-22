@@ -105,11 +105,11 @@ It returns a schema that accepts the same arguments as the input, or an error.
 | Accepted | Notes |
 |---|---|
 | Local `$defs` references | Only annotations may sit beside a `$ref` |
-| `allOf` of one schema | Merged into the property, as pydantic 2.0 to 2.8 write a described reference |
+| `allOf` of one schema | Merged into the property, as pydantic 2.0 to 2.8 write a described reference. `nullable` may not sit on either side |
 | A nullable property | `anyOf` of one schema and null; `oneOf` of the same when the schema rejects null; a type list of one type and null; `"nullable": true` |
 | One type per property | Every property needs a type |
 | String enums | A null member counts only where the type allows null |
-| A string `const` | Read as an enum of one value |
+| A string `const` | Read as an enum of one value. An `enum` beside it must hold it |
 | Annotations | `title`, `description`, `default`, `examples`, `format`, `$comment`, `$schema`, `deprecated`, `readOnly`, `writeOnly` |
 
 Two keywords are read more loosely than JSON Schema 2020-12 reads them:

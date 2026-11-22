@@ -64,7 +64,8 @@ var schemaTypes = map[string]bool{
 // The accepted subset:
 //   - Local "#/$defs/<name>" references, inlined first (see InlineDefs).
 //     Only annotations may sit beside a $ref.
-//   - An allOf of one schema, merged into the property.
+//   - An allOf of one schema, merged into the property, with nullable on
+//     neither side.
 //   - A nullable property: anyOf of one schema and {"type":"null"}, oneOf
 //     of the same where the schema itself rejects null, a type list of one
 //     type and "null", or "nullable": true. Beside such a union, only
@@ -410,6 +411,13 @@ func foldAllOf(node map[string]any, path string) error {
 	if _, ok := only[kwAllOf]; ok {
 		return fmt.Errorf("%w: schema at %s uses allOf inside allOf, which is not supported", ErrUnsupportedSchema, path)
 	}
+	// nullable widens only the type of its own schema. Merged, it would
+	// widen a type written in the other one.
+	_, outer := node[kwNullable]
+	_, inner := only[kwNullable]
+	if outer || inner {
+		return fmt.Errorf("%w: schema at %s uses nullable with allOf, which is not supported", ErrUnsupportedSchema, path)
+	}
 	delete(node, kwAllOf)
 	return mergeMember(node, only, kwAllOf, path)
 }
@@ -454,7 +462,8 @@ func acceptsNull(m map[string]any) bool {
 }
 
 // foldConst reads a string const as an enum of one, giving it type string
-// when it has none. Any other const is refused.
+// when it has none. An enum beside it must hold it. Any other const is
+// refused.
 func foldConst(node map[string]any, path string) error {
 	v, ok := node[kwConst]
 	if !ok {
@@ -464,8 +473,12 @@ func foldConst(node map[string]any, path string) error {
 	if !ok {
 		return fmt.Errorf("%w: schema at %s uses a const that is not a string, which is not supported", ErrUnsupportedSchema, path)
 	}
-	if _, ok := node[kwEnum]; ok {
-		return fmt.Errorf("%w: schema at %s uses both const and enum, which is not supported", ErrUnsupportedSchema, path)
+	// Both apply. pydantic 2.8 and 2.9 write a Literal with both.
+	if e, ok := node[kwEnum]; ok {
+		list, _ := e.([]any)
+		if !slices.Contains(list, any(c)) {
+			return fmt.Errorf("%w: schema at %s uses a const its enum does not hold, which is not supported", ErrUnsupportedSchema, path)
+		}
 	}
 	delete(node, kwConst)
 	node[kwEnum] = []any{c}
