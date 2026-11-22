@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.49.0 (2026-11-22)
+
+### Features
+
+- **mcp**: ParseInputSchema refuses a tool schema it cannot represent exactly (#177) ([b22bf49](https://github.com/urmzd/saige/commit/b22bf49e4f059a4bce4149d8e626e55b9f9c384e))
+
+### Misc
+
+- **showcase**: legible hero and dark-mode card image (#178) ([d73aa78](https://github.com/urmzd/saige/commit/d73aa7878665f10733779775d3045d5a6f269736))
+- **showcase**: recapture agent demo with current saige (#176) ([e45bc7c](https://github.com/urmzd/saige/commit/e45bc7cdb605d6969b860a5235a4384183c23e8b))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.48.0...v0.49.0)
+
+
 ## 0.48.0 (2026-11-21)
 
 ### Features
