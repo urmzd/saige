@@ -100,7 +100,18 @@ Local `#/$defs/<name>` references, which pydantic and similar generators emit fo
 A property written as `anyOf` or `oneOf` of one schema and `{"type": "null"}` becomes that schema, nullable.
 A schema `InlineDefs` refuses (a remote or recursive reference, one that names no definition, more than `MaxInlinedRefs` expansions) still imports approximately, with the reference read as a string, so one odd tool never breaks a server's import.
 A host that would rather refuse such a tool calls `ParseInputSchema` itself.
-It inlines references, folds nullable unions and type lists, and refuses everything else it cannot represent exactly: other `anyOf` or `oneOf`, `allOf`, several types, tuple `items`, nesting deeper than `MaxSchemaDepth`, and a root that is not an object.
+It returns a schema that accepts the same arguments as the input, or an error.
+
+| Accepted | Notes |
+|---|---|
+| Local `$defs` references | Only annotations may sit beside a `$ref` |
+| A nullable property | `anyOf`/`oneOf` of one schema and null, a type list of one type and null, or `"nullable": true` |
+| One type per property | Every property needs a type |
+| String enums | A null member counts only where the type allows null |
+| `additionalProperties` as `true` or `false` | `false` is read as `true`: the one loosening, kept because zod writes it on every object |
+| Annotations | `title`, `description`, `default`, `examples`, `format`, `$comment`, `$schema`, `$id`, `deprecated`, `readOnly`, `writeOnly` |
+
+Everything else is refused: other unions, `allOf`, `type` or `enum` beside a union, any other keyword (`const`, `pattern`, `minimum`, `additionalProperties` as a schema, for example a Go map), nesting deeper than `MaxSchemaDepth`, and a root that is not a non-nullable object.
 Every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
 
 ```go
