@@ -22,6 +22,7 @@ const (
 	kwNullable             = "nullable"
 	kwItems                = "items"
 	kwAdditionalProperties = "additionalProperties"
+	kwConst                = "const"
 )
 
 // MaxSchemaDepth bounds how deeply ParseInputSchema follows nested
@@ -32,7 +33,7 @@ const MaxSchemaDepth = 32
 // drop them. "format" is an annotation by default since draft 2019-09.
 var annotationKeywords = map[string]bool{
 	"title": true, "description": true, "default": true, "examples": true,
-	"$comment": true, "$schema": true, "$id": true, "deprecated": true,
+	"$comment": true, "$schema": true, "deprecated": true,
 	"readOnly": true, "writeOnly": true, "format": true,
 }
 
@@ -63,24 +64,29 @@ var schemaTypes = map[string]bool{
 // The accepted subset:
 //   - Local "#/$defs/<name>" references, inlined first (see InlineDefs).
 //     Only annotations may sit beside a $ref.
-//   - A nullable property: anyOf or oneOf of one schema and
-//     {"type":"null"}, a type list of one type and "null", or
-//     "nullable": true. Beside such a union, only annotations and keywords
-//     the member does not set (or sets to the same value) may appear, and
-//     never type, enum or nullable.
+//   - An allOf of one schema, merged into the property.
+//   - A nullable property: anyOf of one schema and {"type":"null"}, oneOf
+//     of the same where the schema itself rejects null, a type list of one
+//     type and "null", or "nullable": true. Beside such a union, only
+//     annotations and keywords the member does not set (or sets to the
+//     same value) may appear, and never type, enum, const or nullable.
 //   - Exactly one type per property, from the JSON Schema type names.
-//   - String enums. A null member counts only where the type allows null.
-//   - additionalProperties as true or false. False is read as true: the
-//     model may send a key the server then rejects. This is the one
-//     loosening, kept because zod writes it on every object.
+//   - String enums, and a string const read as an enum of one. A null
+//     member counts only where the type allows null.
 //   - Annotations (title, description, default, examples, format, $comment,
-//     $schema, $id, deprecated, readOnly, writeOnly), which are dropped or
-//     kept as PropertyDef allows.
+//     $schema, deprecated, readOnly, writeOnly), which are dropped or kept
+//     as PropertyDef allows.
 //
-// Everything else is refused: other unions, allOf, any other keyword
-// (const, pattern, minimum, additionalProperties as a schema, and so on), a
-// property with no type, nesting deeper than MaxSchemaDepth, and a root that
-// is not a non-nullable object. Every refusal wraps ErrUnsupportedSchema and
+// Two keywords are read more loosely than JSON Schema 2020-12 reads them:
+//   - additionalProperties false is read as true: the model may send a key
+//     the server then rejects. zod writes it on every object.
+//   - "nullable": true allows null, as OpenAPI 3.0 and saige's own
+//     PropertyDef encoding read it. JSON Schema ignores the keyword.
+//
+// Everything else is refused: other unions, an allOf of several schemas,
+// any other keyword (pattern, minimum, additionalProperties as a schema,
+// and so on), a property with no type, nesting deeper than MaxSchemaDepth,
+// and a root that is not a non-nullable object. Every refusal wraps ErrUnsupportedSchema and
 // names the location in the schema and the reason.
 //
 // An empty raw schema is an object with no properties.
@@ -179,7 +185,9 @@ func normalizeProperty(node map[string]any, path string, depth int) error {
 		return fmt.Errorf("%w: schema at %s uses $ref, which is not supported", ErrUnsupportedSchema, path)
 	}
 	if _, ok := node[kwAllOf]; ok {
-		return fmt.Errorf("%w: schema at %s uses allOf, which is not supported", ErrUnsupportedSchema, path)
+		if err := foldAllOf(node, path); err != nil {
+			return err
+		}
 	}
 	_, anyOf := node[kwAnyOf]
 	_, oneOf := node[kwOneOf]
@@ -196,6 +204,9 @@ func normalizeProperty(node map[string]any, path string, depth int) error {
 		}
 	}
 
+	if err := foldConst(node, path); err != nil {
+		return err
+	}
 	typeNull, err := foldType(node, path)
 	if err != nil {
 		return err
@@ -371,14 +382,44 @@ func foldNullableUnion(node map[string]any, key, path string) error {
 			return fmt.Errorf("%w: schema at %s uses %s inside %s, which is not supported", ErrUnsupportedSchema, path, k, key)
 		}
 	}
-	for _, k := range []string{kwType, kwEnum, kwNullable} {
+	// A null matching both branches of a oneOf fails it, so the union
+	// would reject null rather than allow it.
+	if key == kwOneOf && acceptsNull(only) {
+		return fmt.Errorf("%w: schema at %s uses oneOf whose schema also accepts null, which is not supported", ErrUnsupportedSchema, path)
+	}
+	for _, k := range []string{kwType, kwEnum, kwConst, kwNullable} {
 		if _, ok := node[k]; ok {
 			return fmt.Errorf("%w: schema at %s sets %s beside %s, which is not supported", ErrUnsupportedSchema, path, k, key)
 		}
 	}
 	delete(node, key)
-	for _, k := range sortedKeys(only) {
-		v := only[k]
+	return mergeMember(node, only, key, path)
+}
+
+// foldAllOf replaces node's allOf of one schema by that schema. Both apply,
+// so the merge follows the same rules as a union's member.
+func foldAllOf(node map[string]any, path string) error {
+	list, ok := node[kwAllOf].([]any)
+	if !ok || len(list) != 1 {
+		return fmt.Errorf("%w: schema at %s uses allOf of other than one schema, which is not supported", ErrUnsupportedSchema, path)
+	}
+	only, ok := list[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%w: schema at %s: allOf entry is not an object", ErrUnsupportedSchema, path)
+	}
+	if _, ok := only[kwAllOf]; ok {
+		return fmt.Errorf("%w: schema at %s uses allOf inside allOf, which is not supported", ErrUnsupportedSchema, path)
+	}
+	delete(node, kwAllOf)
+	return mergeMember(node, only, kwAllOf, path)
+}
+
+// mergeMember copies member's keywords onto node. A keyword both set is kept
+// when it is an annotation (the node wins) or the same value; any other
+// clash is refused, since both would apply.
+func mergeMember(node, member map[string]any, key, path string) error {
+	for _, k := range sortedKeys(member) {
+		v := member[k]
 		if cur, set := node[k]; set {
 			if annotationKeywords[k] || reflect.DeepEqual(cur, v) {
 				continue
@@ -386,6 +427,50 @@ func foldNullableUnion(node map[string]any, key, path string) error {
 			return fmt.Errorf("%w: schema at %s sets %s both beside %s and inside it, which is not supported", ErrUnsupportedSchema, path, k, key)
 		}
 		node[k] = v
+	}
+	return nil
+}
+
+// acceptsNull reports whether a schema may allow null by its type, enum or
+// nullable keyword. It errs towards true.
+func acceptsNull(m map[string]any) bool {
+	switch t := m[kwType].(type) {
+	case string:
+		if t == types.SchemaNull {
+			return true
+		}
+	case []any:
+		if slices.Contains(t, any(types.SchemaNull)) {
+			return true
+		}
+	}
+	if b, _ := m[kwNullable].(bool); b {
+		return true
+	}
+	if e, ok := m[kwEnum].([]any); ok && slices.Contains(e, nil) {
+		return true
+	}
+	return false
+}
+
+// foldConst reads a string const as an enum of one, giving it type string
+// when it has none. Any other const is refused.
+func foldConst(node map[string]any, path string) error {
+	v, ok := node[kwConst]
+	if !ok {
+		return nil
+	}
+	c, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%w: schema at %s uses a const that is not a string, which is not supported", ErrUnsupportedSchema, path)
+	}
+	if _, ok := node[kwEnum]; ok {
+		return fmt.Errorf("%w: schema at %s uses both const and enum, which is not supported", ErrUnsupportedSchema, path)
+	}
+	delete(node, kwConst)
+	node[kwEnum] = []any{c}
+	if _, ok := node[kwType]; !ok {
+		node[kwType] = types.SchemaString
 	}
 	return nil
 }

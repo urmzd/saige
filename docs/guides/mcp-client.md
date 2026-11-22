@@ -105,17 +105,30 @@ It returns a schema that accepts the same arguments as the input, or an error.
 | Accepted | Notes |
 |---|---|
 | Local `$defs` references | Only annotations may sit beside a `$ref` |
-| A nullable property | `anyOf`/`oneOf` of one schema and null, a type list of one type and null, or `"nullable": true` |
+| `allOf` of one schema | Merged into the property, as pydantic 2.0 to 2.8 write a described reference |
+| A nullable property | `anyOf` of one schema and null; `oneOf` of the same when the schema rejects null; a type list of one type and null; `"nullable": true` |
 | One type per property | Every property needs a type |
 | String enums | A null member counts only where the type allows null |
-| `additionalProperties` as `true` or `false` | `false` is read as `true`: the one loosening, kept because zod writes it on every object |
-| Annotations | `title`, `description`, `default`, `examples`, `format`, `$comment`, `$schema`, `$id`, `deprecated`, `readOnly`, `writeOnly` |
+| A string `const` | Read as an enum of one value |
+| Annotations | `title`, `description`, `default`, `examples`, `format`, `$comment`, `$schema`, `deprecated`, `readOnly`, `writeOnly` |
 
-Everything else is refused: other unions, `allOf`, `type` or `enum` beside a union, any other keyword (`const`, `pattern`, `minimum`, `additionalProperties` as a schema, for example a Go map), nesting deeper than `MaxSchemaDepth`, and a root that is not a non-nullable object.
+Two keywords are read more loosely than JSON Schema 2020-12 reads them:
+
+- `additionalProperties: false` is read as `true`, so the model may send a key the server then rejects. zod writes it on every object.
+- `"nullable": true` allows null, as OpenAPI 3.0 and saige's own `PropertyDef` encoding read it. JSON Schema ignores the keyword.
+
+Everything else is refused, for example:
+
+- other unions, an `allOf` of several schemas, and `type`, `enum`, `const` or `nullable` beside a union
+- a keyword set both beside a union or `allOf` and inside it, with different values
+- any other keyword: `pattern`, `minimum`, `$id`, or `additionalProperties` as a schema (a Go map)
+- a property with no type, nesting deeper than `MaxSchemaDepth`, and a root that is not a non-nullable object
+
+Common real shapes that are refused: zod 4 `z.number().int()` (it adds `minimum` and `maximum`), Go `uint` fields (`minimum: 0`), Go maps, and Go `any` fields (schema `true`).
 Every refusal wraps `ErrUnsupportedSchema` and names the location and the reason.
 
 ```go
-params, stats, err := mcp.ParseInputSchema(tool.InputSchema)
+params, _, err := mcp.ParseInputSchema(tool.InputSchema)
 if errors.Is(err, mcp.ErrUnsupportedSchema) {
     return fmt.Errorf("tool %s: %w", tool.Name, err) // offer nothing rather than a schema that means something else
 }

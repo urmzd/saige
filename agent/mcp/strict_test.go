@@ -90,7 +90,9 @@ func TestParseInputSchemaRefusesWhatItCannotRepresent(t *testing.T) {
 		"one_of_no_null":   prop(map[string]any{"oneOf": []any{map[string]any{"type": "string"}}}),
 		"type_array":       prop(map[string]any{"type": []any{"string", "integer"}}),
 		"only_null_types":  prop(map[string]any{"type": []any{"null", "null"}}),
-		"all_of":           prop(map[string]any{"allOf": []any{map[string]any{"type": "string"}}}),
+		"all_of_two":       prop(map[string]any{"allOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "string"}}}),
+		"all_of_in_all_of": prop(map[string]any{"allOf": []any{map[string]any{"allOf": []any{map[string]any{"type": "string"}}}}}),
+		"all_of_clash":     prop(map[string]any{"type": "string", "allOf": []any{map[string]any{"type": "integer"}}}),
 		"remote_ref":       prop(map[string]any{"$ref": "https://example.com/s.json"}),
 		"missing_def":      prop(map[string]any{"$ref": "#/$defs/Nope"}),
 		"tuple_items":      prop(map[string]any{"type": "array", "items": []any{map[string]any{"type": "string"}}}),
@@ -109,7 +111,15 @@ func TestParseInputSchemaRefusesWhatItCannotRepresent(t *testing.T) {
 		"required_conflict":    prop(map[string]any{"required": []any{"a"}, "anyOf": []any{map[string]any{"type": "object", "required": []any{"b"}}, map[string]any{"type": "null"}}}),
 		"properties_conflict":  prop(map[string]any{"properties": map[string]any{"a": map[string]any{"type": "string"}}, "anyOf": []any{map[string]any{"type": "object", "properties": map[string]any{"b": map[string]any{"type": "string"}}}, map[string]any{"type": "null"}}}),
 		"ref_with_type":        {"type": "object", "$defs": map[string]any{"A": map[string]any{"type": "object"}}, "properties": map[string]any{"v": map[string]any{"$ref": "#/$defs/A", "type": "string"}}},
-		"const":                prop(map[string]any{"type": "string", "const": "x"}),
+		"integer_const":        prop(map[string]any{"type": "integer", "const": 1}),
+		"const_and_enum":       prop(map[string]any{"type": "string", "const": "x", "enum": []any{"x"}}),
+		"const_beside_union":   prop(map[string]any{"const": "x", "anyOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}}),
+		"one_of_nullable_type": prop(map[string]any{"oneOf": []any{map[string]any{"type": []any{"string", "null"}}, map[string]any{"type": "null"}}}),
+		"one_of_null_enum":     prop(map[string]any{"oneOf": []any{map[string]any{"type": []any{"string", "null"}, "enum": []any{"a", nil}}, map[string]any{"type": "null"}}}),
+		"one_of_two_nulls":     prop(map[string]any{"oneOf": []any{map[string]any{"type": "null", "title": "n"}, map[string]any{"type": "null"}}}),
+		"one_of_nullable_flag": prop(map[string]any{"oneOf": []any{map[string]any{"type": "string", "nullable": true}, map[string]any{"type": "null"}}}),
+		"id_beside_ref":        {"type": "object", "$defs": map[string]any{"A": map[string]any{"type": "string"}}, "properties": map[string]any{"v": map[string]any{"$id": "https://example.com/x", "$ref": "#/$defs/A"}}},
+		"id":                   prop(map[string]any{"type": "string", "$id": "https://example.com/x"}),
 		"pattern":              prop(map[string]any{"type": "string", "pattern": "^a"}),
 		"minimum":              prop(map[string]any{"type": "integer", "minimum": 1}),
 		"not":                  prop(map[string]any{"type": "string", "not": map[string]any{"enum": []any{"x"}}}),
@@ -238,5 +248,43 @@ func TestParseInputSchemaDoesNotModifyItsInput(t *testing.T) {
 	}
 	if string(raw) != before {
 		t.Error("ParseInputSchema modified its input")
+	}
+}
+
+func TestParseInputSchemaAcceptsPydanticAllOfAndLiteralShapes(t *testing.T) {
+	raw := mustJSON(t, map[string]any{
+		"type": "object",
+		"$defs": map[string]any{
+			"Kind":    map[string]any{"type": "string", "enum": []any{"retail", "wholesale"}, "title": "Kind"},
+			"Address": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}, "required": []any{"city"}},
+		},
+		"properties": map[string]any{
+			// pydantic 2.0 to 2.8: Field(description=...) on a model or enum field.
+			"kind": map[string]any{"allOf": []any{map[string]any{"$ref": "#/$defs/Kind"}}, "description": "Order kind", "default": "retail"},
+			"ship": map[string]any{"allOf": []any{map[string]any{"$ref": "#/$defs/Address"}}, "description": "Where to"},
+			// pydantic Literal["x"]: 2.5 leaves out type, later versions add it.
+			"old_literal": map[string]any{"const": "x", "title": "Old"},
+			"new_literal": map[string]any{"const": "x", "type": "string"},
+			// The oneOf branch rejects null, so oneOf of it and null is nullable.
+			"one_of": map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}},
+		},
+	})
+	s, _, err := ParseInputSchema(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := s.Properties["kind"]; k.Type != types.SchemaString || k.Description != "Order kind" || !slices.Equal(k.Enum, []string{"retail", "wholesale"}) {
+		t.Errorf("kind = %+v, want the Kind enum with the outer description", k)
+	}
+	if sh := s.Properties["ship"]; sh.Type != types.SchemaObject || sh.Properties["city"].Type != types.SchemaString || sh.Description != "Where to" {
+		t.Errorf("ship = %+v, want the Address object", sh)
+	}
+	for _, name := range []string{"old_literal", "new_literal"} {
+		if l := s.Properties[name]; l.Type != types.SchemaString || !slices.Equal(l.Enum, []string{"x"}) || l.Nullable {
+			t.Errorf("%s = %+v, want a string enum of x", name, l)
+		}
+	}
+	if o := s.Properties["one_of"]; o.Type != types.SchemaString || !o.Nullable {
+		t.Errorf("one_of = %+v, want nullable string", o)
 	}
 }
