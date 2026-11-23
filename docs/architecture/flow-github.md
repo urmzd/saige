@@ -112,8 +112,8 @@ is made:
 
 Otherwise the read is refused with a `*ReadError` (`errors.Is` reports
 `connector.ErrUndeliverable`; `Kept` says `ReadRefused` decided). Each hook
-is asked at most once for a read, with the owner and repository as the
-reference wrote them, which are the ones requested. A host that sets
+is asked at most once for each repository a read reaches, with the owner and
+repository that are requested, as the reference wrote them. A host that sets
 `MayRead` grants all five reads together, `github_fix_base` included; the
 hooks are not told which read is asking.
 
@@ -121,16 +121,24 @@ A cross-source read is answered by the repository the grant was decided for
 or not at all. GitHub answers a renamed or transferred repository with a
 redirect; `HTTPAPI` does not follow one for these reads and fails with
 `ErrReadRedirected`, with or without the hooks. The connector marks the
-read's context with `ReadWhereNamed`, and another `API` implementation that
-makes HTTP requests checks `IsReadWhereNamed` to do the same. A run's read of
-its own repository follows redirects as the client is configured to.
+read's context with `ReadWhereNamed`.
+
+A run's read of its own repository follows a redirect within that
+repository. A redirect to another repository, such as an issue that was
+transferred, is a cross-source read of that repository: steps 1 to 4 decide
+it before it is requested, and a read they do not grant fails with
+`ErrReadRedirected`. A redirect to a location that names no repository on
+the API's own base, such as `/repositories/{id}`, is not followed. `HTTPAPI`
+asks `FollowReadRedirect` about every redirect, and another `API`
+implementation that follows redirects asks it too.
 
 Both hooks are nil by default: nil `MayRead` grants nothing more and nil
 `ReadRefused` refuses nothing, so a `Config` without them grants what
 `ReadRepositories` names and nothing else. The hooks are never asked for a
 write (`Config.ActionRepositories` alone grants a cross-surface write), for a
-run's own repository, or for an address the host bound itself (`Deliver`,
-`Messages`, `PollFeedback`). `github_create_review` and
+run's own repository (only for another repository a redirect of its read
+names), or for an address the host bound itself (`Deliver`, `Messages`,
+`PollFeedback`). `github_create_review` and
 `github_create_fix_pr` read their target to validate the write, under
 `ActionRepositories` and without the hooks, and return none of what they
 read.

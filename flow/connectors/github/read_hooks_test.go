@@ -516,6 +516,9 @@ func TestACrossSourceReadIsAnsweredWhereItWasNamed(t *testing.T) {
 			}
 		},
 		"list": func(cfg *github.Config) { cfg.ReadRepositories = []string{"acme/old"} },
+		"target granted": func(cfg *github.Config) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+		},
 	}
 	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		for grants, edit := range configs {
@@ -554,11 +557,17 @@ func TestACrossSourceReadIsAnsweredWhereItWasNamed(t *testing.T) {
 					t.Errorf("%d, %s, %s: the error names where the repository answered from: %v", status, grants, name, err)
 				}
 			}
-			// A run on the repository itself reads it through the redirect,
-			// as before; only the comments read never follows one.
+			// A run on the repository itself follows a redirect to another
+			// repository only when that repository is granted as a
+			// cross-source read; the comments read never follows one.
 			own := address.MustParse("github://acme/old/issues/7")
-			if got, err := invoke("github_read_context", `{}`, own); err != nil || !strings.Contains(got, "kept content") {
-				t.Errorf("%d, %s: the run's own read: %q, %v", status, grants, got, err)
+			got, err := invoke("github_read_context", `{}`, own)
+			if grants == "target granted" {
+				if err != nil || !strings.Contains(got, "kept content") {
+					t.Errorf("%d, %s: the run's own read: %q, %v", status, grants, got, err)
+				}
+			} else if !errors.Is(err, github.ErrReadRedirected) || strings.Contains(got, "kept content") {
+				t.Errorf("%d, %s: the run's own read: %q, %v; want ErrReadRedirected", status, grants, got, err)
 			}
 			if _, err := invoke("ReadComments", "", own); !errors.Is(err, github.ErrReadRedirected) {
 				t.Errorf("%d, %s: the run's own comments read: %v", status, grants, err)
@@ -587,5 +596,144 @@ func TestReadWhereNamedMarksAContext(t *testing.T) {
 	stop.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("no redirects") }
 	if _, err := github.NewHTTPAPIAt(srv.URL, "tok", stop).ReadContext(ctx, old, 1); err == nil || !strings.Contains(err.Error(), "no redirects") {
 		t.Fatalf("the client's own policy: %v", err)
+	}
+}
+
+// transferredIssue answers /repos/acme/web/issues/7 with a redirect to
+// location plus the rest of the path, as the API does for an issue moved to
+// another repository, and serves acme/other's and acme/web's issue 7.
+func transferredIssue(t *testing.T, location string) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.Path)
+		mu.Unlock()
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/repos/acme/web/issues/7"); ok {
+			target := location + rest
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch strings.ToLower(r.URL.Path) {
+		case "/repos/acme/other/issues/7", "/repos/acme/web/moved/issues/7":
+			_, _ = w.Write([]byte(`{"number":7,"title":"moved content","body":"moved content","state":"open"}`))
+		case "/repos/acme/other/issues/7/comments", "/repos/acme/web/moved/issues/7/comments":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(requests)
+	}
+}
+
+// A read of the run's own repository that GitHub redirects to another
+// repository asks the cross-source rules about that repository before it
+// requests it, and follows the redirect only when they grant it.
+func TestAnOwnReadRedirectedToAnotherRepositoryAsksTheReadHooks(t *testing.T) {
+	own := address.MustParse("github://acme/web/pull/3")
+	reads := []string{`{"number":7}`, `{"address":"acme/web#7"}`, `{"address":"acme/web","number":7}`}
+	for _, tc := range []struct {
+		name     string
+		location string
+		cfg      func(*github.Config, *[]string)
+		// asked is what ReadRefused hears; follows says the read returns
+		// the redirect's target.
+		asked   []string
+		follows bool
+	}{
+		{"kept", "/repos/acme/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return owner+"/"+repo == "acme/other"
+			}
+		}, []string{"acme/other"}, false},
+		{"not granted", "/repos/acme/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, []string{"acme/other"}, false},
+		{"granted by MayRead", "/repos/acme/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(_ context.Context, owner, repo string) bool { return owner+"/"+repo == "acme/other" }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, []string{"acme/other"}, true},
+		{"granted by ReadRepositories", "/repos/acme/other/issues/7", func(cfg *github.Config, _ *[]string) {
+			cfg.ReadRepositories = []string{"acme/other"}
+		}, nil, true},
+		{"an owner not served", "/repos/partner/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
+		{"a location that names no repository", "/repositories/42/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
+		{"within the same repository", "/repos/ACME/Web/moved/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return true
+			}
+		}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, args := range reads {
+				srv, requests := transferredIssue(t, tc.location)
+				var asked []string
+				cfg := github.Config{API: github.NewHTTPAPIAt(srv.URL, "tok", srv.Client()), Owners: []string{"acme"}}
+				tc.cfg(&cfg, &asked)
+				c, err := github.New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r, err := c.Actions()[0].Invoke(context.Background(), own, json.RawMessage(args))
+				if !slices.Equal(asked, tc.asked) {
+					t.Errorf("%s: ReadRefused heard %v, want %v", args, asked, tc.asked)
+				}
+				if tc.follows {
+					if err != nil || !strings.Contains(r.Summary, "moved content") {
+						t.Errorf("%s: %q, %v; want the redirect followed", args, r.Summary, err)
+					}
+					continue
+				}
+				if !errors.Is(err, github.ErrReadRedirected) || strings.Contains(r.Summary, "moved content") {
+					t.Errorf("%s: %q, %v; want ErrReadRedirected", args, r.Summary, err)
+				}
+				if got := requests(); len(got) != 1 {
+					t.Errorf("%s: requests %v; want only the run's own", args, got)
+				}
+			}
+		})
+	}
+}
+
+// FollowReadRedirect follows every redirect for an unmarked context and
+// none for one marked ReadWhereNamed.
+func TestFollowReadRedirectWithoutTheConnectorsMark(t *testing.T) {
+	ctx := context.Background()
+	if err := github.FollowReadRedirect(ctx, "acme", "other"); err != nil {
+		t.Errorf("unmarked: %v", err)
+	}
+	if err := github.FollowReadRedirect(github.ReadWhereNamed(ctx), "acme", "old"); !errors.Is(err, github.ErrReadRedirected) {
+		t.Errorf("marked: %v", err)
 	}
 }

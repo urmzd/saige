@@ -38,7 +38,8 @@ func (e *ReadError) Unwrap() error { return connector.ErrUndeliverable }
 // the one the caller reads, so the grant is decided for what is read, and
 // the context it returns is the one to read with: for a repository other
 // than the run's own it is marked ReadWhereNamed, so the read is answered
-// by the repository the grant was decided for or not at all.
+// by the repository the grant was decided for or not at all. For the run's
+// own repository it is marked by ownRead.
 func (c *Connector) readTarget(ctx context.Context, source address.Address, reference string) (context.Context, address.Address, error) {
 	return c.readTargetIn(ctx, source, reference, false)
 }
@@ -48,10 +49,11 @@ func (c *Connector) readTarget(ctx context.Context, source address.Address, refe
 // a second time for it.
 func (c *Connector) readTargetIn(ctx context.Context, source address.Address, reference string, granted bool) (context.Context, address.Address, error) {
 	if reference == "" {
-		if _, err := c.ref(source); err != nil {
+		own, err := c.ref(source)
+		if err != nil {
 			return ctx, address.Address{}, err
 		}
-		return ctx, source, nil
+		return c.ownRead(ctx, own.Owner, own.Repo), source, nil
 	}
 	target, err := ParseReadReference(reference)
 	if err != nil {
@@ -71,7 +73,7 @@ func (c *Connector) readTargetIn(ctx context.Context, source address.Address, re
 		if original, err := c.ref(source); err == nil && original.Number == ref.Number && source.Params["head_sha"] != "" {
 			clean = clean.WithParam("head_sha", source.Params["head_sha"])
 		}
-		return ctx, clean, nil
+		return c.ownRead(ctx, ref.Owner, ref.Repo), clean, nil
 	}
 	if !granted {
 		if err := c.crossSourceRead(ctx, ref.Owner, ref.Repo); err != nil {
@@ -91,9 +93,11 @@ func ownRepository(source address.Address, owner, repo string) bool {
 // crossSourceRead decides a read of owner/repo by a run raised anywhere
 // else: Config.ReadRefused refuses it first, whatever grants it; then
 // Config.ReadRepositories grants it by name; then Config.MayRead is asked.
-// Only the reads that take a reference call it (the read actions and
-// ReadComments), once for each, so neither hook ever reaches a write. A
-// refusal is a *ReadError.
+// Only the reads that take a reference call it
+// (the read actions and ReadComments), once for each, and a read of the
+// run's own repository calls it for a repository a redirect names
+// (redirectGrant), so neither hook ever reaches a write. A refusal is a
+// *ReadError.
 func (c *Connector) crossSourceRead(ctx context.Context, owner, repo string) error {
 	if c.cfg.ReadRefused != nil && c.cfg.ReadRefused(ctx, owner, repo) {
 		return &ReadError{Owner: owner, Repo: repo, Kept: true}
@@ -105,4 +109,25 @@ func (c *Connector) crossSourceRead(ctx context.Context, owner, repo string) err
 		return nil
 	}
 	return &ReadError{Owner: owner, Repo: repo}
+}
+
+// ownRead marks ctx for a read of the run's own repository owner/repo. A
+// redirect within it is followed; a redirect to another repository is
+// followed only when redirectGrant allows that repository, which is asked
+// once for each repository in the read (FollowReadRedirect).
+func (c *Connector) ownRead(ctx context.Context, owner, repo string) context.Context {
+	return context.WithValue(ctx, ownReadKey{}, ownRead{owner: owner, repo: repo, grant: c.redirectGrant, decided: &redirectDecisions{}})
+}
+
+// redirectGrant decides a redirect of a read of the run's own repository to
+// owner/repo as a cross-source read of owner/repo: the connector serves the
+// owner, the names are valid, and crossSourceRead grants it.
+func (c *Connector) redirectGrant(ctx context.Context, owner, repo string) error {
+	if c.owners != nil && !c.owners[strings.ToLower(owner)] {
+		return fmt.Errorf("%w: owner %q is not served", connector.ErrUndeliverable, owner)
+	}
+	if address.ValidWorkspace(owner) != nil || !validRepository(repo) {
+		return fmt.Errorf("%w: invalid GitHub repository", connector.ErrUndeliverable)
+	}
+	return c.crossSourceRead(ctx, owner, repo)
 }

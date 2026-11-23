@@ -200,6 +200,8 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 		if args.Number == 0 {
 			if cross {
 				ctx = ReadWhereNamed(ctx)
+			} else {
+				ctx = c.ownRead(ctx, owner, repo)
 			}
 			return c.readRepository(ctx, owner, repo, args.Page)
 		}
