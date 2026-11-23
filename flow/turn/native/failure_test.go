@@ -3,6 +3,7 @@ package native_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/guardrail"
 	"github.com/urmzd/saige/agent/provider/fallback"
+	"github.com/urmzd/saige/agent/provider/router"
 	saigetypes "github.com/urmzd/saige/agent/types"
 
 	"github.com/urmzd/saige/flow/turn"
@@ -159,6 +161,65 @@ func TestAFallbackChainRepeatsOnlyWhenEveryMemberWould(t *testing.T) {
 				t.Errorf("Repeats is %v, want %v: %v", got, tc.repeats, err)
 			}
 		})
+	}
+}
+
+// streamsError is a model whose every call fails mid-stream with err.
+type streamsError struct{ err error }
+
+func (f streamsError) Stream(context.Context, saigetypes.Request) (<-chan saigetypes.Delta, error) {
+	ch := make(chan saigetypes.Delta, 1)
+	ch <- saigetypes.ErrorDelta{Error: f.err}
+	close(ch)
+	return ch, nil
+}
+
+// A router whose home profile was overloaded, then whose backup refused the
+// request locally, is retried: a retry reaches the home profile again.
+func TestARouterThatFailedOverFromAPassingFailureIsRetried(t *testing.T) {
+	t.Parallel()
+	r, err := router.New(router.Config{Profiles: []router.Profile{
+		{ID: "home", Provider: alwaysFails{modelFailure("home", saigetypes.ErrorKindUnavailable, 503)}},
+		{ID: "backup", Provider: alwaysFails{fmt.Errorf("google: part 0: %w", saigetypes.ErrMediaUnavailable)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err = invoke(ctx, newAgent(t, r.Session()))
+	if !errors.Is(err, saigetypes.ErrMediaUnavailable) {
+		t.Fatalf("err = %v, want the backup's failure", err)
+	}
+	if failure.Repeats(err) {
+		t.Errorf("Repeats is true: %v", err)
+	}
+}
+
+// A fallback chain that falls back on rate limits only, whose second member
+// failed mid-stream with an error it does not fall back on, is retried: the
+// first member was rate limited.
+func TestANarrowedFallbackChainThatPassedARateLimitIsRetried(t *testing.T) {
+	t.Parallel()
+	rule, err := fallback.Rule(fallback.OnRateLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain, err := fallback.New(fallback.Config{FallbackOn: rule, Providers: []saigetypes.Provider{
+		streamsError{modelFailure("primary", saigetypes.ErrorKindRateLimit, 429)},
+		streamsError{modelFailure("backup", saigetypes.ErrorKindContextLength, 400)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err = invoke(ctx, newAgent(t, chain))
+	if !errors.Is(err, saigetypes.ErrContextLength) {
+		t.Fatalf("err = %v, want the backup's failure", err)
+	}
+	if failure.Repeats(err) {
+		t.Errorf("Repeats is true: %v", err)
 	}
 }
 

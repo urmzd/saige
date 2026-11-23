@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/urmzd/saige/agent/provider/internal/optionscheck"
 	"github.com/urmzd/saige/agent/provider/internal/schemacheck"
@@ -18,8 +19,13 @@ import (
 // Fallback covers both an immediate Stream error and a mid-stream error
 // (an ErrorDelta) that arrives before any content-bearing delta has been
 // delivered downstream (see isContentDelta). Once content has been forwarded,
-// falling back would duplicate partial output, so the error delta is
-// propagated as-is instead.
+// falling back would duplicate partial output, so the error is propagated
+// instead.
+//
+// A chain that ends on a member's error after earlier members failed over
+// reports a *types.FallbackError with every member's failure, whether or not
+// that last error was one to fall back on. The FallbackError unwraps to the
+// last member's error, so errors.Is, errors.As and types.KindOf answer for it.
 type Provider struct {
 	Config
 }
@@ -289,9 +295,10 @@ func isContentDelta(d types.Delta) bool {
 // relay forwards deltas from src to out. An ErrorDelta that arrives before any
 // content-bearing delta has been forwarded downstream discards the failed
 // stream and retries with the remaining providers; anything later is
-// propagated as-is. When the remaining providers are exhausted, the
-// accumulated FallbackError is emitted as an ErrorDelta (the channel was
-// already handed to the consumer).
+// propagated, inside a FallbackError with every failure when earlier members
+// failed over. When the remaining providers are exhausted, the accumulated
+// FallbackError is emitted as an ErrorDelta (the channel was already handed
+// to the consumer).
 //
 // Every return path that abandons a live src must `go drain(src)` first:
 // provider adapters may send on unbuffered channels, and a producer blocked on
@@ -321,9 +328,18 @@ func (f *Provider) relay(ctx context.Context, out chan<- types.Delta, src <-chan
 				if !ok {
 					return // stream finished (cleanly, or after a propagated error)
 				}
-				if ed, isErr := d.(types.ErrorDelta); isErr && !forwarded && ctx.Err() == nil && shouldFallback(ed.Error) {
-					fbErr = ed.Error
-					break read
+				if ed, isErr := d.(types.ErrorDelta); isErr {
+					if !forwarded && ctx.Err() == nil && shouldFallback(ed.Error) {
+						fbErr = ed.Error
+						break read
+					}
+					if len(errs) > 0 {
+						// The chain ends on a member after earlier members
+						// failed over: report every failure, so an earlier
+						// transient one stays visible. The chain unwraps to
+						// this member's error.
+						d = types.ErrorDelta{Error: &types.FallbackError{Errors: append(slices.Clone(errs), ed.Error)}}
+					}
 				}
 				if !send(d) {
 					go drain(src) // send failed on ctx.Done: src is still live

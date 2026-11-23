@@ -1008,13 +1008,26 @@ func (s *Session) relay(ctx context.Context, out chan<- types.Delta, p plan, q r
 			// The request ends here, so usage held from this attempt is
 			// real spend on the profile that failed: report it.
 			if flush() {
-				send(types.ErrorDelta{Error: err})
+				send(types.ErrorDelta{Error: ended(err, failures)})
 			}
 			return
 		}
 		order, reason = reroute(order, p.candidates[id], p.candidates, err)
 	}
 	send(types.ErrorDelta{Error: &types.FallbackError{Errors: failures}})
+}
+
+// ended is the error a request reports when it stops on err, the failure of
+// its last attempt. After a single attempt it is err itself. After earlier
+// attempts failed over it is a *FallbackError with every attempt's failure,
+// so a caller can still see an earlier failure that was transient; the chain
+// unwraps to the last attempt, so errors.Is, errors.As and KindOf answer as
+// they do for err.
+func ended(err error, failures []error) error {
+	if len(failures) < 2 {
+		return err
+	}
+	return &types.FallbackError{Errors: failures}
 }
 
 // reroute filters the remaining order by the class of the failure. A

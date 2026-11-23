@@ -471,8 +471,10 @@ func IsContentFilterFinishReason(reason string) bool {
 	}
 }
 
-// FallbackError is returned when every member of a fallback chain or router
-// failed. Errors holds every attempt, in order.
+// FallbackError is returned when a fallback chain or router ends after more
+// than one attempt failed: every member failed, or a member failed with an
+// error the chain does not fall back on after earlier members failed over.
+// Errors holds every attempt, in order.
 //
 // It is classified by its last attempt, the one that ended the chain:
 // Unwrap returns that attempt alone, so errors.Is, errors.As, KindOf,
