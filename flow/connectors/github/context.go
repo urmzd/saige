@@ -193,11 +193,14 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 		repository = target
 	}
 	if repository.Connector != "" {
-		owner, repo, err := c.repositoryTarget(ctx, target, repository)
+		owner, repo, cross, err := c.repositoryTarget(ctx, target, repository)
 		if err != nil {
 			return connector.Result{}, err
 		}
 		if args.Number == 0 {
+			if cross {
+				ctx = ReadWhereNamed(ctx)
+			}
 			return c.readRepository(ctx, owner, repo, args.Page)
 		}
 		issue := refAddress(Ref{Owner: owner, Repo: repo, Number: args.Number}, "issues")
@@ -210,7 +213,7 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 	}
 	// A repository named with a number passed its grants in repositoryTarget
 	// above; they are asked once for a call.
-	target, err := c.readTargetIn(ctx, target, args.Address, repository.Connector != "")
+	ctx, target, err := c.readTargetIn(ctx, target, args.Address, repository.Connector != "")
 	if err != nil {
 		return connector.Result{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -199,55 +200,50 @@ func TestCommentsDeletedWhileReadAreAChange(t *testing.T) {
 	}
 }
 
-// A redirect that stays on the API's host is followed with the token; one
-// that leaves it is refused and the other host is sent nothing.
-func TestTheLatestCommentsStayOnTheAPIHost(t *testing.T) {
+// No redirect is followed, to the API's own host or to another: the read
+// fails with ErrReadRedirected after the one request, and nothing is sent
+// anywhere else.
+func TestTheLatestCommentsFollowNoRedirect(t *testing.T) {
 	elsewhere := count(t, func(w http.ResponseWriter, _ *http.Request) { writeComments(w, 1, 3) })
-	for _, tc := range []struct {
-		name, to string
-		want     bool
-	}{
-		{"the same host", "/repositories/1/issues/7/comments?per_page=30&page=1", true},
-		{"another host", elsewhere.URL + "/repos/acme/repo/issues/7/comments?per_page=30&page=1", false},
-		{"another scheme", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var srv *counted
-			srv = count(t, func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasPrefix(r.URL.Path, "/repositories/") {
+	elsewhereURL, _ := url.Parse(elsewhere.URL)
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		for name, to := range map[string]string{
+			"the same host":         "/repositories/1/issues/7/comments?per_page=30&page=1",
+			"another repository":    "/repos/acme/other/issues/7/comments?per_page=30&page=1",
+			"another host":          elsewhere.URL + "/repos/acme/repo/issues/7/comments?per_page=30&page=1",
+			"another scheme":        "https://" + elsewhereURL.Host + "/x",
+			"a host with user info": "http://127.0.0.1@" + elsewhereURL.Host + "/x",
+			"scheme-relative":       "//" + elsewhereURL.Host + "/x",
+		} {
+			srv := count(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/repos/acme/repo/issues/7/comments" {
 					writeComments(w, 1, 3)
 					return
 				}
-				to := tc.to
-				if to == "" {
-					to = "https" + strings.TrimPrefix(srv.URL, "http") + "/repositories/1/issues/7/comments?page=1"
-				}
-				http.Redirect(w, r, to, http.StatusMovedPermanently)
+				w.Header().Set("Location", to)
+				w.WriteHeader(status)
 			})
 			got, err := github.NewHTTPAPIAt(srv.URL, "tok", srv.Client()).LatestComments(context.Background(), commentsRef, 5, nil)
-			if tc.want {
-				if err != nil || len(got) != 3 || fmt.Sprint(srv.auth) != "[Bearer tok Bearer tok]" {
-					t.Fatalf("%d comments, %v, authorization %v", len(got), err, srv.auth)
-				}
-				return
+			if !errors.Is(err, github.ErrReadRedirected) || got != nil || srv.pages() != "[1]" {
+				t.Errorf("%d to %s: %d comments, %v, requests %s", status, name, len(got), err, srv.pages())
 			}
-			if err == nil || got != nil || len(srv.asked) != 1 {
-				t.Fatalf("%d comments, %v, %d requests to the API", len(got), err, len(srv.asked))
-			}
-		})
+		}
 	}
 	if elsewhere.pages() != "[]" {
 		t.Fatalf("another host was sent %s, authorization %v", elsewhere.pages(), elsewhere.auth)
 	}
+}
 
-	// The caller's own redirect policy still applies on the same host.
+// A path prefix in the base, as GitHub Enterprise Server has, is kept.
+func TestTheLatestCommentsKeepTheBasePath(t *testing.T) {
+	var paths []string
 	srv := count(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/repositories/1/issues/7/comments", http.StatusFound)
+		paths = append(paths, r.URL.Path)
+		writeComments(w, 1, 3)
 	})
-	stop := srv.Client()
-	stop.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("no redirects") }
-	if _, err := github.NewHTTPAPIAt(srv.URL, "tok", stop).LatestComments(context.Background(), commentsRef, 5, nil); err == nil || !strings.Contains(err.Error(), "no redirects") {
-		t.Fatalf("error %v, want the client's own refusal", err)
+	got, err := github.NewHTTPAPIAt(srv.URL+"/api/v3", "tok", srv.Client()).LatestComments(context.Background(), commentsRef, 5, nil)
+	if err != nil || len(got) != 3 || fmt.Sprint(paths) != "[/api/v3/repos/acme/repo/issues/7/comments]" {
+		t.Fatalf("%d comments, %v, paths %v", len(got), err, paths)
 	}
 }
 

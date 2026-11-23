@@ -44,10 +44,11 @@ const maxLatestCommentsPage = 10000
 // ParseReadReference reads for an issue or pull request, and a repository
 // other than source's own is read only when Config.ReadRepositories or
 // Config.MayRead grants it and Config.ReadRefused does not refuse it, else
-// the error is a *ReadError and nothing is requested. want and keep are
-// LatestCommentsAPI's. The API must implement LatestCommentsAPI.
+// the error is a *ReadError and nothing is requested. A repository that
+// answers with a redirect is not followed: ErrReadRedirected. want and keep
+// are LatestCommentsAPI's. The API must implement LatestCommentsAPI.
 func (c *Connector) ReadComments(ctx context.Context, source address.Address, reference string, want int, keep func(ContextComment) bool) ([]ContextComment, error) {
-	target, err := c.readTarget(ctx, source, reference)
+	ctx, target, err := c.readTarget(ctx, source, reference)
 	if err != nil {
 		return nil, err
 	}
@@ -71,8 +72,8 @@ func (c *Connector) ReadComments(ctx context.Context, source address.Address, re
 //
 // Every request goes to the API's own base. The Link header gives only a
 // page number, bounded; the request is built here and never taken from the
-// header. A redirect to another host or scheme is refused, so the token
-// stays with the host it was given for.
+// header. No redirect is followed (ErrReadRedirected), so a read is at most
+// three requests, each for the repository ref names on the API's own host.
 func (a *HTTPAPI) LatestComments(ctx context.Context, ref Ref, want int, keep func(ContextComment) bool) ([]ContextComment, error) {
 	if err := validReadRef(ref, 1); err != nil {
 		return nil, err
@@ -119,7 +120,7 @@ func kept(comments []ContextComment, keep func(ContextComment) bool) int {
 // Link header names, 0 when it names none.
 func (a *HTTPAPI) commentsPage(ctx context.Context, ref Ref, page int) ([]ContextComment, int, error) {
 	target := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=%d&page=%d", a.client.Base, ref.Owner, ref.Repo, ref.Number, contextPageSize, page)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(ReadWhereNamed(ctx), http.MethodGet, target, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("github: comments on %s: %w", ref, err)
 	}
@@ -128,7 +129,7 @@ func (a *HTTPAPI) commentsPage(ctx context.Context, ref Ref, page int) ([]Contex
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := sameHostOnly(a.client.HTTP).Do(req)
+	resp, err := a.client.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("github: comments on %s: %w", ref, err)
 	}
@@ -145,33 +146,6 @@ func (a *HTTPAPI) commentsPage(ctx context.Context, ref Ref, page int) ([]Contex
 		return nil, 0, fmt.Errorf("github: comments on %s: %w", ref, err)
 	}
 	return out[:min(len(out), contextPageSize)], lastPage(resp.Header.Get("Link")), nil
-}
-
-// errOtherHost is why sameHostOnly stops a redirect.
-var errOtherHost = errors.New("github: redirect to another host refused")
-
-// sameHostOnly is base, refusing a redirect that leaves the host or scheme
-// of the request it started with. A redirect that stays is left to base's
-// own policy.
-func sameHostOnly(base *http.Client) *http.Client {
-	out := &http.Client{Timeout: httpjson.DefaultTimeout}
-	if base != nil {
-		out = &http.Client{Transport: base.Transport, Jar: base.Jar, Timeout: base.Timeout, CheckRedirect: base.CheckRedirect}
-	}
-	next := out.CheckRedirect
-	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if first := via[0].URL; req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
-			return errOtherHost
-		}
-		if next != nil {
-			return next(req, via)
-		}
-		if len(via) >= 10 {
-			return errors.New("stopped after 10 redirects")
-		}
-		return nil
-	}
-	return out
 }
 
 // lastPage is the page number a Link header names rel="last", 0 when it

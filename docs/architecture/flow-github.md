@@ -91,9 +91,15 @@ the host's own URLs. Automation text is the host's and refers to nothing.
 The reads that take a reference (`github_read_context`, `github_read_file`,
 `github_workflow_status`, `github_fix_base` and `Connector.ReadComments`)
 parse it with `ParseReadReference` into an owner, a repository and a number,
-and request exactly that: a URL is never fetched. A run reads its own
-repository. Any other repository is a cross-source read, decided in this
-order before any request is made:
+and request that repository on the API's own base: a URL is never fetched.
+A reference whose repository still ends in `.git` after one clone suffix is
+taken off, or whose owner is longer than 39 characters or repository longer
+than 100, is refused.
+
+A run reads its own repository: the one its address names, whether the
+address is the repository's or one of its issues or pull requests. Any other
+repository is a cross-source read, decided in this order before any request
+is made:
 
 1. `Config.Owners`: an owner the connector does not serve is refused.
 2. `Config.ReadRefused(ctx, owner, repo)`: true refuses the read whatever
@@ -107,13 +113,27 @@ order before any request is made:
 Otherwise the read is refused with a `*ReadError` (`errors.Is` reports
 `connector.ErrUndeliverable`; `Kept` says `ReadRefused` decided). Each hook
 is asked at most once for a read, with the owner and repository as the
-reference wrote them, which are the ones requested. Both hooks are nil by
-default: nil `MayRead` grants nothing more and nil `ReadRefused` refuses
-nothing, so a `Config` without them reads its own repository and
-`ReadRepositories`, as before. The hooks are never asked for a write
-(`Config.ActionRepositories` alone grants a cross-surface write), for a run's
-own repository, or for an address the host bound itself (`Deliver`,
-`Messages`, `PollFeedback`).
+reference wrote them, which are the ones requested. A host that sets
+`MayRead` grants all five reads together, `github_fix_base` included; the
+hooks are not told which read is asking.
+
+A cross-source read is answered by the repository the grant was decided for
+or not at all. GitHub answers a renamed or transferred repository with a
+redirect; `HTTPAPI` does not follow one for these reads and fails with
+`ErrReadRedirected`, with or without the hooks. The connector marks the
+read's context with `ReadWhereNamed`, and another `API` implementation that
+makes HTTP requests checks `IsReadWhereNamed` to do the same. A run's read of
+its own repository follows redirects as the client is configured to.
+
+Both hooks are nil by default: nil `MayRead` grants nothing more and nil
+`ReadRefused` refuses nothing, so a `Config` without them grants what
+`ReadRepositories` names and nothing else. The hooks are never asked for a
+write (`Config.ActionRepositories` alone grants a cross-surface write), for a
+run's own repository, or for an address the host bound itself (`Deliver`,
+`Messages`, `PollFeedback`). `github_create_review` and
+`github_create_fix_pr` read their target to validate the write, under
+`ActionRepositories` and without the hooks, and return none of what they
+read.
 
 With either hook set, a read action refuses arguments with a key given
 twice, two keys that differ only by case, or a key its schema does not
@@ -123,11 +143,12 @@ declare, before decoding them.
 conversation comments of an issue or pull request, through the optional
 `LatestCommentsAPI`: page 1, the page its `Link` header names last, and the
 page before that when the last holds fewer than `want` comments `keep`
-accepts. That is at most three requests and two pages of 30. Only a page
-number is read from the `Link` header (up to 10000); every request goes to
-the API's own base, a redirect to another host or scheme is refused, and one
-answer is read up to 4 MiB. Comments deleted between the requests are
-`ErrCommentsChanged`.
+accepts. `HTTPAPI` makes at most three requests for it, each to the API's
+own base for the repository named, and follows no redirect
+(`ErrReadRedirected`), for a run's own repository too. It returns at most two
+pages of 30. Only a page number is read from the `Link` header (up to
+10000), and one answer is read up to 4 MiB. Comments deleted between the
+requests are `ErrCommentsChanged`.
 
 ## Where the answer lands
 

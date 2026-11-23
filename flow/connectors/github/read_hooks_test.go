@@ -316,6 +316,10 @@ func TestTheReadHooksAreAskedAboutWhatIsRead(t *testing.T) {
 
 		{"a number in the run's own repository", "github://acme/web/pull/3", `{"number":7}`, "", "/repos/acme/web/issues/7"},
 		{"the run's own repository by name", "github://acme/web/pull/3", `{"address":"ACME/Web#7"}`, "", "/repos/ACME/Web/issues/7"},
+		{"a run bound to a repository, a number", "github://acme/web", `{"number":7}`, "", "/repos/acme/web/issues/7"},
+		{"a run bound to a repository, its issue by name", "github://acme/web", `{"address":"acme/web#7"}`, "", "/repos/acme/web/issues/7"},
+		{"a run bound to a repository, its name and a number", "github://acme/web", `{"address":"acme/web","number":7}`, "", "/repos/acme/web/issues/7"},
+		{"a run bound to a repository, another repository", "github://acme/web", `{"address":"acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
 
 		{"a number with no repository", "slack://T01/C01", `{"address":"#7"}`, "", ""},
 		{"a number with no repository, from a run", "github://acme/web/pull/3", `{"address":"#7"}`, "", ""},
@@ -325,6 +329,12 @@ func TestTheReadHooksAreAskedAboutWhatIsRead(t *testing.T) {
 		{"a URL with a query", "slack://T01/C01", `{"address":"https://github.com/acme/docs/issues/7?next=1"}`, "", ""},
 		{"plain http", "slack://T01/C01", `{"address":"http://github.com/acme/docs/issues/7"}`, "", ""},
 		{"an owner not served", "slack://T01/C01", `{"address":"partner/docs#7"}`, "", ""},
+		{"a clone suffix twice", "slack://T01/C01", `{"address":"acme/docs.git.git#7"}`, "", ""},
+		{"a clone suffix twice, address", "slack://T01/C01", `{"address":"github://acme/docs.git.git/issues/7"}`, "", ""},
+		{"a clone suffix twice, in another case", "slack://T01/C01", `{"address":"https://github.com/acme/docs.GIT.git"}`, "", ""},
+		{"a clone suffix in another case", "slack://T01/C01", `{"address":"acme/docs.Git#7"}`, "", ""},
+		{"a repository name past its length", "slack://T01/C01", `{"address":"acme/` + strings.Repeat("r", 101) + `#7"}`, "", ""},
+		{"an owner past its length", "slack://T01/C01", `{"address":"` + strings.Repeat("a", 40) + `/docs#7"}`, "", ""},
 		{"two address keys", "slack://T01/C01", `{"address":"acme/web#1","Address":"acme/docs#7"}`, "", ""},
 		{"the address twice", "slack://T01/C01", `{"address":"acme/web#1","address":"acme/docs#7"}`, "", ""},
 		{"an undeclared key", "slack://T01/C01", `{"address":"acme/web#1","repo":"acme/docs"}`, "", ""},
@@ -378,6 +388,10 @@ func TestNilReadHooksGrantNothingMore(t *testing.T) {
 		{"no grant", "slack://T01/C01", `{"address":"acme/docs#7"}`, nil, ""},
 		{"another repository's run", "github://acme/web/issues/7", `{"address":"acme/docs#7"}`, nil, ""},
 		{"a grant for another repository", "slack://T01/C01", `{"address":"acme/docs#7"}`, []string{"acme/web"}, ""},
+		{"a run bound to its repository, a number", "github://acme/web", `{"number":7}`, nil, "web issue"},
+		{"a run bound to its repository, its issue by name", "github://acme/web", `{"address":"acme/web#7"}`, nil, "web issue"},
+		{"a run bound to its repository, its name and a number", "github://acme/web", `{"address":"acme/web","number":7}`, nil, "web issue"},
+		{"a run bound to a repository, another repository", "github://acme/web", `{"address":"acme/docs#7"}`, nil, ""},
 		// The decoder keeps the last key that matches a field, as it did.
 		{"two address keys, the last listed", "slack://T01/C01", `{"address":"acme/web#7","Address":"acme/docs#7"}`, []string{"acme/docs"}, "docs issue"},
 		{"two address keys, the first listed", "slack://T01/C01", `{"address":"acme/web#7","Address":"acme/docs#7"}`, []string{"acme/web"}, ""},
@@ -436,5 +450,142 @@ func TestAReadHookGrantNeverAuthorizesAWrite(t *testing.T) {
 	}
 	if len(fake.Comments()) != 0 {
 		t.Fatalf("comments were posted: %+v", fake.Comments())
+	}
+}
+
+// moved answers /repos/acme/old/... with a redirect to the same path under
+// /repos/acme/kept, on the same host, as the API does for a repository that
+// was renamed or transferred, and serves acme/kept.
+func moved(t *testing.T, status int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/repos/acme/old"); ok {
+			target := "/repos/acme/kept" + rest
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, status)
+			return
+		}
+		rest, ok := strings.CutPrefix(r.URL.Path, "/repos/acme/kept")
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body := `[]`
+		switch {
+		case rest == "":
+			body = `{"full_name":"acme/kept","description":"kept content","default_branch":"main","html_url":"https://github.com/acme/kept"}`
+		case rest == "/git/ref/heads/main":
+			body = `{"object":{"sha":"` + hookSHA + `"}}`
+		case rest == "/issues/7":
+			body = `{"number":7,"title":"kept content","body":"kept content","state":"open","html_url":"https://github.com/acme/kept/issues/7"}`
+		case rest == "/issues/7/comments":
+			body = `[{"id":1,"body":"kept content","user":{"login":"ana"}}]`
+		case strings.HasPrefix(rest, "/contents/"):
+			body = `{"type":"file","encoding":"base64","content":"a2VwdCBjb250ZW50","sha":"x","html_url":"https://github.com/acme/kept/blob/x/README.md","size":12}`
+		case strings.HasPrefix(rest, "/actions/runs"):
+			body = `{"total_count":1,"workflow_runs":[{"id":1,"name":"kept content","head_sha":"` + hookSHA + `","run_attempt":1,"status":"completed","conclusion":"success"}]}`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A read of a repository other than the run's own is answered by the
+// repository the grants were decided for, or it fails: a redirect to
+// another location is not followed, with the hooks or with the
+// ReadRepositories list alone.
+func TestACrossSourceReadIsAnsweredWhereItWasNamed(t *testing.T) {
+	reads := map[string]string{
+		"github_read_context":             `{"address":"acme/old#7"}`,
+		"github_read_context, repository": `{"address":"acme/old"}`,
+		"github_read_context, numbered":   `{"address":"acme/old","number":7}`,
+		"github_read_file":                `{"address":"acme/old#7","path":"README.md","ref":"` + hookSHA + `"}`,
+		"github_workflow_status":          `{"address":"acme/old#7","ref":"` + hookSHA + `"}`,
+		"github_fix_base":                 `{"address":"acme/old#7"}`,
+		"ReadComments":                    "",
+	}
+	configs := map[string]func(*github.Config){
+		"hooks": func(cfg *github.Config) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				return strings.EqualFold(owner+"/"+repo, "acme/kept")
+			}
+		},
+		"list": func(cfg *github.Config) { cfg.ReadRepositories = []string{"acme/old"} },
+	}
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		for grants, edit := range configs {
+			srv := moved(t, status)
+			cfg := github.Config{
+				API: github.NewHTTPAPIAt(srv.URL, "tok", srv.Client()), Owners: []string{"acme"}, FixPullRequests: true,
+				AuthorizeFixPull: func(context.Context, github.Ref) error { return nil },
+			}
+			edit(&cfg)
+			c, err := github.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			invoke := func(name, args string, source address.Address) (string, error) {
+				if name == "ReadComments" {
+					comments, err := c.ReadComments(context.Background(), source, "acme/old#7", 5, nil)
+					data, _ := json.Marshal(comments)
+					return string(data), err
+				}
+				name, _, _ = strings.Cut(name, ",")
+				for _, a := range c.Actions() {
+					if a.Name == name {
+						r, err := a.Invoke(context.Background(), source, json.RawMessage(args))
+						return r.Summary + string(r.Data), err
+					}
+				}
+				t.Fatalf("no action %s", name)
+				return "", nil
+			}
+			for name, args := range reads {
+				got, err := invoke(name, args, address.MustParse("slack://T01/C01"))
+				if !errors.Is(err, github.ErrReadRedirected) || strings.Contains(got, "kept content") || strings.Contains(got, hookSHA) {
+					t.Errorf("%d, %s, %s: result %q, error %v; want ErrReadRedirected", status, grants, name, got, err)
+				}
+				if err != nil && strings.Contains(err.Error(), "kept") {
+					t.Errorf("%d, %s, %s: the error names where the repository answered from: %v", status, grants, name, err)
+				}
+			}
+			// A run on the repository itself reads it through the redirect,
+			// as before; only the comments read never follows one.
+			own := address.MustParse("github://acme/old/issues/7")
+			if got, err := invoke("github_read_context", `{}`, own); err != nil || !strings.Contains(got, "kept content") {
+				t.Errorf("%d, %s: the run's own read: %q, %v", status, grants, got, err)
+			}
+			if _, err := invoke("ReadComments", "", own); !errors.Is(err, github.ErrReadRedirected) {
+				t.Errorf("%d, %s: the run's own comments read: %v", status, grants, err)
+			}
+		}
+	}
+}
+
+// A context marked for a read where it was named stops a redirect on any
+// API call; an unmarked one keeps the client's own policy.
+func TestReadWhereNamedMarksAContext(t *testing.T) {
+	ctx := context.Background()
+	if github.IsReadWhereNamed(ctx) || !github.IsReadWhereNamed(github.ReadWhereNamed(ctx)) {
+		t.Fatal("the mark is not read back")
+	}
+	srv := moved(t, http.StatusMovedPermanently)
+	api := github.NewHTTPAPIAt(srv.URL, "tok", srv.Client())
+	old := github.Ref{Owner: "acme", Repo: "old", Number: 7}
+	if got, err := api.ReadContext(ctx, old, 1); err != nil || got.Subject.Title != "kept content" {
+		t.Fatalf("unmarked: %+v, %v", got.Subject, err)
+	}
+	if _, err := api.ReadContext(github.ReadWhereNamed(ctx), old, 1); !errors.Is(err, github.ErrReadRedirected) {
+		t.Fatalf("marked: %v", err)
+	}
+	stop := srv.Client()
+	stop.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("no redirects") }
+	if _, err := github.NewHTTPAPIAt(srv.URL, "tok", stop).ReadContext(ctx, old, 1); err == nil || !strings.Contains(err.Error(), "no redirects") {
+		t.Fatalf("the client's own policy: %v", err)
 	}
 }
