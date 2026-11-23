@@ -153,7 +153,7 @@ func validRepository(repo string) bool {
 }
 
 func (c *Connector) readContext(ctx context.Context, target address.Address, raw json.RawMessage) (connector.Result, error) {
-	if target.Connector == Name {
+	if target.Connector == Name && !isRepository(target) {
 		if _, err := c.ref(target); err != nil {
 			return connector.Result{}, err
 		}
@@ -176,6 +176,37 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 	}
 	if args.Page == 0 {
 		args.Page = 1
+	}
+	// A repository, named by the address or bound by the host as the
+	// source, reads as the repository, or as one of its issues when a
+	// number is given.
+	repository := address.Address{}
+	if args.Address != "" {
+		parsed, err := ParseReadReference(args.Address)
+		if err != nil {
+			return connector.Result{}, err
+		}
+		if isRepository(parsed) {
+			repository = parsed
+		}
+	} else if isRepository(target) {
+		repository = target
+	}
+	if repository.Connector != "" {
+		owner, repo, err := c.repositoryTarget(target, repository)
+		if err != nil {
+			return connector.Result{}, err
+		}
+		if args.Number == 0 {
+			return c.readRepository(ctx, owner, repo, args.Page)
+		}
+		issue := refAddress(Ref{Owner: owner, Repo: repo, Number: args.Number}, "issues")
+		if args.Address == "" {
+			// The host bound this repository; its issues are read as its own.
+			target, args.Address = issue, ""
+		} else {
+			args.Address = issue.String()
+		}
 	}
 	target, err := c.readTarget(target, args.Address)
 	if err != nil {
@@ -202,6 +233,25 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 	}
 	// Summary is the tool result the model receives, not just the audit metadata.
 	return connector.Result{Summary: string(data), Data: data, Address: refAddress(ref, kind)}, nil
+}
+
+func (c *Connector) readRepository(ctx context.Context, owner, repo string, page int) (connector.Result, error) {
+	if page > 1 {
+		return connector.Result{}, fmt.Errorf("github: a repository read has one page; read an item by its address for more")
+	}
+	api, ok := c.cfg.API.(RepositoryAPI)
+	if !ok {
+		return connector.Result{}, fmt.Errorf("%w: github repository reads", connector.ErrUnsupported)
+	}
+	result, err := api.ReadRepository(ctx, owner, repo)
+	if err != nil {
+		return connector.Result{}, err
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return connector.Result{}, fmt.Errorf("github: encode repository: %w", err)
+	}
+	return connector.Result{Summary: string(data), Data: data, Address: address.Address{Connector: Name, Workspace: owner, Path: []string{repo}}}, nil
 }
 
 func mustTargetNumber(target address.Address) int {

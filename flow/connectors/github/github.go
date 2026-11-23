@@ -626,8 +626,8 @@ func (c *Connector) Actions() []connector.Action {
 	actions := []connector.Action{
 		{
 			Name:        "github_read_context",
-			Description: "Read the issue or pull request, conversation, reviews, diff comments and changed-file patches in this run's repository. Follow next_page until absent. Missing patches are unavailable evidence, not proof that a file has no changes.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{"address":{"type":"string","description":"Optional GitHub issue/PR URL or github:// address. Other repositories require an operator read grant."},"number":{"type":"integer","minimum":1,"description":"Issue or PR number. Defaults to this run's subject."},"page":{"type":"integer","minimum":1,"description":"Page to read, starting at 1."}},"additionalProperties":false}`),
+			Description: "Read a GitHub issue or pull request (its conversation, reviews, diff comments and changed-file patches), or a repository's overview. For an issue or PR, pass its full address, such as github://owner/repo/pull/12 or https://github.com/owner/repo/pull/12, and follow next_page until absent; missing patches are unavailable evidence, not proof that a file has no changes. For a repository, pass owner/repo to get its description, default branch, README head and recent open PRs and issues, each with the address that reads it. With no address, reads this run's own issue or PR.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"address":{"type":"string","description":"What to read. An issue or PR: github://owner/repo/pull/12, github://owner/repo/issues/12, or its https://github.com URL. A repository: owner/repo, github://owner/repo or https://github.com/owner/repo. Repositories other than this run's own require an operator read grant."},"number":{"type":"integer","minimum":1,"description":"Issue or PR number in this run's repository, or in the repository the address names. Defaults to this run's subject."},"page":{"type":"integer","minimum":1,"description":"Page to read, starting at 1. A repository read has one page."}},"additionalProperties":false}`),
 			Invoke:      c.readContext,
 		},
 		{
