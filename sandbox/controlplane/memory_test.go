@@ -145,6 +145,41 @@ func TestSubmitAsyncAndResult(t *testing.T) {
 	}
 }
 
+// A failed task reports its error and keeps the output its tool returned
+// beside it.
+func TestAFailedTaskKeepsItsOutput(t *testing.T) {
+	ctx := context.Background()
+	ws, err := workspace.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tool.NewRegistry()
+	if err := registry.Register(tool.Func("explains", func(context.Context, tool.Runtime, []byte) ([]byte, error) {
+		return []byte(`{"why":"out of steps"}`), errors.New("gave up")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	rec := metrics.NewMemory()
+	plane := controlplane.NewMemory(inproc.NewFactory(registry, ws), rec)
+	if err := plane.Deploy(ctx, controlplane.ServiceSpec{Name: "svc"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := plane.SubmitAsync(ctx, "svc", task.Task{Tool: "explains"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := awaitResult(t, plane, "svc", id)
+	if !strings.Contains(res.Error, "gave up") {
+		t.Errorf("Error = %q, want the tool's error", res.Error)
+	}
+	if string(res.Output) != `{"why":"out of steps"}` {
+		t.Errorf("Output = %q, want what the tool returned", res.Output)
+	}
+	if res.TaskID != id || res.NodeID == "" {
+		t.Errorf("result = %+v, want the task and node ids", res)
+	}
+}
+
 func TestSpawnIsPolicyGated(t *testing.T) {
 	ctx := context.Background()
 

@@ -25,7 +25,8 @@ type Node interface {
 	// ID uniquely identifies the node within its deployment.
 	ID() string
 	// Run executes t and returns its result. Implementations must be safe
-	// for concurrent Run calls.
+	// for concurrent Run calls. A failed Run may return, beside its error,
+	// a result holding the output its tool returned.
 	Run(ctx context.Context, t task.Task) (task.Result, error)
 	// Health reports the node's current condition.
 	Health(ctx context.Context) Health

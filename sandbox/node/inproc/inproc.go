@@ -79,7 +79,9 @@ func (n *inprocNode) Run(ctx context.Context, t task.Task) (task.Result, error) 
 
 	out, err := tl.Call(ctx, rt, t.Input)
 	if err != nil {
-		return task.Result{}, fmt.Errorf("node %s: tool %q: %w", n.id, t.Tool, err)
+		// What a failed tool returned travels with its error: a tool that
+		// describes its failure in its output is read by its caller.
+		return task.Result{Output: out}, fmt.Errorf("node %s: tool %q: %w", n.id, t.Tool, err)
 	}
 	return task.Result{TaskID: t.ID, NodeID: n.id, Output: out}, nil
 }
