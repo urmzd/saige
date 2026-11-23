@@ -15,6 +15,7 @@ import (
 // errors.Is reports it as connector.ErrUndeliverable.
 type ReadError struct {
 	// Owner and Repo name the repository as the reference wrote it.
+	// Config.ReadRefused and Config.MayRead are given them in lower case.
 	Owner, Repo string
 	// Kept is true when Config.ReadRefused refused the read, and false
 	// when neither Config.ReadRepositories nor Config.MayRead granted it.
@@ -93,19 +94,21 @@ func ownRepository(source address.Address, owner, repo string) bool {
 // crossSourceRead decides a read of owner/repo by a run raised anywhere
 // else: Config.ReadRefused refuses it first, whatever grants it; then
 // Config.ReadRepositories grants it by name; then Config.MayRead is asked.
-// Only the reads that take a reference call it
+// GitHub names are case-insensitive, so both hooks are given the owner and
+// repository in lower case. Only the reads that take a reference call it
 // (the read actions and ReadComments), once for each, and a read of the
 // run's own repository calls it for a repository a redirect names
 // (redirectGrant), so neither hook ever reaches a write. A refusal is a
 // *ReadError.
 func (c *Connector) crossSourceRead(ctx context.Context, owner, repo string) error {
-	if c.cfg.ReadRefused != nil && c.cfg.ReadRefused(ctx, owner, repo) {
+	lowerOwner, lowerRepo := strings.ToLower(owner), strings.ToLower(repo)
+	if c.cfg.ReadRefused != nil && c.cfg.ReadRefused(ctx, lowerOwner, lowerRepo) {
 		return &ReadError{Owner: owner, Repo: repo, Kept: true}
 	}
-	if c.readRepos[strings.ToLower(owner+"/"+repo)] {
+	if c.readRepos[lowerOwner+"/"+lowerRepo] {
 		return nil
 	}
-	if c.cfg.MayRead != nil && c.cfg.MayRead(ctx, owner, repo) {
+	if c.cfg.MayRead != nil && c.cfg.MayRead(ctx, lowerOwner, lowerRepo) {
 		return nil
 	}
 	return &ReadError{Owner: owner, Repo: repo}

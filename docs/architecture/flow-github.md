@@ -113,7 +113,9 @@ is made:
 Otherwise the read is refused with a `*ReadError` (`errors.Is` reports
 `connector.ErrUndeliverable`; `Kept` says `ReadRefused` decided). Each hook
 is asked at most once for each repository a read reaches, with the owner and
-repository that are requested, as the reference wrote them. A host that sets
+repository that are requested. GitHub names are case-insensitive, so the
+hooks receive them in lower case however the reference spells them, and a
+host can compare them exactly. A host that sets
 `MayRead` grants all five reads together, `github_fix_base` included; the
 hooks are not told which read is asking.
 

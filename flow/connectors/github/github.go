@@ -47,7 +47,8 @@
 // request or a repository. A run reads its own repository; any other is a
 // cross-source read, which Config.ReadRepositories or Config.MayRead grants
 // and Config.ReadRefused refuses, before any request is made. A refusal is
-// a *ReadError. A cross-source read follows no redirect (ErrReadRedirected), so it returns
+// a *ReadError. The hooks hear the owner and repository in lower case. A
+// cross-source read follows no redirect (ErrReadRedirected), so it returns
 // only the repository the grant was decided for. A run's read of its own
 // repository that is redirected to another repository is decided as a
 // cross-source read of that repository before it is requested, and fails
@@ -147,7 +148,8 @@ type Config struct {
 	// that takes a reference (github_read_context, github_read_file,
 	// github_workflow_status, github_fix_base and ReadComments) asks it
 	// before any request, once, with the owner and repository the read
-	// would then request, as the reference wrote them. It is asked after the owners check, after ReadRefused and after the
+	// would then request, in lower case: GitHub names are case-insensitive.
+	// It is asked after the owners check, after ReadRefused and after the
 	// ReadRepositories list, and only for a repository other than the
 	// run's own. A read of the run's own repository that GitHub redirects
 	// to another repository asks it about that repository, before the
@@ -164,7 +166,7 @@ type Config struct {
 	// ReadRefused keeps a repository to its own runs: a cross-source read of
 	// it is refused whatever ReadRepositories or MayRead grant, while a run
 	// on one of its own issues or pull requests still reads it. It is asked
-	// where MayRead is, first, and also for the
+	// where MayRead is, first, also in lower case, and also for the
 	// repository a redirect of a run's own read names. Nil refuses nothing.
 	//
 	// With either hook set, a read action refuses arguments whose keys are

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/urmzd/saige/flow/address"
@@ -287,11 +288,12 @@ func TestEveryEntryPointChoosesWhetherItAsksTheReadHooks(t *testing.T) {
 }
 
 // The hooks are asked about the repository the read then requests, however
-// the reference is written.
+// the reference is written, and hear its owner and name in lower case.
 func TestTheReadHooksAreAskedAboutWhatIsRead(t *testing.T) {
 	for _, tc := range []struct {
 		name, source, args string
-		// asked is the owner/repo both hooks hear, "" when neither is asked.
+		// asked is the owner/repo both hooks hear, in lower case, "" when
+		// neither is asked.
 		asked string
 		// first is the first request, "" when nothing is requested.
 		first string
@@ -302,8 +304,8 @@ func TestTheReadHooksAreAskedAboutWhatIsRead(t *testing.T) {
 		{"short reference", "slack://T01/C01", `{"address":"acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
 		{"repository URL with a number", "slack://T01/C01", `{"address":"https://github.com/acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
 		{"surrounding space", "slack://T01/C01", `{"address":"  acme/docs#7 "}`, "acme/docs", "/repos/acme/docs/issues/7"},
-		{"mixed case", "slack://T01/C01", `{"address":"Acme/Docs#7"}`, "Acme/Docs", "/repos/Acme/Docs/issues/7"},
-		{"mixed case URL", "slack://T01/C01", `{"address":"https://github.com/ACME/docs/pull/7"}`, "ACME/docs", "/repos/ACME/docs/issues/7"},
+		{"mixed case", "slack://T01/C01", `{"address":"Acme/Docs#7"}`, "acme/docs", "/repos/Acme/Docs/issues/7"},
+		{"mixed case URL", "slack://T01/C01", `{"address":"https://github.com/ACME/docs/pull/7"}`, "acme/docs", "/repos/ACME/docs/issues/7"},
 		{"clone suffix, short", "slack://T01/C01", `{"address":"acme/docs.git#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
 		{"clone suffix, address", "slack://T01/C01", `{"address":"github://acme/docs.git/issues/7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
 		{"repository and number", "slack://T01/C01", `{"address":"acme/docs","number":7}`, "acme/docs", "/repos/acme/docs/issues/7"},
@@ -664,7 +666,7 @@ func TestAnOwnReadRedirectedToAnotherRepositoryAsksTheReadHooks(t *testing.T) {
 				return false
 			}
 		}, []string{"acme/other"}, false},
-		{"granted by MayRead", "/repos/acme/other/issues/7", func(cfg *github.Config, asked *[]string) {
+		{"granted by MayRead", "/repos/ACME/Other/issues/7", func(cfg *github.Config, asked *[]string) {
 			cfg.MayRead = func(_ context.Context, owner, repo string) bool { return owner+"/"+repo == "acme/other" }
 			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
 				*asked = append(*asked, owner+"/"+repo)
@@ -723,6 +725,56 @@ func TestAnOwnReadRedirectedToAnotherRepositoryAsksTheReadHooks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The read hooks hear a repository's owner and name in lower case, however
+// the reference spells them, so a host may compare them exactly.
+func TestTheReadHooksHearLowerCaseNames(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"number":7,"title":"kept content","body":"kept content","state":"open"}`))
+	}))
+	t.Cleanup(srv.Close)
+	var mayRead, refused []string
+	c, err := github.New(github.Config{
+		API:    github.NewHTTPAPIAt(srv.URL, "tok", srv.Client()),
+		Owners: []string{"acme"},
+		MayRead: func(_ context.Context, owner, repo string) bool {
+			mayRead = append(mayRead, owner+"/"+repo)
+			return true
+		},
+		ReadRefused: func(_ context.Context, owner, repo string) bool {
+			refused = append(refused, owner+"/"+repo)
+			return owner+"/"+repo == "acme/kept"
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range []string{`{"address":"ACME/Kept#7"}`, `{"address":"https://github.com/Acme/KEPT/issues/7"}`, `{"address":"acme/Kept","number":7}`} {
+		mayRead, refused = nil, nil
+		r, err := c.Actions()[0].Invoke(context.Background(), address.MustParse("slack://T01/C01"), json.RawMessage(args))
+		var refusal *github.ReadError
+		if !errors.As(err, &refusal) || !refusal.Kept || strings.Contains(r.Summary, "kept content") || requests.Load() != 0 {
+			t.Errorf("%s: %q, %v, %d requests; want a kept refusal and no request", args, r.Summary, err, requests.Load())
+		}
+		if !slices.Equal(refused, []string{"acme/kept"}) || len(mayRead) != 0 {
+			t.Errorf("%s: ReadRefused heard %v, MayRead heard %v", args, refused, mayRead)
+		}
+	}
+	mayRead, refused = nil, nil
+	if _, err := c.Actions()[0].Invoke(context.Background(), address.MustParse("slack://T01/C01"), json.RawMessage(`{"address":"Acme/Docs#7"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(mayRead, []string{"acme/docs"}) || !slices.Equal(refused, []string{"acme/docs"}) {
+		t.Errorf("MayRead heard %v, ReadRefused heard %v; want acme/docs", mayRead, refused)
 	}
 }
 
