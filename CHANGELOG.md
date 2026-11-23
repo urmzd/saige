@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.50.0 (2026-11-23)
+
+### Features
+
+- **github**: read a repository with github_read_context ([d3a03f7](https://github.com/urmzd/saige/commit/d3a03f7deaabc8ec06d410d5843a2993e8c34fc1))
+
+### Bug Fixes
+
+- **github**: mark read results as untrusted data; read owner/repo#N and .git ([cfe6350](https://github.com/urmzd/saige/commit/cfe63502e7fd0273cf922c55d4cfde87705e0530))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.49.0...v0.50.0)
+
+
 ## 0.49.0 (2026-11-22)
 
 ### Features
