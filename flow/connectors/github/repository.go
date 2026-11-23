@@ -299,8 +299,8 @@ func isRepository(target address.Address) bool {
 
 // repositoryTarget checks a repository address the way readTarget checks
 // an issue: the connector serves its owner, and it is the run's own
-// repository or one granted for cross-source reads.
-func (c *Connector) repositoryTarget(source, target address.Address) (owner, repo string, err error) {
+// repository or one granted for cross-source reads (crossSourceRead).
+func (c *Connector) repositoryTarget(ctx context.Context, source, target address.Address) (owner, repo string, err error) {
 	owner, repo = target.Workspace, target.Path[0]
 	if c.owners != nil && !c.owners[strings.ToLower(owner)] {
 		return "", "", fmt.Errorf("%w: %s is owned by %q, which this connector does not serve", connector.ErrUndeliverable, target, owner)
@@ -311,8 +311,8 @@ func (c *Connector) repositoryTarget(source, target address.Address) (owner, rep
 	if source.Connector == Name && len(source.Path) > 0 && strings.EqualFold(source.Workspace, owner) && strings.EqualFold(source.Path[0], repo) {
 		return owner, repo, nil
 	}
-	if !c.readRepos[strings.ToLower(owner+"/"+repo)] {
-		return "", "", fmt.Errorf("%w: repository %s/%s is not granted for cross-source reads", connector.ErrUndeliverable, owner, repo)
+	if err := c.crossSourceRead(ctx, owner, repo); err != nil {
+		return "", "", err
 	}
 	return owner, repo, nil
 }

@@ -128,6 +128,17 @@ type Config struct {
 	// ReadRepositories grants cross-source read access to exact owner/repo
 	// names. It never grants mutation or delivery access.
 	ReadRepositories []string
+	// MayRead grants a cross-source read of a repository ReadRepositories
+	// does not name, such as one a GitHub App installation covers. The read
+	// actions ask it after the owners check and the ReadRepositories list,
+	// and only for a repository other than the run's own; no write ever
+	// asks it. Nil grants nothing more.
+	MayRead func(ctx context.Context, owner, repo string) bool
+	// ReadRefused keeps a repository to its own runs: a cross-source read of
+	// it is refused whatever ReadRepositories or MayRead grant, while a run
+	// on one of its own issues or pull requests still reads it. Nil refuses
+	// nothing.
+	ReadRefused func(ctx context.Context, owner, repo string) bool
 
 	// Bots maps a GitHub login to the agent it stands for, and is how a review
 	// request is resolved: GitHub names the reviewer, not the agent. A GitHub App
@@ -683,6 +694,11 @@ func (c *Connector) Actions() []connector.Action {
 	actions = append(actions, c.fileAction(), c.workflowStatusAction(), c.reviewAction())
 	if c.cfg.FixPullRequests {
 		actions = append(actions, c.fixBaseAction(), c.fixPullAction())
+	}
+	for i, a := range actions {
+		if readActionNames[a.Name] {
+			actions[i] = c.oneKeyEach(a)
+		}
 	}
 	return actions
 }

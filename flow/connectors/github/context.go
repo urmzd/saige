@@ -193,7 +193,7 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 		repository = target
 	}
 	if repository.Connector != "" {
-		owner, repo, err := c.repositoryTarget(target, repository)
+		owner, repo, err := c.repositoryTarget(ctx, target, repository)
 		if err != nil {
 			return connector.Result{}, err
 		}
@@ -208,7 +208,7 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 			args.Address = issue.String()
 		}
 	}
-	target, err := c.readTarget(target, args.Address)
+	target, err := c.readTarget(ctx, target, args.Address)
 	if err != nil {
 		return connector.Result{}, err
 	}

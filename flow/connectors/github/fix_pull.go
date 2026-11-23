@@ -116,7 +116,7 @@ func (c *Connector) fixBaseAction() connector.Action {
 		if err := decodeArguments(raw, &args); err != nil {
 			return connector.Result{}, err
 		}
-		target, err := c.readTarget(target, args.Address)
+		target, err := c.readTarget(ctx, target, args.Address)
 		if err != nil {
 			return connector.Result{}, err
 		}
