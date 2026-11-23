@@ -2,7 +2,6 @@ package github
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/urmzd/saige/flow/address"
@@ -19,26 +18,12 @@ func (c *Connector) readTarget(source address.Address, reference string) (addres
 		}
 		return source, nil
 	}
-	var target address.Address
-	var err error
-	if strings.HasPrefix(reference, "github://") {
-		target, err = address.Parse(reference)
-	} else {
-		var u *url.URL
-		u, err = url.Parse(reference)
-		if err == nil {
-			if u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" {
-				return address.Address{}, fmt.Errorf("%w: expected a github:// address or github.com issue/PR URL", connector.ErrUndeliverable)
-			}
-			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if len(parts) != 4 {
-				return address.Address{}, fmt.Errorf("%w: expected a GitHub issue or PR reference", connector.ErrUndeliverable)
-			}
-			target = address.Address{Connector: Name, Workspace: parts[0], Path: parts[1:]}
-		}
-	}
+	target, err := ParseReadReference(reference)
 	if err != nil {
-		return address.Address{}, fmt.Errorf("github: read reference: %w", err)
+		return address.Address{}, err
+	}
+	if isRepository(target) {
+		return address.Address{}, fmt.Errorf("%w: %s names a repository; this action needs an issue or pull request, such as github://%s/%s/pull/12", connector.ErrUndeliverable, reference, target.Workspace, target.Path[0])
 	}
 	ref, err := c.ref(target)
 	if err != nil {

@@ -21,6 +21,7 @@ type Fake struct {
 	commits       []FakeCommit
 	mu            sync.Mutex
 	contexts      map[string]Context
+	repositories  map[string]RepositoryContext
 	checks        map[int64]FakeCheck
 	comments      []FakeComment
 	byID          map[int64]int

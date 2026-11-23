@@ -24,7 +24,7 @@ func (c *Connector) actionTarget(source address.Address, reference string) (addr
 		u, err = url.Parse(reference)
 		if err == nil {
 			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || len(parts) != 4 {
+			if !githubURL(u) || len(parts) != 4 {
 				return address.Address{}, fmt.Errorf("%w: expected a GitHub issue or pull request address", connector.ErrUndeliverable)
 			}
 			target = address.Address{Connector: Name, Workspace: parts[0], Path: parts[1:]}
