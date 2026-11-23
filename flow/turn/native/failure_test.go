@@ -175,24 +175,38 @@ func (f streamsError) Stream(context.Context, saigetypes.Request) (<-chan saiget
 }
 
 // A router whose home profile was overloaded, then whose backup refused the
-// request locally, is retried: a retry reaches the home profile again.
+// request locally, is retried: a retry reaches the home profile again. The
+// first case is the chain "unavailable, then invalid model config" of
+// failure's table, built through a real router.
 func TestARouterThatFailedOverFromAPassingFailureIsRetried(t *testing.T) {
 	t.Parallel()
-	r, err := router.New(router.Config{Profiles: []router.Profile{
-		{ID: "home", Provider: alwaysFails{modelFailure("home", saigetypes.ErrorKindUnavailable, 503)}},
-		{ID: "backup", Provider: alwaysFails{fmt.Errorf("google: part 0: %w", saigetypes.ErrMediaUnavailable)}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	err = invoke(ctx, newAgent(t, r.Session()))
-	if !errors.Is(err, saigetypes.ErrMediaUnavailable) {
-		t.Fatalf("err = %v, want the backup's failure", err)
-	}
-	if failure.Repeats(err) {
-		t.Errorf("Repeats is true: %v", err)
+	for name, refused := range map[string]error{
+		"unavailable, then invalid model config": fmt.Errorf("backup: %w", saigetypes.ErrInvalidModelConfig),
+		"unavailable, then media unavailable":    fmt.Errorf("google: part 0: %w", saigetypes.ErrMediaUnavailable),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r, err := router.New(router.Config{Profiles: []router.Profile{
+				{ID: "home", Provider: alwaysFails{modelFailure("home", saigetypes.ErrorKindUnavailable, 503)}},
+				{ID: "backup", Provider: alwaysFails{refused}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			err = invoke(ctx, newAgent(t, r.Session()))
+			if !errors.Is(err, refused) {
+				t.Fatalf("err = %v, want the backup's failure", err)
+			}
+			var chain *saigetypes.FallbackError
+			if !errors.As(err, &chain) || len(chain.Errors) != 2 {
+				t.Fatalf("err = %v, want a chain of both failures", err)
+			}
+			if failure.Repeats(err) {
+				t.Errorf("Repeats is true: %v", err)
+			}
+		})
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urmzd/saige/agent/provider/router"
 	saigetypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/flow/turn"
 	"github.com/urmzd/saige/flow/turn/failure"
@@ -19,31 +18,6 @@ func provider(kind saigetypes.ErrorKind) error {
 }
 
 func chain(members ...error) error { return &saigetypes.FallbackError{Errors: members} }
-
-// failsWith is a model whose every call fails with err.
-type failsWith struct{ err error }
-
-func (f failsWith) Stream(context.Context, saigetypes.Request) (<-chan saigetypes.Delta, error) {
-	return nil, f.err
-}
-
-// routed returns the error a router reports when each of its profiles, in
-// order, fails with the matching error.
-func routed(failures ...error) error {
-	var profiles []router.Profile
-	for i, err := range failures {
-		profiles = append(profiles, router.Profile{ID: saigetypes.ProfileID(fmt.Sprintf("p%d", i)), Provider: failsWith{err}})
-	}
-	r, err := router.New(router.Config{Profiles: profiles})
-	if err != nil {
-		panic(err)
-	}
-	_, err = saigetypes.GenerateText(context.Background(), r.Session(), "hello")
-	if err == nil {
-		panic("the router served the request")
-	}
-	return err
-}
 
 var cases = []struct {
 	name    string
@@ -84,7 +58,10 @@ var cases = []struct {
 	{"chain: auth, then context length", chain(provider(saigetypes.ErrorKindAuth), provider(saigetypes.ErrorKindContextLength)), true},
 	{"chain: invalid model config twice", chain(saigetypes.ErrInvalidModelConfig, fmt.Errorf("backup: %w", saigetypes.ErrInvalidModelConfig)), true},
 	{"chain: rate limited, then context length", chain(provider(saigetypes.ErrorKindRateLimit), provider(saigetypes.ErrorKindContextLength)), false},
-	{"chain: unavailable, then invalid model config", routed(provider(saigetypes.ErrorKindUnavailable), saigetypes.ErrInvalidModelConfig), false},
+	// TestARouterThatFailedOverFromAPassingFailureIsRetried in
+	// flow/turn/native builds this chain through a real router: this package
+	// may not import saige's providers.
+	{"chain: unavailable, then invalid model config", chain(provider(saigetypes.ErrorKindUnavailable), saigetypes.ErrInvalidModelConfig), false},
 	{"chain: transient, then media unavailable", chain(provider(saigetypes.ErrorKindTransient), saigetypes.ErrMediaUnavailable), false},
 	{"chain: canceled, then context length", chain(context.Canceled, provider(saigetypes.ErrorKindContextLength)), false},
 	{"chain: context length, then rate limited", chain(provider(saigetypes.ErrorKindContextLength), provider(saigetypes.ErrorKindRateLimit)), false},
