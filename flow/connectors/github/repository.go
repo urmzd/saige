@@ -227,14 +227,16 @@ func githubURL(u *url.URL) bool {
 	return u.Scheme == httpsScheme && u.Host == "github.com" && u.User == nil && u.RawQuery == ""
 }
 
-const readFormsHint = "use github://owner/repo/pull/12, github://owner/repo/issues/12, https://github.com/owner/repo/pull/12, or owner/repo for the repository"
+const readFormsHint = "use github://owner/repo/pull/12, github://owner/repo/issues/12, https://github.com/owner/repo/pull/12, owner/repo#12, or owner/repo for the repository"
 
 // ParseReadReference reads a reference a read action was given: an issue
 // or pull request (github://owner/repo/{issues|pull}/N or the github.com
-// URL of one) or a repository (owner/repo, github://owner/repo or
-// https://github.com/owner/repo). A repository's address has one path
-// segment, an issue's or pull request's three. URLs are parsed into
-// coordinates and never fetched. Nothing is checked against grants here.
+// URL of one, or owner/repo#N and https://github.com/owner/repo#N, read as
+// issues/N, which GitHub answers for a pull request too) or a repository
+// (owner/repo, github://owner/repo or https://github.com/owner/repo, with
+// or without ".git"). A repository's address has one path segment, an
+// issue's or pull request's three. URLs are parsed into coordinates and
+// never fetched. Nothing is checked against grants here.
 func ParseReadReference(reference string) (address.Address, error) {
 	reference = strings.TrimSpace(reference)
 	var target address.Address
@@ -255,12 +257,25 @@ func ParseReadReference(reference string) (address.Address, error) {
 			return address.Address{}, fmt.Errorf("%w: expected a GitHub repository, issue or PR URL; %s", connector.ErrUndeliverable, readFormsHint)
 		}
 		target = address.Address{Connector: Name, Workspace: parts[0], Path: parts[1:]}
+		// A repository URL with #12 names item 12, as GitHub's own links do;
+		// any other fragment (#readme) leaves the repository.
+		if len(parts) == 2 && itemNumber(u.Fragment) {
+			target.Path = append(target.Path, "issues", u.Fragment)
+		}
 	default:
 		owner, repo, ok := strings.Cut(reference, "/")
-		if !ok || strings.ContainsAny(repo, "/#?: \t\r\n") {
+		repo, number, _ := strings.Cut(repo, "#")
+		if !ok || strings.ContainsAny(repo, "/#?: \t\r\n") || strings.Contains(reference, "#") && !itemNumber(number) {
 			return address.Address{}, fmt.Errorf("%w: %q is not a GitHub reference; %s", connector.ErrUndeliverable, reference, readFormsHint)
 		}
 		target = address.Address{Connector: Name, Workspace: owner, Path: []string{repo}}
+		if number != "" {
+			target.Path = append(target.Path, "issues", number)
+		}
+	}
+	// A clone URL's ".git" names the same repository.
+	if len(target.Path) > 0 {
+		target.Path[0] = strings.TrimSuffix(target.Path[0], ".git")
 	}
 	if target.Workspace == "" || address.ValidWorkspace(target.Workspace) != nil || len(target.Path) == 0 || !validRepository(target.Path[0]) {
 		return address.Address{}, fmt.Errorf("%w: invalid GitHub repository; %s", connector.ErrUndeliverable, readFormsHint)
@@ -269,6 +284,12 @@ func ParseReadReference(reference string) (address.Address, error) {
 		return address.Address{}, fmt.Errorf("%w: %s is not a repository, issue or pull request; %s", connector.ErrUndeliverable, target, readFormsHint)
 	}
 	return target, nil
+}
+
+// itemNumber says whether s is an issue or pull request number.
+func itemNumber(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0 && strconv.Itoa(n) == s
 }
 
 // isRepository says whether a github address names a whole repository.
