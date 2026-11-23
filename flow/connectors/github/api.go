@@ -155,18 +155,28 @@ func (t whereNamedTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // repository is the owner and repository a URL names under the API's own
-// base (/repos/{owner}/{repo}/...), or two empty strings.
+// base (/repos/{owner}/{repo}/...), or two empty strings. It reads the
+// path as it is sent, escaped, so the names it returns are the ones the
+// next request asks for. An owner or repository with an escape, or a later
+// segment that unescapes to a dot segment or holds a slash, names no
+// repository.
 func (t whereNamedTransport) repository(u *url.URL) (owner, repo string) {
 	if t.base == nil || u.Scheme != t.base.Scheme || !strings.EqualFold(u.Host, t.base.Host) {
 		return "", ""
 	}
-	rest, ok := strings.CutPrefix(u.Path, strings.TrimSuffix(t.base.Path, "/")+"/repos/")
+	rest, ok := strings.CutPrefix(u.EscapedPath(), strings.TrimSuffix(t.base.EscapedPath(), "/")+"/repos/")
 	if !ok {
 		return "", ""
 	}
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" || strings.ContainsRune(parts[0]+parts[1], '%') {
 		return "", ""
+	}
+	for _, segment := range parts[2:] {
+		plain, err := url.PathUnescape(segment)
+		if err != nil || plain == "." || plain == ".." || strings.ContainsAny(plain, "/\\") {
+			return "", ""
+		}
 	}
 	return parts[0], parts[1]
 }

@@ -130,7 +130,10 @@ repository. A redirect to another repository, such as an issue that was
 transferred, is a cross-source read of that repository: steps 1 to 4 decide
 it before it is requested, and a read they do not grant fails with
 `ErrReadRedirected`. A redirect to a location that names no repository on
-the API's own base, such as `/repositories/{id}`, is not followed. `HTTPAPI`
+the API's own base, such as `/repositories/{id}`, is not followed. The
+location is read as it will be requested, escaped: an owner or repository
+with an escape, or a later segment that unescapes to `.`, `..` or a slash,
+names no repository. `HTTPAPI`
 asks `FollowReadRedirect` about every redirect, and another `API`
 implementation that follows redirects asks it too.
 

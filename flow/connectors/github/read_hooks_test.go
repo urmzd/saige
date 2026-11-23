@@ -690,6 +690,34 @@ func TestAnOwnReadRedirectedToAnotherRepositoryAsksTheReadHooks(t *testing.T) {
 				return false
 			}
 		}, nil, false},
+		{"an escaped slash in the repository", "/repos/acme/web%2F..%2Fother/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
+		{"an escaped dot segment as the repository", "/repos/acme/%2e%2e/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
+		{"an escaped dot segment after the repository", "/repos/acme/web/%2e%2e/%2E%2E/other/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
+		{"an escaped slash after the repository", "/repos/acme/web/..%2F..%2Fother/issues/7", func(cfg *github.Config, asked *[]string) {
+			cfg.MayRead = func(context.Context, string, string) bool { return true }
+			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
+				*asked = append(*asked, owner+"/"+repo)
+				return false
+			}
+		}, nil, false},
 		{"within the same repository", "/repos/ACME/Web/moved/issues/7", func(cfg *github.Config, asked *[]string) {
 			cfg.ReadRefused = func(_ context.Context, owner, repo string) bool {
 				*asked = append(*asked, owner+"/"+repo)
