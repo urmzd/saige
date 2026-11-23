@@ -486,6 +486,26 @@ its currency is `USD` and treats anything in `other_costs` as spend it cannot
 compare. A total's `as_of` is the oldest date among its calls, and empty when
 any was priced from a card with no date.
 
+### Which failed turns are retried
+
+A failed turn is retried by running it again, model calls included, so a
+failure that a retry would only repeat fails the run on its first attempt
+(`flow/turn/failure`). Those are: the agent loop reached its iteration limit
+(`ErrMaxIterations`), the model kept asking for the same tool calls with the
+same arguments (`ErrRepeatedToolCalls`), the request was refused locally as
+an invalid model configuration (`ErrInvalidModelConfig`, which a media part
+with no usable locator also matches), and the prompt does not fit the
+model's context window (`ErrContextLength`). A turn under a budget is not
+retried either.
+
+Everything else is retried up to the worker's attempt limit, including a
+tripped guardrail, a run whose tool calls kept failing, any transient
+provider failure, and a fallback chain in which any member failed
+transiently. A turn whose context ended (a worker shutting down, a lost
+claim) never fails its run, whatever error it returned. A `turn.Runtime`
+decides for its own errors with `turn.WithRepeats`; the decision crosses a
+sandbox task with the error.
+
 ### Counted once, across retries and replays
 
 durable retries a failed attempt and replays the workflow body from the top,

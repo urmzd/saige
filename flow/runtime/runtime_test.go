@@ -925,10 +925,9 @@ func TestADeterministicAgentFailureIsNotRetried(t *testing.T) {
 
 	for name, cause := range map[string]error{
 		"max iterations":       saigetypes.ErrMaxIterations,
-		"tool error limit":     saigetypes.ErrToolErrorLimit,
 		"repeated tool calls":  saigetypes.ErrRepeatedToolCalls,
-		"guardrail":            saigetypes.ErrGuardrailTripped,
 		"invalid model config": saigetypes.ErrInvalidModelConfig,
+		"media unavailable":    saigetypes.ErrMediaUnavailable,
 		"context length":       saigetypes.ErrContextLength,
 	} {
 		t.Run(name, func(t *testing.T) {

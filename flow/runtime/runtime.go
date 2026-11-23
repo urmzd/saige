@@ -129,7 +129,6 @@ import (
 	"strings"
 	"time"
 
-	saigetypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/durable"
 	"github.com/urmzd/saige/durable/run"
 
@@ -140,6 +139,7 @@ import (
 	"github.com/urmzd/saige/flow/session"
 	"github.com/urmzd/saige/flow/thread"
 	turnrt "github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/turn/failure"
 	"github.com/urmzd/saige/flow/turn/native"
 
 	"github.com/urmzd/saige/flow/attachment"
@@ -1140,7 +1140,12 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	if settleErr := r.settleTurnBudget(context.WithoutCancel(ctx), in, attempt, mine, req.Budget, err != nil); settleErr != nil {
 		return out, settleErr
 	}
-	if err != nil && (req.Budget != nil || repeats(err)) {
+	// A failure a retry would only repeat fails the run at once: another
+	// attempt pays for the whole turn again to reach the same end. A turn
+	// under a budget is never retried. An attempt whose own context ended
+	// (the worker is shutting down, the claim was lost) decides nothing
+	// about the run, whatever error the turn returned on its way out.
+	if err != nil && (req.Budget != nil || (ctx.Err() == nil && failure.Repeats(err))) {
 		err = durable.NonRetryable(err)
 	}
 	if err != nil {
@@ -1461,26 +1466,4 @@ func RunID(tenant, tagID string) string {
 		h.Write([]byte(field))
 	}
 	return "r" + hex.EncodeToString(h.Sum(nil)[:16])
-}
-
-// repeats reports whether a turn's failure would come back on a retry of the
-// same input: the agent loop hit one of its own limits, a guardrail refused,
-// the model configuration is invalid, or the prompt does not fit the model's
-// context. Retrying spends the whole attempt again (model calls included) to
-// reach the same end, so such a failure fails the run at once. A sandboxed
-// turn's error keeps these sentinels across the wire (agent/types.wire).
-func repeats(err error) bool {
-	for _, deterministic := range []error{
-		saigetypes.ErrMaxIterations,
-		saigetypes.ErrToolErrorLimit,
-		saigetypes.ErrRepeatedToolCalls,
-		saigetypes.ErrGuardrailTripped,
-		saigetypes.ErrInvalidModelConfig,
-		saigetypes.ErrContextLength,
-	} {
-		if errors.Is(err, deterministic) {
-			return true
-		}
-	}
-	return false
 }
