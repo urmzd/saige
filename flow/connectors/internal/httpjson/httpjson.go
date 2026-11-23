@@ -71,18 +71,11 @@ func (e *Error) Retryable() bool {
 // Do performs one call. in is marshalled as the request body when non-nil, and
 // out is unmarshalled from the response body when non-nil.
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
-	_, err := c.DoHeader(ctx, method, path, in, out)
-	return err
-}
-
-// DoHeader is Do, and also returns the response's headers when the call
-// succeeds, for a caller that reads pagination from them.
-func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any) (http.Header, error) {
 	var body io.Reader
 	if in != nil {
 		encoded, err := json.Marshal(in)
 		if err != nil {
-			return nil, fmt.Errorf("httpjson: marshal %s %s: %w", method, path, err)
+			return fmt.Errorf("httpjson: marshal %s %s: %w", method, path, err)
 		}
 		body = bytes.NewReader(encoded)
 	}
@@ -90,7 +83,7 @@ func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any)
 	url := c.Base + path
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return nil, fmt.Errorf("httpjson: build %s %s: %w", method, url, err)
+		return fmt.Errorf("httpjson: build %s %s: %w", method, url, err)
 	}
 	for k, vs := range c.Header {
 		for _, v := range vs {
@@ -103,7 +96,7 @@ func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any)
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("httpjson: %s %s: %w", method, url, err)
+		return fmt.Errorf("httpjson: %s %s: %w", method, url, err)
 	}
 	defer func() {
 		// Drain before closing: an undrained body cannot be reused, and these
@@ -114,7 +107,7 @@ func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		return nil, &Error{
+		return &Error{
 			Status: resp.StatusCode,
 			Method: method,
 			URL:    url,
@@ -122,12 +115,12 @@ func (c *Client) DoHeader(ctx context.Context, method, path string, in, out any)
 		}
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
-		return resp.Header, nil
+		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return nil, fmt.Errorf("httpjson: decode %s %s: %w", method, url, err)
+		return fmt.Errorf("httpjson: decode %s %s: %w", method, url, err)
 	}
-	return resp.Header, nil
+	return nil
 }
 
 func (c *Client) client() *http.Client {

@@ -39,6 +39,15 @@
 //
 // github_comment, github_request_review and github_add_labels. Each returns the
 // address of what it changed, so the action.taken event can cite it.
+//
+// # Reads
+//
+// github_read_context, github_read_file, github_workflow_status,
+// github_fix_base and ReadComments take a reference to an issue, a pull
+// request or a repository. A run reads its own repository; any other is a
+// cross-source read, which Config.ReadRepositories or Config.MayRead grants
+// and Config.ReadRefused refuses, before any request is made. A refusal is
+// a *ReadError. No write asks the read hooks.
 package github
 
 import (
@@ -129,15 +138,27 @@ type Config struct {
 	// names. It never grants mutation or delivery access.
 	ReadRepositories []string
 	// MayRead grants a cross-source read of a repository ReadRepositories
-	// does not name, such as one a GitHub App installation covers. The read
-	// actions ask it after the owners check and the ReadRepositories list,
-	// and only for a repository other than the run's own; no write ever
-	// asks it. Nil grants nothing more.
+	// does not name, such as one a GitHub App installation covers. A read
+	// that takes a reference (github_read_context, github_read_file,
+	// github_workflow_status, github_fix_base and ReadComments) asks it
+	// before any request, once, with the owner and repository the read
+	// would then request, as the reference wrote them. It is asked after
+	// the owners check, after ReadRefused and after the ReadRepositories
+	// list, and only for a repository other than the run's own. A write
+	// never asks it, and neither does a read of an address the host bound
+	// (Messages, PollFeedback). Nil grants nothing more, which is the
+	// behavior of a Config without the hooks: a run reads its own
+	// repository and the ReadRepositories, and a refusal is a *ReadError.
 	MayRead func(ctx context.Context, owner, repo string) bool
 	// ReadRefused keeps a repository to its own runs: a cross-source read of
 	// it is refused whatever ReadRepositories or MayRead grant, while a run
-	// on one of its own issues or pull requests still reads it. Nil refuses
-	// nothing.
+	// on one of its own issues or pull requests still reads it. It is asked
+	// where MayRead is, first. Nil refuses nothing.
+	//
+	// With either hook set, a read action refuses arguments whose keys are
+	// ambiguous (a key given twice, two keys that differ only by case, a key
+	// its schema does not declare) before decoding them. With both nil the
+	// arguments are decoded as they were before the hooks existed.
 	ReadRefused func(ctx context.Context, owner, repo string) bool
 
 	// Bots maps a GitHub login to the agent it stands for, and is how a review
@@ -695,9 +716,11 @@ func (c *Connector) Actions() []connector.Action {
 	if c.cfg.FixPullRequests {
 		actions = append(actions, c.fixBaseAction(), c.fixPullAction())
 	}
-	for i, a := range actions {
-		if readActionNames[a.Name] {
-			actions[i] = c.oneKeyEach(a)
+	if c.cfg.MayRead != nil || c.cfg.ReadRefused != nil {
+		for i, a := range actions {
+			if readActionNames[a.Name] {
+				actions[i] = c.oneKeyEach(a)
+			}
 		}
 	}
 	return actions

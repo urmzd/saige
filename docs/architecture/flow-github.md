@@ -14,9 +14,10 @@ with ordinary Markdown and exposes no `/fix` or `/check` tools.
 Review policy, PR guides, signed mutation grants, check-run and summary
 presentation, agent definitions and deployment configuration belong to the
 host. `github.New(github.Config{...})` takes transport configuration: the API
-client, the webhook verifier, owners, bot mappings, read repositories,
-whether to publish checks, and the app's own login. For the API client's
-token, see [credentials](#credentials).
+client, the webhook verifier, owners, bot mappings, read repositories and
+read hooks (see [what a read may reach](#what-a-read-may-reach)), whether to
+publish checks, and the app's own login. For the API client's token, see
+[credentials](#credentials).
 
 **Agents never approve.** A review an agent submits is `COMMENT` or
 `REQUEST_CHANGES`. `PrepareReview`, the HTTP API and the fake refuse `APPROVE`
@@ -84,6 +85,49 @@ does not say which it is, so `#12` is addressed as an issue. A team mention
 reference. A pasted Slack permalink is addressed as its thread when
 `Config.Links.SlackTeams` names its domain, and `Config.Links.Address` reads
 the host's own URLs. Automation text is the host's and refers to nothing.
+
+## What a read may reach
+
+The reads that take a reference (`github_read_context`, `github_read_file`,
+`github_workflow_status`, `github_fix_base` and `Connector.ReadComments`)
+parse it with `ParseReadReference` into an owner, a repository and a number,
+and request exactly that: a URL is never fetched. A run reads its own
+repository. Any other repository is a cross-source read, decided in this
+order before any request is made:
+
+1. `Config.Owners`: an owner the connector does not serve is refused.
+2. `Config.ReadRefused(ctx, owner, repo)`: true refuses the read whatever
+   grants it, which keeps a repository to runs on its own issues and pull
+   requests.
+3. `Config.ReadRepositories`: an exact `owner/repo`, in any case, grants it.
+4. `Config.MayRead(ctx, owner, repo)`: true grants it, for a host whose
+   grants are not a fixed list, such as the repositories a GitHub App
+   installation covers.
+
+Otherwise the read is refused with a `*ReadError` (`errors.Is` reports
+`connector.ErrUndeliverable`; `Kept` says `ReadRefused` decided). Each hook
+is asked at most once for a read, with the owner and repository as the
+reference wrote them, which are the ones requested. Both hooks are nil by
+default: nil `MayRead` grants nothing more and nil `ReadRefused` refuses
+nothing, so a `Config` without them reads its own repository and
+`ReadRepositories`, as before. The hooks are never asked for a write
+(`Config.ActionRepositories` alone grants a cross-surface write), for a run's
+own repository, or for an address the host bound itself (`Deliver`,
+`Messages`, `PollFeedback`).
+
+With either hook set, a read action refuses arguments with a key given
+twice, two keys that differ only by case, or a key its schema does not
+declare, before decoding them.
+
+`ReadComments(ctx, source, reference, want, keep)` reads only the latest
+conversation comments of an issue or pull request, through the optional
+`LatestCommentsAPI`: page 1, the page its `Link` header names last, and the
+page before that when the last holds fewer than `want` comments `keep`
+accepts. That is at most three requests and two pages of 30. Only a page
+number is read from the `Link` header (up to 10000); every request goes to
+the API's own base, a redirect to another host or scheme is refused, and one
+answer is read up to 4 MiB. Comments deleted between the requests are
+`ErrCommentsChanged`.
 
 ## Where the answer lands
 

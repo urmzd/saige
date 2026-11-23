@@ -208,7 +208,9 @@ func (c *Connector) readContext(ctx context.Context, target address.Address, raw
 			args.Address = issue.String()
 		}
 	}
-	target, err := c.readTarget(ctx, target, args.Address)
+	// A repository named with a number passed its grants in repositoryTarget
+	// above; they are asked once for a call.
+	target, err := c.readTargetIn(ctx, target, args.Address, repository.Connector != "")
 	if err != nil {
 		return connector.Result{}, err
 	}

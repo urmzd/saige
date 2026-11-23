@@ -1,0 +1,440 @@
+package github_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/connector"
+	"github.com/urmzd/saige/flow/connectors/github"
+	"github.com/urmzd/saige/flow/event"
+)
+
+const hookSHA = "316c56f81540c3eaca02184173df322a48aebdd9"
+
+// hookProbe records what the read hooks were asked and what reached the API.
+type hookProbe struct {
+	mu       sync.Mutex
+	mayRead  []string
+	refused  []string
+	requests []string
+	// early is set when a hook was asked after a request had been made.
+	early bool
+}
+
+func (p *hookProbe) snapshot() (mayRead, refused, requests []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.mayRead), slices.Clone(p.refused), slices.Clone(p.requests)
+}
+
+// probed is a connector over the HTTP API of a local server that answers
+// every request 404, with both hooks recording. grant and refuse are what
+// MayRead and ReadRefused answer. edit changes the Config before New.
+func probed(t *testing.T, grant, refuse bool, edit func(*github.Config)) (*github.Connector, *hookProbe) {
+	t.Helper()
+	p := &hookProbe{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.mu.Lock()
+		p.requests = append(p.requests, r.Method+" "+r.URL.Path)
+		p.mu.Unlock()
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := github.Config{
+		API:              github.NewHTTPAPIAt(srv.URL, "tok", srv.Client()),
+		Owners:           []string{"acme"},
+		FixPullRequests:  true,
+		AuthorizeFixPull: func(context.Context, github.Ref) error { return nil },
+		MayRead: func(_ context.Context, owner, repo string) bool {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.mayRead = append(p.mayRead, owner+"/"+repo)
+			p.early = p.early || len(p.requests) > 0
+			return grant
+		},
+		ReadRefused: func(_ context.Context, owner, repo string) bool {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.refused = append(p.refused, owner+"/"+repo)
+			p.early = p.early || len(p.requests) > 0
+			return refuse
+		},
+	}
+	if edit != nil {
+		edit(&cfg)
+	}
+	c, err := github.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, p
+}
+
+type entryKind string
+
+const (
+	// reads takes a reference: the hooks are asked for a repository other
+	// than the run's own.
+	reads entryKind = "read"
+	// writes changes GitHub: the hooks are never asked.
+	writes entryKind = "write"
+	// bound reads an address the host supplied: the hooks are never asked.
+	bound entryKind = "bound read"
+	// ingress receives deliveries: the hooks are never asked.
+	ingress entryKind = "ingress"
+	// inProcess makes no request.
+	inProcess entryKind = "local"
+)
+
+// entryPoints is every way into the connector: each action Actions returns
+// and each exported method. A new one fails
+// TestEveryEntryPointChoosesWhetherItAsksTheReadHooks until it is listed.
+// args are an action's arguments naming github://acme/docs/pull/7.
+var entryPoints = map[string]struct {
+	kind entryKind
+	args string
+}{
+	"action github_read_context":    {reads, `{"address":"github://acme/docs/pull/7"}`},
+	"action github_read_file":       {reads, `{"address":"github://acme/docs/pull/7","path":"README.md","ref":"` + hookSHA + `"}`},
+	"action github_workflow_status": {reads, `{"address":"github://acme/docs/pull/7","ref":"` + hookSHA + `"}`},
+	"action github_fix_base":        {reads, `{"address":"github://acme/docs/pull/7"}`},
+	"method ReadComments":           {reads, ""},
+
+	"action github_comment":        {writes, `{"address":"github://acme/docs/pull/7","body":"note"}`},
+	"action github_request_review": {writes, `{"address":"github://acme/docs/pull/7","reviewers":["ada"]}`},
+	"action github_add_labels":     {writes, `{"address":"github://acme/docs/pull/7","labels":["bug"]}`},
+	"action github_create_review":  {writes, `{"address":"github://acme/docs/pull/7","commit_id":"` + hookSHA + `","event":"COMMENT","body":"note"}`},
+	"action github_create_fix_pr":  {writes, `{"address":"github://acme/docs/pull/7","base":{"name":"main","sha":"` + hookSHA + `"},"title":"Fix","body":"Fix","changes":{"message":"fix","files":[{"path":"a.txt","content":"a"}]}}`},
+	"method Deliver":               {writes, ""},
+	"method Flush":                 {writes, ""},
+
+	"method Messages":     {bound, ""},
+	"method PollFeedback": {bound, ""},
+
+	"method ServeHTTP": {ingress, ""},
+	"method Ingest":    {ingress, ""},
+
+	"method Name":      {inProcess, ""},
+	"method Ingesting": {inProcess, ""},
+	"method Actions":   {inProcess, ""},
+	"method Reference": {inProcess, ""},
+}
+
+// enter calls one entry point for a run raised on source. The methods that
+// take no reference are called on the address a host would bind.
+func enter(t *testing.T, c *github.Connector, name string, source address.Address) error {
+	t.Helper()
+	ctx := context.Background()
+	docs := address.MustParse("github://acme/docs/pull/7")
+	kind, rest, _ := strings.Cut(name, " ")
+	if kind == "action" {
+		for _, a := range c.Actions() {
+			if a.Name == rest {
+				_, err := a.Invoke(ctx, source, json.RawMessage(entryPoints[name].args))
+				return err
+			}
+		}
+		t.Fatalf("no action %s", rest)
+	}
+	switch rest {
+	case "ReadComments":
+		_, err := c.ReadComments(ctx, source, docs.String(), 5, nil)
+		return err
+	case "Messages":
+		_, err := c.Messages(ctx, "", docs)
+		return err
+	case "PollFeedback":
+		_, err := c.PollFeedback(ctx, docs, 1)
+		return err
+	case "Deliver":
+		return c.Deliver(ctx, docs, event.Envelope{})
+	case "Flush":
+		return c.Flush(ctx)
+	case "ServeHTTP":
+		c.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")))
+	case "Ingest":
+		done, cancel := context.WithCancel(ctx)
+		cancel()
+		return c.Ingest(done, func(context.Context, event.Envelope) error { return nil })
+	case "Name":
+		_ = c.Name()
+	case "Ingesting":
+		_ = c.Ingesting()
+	case "Actions":
+		_ = c.Actions()
+	case "Reference":
+		_, err := c.Reference(docs)
+		return err
+	default:
+		t.Fatalf("entry point %s is listed but enter does not call it", name)
+	}
+	return nil
+}
+
+func TestEveryEntryPointChoosesWhetherItAsksTheReadHooks(t *testing.T) {
+	c, _ := probed(t, true, false, nil)
+	var have []string
+	for _, a := range c.Actions() {
+		have = append(have, "action "+a.Name)
+	}
+	typ := reflect.TypeOf(c)
+	for i := range typ.NumMethod() {
+		have = append(have, "method "+typ.Method(i).Name)
+	}
+	var listed []string
+	for name := range entryPoints {
+		listed = append(listed, name)
+	}
+	sort.Strings(have)
+	sort.Strings(listed)
+	if !slices.Equal(have, listed) {
+		t.Fatalf("entry points and the table differ; list every action and exported method with its kind\nconnector: %v\ntable:     %v", have, listed)
+	}
+
+	slack := address.MustParse("slack://T01/C01")
+	own := address.MustParse("github://acme/docs/pull/7")
+	const docs = "acme/docs"
+	for _, name := range listed {
+		entry := entryPoints[name]
+		t.Run(name, func(t *testing.T) {
+			if entry.kind != reads {
+				// Not a read by reference: the hooks are never asked, from
+				// another surface or from the repository's own run, and a
+				// grant they would give lets nothing through.
+				for _, source := range []address.Address{slack, own} {
+					c, p := probed(t, true, false, nil)
+					err := enter(t, c, name, source)
+					mayRead, refused, requests := p.snapshot()
+					if len(mayRead) != 0 || len(refused) != 0 {
+						t.Fatalf("from %s the hooks were asked: MayRead %v, ReadRefused %v", source, mayRead, refused)
+					}
+					if entry.kind == writes && strings.HasPrefix(name, "action ") && source.Connector != github.Name && (err == nil || len(requests) != 0) {
+						t.Fatalf("a write from %s: error %v, requests %v", source, err, requests)
+					}
+				}
+				return
+			}
+
+			// Granted: both hooks are asked once, before any request, about
+			// the repository that is then requested.
+			c, p := probed(t, true, false, nil)
+			_ = enter(t, c, name, slack)
+			mayRead, refused, requests := p.snapshot()
+			if !slices.Equal(mayRead, []string{docs}) || !slices.Equal(refused, []string{docs}) || p.early {
+				t.Fatalf("granted: MayRead %v, ReadRefused %v, asked after a request: %t", mayRead, refused, p.early)
+			}
+			if len(requests) == 0 {
+				t.Fatal("granted: nothing was requested")
+			}
+			for _, r := range requests {
+				if !strings.Contains(r, " /repos/acme/docs") {
+					t.Fatalf("granted: requested %s, not the repository the hooks were asked about", r)
+				}
+			}
+
+			// Not granted: asked once, nothing requested, a *ReadError.
+			c, p = probed(t, false, false, nil)
+			err := enter(t, c, name, slack)
+			mayRead, refused, requests = p.snapshot()
+			var refusal *github.ReadError
+			if !errors.As(err, &refusal) || *refusal != (github.ReadError{Owner: "acme", Repo: "docs"}) || !errors.Is(err, connector.ErrUndeliverable) {
+				t.Fatalf("not granted: error %v", err)
+			}
+			if !slices.Equal(mayRead, []string{docs}) || !slices.Equal(refused, []string{docs}) || len(requests) != 0 {
+				t.Fatalf("not granted: MayRead %v, ReadRefused %v, requests %v", mayRead, refused, requests)
+			}
+
+			// Kept to its own runs: ReadRefused is asked once and decides,
+			// whatever MayRead or ReadRepositories would grant.
+			c, p = probed(t, true, true, func(cfg *github.Config) { cfg.ReadRepositories = []string{docs} })
+			err = enter(t, c, name, slack)
+			mayRead, refused, requests = p.snapshot()
+			if !errors.As(err, &refusal) || *refusal != (github.ReadError{Owner: "acme", Repo: "docs", Kept: true}) || !errors.Is(err, connector.ErrUndeliverable) {
+				t.Fatalf("kept: error %v", err)
+			}
+			if len(mayRead) != 0 || !slices.Equal(refused, []string{docs}) || len(requests) != 0 {
+				t.Fatalf("kept: MayRead %v, ReadRefused %v, requests %v", mayRead, refused, requests)
+			}
+
+			// Named in ReadRepositories: MayRead is not needed.
+			c, p = probed(t, false, false, func(cfg *github.Config) { cfg.ReadRepositories = []string{docs} })
+			_ = enter(t, c, name, slack)
+			mayRead, refused, requests = p.snapshot()
+			if len(mayRead) != 0 || !slices.Equal(refused, []string{docs}) || len(requests) == 0 {
+				t.Fatalf("listed: MayRead %v, ReadRefused %v, requests %v", mayRead, refused, requests)
+			}
+
+			// The repository's own run reads it without the hooks.
+			c, p = probed(t, false, true, nil)
+			_ = enter(t, c, name, own)
+			mayRead, refused, requests = p.snapshot()
+			if len(mayRead) != 0 || len(refused) != 0 || len(requests) == 0 {
+				t.Fatalf("own run: MayRead %v, ReadRefused %v, requests %v", mayRead, refused, requests)
+			}
+		})
+	}
+}
+
+// The hooks are asked about the repository the read then requests, however
+// the reference is written.
+func TestTheReadHooksAreAskedAboutWhatIsRead(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, args string
+		// asked is the owner/repo both hooks hear, "" when neither is asked.
+		asked string
+		// first is the first request, "" when nothing is requested.
+		first string
+	}{
+		{"github address", "slack://T01/C01", `{"address":"github://acme/docs/issues/7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"pull request URL", "slack://T01/C01", `{"address":"https://github.com/acme/docs/pull/7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"comment URL", "slack://T01/C01", `{"address":"https://github.com/acme/docs/issues/7#issuecomment-1"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"short reference", "slack://T01/C01", `{"address":"acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"repository URL with a number", "slack://T01/C01", `{"address":"https://github.com/acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"surrounding space", "slack://T01/C01", `{"address":"  acme/docs#7 "}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"mixed case", "slack://T01/C01", `{"address":"Acme/Docs#7"}`, "Acme/Docs", "/repos/Acme/Docs/issues/7"},
+		{"mixed case URL", "slack://T01/C01", `{"address":"https://github.com/ACME/docs/pull/7"}`, "ACME/docs", "/repos/ACME/docs/issues/7"},
+		{"clone suffix, short", "slack://T01/C01", `{"address":"acme/docs.git#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"clone suffix, address", "slack://T01/C01", `{"address":"github://acme/docs.git/issues/7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"repository and number", "slack://T01/C01", `{"address":"acme/docs","number":7}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"reference and another number", "slack://T01/C01", `{"address":"acme/docs#3","number":7}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"another repository's run", "github://acme/web/pull/3", `{"address":"acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+		{"repository", "slack://T01/C01", `{"address":"acme/docs"}`, "acme/docs", "/repos/acme/docs"},
+		{"repository URL", "slack://T01/C01", `{"address":"https://github.com/acme/docs.git"}`, "acme/docs", "/repos/acme/docs"},
+		{"repository address", "slack://T01/C01", `{"address":"github://acme/docs"}`, "acme/docs", "/repos/acme/docs"},
+		{"address key in another case", "slack://T01/C01", `{"Address":"acme/docs#7"}`, "acme/docs", "/repos/acme/docs/issues/7"},
+
+		{"a number in the run's own repository", "github://acme/web/pull/3", `{"number":7}`, "", "/repos/acme/web/issues/7"},
+		{"the run's own repository by name", "github://acme/web/pull/3", `{"address":"ACME/Web#7"}`, "", "/repos/ACME/Web/issues/7"},
+
+		{"a number with no repository", "slack://T01/C01", `{"address":"#7"}`, "", ""},
+		{"a number with no repository, from a run", "github://acme/web/pull/3", `{"address":"#7"}`, "", ""},
+		{"another host", "slack://T01/C01", `{"address":"https://evil.test/acme/docs/issues/7"}`, "", ""},
+		{"a host that ends the same", "slack://T01/C01", `{"address":"https://notgithub.com/acme/docs/issues/7"}`, "", ""},
+		{"a URL with a user", "slack://T01/C01", `{"address":"https://user@github.com/acme/docs/issues/7"}`, "", ""},
+		{"a URL with a query", "slack://T01/C01", `{"address":"https://github.com/acme/docs/issues/7?next=1"}`, "", ""},
+		{"plain http", "slack://T01/C01", `{"address":"http://github.com/acme/docs/issues/7"}`, "", ""},
+		{"an owner not served", "slack://T01/C01", `{"address":"partner/docs#7"}`, "", ""},
+		{"two address keys", "slack://T01/C01", `{"address":"acme/web#1","Address":"acme/docs#7"}`, "", ""},
+		{"the address twice", "slack://T01/C01", `{"address":"acme/web#1","address":"acme/docs#7"}`, "", ""},
+		{"an undeclared key", "slack://T01/C01", `{"address":"acme/web#1","repo":"acme/docs"}`, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, p := probed(t, true, false, nil)
+			_, err := c.Actions()[0].Invoke(context.Background(), address.MustParse(tc.source), json.RawMessage(tc.args))
+			mayRead, refused, requests := p.snapshot()
+			var want []string
+			if tc.asked != "" {
+				want = []string{tc.asked}
+			}
+			if !slices.Equal(mayRead, want) || !slices.Equal(refused, want) || p.early {
+				t.Fatalf("MayRead %v, ReadRefused %v, want each %v; asked after a request: %t", mayRead, refused, want, p.early)
+			}
+			if tc.first == "" {
+				if err == nil || len(requests) != 0 {
+					t.Fatalf("error %v, requests %v; want a refusal and no request", err, requests)
+				}
+				return
+			}
+			if len(requests) == 0 || requests[0] != "GET "+tc.first {
+				t.Fatalf("requests %v, want first GET %s (error %v)", requests, tc.first, err)
+			}
+			repository := strings.Join(strings.Split(tc.first, "/")[:4], "/")
+			for _, r := range requests {
+				if got := strings.TrimPrefix(r, "GET "); got != repository && !strings.HasPrefix(got, repository+"/") {
+					t.Fatalf("requested %s outside %s", r, repository)
+				}
+			}
+		})
+	}
+}
+
+// A Config without the hooks reads what it read before them: the run's own
+// repository and the ReadRepositories, with arguments decoded as before.
+func TestNilReadHooksGrantNothingMore(t *testing.T) {
+	fake := github.NewFake()
+	for _, repo := range []string{"docs", "web"} {
+		if err := fake.SeedContext(github.Ref{Owner: "acme", Repo: repo, Number: 7}, github.Context{Subject: github.ContextSubject{Title: repo + " issue"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, source, args string
+		grants             []string
+		want               string
+	}{
+		{"its own repository", "github://acme/docs/issues/9", `{"address":"acme/docs#7"}`, nil, "docs issue"},
+		{"a listed repository", "slack://T01/C01", `{"address":"acme/docs#7"}`, []string{"acme/docs"}, "docs issue"},
+		{"no grant", "slack://T01/C01", `{"address":"acme/docs#7"}`, nil, ""},
+		{"another repository's run", "github://acme/web/issues/7", `{"address":"acme/docs#7"}`, nil, ""},
+		{"a grant for another repository", "slack://T01/C01", `{"address":"acme/docs#7"}`, []string{"acme/web"}, ""},
+		// The decoder keeps the last key that matches a field, as it did.
+		{"two address keys, the last listed", "slack://T01/C01", `{"address":"acme/web#7","Address":"acme/docs#7"}`, []string{"acme/docs"}, "docs issue"},
+		{"two address keys, the first listed", "slack://T01/C01", `{"address":"acme/web#7","Address":"acme/docs#7"}`, []string{"acme/web"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := github.New(github.Config{API: fake, ReadRepositories: tc.grants})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := c.Actions()[0].Invoke(context.Background(), address.MustParse(tc.source), json.RawMessage(tc.args))
+			if tc.want != "" {
+				if err != nil || !strings.Contains(result.Summary, tc.want) {
+					t.Fatalf("summary %q error %v, want %q", result.Summary, err, tc.want)
+				}
+				return
+			}
+			var refusal *github.ReadError
+			if !errors.As(err, &refusal) || refusal.Kept || !errors.Is(err, connector.ErrUndeliverable) {
+				t.Fatalf("summary %q error %v, want a ReadError", result.Summary, err)
+			}
+			if want := fmt.Sprintf("%s: repository %s/%s is not granted for cross-source reads", connector.ErrUndeliverable, refusal.Owner, refusal.Repo); err.Error() != want {
+				t.Fatalf("error %q, want %q", err, want)
+			}
+		})
+	}
+}
+
+// The ReadRepositories list is matched without regard to case, and the
+// repository is requested as the reference wrote it.
+func TestAListedRepositoryIsReadInAnyCaseWithoutTheHooks(t *testing.T) {
+	c, p := probed(t, false, false, func(cfg *github.Config) {
+		cfg.MayRead, cfg.ReadRefused, cfg.ReadRepositories = nil, nil, []string{"acme/docs"}
+	})
+	_, _ = c.Actions()[0].Invoke(context.Background(), address.MustParse("slack://T01/C01"), json.RawMessage(`{"address":"Acme/Docs#7"}`))
+	if _, _, requests := p.snapshot(); !slices.Equal(requests, []string{"GET /repos/Acme/Docs/issues/7"}) {
+		t.Fatalf("requests %v", requests)
+	}
+}
+
+// A grant from MayRead never reaches a write, on any action.
+func TestAReadHookGrantNeverAuthorizesAWrite(t *testing.T) {
+	everything := func(context.Context, string, string) bool { return true }
+	fake := github.NewFake()
+	c, err := github.New(github.Config{API: fake, Owners: []string{"acme"}, MayRead: everything, FixPullRequests: true, AuthorizeFixPull: func(context.Context, github.Ref) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, entry := range entryPoints {
+		action, ok := strings.CutPrefix(name, "action ")
+		if !ok || entry.kind != writes {
+			continue
+		}
+		if err := enter(t, c, name, address.MustParse("slack://T01/C01")); err == nil {
+			t.Errorf("%s wrote to a repository MayRead grants, from another surface", action)
+		}
+	}
+	if len(fake.Comments()) != 0 {
+		t.Fatalf("comments were posted: %+v", fake.Comments())
+	}
+}

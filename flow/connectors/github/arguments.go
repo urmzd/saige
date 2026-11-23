@@ -28,7 +28,9 @@ var readActionNames = map[string]bool{
 // key the schema does not declare is refused. Arguments that are not one
 // JSON object are left for the action's decoder to refuse. The bound
 // target is checked first, as each action does, so a target the connector
-// does not serve is refused as such.
+// does not serve is refused as such. Actions applies it only when
+// Config.MayRead or Config.ReadRefused is set, so a Config without the
+// hooks decodes arguments as before.
 func (c *Connector) oneKeyEach(action connector.Action) connector.Action {
 	declared := declaredArguments(action.Schema)
 	next := action.Invoke
