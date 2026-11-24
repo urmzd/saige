@@ -127,26 +127,39 @@ func TestDocumentBoundsTheSourcesAndLabelsItKeeps(t *testing.T) {
 	}
 }
 
-func TestViewMatchesOnlyTheRunAgentsCitations(t *testing.T) {
+func nestedCitation(seq uint64, label, title string) event.Envelope {
+	return ev(seq, event.TypeCitation, fmt.Sprintf(`{"label":%q,"text":"passage %s","source":{"document_title":%q,"source_uri":"https://example.com/%s"},"parent":["call_1"]}`, label, title, title, title))
+}
+
+func TestViewListsANestedAgentsSourceTheAnswerCites(t *testing.T) {
 	d := render.New()
-	// A nested agent's citation reuses the label the run's answer gives
-	// another source.
-	d.Apply(ev(1, event.TypeCitation, `{"label":"[1]","text":"nested passage","source":{"document_title":"nested","source_uri":"https://example.com/nested"},"parent":["call_1"]}`))
-	d.Apply(citation(2, "[1]", "alpha"))
-	// The same source cited at both levels keeps only the run agent's labels.
-	d.Apply(ev(3, event.TypeCitation, `{"label":"[9]","text":"nested passage","source":{"document_title":"alpha","source_uri":"https://example.com/alpha"},"parent":["call_1"]}`))
-	d.Apply(text(4, "Alpha says so [1], and [9]."))
+	d.Apply(nestedCitation(1, "[1]", "alpha"))
+	d.Apply(text(2, "The researcher found it [1]."))
 	got := d.View().Citations
 	if len(got) != 1 || got[0].Title != "alpha" || got[0].Ref() != "1" {
-		t.Fatalf("citations = %+v, want only alpha referred to as 1", got)
+		t.Fatalf("citations = %+v, want alpha referred to as 1", got)
 	}
 }
 
-func TestViewListsNoNestedCitationsAlone(t *testing.T) {
+func TestViewPrefersTheRunAgentsLabelOverANestedOne(t *testing.T) {
 	d := render.New()
-	d.Apply(ev(1, event.TypeCitation, `{"label":"[1]","text":"nested passage","source":{"document_title":"nested","source_uri":"https://example.com/nested"},"parent":["call_1"]}`))
-	d.Apply(text(2, "See [1]."))
-	if got := d.View().Citations; len(got) != 0 {
-		t.Errorf("citations = %+v, want none", got)
+	d.Apply(nestedCitation(1, "[1]", "nested"))
+	d.Apply(citation(2, "[1]", "alpha"))
+	d.Apply(nestedCitation(3, "[2]", "beta"))
+	d.Apply(text(4, "Alpha says so [1], and beta [2]."))
+	got := d.View().Citations
+	if len(got) != 2 || got[0].Title != "alpha" || got[0].Ref() != "1" || got[1].Title != "beta" || got[1].Ref() != "2" {
+		t.Fatalf("citations = %+v, want alpha as 1 and beta as 2", got)
+	}
+}
+
+func TestViewJoinsANestedLabelOfARunAgentsSource(t *testing.T) {
+	d := render.New()
+	d.Apply(citation(1, "[1]", "alpha"))
+	d.Apply(nestedCitation(2, "[3]", "alpha"))
+	d.Apply(text(3, "See [1] and [3]."))
+	got := d.View().Citations
+	if len(got) != 1 || got[0].Ref() != "1, 3" {
+		t.Fatalf("citations = %+v, want alpha referred to as 1, 3", got)
 	}
 }

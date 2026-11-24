@@ -118,12 +118,17 @@ type Citation struct {
 	// In a View it holds the labels the answer cites, joined by ", ";
 	// renderers prefer it over N.
 	Label string
-	// Labels are every label the citation events gave this source, as they
-	// gave them. A View reads them to decide whether the answer cites it.
+	// Labels are every label the run's own agent's citation events gave
+	// this source, as they gave them. A View reads them to decide whether
+	// the answer cites it.
 	Labels []string `json:",omitempty"`
-	Title  string
-	URI    string
-	seq    uint64
+	// NestedLabels are the labels citation events from nested agents (those
+	// with a Parent) gave this source. A View matches one only when no
+	// source has it among its Labels.
+	NestedLabels []string `json:",omitempty"`
+	Title        string
+	URI          string
+	seq          uint64
 }
 
 // Ref returns the footnote marker for this citation: the agent's own label when
@@ -488,14 +493,12 @@ func (d *Doc) tool(id string, seq uint64) int {
 // addCitation files a citation event's source. The event's passage text is
 // not kept: a surface shows where a cited passage is, not what it says.
 //
-// Only the run's own agent's citations are filed. A nested agent's citation
-// (one with a Parent) carries labels from that agent's own answer, which can
-// repeat labels the run's answer uses for other sources, so it is not
-// matched against the run's answer.
+// A nested agent's citation (one with a Parent) is filed with its labels
+// kept apart from the run's own agent's labels. The agent loop gives a
+// nested agent's source one label across the run, so the run's answer may
+// cite it by that label; a View matches it only for a label no citation of
+// the run's own agent gives (see cited).
 func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
-	if len(b.Parent) > 0 {
-		return false
-	}
 	c := Citation{
 		Title: first(b.Source.DocumentTitle, b.Source.SectionHeading),
 		URI:   b.Source.SourceURI,
@@ -504,18 +507,24 @@ func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 		return false
 	}
 	label := strings.TrimSpace(b.Label)
+	nested := len(b.Parent) > 0
 	key := c.URI + "\x00" + c.Title
 	if i, ok := d.citeAt[key]; ok {
 		// The same source cited twice is one footnote, which the answer
 		// may refer to by any of its labels. Keep the earliest sequence
 		// number so numbering does not shuffle on redelivery.
 		changed := false
-		if label != "" && !slices.Contains(d.cites[i].Labels, label) && len(d.cites[i].Labels) < MaxLabelsPerSource {
-			d.cites[i].Labels = append(d.cites[i].Labels, label)
+		ci := &d.cites[i]
+		list := &ci.Labels
+		if nested {
+			list = &ci.NestedLabels
+		}
+		if label != "" && !slices.Contains(*list, label) && len(ci.Labels)+len(ci.NestedLabels) < MaxLabelsPerSource {
+			*list = append(*list, label)
 			changed = true
 		}
-		if seq != 0 && seq < d.cites[i].seq {
-			d.cites[i].seq = seq
+		if seq != 0 && seq < ci.seq {
+			ci.seq = seq
 			changed = true
 		}
 		return changed
@@ -524,7 +533,11 @@ func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 		return false
 	}
 	if label != "" {
-		c.Labels = []string{label}
+		if nested {
+			c.NestedLabels = []string{label}
+		} else {
+			c.Labels = []string{label}
+		}
 	}
 	c.seq = seq
 	d.cites = append(d.cites, c)

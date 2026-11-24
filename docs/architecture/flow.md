@@ -921,8 +921,9 @@ Verified against the code, and honest.
   a link longer than 2048 bytes is left out rather than cut. Only an http or
   https URI with a host is linked, without any user information and encoded
   for the surface's link syntax; any other source is listed by its title
-  alone. Only the run's own agent's citations are matched against its
-  answer: a nested agent's citations (those with a `Parent`) are not.
+  alone. A nested agent's citation (one with a `Parent`) is matched too,
+  but only for a label no citation of the run's own agent gives. On GitHub a
+  title is escaped as Markdown text, so it cannot add markup or a mention.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover

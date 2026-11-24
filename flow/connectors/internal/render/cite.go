@@ -173,6 +173,10 @@ func blank(b *strings.Builder, s string) {
 
 // cited returns the sources text cites, in sequence order and numbered from
 // one, each with Label set to the keys of the labels text cites it by.
+//
+// The run's own agent's labels come first: a nested agent's label (see
+// Citation.NestedLabels) matches only when no source has it among its
+// Labels.
 func cited(cites []Citation, text string) []Citation {
 	if len(cites) == 0 {
 		return nil
@@ -180,6 +184,12 @@ func cited(cites []Citation, text string) []Citation {
 	refs := CitedLabels(text)
 	if len(refs) == 0 {
 		return nil
+	}
+	top := make(map[string]struct{})
+	for _, c := range cites {
+		for _, l := range c.Labels {
+			top[LabelKey(l)] = struct{}{}
+		}
 	}
 	var out []Citation
 	for _, c := range cites {
@@ -190,11 +200,21 @@ func cited(cites []Citation, text string) []Citation {
 				keys = append(keys, k)
 			}
 		}
+		for _, l := range c.NestedLabels {
+			k := LabelKey(l)
+			if _, shadowed := top[k]; shadowed {
+				continue
+			}
+			if _, ok := refs[k]; ok && !slices.Contains(keys, k) {
+				keys = append(keys, k)
+			}
+		}
 		if len(keys) == 0 {
 			continue
 		}
 		c.Label = strings.Join(keys, ", ")
 		c.Labels = append([]string(nil), c.Labels...)
+		c.NestedLabels = append([]string(nil), c.NestedLabels...)
 		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].seq < out[j].seq })

@@ -20,7 +20,23 @@ const (
 
 // RenderDefault renders ordinary Markdown with lifecycle progress.
 func RenderDefault(v View) string {
-	return sink.Clamp(sink.Layout(markdown{}, v), MaxBodyChars)
+	return sink.Clamp(sink.Layout(markdown{}, escapeTitles(v)), MaxBodyChars)
+}
+
+// escapeTitles returns a copy of v with each citation's title escaped as
+// Markdown text (see escapeText). A title comes from a source, not from the
+// model's answer, so it is shown as written rather than read as markup.
+func escapeTitles(v View) View {
+	if len(v.Citations) == 0 {
+		return v
+	}
+	out := v
+	out.Citations = make([]render.Citation, len(v.Citations))
+	for i, c := range v.Citations {
+		c.Title = escapeText(c.Title)
+		out.Citations[i] = c
+	}
+	return out
 }
 
 // Reference validates the connector's owner boundary and decodes an address.

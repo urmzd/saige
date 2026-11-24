@@ -21,16 +21,45 @@ func (markdown) Code(s string) string {
 	return "`" + s + "`"
 }
 
-// Link renders [text](uri). Brackets in the label would close it early. In
+// Link renders [text](uri). Brackets in the label are escaped, since they
+// would close it early. In
 // the uri, whitespace, parentheses, angle brackets and backslashes are
 // percent-encoded, since Markdown reads them as the end of the destination or
 // as escapes.
+//
+// A label that is the uri itself is escaped as text (see escapeText); any
+// other label is the caller's to escape.
 func (markdown) Link(text, uri string) string {
-	if text == "" {
-		text = uri
+	if text == "" || text == uri {
+		text = escapeText(uri)
 	}
-	text = strings.NewReplacer("[", "(", "]", ")").Replace(text)
-	return "[" + text + "](" + linkURI.Replace(uri) + ")"
+	return "[" + escapeBrackets(text) + "](" + linkURI.Replace(uri) + ")"
+}
+
+// escapeBrackets backslash-escapes each "[" and "]" in s that is not already
+// escaped, so a label cannot close its link early.
+func escapeBrackets(s string) string {
+	if !strings.ContainsAny(s, "[]") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\\':
+			b.WriteByte(c)
+			if i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			}
+		case '[', ']':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // linkURI encodes the characters of a uri that end or alter a Markdown link
@@ -41,3 +70,29 @@ var linkURI = strings.NewReplacer(
 )
 
 func (markdown) Item(s string) string { return "- " + s }
+
+// escapeText makes s read as plain text in GitHub Markdown within a line,
+// inline or as a link's label. The ASCII punctuation Markdown reads as inline
+// syntax (emphasis, code spans, links and images, raw HTML, autolinks,
+// strikethrough, table cells, entities) is backslash-escaped, and so is a
+// backslash, so a trailing one cannot escape what follows. An "@" is
+// followed by a zero-width joiner, so it does not start a mention.
+func escapeText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + len(s)/4)
+	for _, r := range s {
+		switch {
+		case r == '@':
+			b.WriteString("@\u200d")
+		case r < 0x80 && strings.ContainsRune(markdownPunct, r):
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// markdownPunct is the ASCII punctuation escapeText backslash-escapes.
+const markdownPunct = "\\`*_{}[]()<>!|~&"

@@ -101,3 +101,71 @@ func TestFootnoteLinkStaysOneMarkdownLink(t *testing.T) {
 		})
 	}
 }
+
+func TestFootnoteTitleIsShownAsText(t *testing.T) {
+	tests := []struct {
+		name, title, want string
+		raw               []string
+	}{
+		{"mention", "by @octocat", "by @\u200docto", []string{"@octocat"}},
+		{"image", "![img](https://example.com/i.png)", `\!\[img\]\(https://example.com/i.png\)`, []string{"![img]", "](https://example.com/i.png)"}},
+		{"raw html", `<img src="x">`, `\<img src="x"\>`, []string{"<img"}},
+		{"autolink", "<https://example.com/x>", `\<https://example.com/x\>`, []string{"<https://example.com/x>"}},
+		{"brackets", "a]b[c", `a\]b\[c`, []string{"a]b[c"}},
+		{"trailing backslash", `path\`, `path\\`, nil},
+		{"backticks", "use `x`", "use \\`x\\`", []string{"`x`"}},
+	}
+	for _, tc := range tests {
+		for _, uri := range []string{"https://example.com/s", "javascript:alert(1)"} {
+			t.Run(tc.name+" "+uri[:5], func(t *testing.T) {
+				fake := github.NewFake()
+				c := sinkConnector(t, fake)
+				for _, e := range []event.Envelope{
+					ev(1, event.TypeAccepted, ""),
+					ev(2, event.TypeCitation, fmt.Sprintf(`{"label":"[1]","source":{"document_title":%q,"source_uri":%q}}`, tc.title, uri)),
+					textEvent(3, "See [1]."),
+					ev(4, event.TypeCompleted, ""),
+				} {
+					if err := c.Deliver(context.Background(), target, e); err != nil {
+						t.Fatalf("Deliver(seq %d): %v", e.Seq, err)
+					}
+				}
+				comments := fake.Comments()
+				if len(comments) != 1 {
+					t.Fatalf("github holds %d comments, want 1", len(comments))
+				}
+				body := comments[0].Body
+				if !strings.Contains(body, tc.want) {
+					t.Errorf("comment lacks %q:\n%s", tc.want, body)
+				}
+				for _, r := range tc.raw {
+					if unescaped(body, r) {
+						t.Errorf("comment carries %q unescaped:\n%s", r, body)
+					}
+				}
+				// The footnote line ends with the title or the link, never
+				// with an unescaped backslash that would escape what follows.
+				line := body[strings.Index(body, "[1] "):]
+				line, _, _ = strings.Cut(line, "\n")
+				if strings.HasSuffix(strings.TrimSuffix(line, `\\`), `\`) {
+					t.Errorf("footnote ends with a lone backslash: %q", line)
+				}
+			})
+		}
+	}
+}
+
+// unescaped reports whether body holds r at a position not preceded by a
+// backslash.
+func unescaped(body, r string) bool {
+	for i := 0; ; {
+		j := strings.Index(body[i:], r)
+		if j < 0 {
+			return false
+		}
+		if at := i + j; at == 0 || body[at-1] != '\\' {
+			return true
+		}
+		i += j + 1
+	}
+}
