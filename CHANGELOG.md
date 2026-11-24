@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.52.2 (2026-11-24)
+
+### Bug Fixes
+
+- **flow**: keep flow tests off the agent loop and widen GitHub title escaping ([5a7d090](https://github.com/urmzd/saige/commit/5a7d0907fc02d658572d00011289b46e343d7d1b))
+- **flow**: match nested citations after the run agent's and escape GitHub titles ([3783b55](https://github.com/urmzd/saige/commit/3783b5516de1b6bfbe8cef4ba9b385e6c0ea572a))
+- **flow**: link only http and https footnotes and match top-level citations ([ecb9a36](https://github.com/urmzd/saige/commit/ecb9a36a97cfbf52ac8ce3bd32f81ffafaec84e8))
+- **flow**: list only the sources an answer cites on surfaces ([fa2469d](https://github.com/urmzd/saige/commit/fa2469d57011b770fbfd0c6032f78aac5c40e35c))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.1...v0.52.2)
+
+
 ## 0.52.1 (2026-11-24)
 
 ### Bug Fixes
