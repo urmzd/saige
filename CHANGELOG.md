@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.51.0 (2026-11-24)
+
+### Features
+
+- **sandbox**: keep a failed task's output beside its error ([0a77474](https://github.com/urmzd/saige/commit/0a7747471bd43f008639b38b726124eb236fccb2))
+
+### Bug Fixes
+
+- **provider**: report every failure when a chain stops after failing over ([3ace4c2](https://github.com/urmzd/saige/commit/3ace4c22599efe95a672f356f3fbe96b7e926d62))
+- **flow**: carry a failed turn's retry decision out of the sandbox ([8458b0a](https://github.com/urmzd/saige/commit/8458b0a28e4f1b4303c3951873c8d80f577eafc4))
+- **types**: list the tool error limit and repeated tool call codes in the wire table ([d9f9b8e](https://github.com/urmzd/saige/commit/d9f9b8ee2f76a5bf97578000e89007f4d3b25aad))
+- **flow**: do not retry a turn that failed deterministically ([0046467](https://github.com/urmzd/saige/commit/0046467088e83cfd8cddc83380409947ad7dbf13))
+
+### Misc
+
+- **flow**: build the router chain case in the native runtime's tests ([08d0141](https://github.com/urmzd/saige/commit/08d0141edf23571055cc41ec4e2e1434f07a72d0))
+- **wirecheck**: list the agent limit sentinels under agent/types ([6f9df0c](https://github.com/urmzd/saige/commit/6f9df0ce65fa50f735482c92a056bfdfa49e0879))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.50.0...v0.51.0)
+
+
 ## 0.50.0 (2026-11-23)
 
 ### Features
