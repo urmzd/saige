@@ -92,6 +92,12 @@ func (d *Doc) UnmarshalJSON(data []byte) error {
 	}
 	for _, c := range s.Cites {
 		c.Citation.seq = c.Seq
+		// A snapshot written before Labels kept the source's one label in
+		// Label.
+		if len(c.Citation.Labels) == 0 && c.Citation.Label != "" {
+			c.Citation.Labels = []string{c.Citation.Label}
+		}
+		c.Citation.Label = ""
 		d.cites = append(d.cites, c.Citation)
 		d.citeAt[c.Citation.URI+"\x00"+c.Citation.Title] = len(d.cites) - 1
 	}

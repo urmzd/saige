@@ -23,6 +23,11 @@
 // from saige's CitationDelta, at any depth. A tool's citation that repeats one
 // already published is dropped (see Translator.Delta).
 //
+// Every retrieved passage is published, with its text, whether or not the
+// answer cites it: the stream records what the turn was given. What a
+// surface shows of it is the sink's choice; the shared sink lists only the
+// sources whose label the answer refers to, by title and link.
+//
 // # Context layout
 //
 // A provider's prompt cache reuses a request only up to the first byte that

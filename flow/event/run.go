@@ -587,7 +587,8 @@ func init() {
 				}
 				return line("tool", b.Name, "returned:", b.Result)
 			})},
-		{Type: TypeCitation, New: func() Body { return new(Citation) },
+		// A citation carries the text of a passage from a host's corpus.
+		{Type: TypeCitation, Sensitive: true, New: func() Body { return new(Citation) },
 			Render: render(func(_ Envelope, b Citation) string {
 				src := b.Source.SourceURI
 				if src == "" {

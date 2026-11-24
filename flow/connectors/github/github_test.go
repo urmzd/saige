@@ -438,8 +438,8 @@ func TestDeliveringTheSameEventsTwiceKeepsOneEditedComment(t *testing.T) {
 	events := []event.Envelope{
 		ev(1, event.TypeAccepted, ""),
 		textEvent(2, "The retry path posts twice "),
-		textEvent(3, "because the handle was lost."),
-		ev(4, event.TypeCitation, `{"source":{"document_title":"sink.go","source_uri":"https://github.com/urmzd/saige/flow/blob/main/sink.go"}}`),
+		textEvent(3, "because the handle was lost [1]."),
+		ev(4, event.TypeCitation, `{"label":"[1]","source":{"document_title":"sink.go","source_uri":"https://github.com/urmzd/saige/flow/blob/main/sink.go"}}`),
 		ev(5, event.TypeCompleted, ""),
 	}
 	for range 2 {
@@ -458,7 +458,7 @@ func TestDeliveringTheSameEventsTwiceKeepsOneEditedComment(t *testing.T) {
 	if comment.Ref != (github.Ref{Owner: "urmzd", Repo: "fiber", Number: 42}) {
 		t.Errorf("comment ref = %+v", comment.Ref)
 	}
-	if got := strings.Count(comment.Body, "The retry path posts twice because the handle was lost."); got != 1 {
+	if got := strings.Count(comment.Body, "The retry path posts twice because the handle was lost [1]."); got != 1 {
 		t.Errorf("body contains the answer %d times, want 1:\n%s", got, comment.Body)
 	}
 	if !strings.Contains(comment.Body, "**docs-bot** _(done)_") {

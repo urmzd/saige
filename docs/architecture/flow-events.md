@@ -90,7 +90,7 @@ one. Nothing else in the envelope says what `data` holds.
 | `run.delta.thinking.v1` | `Thinking` | |
 | `run.delta.tool.call.v1` | `ToolCall` | |
 | `run.delta.tool.done.v1` | `ToolDone` | |
-| `run.delta.citation.v1` | `Citation` | |
+| `run.delta.citation.v1` | `Citation` | Sensitive: carries the passage text. Surfaces list only the sources the answer cites, without it |
 | `run.delta.tool.marker.v1` | `ToolMarker` | A tool call waiting for a decision |
 | `run.action.taken.v1` | `Action` | |
 | `run.usage.v1` | `UsageCall` | Opt-in |
@@ -241,7 +241,8 @@ text or private host data. A sensitive body is rendered to the model, but it
 is redacted from egress logs and webhooks unless the subscriber opts in
 explicitly. Every ingress body with user text (`message.posted.v1`, the
 GitHub and Jira comment and issue types, `slack.command.invoked.v1`) is
-sensitive. Structural run bodies (`run.started.v1`, `run.usage.v1`) are not.
+sensitive. So is `run.delta.citation.v1`, which carries a passage of the
+host's corpus. Structural run bodies (`run.started.v1`, `run.usage.v1`) are not.
 The model's own output (`run.delta.text.v1`) is not human-authored, and is
 not sensitive.
 
