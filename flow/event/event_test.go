@@ -374,3 +374,16 @@ func FuzzEnvelopeUnmarshal(f *testing.F) {
 		}
 	})
 }
+
+// A citation carries a passage of a host's corpus, so it is sensitive: it
+// is rendered to the model and left out of egress and logs unless a
+// subscriber opts in.
+func TestCitationIsSensitive(t *testing.T) {
+	e, ok := event.Lookup(event.TypeCitation)
+	if !ok {
+		t.Fatal("citation is not registered")
+	}
+	if !e.Sensitive {
+		t.Error("citation is not marked sensitive")
+	}
+}

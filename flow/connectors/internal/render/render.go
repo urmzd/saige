@@ -46,6 +46,7 @@ package render
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,18 +105,25 @@ type Tool struct {
 	seq uint64
 }
 
-// Citation is one source the agent cited.
+// Citation is one source the agent's answer cites.
+//
+// It carries where the source is, never what it says: a citation event's
+// passage text is not kept, so a surface lists a source by its title and
+// link only (see View).
 type Citation struct {
 	// N is the footnote number, assigned in sequence order so that the same
 	// events always number the same way.
 	N int
-	// Label is what the agent's own text refers to, when it supplied one.
-	// Renderers prefer it over N.
-	Label   string
-	Title   string
-	URI     string
-	Snippet string
-	seq     uint64
+	// Label is what the answer refers to this source by, without brackets.
+	// In a View it holds the labels the answer cites, joined by ", ";
+	// renderers prefer it over N.
+	Label string
+	// Labels are every label the citation events gave this source, as they
+	// gave them. A View reads them to decide whether the answer cites it.
+	Labels []string `json:",omitempty"`
+	Title  string
+	URI    string
+	seq    uint64
 }
 
 // Ref returns the footnote marker for this citation: the agent's own label when
@@ -201,7 +209,10 @@ type View struct {
 	// Thinking is the agent's extended reasoning, if the route asked for it.
 	Thinking string
 
-	Tools     []Tool
+	Tools []Tool
+	// Citations are the sources the answer cites: those with a label that
+	// appears in Text outside code (see CitedLabels), in sequence order. A
+	// source the run was given but the answer does not cite is not listed.
 	Citations []Citation
 	Actions   []Action
 
@@ -474,25 +485,38 @@ func (d *Doc) tool(id string, seq uint64) int {
 	return i
 }
 
+// addCitation files a citation event's source. The event's passage text is
+// not kept: a surface shows where a cited passage is, not what it says.
 func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 	c := Citation{
-		Label:   b.Label,
-		Title:   first(b.Source.DocumentTitle, b.Source.SectionHeading),
-		URI:     b.Source.SourceURI,
-		Snippet: b.Text,
+		Title: first(b.Source.DocumentTitle, b.Source.SectionHeading),
+		URI:   b.Source.SourceURI,
 	}
 	if c.URI == "" && c.Title == "" {
 		return false
 	}
+	label := strings.TrimSpace(b.Label)
 	key := c.URI + "\x00" + c.Title
 	if i, ok := d.citeAt[key]; ok {
-		// The same source cited twice is one footnote. Keep the earliest
-		// sequence number so numbering does not shuffle on redelivery.
+		// The same source cited twice is one footnote, which the answer
+		// may refer to by any of its labels. Keep the earliest sequence
+		// number so numbering does not shuffle on redelivery.
+		changed := false
+		if label != "" && !slices.Contains(d.cites[i].Labels, label) && len(d.cites[i].Labels) < MaxLabelsPerSource {
+			d.cites[i].Labels = append(d.cites[i].Labels, label)
+			changed = true
+		}
 		if seq != 0 && seq < d.cites[i].seq {
 			d.cites[i].seq = seq
-			return true
+			changed = true
 		}
+		return changed
+	}
+	if len(d.cites) >= MaxSources {
 		return false
+	}
+	if label != "" {
+		c.Labels = []string{label}
 	}
 	c.seq = seq
 	d.cites = append(d.cites, c)
@@ -655,13 +679,7 @@ func (d *Doc) View() View {
 		v.Tools = append([]Tool(nil), d.tools...)
 		sort.SliceStable(v.Tools, func(i, j int) bool { return v.Tools[i].seq < v.Tools[j].seq })
 	}
-	if len(d.cites) > 0 {
-		v.Citations = append([]Citation(nil), d.cites...)
-		sort.SliceStable(v.Citations, func(i, j int) bool { return v.Citations[i].seq < v.Citations[j].seq })
-		for i := range v.Citations {
-			v.Citations[i].N = i + 1
-		}
-	}
+	v.Citations = cited(d.cites, v.Text)
 	if len(d.actions) > 0 {
 		v.Actions = append([]Action(nil), d.actions...)
 		sort.SliceStable(v.Actions, func(i, j int) bool { return v.Actions[i].seq < v.Actions[j].seq })

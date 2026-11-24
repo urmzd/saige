@@ -1,6 +1,7 @@
 package sink
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/urmzd/saige/flow/connectors/internal/render"
@@ -59,7 +60,7 @@ func MapText(v render.View, fn func(string) string) render.View {
 	if len(v.Citations) > 0 {
 		out.Citations = make([]render.Citation, len(v.Citations))
 		for i, c := range v.Citations {
-			c.Title, c.Snippet = fn(c.Title), fn(c.Snippet)
+			c.Title, c.Label = fn(c.Title), fn(c.Label)
 			out.Citations[i] = c
 		}
 	}
@@ -243,25 +244,49 @@ func layoutTools(m Markup, v render.View) string {
 	return strings.Join(lines, "\n")
 }
 
+// Bounds on the footnotes a surface message carries.
+const (
+	// MaxFootnotes is the most footnotes rendered; the rest are counted on
+	// one closing line.
+	MaxFootnotes = 20
+	// maxFootnoteTitle bounds a footnote's title, in bytes.
+	maxFootnoteTitle = 200
+	// maxFootnoteURI is the longest URI rendered as a link. A longer one is
+	// not rendered: a cut URI is a broken link.
+	maxFootnoteURI = 2048
+	// maxFootnoteRef bounds a footnote's marker, in bytes.
+	maxFootnoteRef = 64
+)
+
 // layoutCitations renders footnotes, which is the whole point of carrying
 // citations as their own event kind: the agent's text refers to [1], and the
 // reader needs [1] to be a link they can follow on the surface they are reading.
+//
+// A footnote is the source's title and link only. The view lists only the
+// sources the answer cites (see render.View), and carries no passage text.
 func layoutCitations(m Markup, v render.View) string {
 	var lines []string
-	for _, c := range v.Citations {
-		label := c.Title
+	for i, c := range v.Citations {
+		if i == MaxFootnotes {
+			lines = append(lines, m.Italic(fmt.Sprintf("and %d more cited sources", len(v.Citations)-MaxFootnotes)))
+			break
+		}
+		uri := c.URI
+		if len(uri) > maxFootnoteURI {
+			uri = ""
+		}
+		label := truncate(collapse(c.Title), maxFootnoteTitle)
 		if label == "" {
-			label = c.URI
+			label = uri
+		}
+		if label == "" {
+			label = "source"
 		}
 		text := label
-		if c.URI != "" {
-			text = m.Link(label, c.URI)
+		if uri != "" {
+			text = m.Link(label, uri)
 		}
-		line := "[" + c.Ref() + "] " + text
-		if c.Snippet != "" {
-			line += " " + m.Italic(truncate(collapse(c.Snippet), 200))
-		}
-		lines = append(lines, line)
+		lines = append(lines, "["+truncate(collapse(c.Ref()), maxFootnoteRef)+"] "+text)
 	}
 	return strings.Join(lines, "\n")
 }

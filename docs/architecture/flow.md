@@ -908,6 +908,17 @@ Verified against the code, and honest.
   with the citing agent's own markers; one that repeats a citation already
   published under the same marker and source is dropped. Citations a model
   produces itself (provider-native search) are not translated.
+- **A surface lists only the sources the answer cites.** The event stream
+  carries every passage a turn was given, with its text, and a citation is
+  `Sensitive`. The shared sink that Slack and GitHub render through keeps no
+  passage text: it lists a source as a footnote only when the answer refers
+  to one of its labels (`[2]`, `[1, 3]`, `[1][3]` or `[^2]`, matched without
+  brackets), and a footnote is the label, the title and the link. Brackets in
+  fenced code blocks and inline code spans are program text, not references;
+  a label inside a quotation is a reference. A source the answer refers to by
+  several labels is one footnote listing them. A message shows at most 20
+  footnotes and counts the rest on one line; a title is cut to 200 bytes, and
+  a link longer than 2048 bytes is left out rather than cut.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover

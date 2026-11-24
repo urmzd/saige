@@ -169,10 +169,11 @@ func TestStatusFollowsTheHighestSequenceNumberNotTheLastArrival(t *testing.T) {
 
 func TestCitationsAreNumberedBySequenceAndDeduplicated(t *testing.T) {
 	d := render.New()
-	d.Apply(ev(7, event.TypeCitation, `{"source":{"document_title":"Second","source_uri":"https://example.com/2"}}`))
-	d.Apply(ev(3, event.TypeCitation, `{"source":{"document_title":"First","source_uri":"https://example.com/1"}}`))
+	d.Apply(text(1, "See [2] and [1]."))
+	d.Apply(ev(7, event.TypeCitation, `{"label":"[2]","source":{"document_title":"Second","source_uri":"https://example.com/2"}}`))
+	d.Apply(ev(3, event.TypeCitation, `{"label":"[1]","source":{"document_title":"First","source_uri":"https://example.com/1"}}`))
 	// The same source cited again is one footnote, not two.
-	d.Apply(ev(9, event.TypeCitation, `{"source":{"document_title":"First","source_uri":"https://example.com/1"}}`))
+	d.Apply(ev(9, event.TypeCitation, `{"label":"[1]","source":{"document_title":"First","source_uri":"https://example.com/1"}}`))
 
 	cites := d.View().Citations
 	if len(cites) != 2 {
@@ -181,15 +182,16 @@ func TestCitationsAreNumberedBySequenceAndDeduplicated(t *testing.T) {
 	if cites[0].Title != "First" || cites[0].N != 1 || cites[0].Ref() != "1" {
 		t.Errorf("first citation = %+v, want First numbered 1", cites[0])
 	}
-	if cites[1].Title != "Second" || cites[1].N != 2 {
+	if cites[1].Title != "Second" || cites[1].N != 2 || cites[1].Ref() != "2" {
 		t.Errorf("second citation = %+v, want Second numbered 2", cites[1])
 	}
 }
 
 func TestCitationsPreferAnAgentSuppliedLabelAndFallBackToTheSection(t *testing.T) {
 	d := render.New()
+	d.Apply(text(1, "Per [rfc] and [d]."))
 	d.Apply(ev(2, event.TypeCitation, `{"label":"rfc","source":{"document_title":"RFC 9110","source_uri":"https://example.com/rfc"}}`))
-	d.Apply(ev(3, event.TypeCitation, `{"text":"a snippet","source":{"section_heading":"Design doc","source_uri":"https://example.com/d"}}`))
+	d.Apply(ev(3, event.TypeCitation, `{"label":"d","text":"a snippet","source":{"section_heading":"Design doc","source_uri":"https://example.com/d"}}`))
 
 	cites := d.View().Citations
 	if len(cites) != 2 {
@@ -198,7 +200,7 @@ func TestCitationsPreferAnAgentSuppliedLabelAndFallBackToTheSection(t *testing.T
 	if cites[0].Ref() != "rfc" || cites[0].URI != "https://example.com/rfc" {
 		t.Errorf("labelled citation = %+v", cites[0])
 	}
-	if cites[1].Title != "Design doc" || cites[1].URI != "https://example.com/d" || cites[1].Snippet != "a snippet" {
+	if cites[1].Title != "Design doc" || cites[1].URI != "https://example.com/d" {
 		t.Errorf("citation from a section = %+v", cites[1])
 	}
 }
@@ -363,7 +365,7 @@ func equalViews(a, b render.View) bool {
 	}
 	for i := range a.Citations {
 		x, y := a.Citations[i], b.Citations[i]
-		if x.N != y.N || x.Ref() != y.Ref() || x.Title != y.Title || x.URI != y.URI || x.Snippet != y.Snippet {
+		if x.N != y.N || x.Ref() != y.Ref() || x.Title != y.Title || x.URI != y.URI || strings.Join(x.Labels, ",") != strings.Join(y.Labels, ",") {
 			return false
 		}
 	}

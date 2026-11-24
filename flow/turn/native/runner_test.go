@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -151,6 +152,46 @@ func TestRetrievalPublishesCitationsBeforeTheAnswer(t *testing.T) {
 	}
 	if !messagesContain(seen, "deploys run on merge to main") {
 		t.Fatalf("the retrieved context never reached the model: %+v", seen)
+	}
+}
+
+// The event stream records every passage a turn was given, cited or not,
+// with its text. Surfaces choose what to show from it (they list only the
+// sources the answer cites); the stream itself is not filtered.
+func TestRetrievalPublishesEveryPassageWhateverTheAnswerCites(t *testing.T) {
+	t.Parallel()
+
+	rev := offlineRevision(1, "")
+	rev.Spec.Sources = []native.Source{{Name: "runbook", URI: "file://runbook.md"}}
+	r, err := native.New(rev,
+		native.WithScript(agenttest.TextResponse("deploys happen on merge [2]")),
+		native.WithRetriever(retrieverFunc(func(context.Context, string) (*ragtypes.AssembledContext, error) {
+			return &ragtypes.AssembledContext{
+				Prompt: "Context.",
+				Blocks: []ragtypes.ContextBlock{
+					{Text: "first passage", Citation: "[1]"},
+					{Text: "second passage", Citation: "[2]"},
+					{Text: "third passage", Citation: "[3]"},
+				},
+			}, nil
+		})))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, res := collect(t, r, native.Turn{Text: "when do deploys happen?"})
+
+	var texts []string
+	for _, b := range got {
+		if c, ok := b.(event.Citation); ok {
+			texts = append(texts, c.Label+" "+c.Text)
+		}
+	}
+	want := []string{"[1] first passage", "[2] second passage", "[3] third passage"}
+	if !slices.Equal(texts, want) {
+		t.Errorf("citations = %q, want %q", texts, want)
+	}
+	if res.Citations != 3 {
+		t.Errorf("Result.Citations is %d, want 3", res.Citations)
 	}
 }
 
