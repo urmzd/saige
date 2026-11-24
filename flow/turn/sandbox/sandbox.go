@@ -275,7 +275,14 @@ func (s *sandboxed) stream(ctx context.Context, deployment, taskID string, sink 
 				return out.Result, fmt.Errorf("sandbox: task %s: %s", taskID, res.Error)
 			}
 			if out.Error != "" {
-				return out.Result, fmt.Errorf("sandbox: task %s: %s", taskID, out.Error)
+				err := fmt.Errorf("sandbox: task %s: %s", taskID, out.Error)
+				if out.Repeats != nil {
+					// The inner Runtime decided, and its decision is the
+					// one thing of the error besides its message that
+					// crosses the task boundary.
+					err = turn.WithRepeats(err, *out.Repeats)
+				}
+				return out.Result, err
 			}
 			return out.Result, nil
 		}
@@ -284,9 +291,12 @@ func (s *sandboxed) stream(ctx context.Context, deployment, taskID string, sink 
 
 // taskOutput is a task's result. A failed turn still reports what it
 // produced, so the error travels beside the result and not instead of it.
+// Error is the error's message; Repeats is the inner Runtime's decision
+// whether a retry would repeat it (turn.Repeats), absent when it made none.
 type taskOutput struct {
-	Result turn.Result `json:"result"`
-	Error  string      `json:"error,omitempty"`
+	Result  turn.Result `json:"result"`
+	Error   string      `json:"error,omitempty"`
+	Repeats *bool       `json:"repeats,omitempty"`
 }
 
 // ensure deploys the service a pinned definition runs in and returns its
@@ -413,6 +423,9 @@ func (s *sandboxed) call(ctx context.Context, rt tool.Runtime, input []byte) ([]
 	out := taskOutput{Result: res}
 	if err != nil {
 		out.Error = err.Error()
+		if repeats, ok := turn.Repeats(err); ok {
+			out.Repeats = &repeats
+		}
 	}
 	return json.Marshal(out)
 }

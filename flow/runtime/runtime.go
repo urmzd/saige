@@ -139,6 +139,7 @@ import (
 	"github.com/urmzd/saige/flow/session"
 	"github.com/urmzd/saige/flow/thread"
 	turnrt "github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/turn/failure"
 	"github.com/urmzd/saige/flow/turn/native"
 
 	"github.com/urmzd/saige/flow/attachment"
@@ -1139,7 +1140,12 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	if settleErr := r.settleTurnBudget(context.WithoutCancel(ctx), in, attempt, mine, req.Budget, err != nil); settleErr != nil {
 		return out, settleErr
 	}
-	if err != nil && req.Budget != nil {
+	// A failure a retry would only repeat fails the run at once: another
+	// attempt pays for the whole turn again to reach the same end. A turn
+	// under a budget is never retried. An attempt whose own context ended
+	// (the worker is shutting down, the claim was lost) decides nothing
+	// about the run, whatever error the turn returned on its way out.
+	if err != nil && (req.Budget != nil || (ctx.Err() == nil && failure.Repeats(err))) {
 		err = durable.NonRetryable(err)
 	}
 	if err != nil {

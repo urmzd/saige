@@ -21,7 +21,8 @@ type Task struct {
 }
 
 // Result is the outcome of executing a Task on a node. Error carries a
-// failure as a string so results survive any transport.
+// failure as a string so results survive any transport. A failed task may
+// still carry Output: what its tool returned beside the error.
 type Result struct {
 	TaskID string `json:"task_id"`
 	NodeID string `json:"node_id,omitempty"`

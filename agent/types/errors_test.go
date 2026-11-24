@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -360,5 +361,23 @@ func TestRegisterWireSentinel(t *testing.T) {
 			}()
 			bad()
 		}()
+	}
+}
+
+// The agent loop's limit sentinels keep their identity and their codes on
+// the wire in a process that links this package without package agent.
+func TestLoopLimitSentinelsSurviveTheWire(t *testing.T) {
+	for code, sentinel := range map[string]error{
+		"max_iterations":            ErrMaxIterations,
+		"agent.tool_error_limit":    ErrToolErrorLimit,
+		"agent.repeated_tool_calls": ErrRepeatedToolCalls,
+	} {
+		encoded := EncodeError(fmt.Errorf("turn: %w", sentinel))
+		if !slices.Contains(encoded.Codes, code) {
+			t.Errorf("codes %v do not include %q", encoded.Codes, code)
+		}
+		if !errors.Is(DecodeError(encoded), sentinel) {
+			t.Errorf("%v lost its identity on the wire", sentinel)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -197,5 +198,56 @@ func TestUsageBeforeOutputDoesNotCommit(t *testing.T) {
 				t.Errorf("forwarded prompt tokens = %d, want %d", prompt, tt.wantPrompt)
 			}
 		})
+	}
+}
+
+// A request that stops on an error it does not fail over on, after earlier
+// profiles failed over, reports every profile's failure. The chain still
+// matches the last failure alone, so errors.Is, errors.As and KindOf answer
+// as they did before.
+func TestStopAfterFailoverReportsEveryFailure(t *testing.T) {
+	unavailable := &types.ProviderError{Kind: types.ErrorKindUnavailable, Err: errors.New("overloaded")}
+	refused := fmt.Errorf("part 0: %w", types.ErrMediaUnavailable)
+	partial := func() (<-chan types.Delta, error) {
+		return deltas(types.PartDelta{Index: 0, Text: "partial"}, types.ErrorDelta{Error: transient()}), nil
+	}
+	for _, tc := range []struct {
+		name   string
+		second func() (<-chan types.Delta, error)
+		last   error
+	}{
+		{"not eligible", func() (<-chan types.Delta, error) { return nil, refused }, types.ErrMediaUnavailable},
+		{"not eligible mid-stream", func() (<-chan types.Delta, error) { return deltas(types.ErrorDelta{Error: refused}), nil }, types.ErrMediaUnavailable},
+		{"after output", partial, types.ErrProviderFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := New(Config{Profiles: []Profile{
+				{ID: "home", Provider: provider{call: func() (<-chan types.Delta, error) { return nil, unavailable }}},
+				{ID: "backup", Provider: provider{call: tc.second}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = consume(t, r.Session())
+			var chain *types.FallbackError
+			if !errors.As(err, &chain) || len(chain.Errors) != 2 {
+				t.Fatalf("err = %v, want a FallbackError with both failures", err)
+			}
+			if !errors.Is(chain.Errors[0], types.ErrUnavailable) {
+				t.Errorf("first failure = %v, want the home profile's", chain.Errors[0])
+			}
+			if !errors.Is(err, tc.last) || errors.Is(err, types.ErrUnavailable) {
+				t.Errorf("err = %v: it does not match the last failure alone", err)
+			}
+		})
+	}
+	// A single attempt reports its own error, not a chain.
+	r, _ := New(Config{Profiles: []Profile{
+		{ID: "only", Provider: provider{call: func() (<-chan types.Delta, error) { return nil, refused }}},
+	}})
+	_, err := consume(t, r.Session())
+	var chain *types.FallbackError
+	if errors.As(err, &chain) || !errors.Is(err, types.ErrMediaUnavailable) {
+		t.Errorf("err = %v, want the only profile's error", err)
 	}
 }

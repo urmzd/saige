@@ -407,6 +407,10 @@ var wireSentinels = []wireSentinel{
 	{"context_canceled", context.Canceled},
 	{"deadline_exceeded", context.DeadlineExceeded},
 	{"max_iterations", ErrMaxIterations},
+	// These two keep the codes they had when package agent declared them,
+	// which still registers the same pairs.
+	{"agent.tool_error_limit", ErrToolErrorLimit},
+	{"agent.repeated_tool_calls", ErrRepeatedToolCalls},
 	{"tool_not_found", ErrToolNotFound},
 	{"provider_failed", ErrProviderFailed},
 	{"context_length", ErrContextLength},

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	saigetypes "github.com/urmzd/saige/agent/types"
 	"github.com/urmzd/saige/durable"
 	"github.com/urmzd/saige/durable/ledger"
 	dqueue "github.com/urmzd/saige/durable/queue"
@@ -913,6 +914,53 @@ func TestARetryableFailureIsReportedAsNonTerminalAndTheRunResumes(t *testing.T) 
 	}
 	if n := h.exec.count(); n != 2 {
 		t.Errorf("the executor ran %d times, want 2 (a retry re-executes)", n)
+	}
+}
+
+// A failure that a retry of the same input would only repeat (the agent loop
+// hit its iteration limit, say) fails the run on its first attempt: retrying
+// it pays for the whole turn again to reach the same end.
+func TestADeterministicAgentFailureIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	for name, cause := range map[string]error{
+		"max iterations":       saigetypes.ErrMaxIterations,
+		"repeated tool calls":  saigetypes.ErrRepeatedToolCalls,
+		"invalid model config": saigetypes.ErrInvalidModelConfig,
+		"media unavailable":    saigetypes.ErrMediaUnavailable,
+		"context length":       saigetypes.ErrContextLength,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			exec := newExecutor("")
+			exec.err = fmt.Errorf("native: agent %q version %s: %w", "docs-bot", "v1", cause)
+			h := newHarness(t, exec)
+			h.specs.revise("docs-bot", "v1")
+			h.work(t)
+
+			ctx := context.Background()
+			acc, err := accept(ctx, h.rt, tag("docs-bot", "Ev-"+name, "hello"))
+			if err != nil {
+				t.Fatalf("Accept: %v", err)
+			}
+			if _, err := h.rt.Result(ctx, acc.RunID); err == nil {
+				t.Fatal("the run succeeded, want a terminal failure")
+			}
+			failed := h.bus.ofKind(event.TypeFailed)
+			if len(failed) != 1 {
+				t.Fatalf("got %d failed events, want 1", len(failed))
+			}
+			body, err := decode[lifecycle](failed[0])
+			if err != nil {
+				t.Fatalf("decode failed event: %v", err)
+			}
+			if !body.Terminal {
+				t.Error("the failure was reported as non-terminal, so a sink waits for a retry")
+			}
+			if n := h.exec.count(); n != 1 {
+				t.Errorf("the executor ran %d times, want 1 (the failure repeats, so it is not retried)", n)
+			}
+		})
 	}
 }
 

@@ -299,6 +299,46 @@ func TestFallbackProvider_MidStreamErrorNotFallbackable(t *testing.T) {
 	}
 }
 
+// A chain that stops mid-stream on a member's error it does not fall back
+// on, after an earlier member failed over, reports both failures. The chain
+// matches the last failure alone, as the bare error did.
+func TestFallbackProvider_MidStreamStopAfterFallbackReportsEveryFailure(t *testing.T) {
+	limited := &types.ProviderError{Provider: "a", Kind: types.ErrorKindRateLimit, Err: errors.New("slow down")}
+	tooLong := &types.ProviderError{Provider: "b", Kind: types.ErrorKindContextLength, Err: errors.New("too long")}
+	rule, err := Rule(OnRateLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, second := range map[string][]types.Delta{
+		"before content": {types.ErrorDelta{Error: tooLong}},
+		"after content":  {types.PartDelta{Index: 0, Text: "partial"}, types.ErrorDelta{Error: tooLong}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fb := must.Get(New(Config{FallbackOn: rule, Providers: []types.Provider{
+				&scriptProvider{deltas: []types.Delta{types.ErrorDelta{Error: limited}}},
+				&scriptProvider{deltas: second},
+			}}))
+			ch, err := fb.Stream(context.Background(), types.Request{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			_, errDeltas := collect(ch)
+			if len(errDeltas) != 1 {
+				t.Fatalf("ErrorDelta count = %d, want 1", len(errDeltas))
+			}
+			got := errDeltas[0].Error
+			var fe *types.FallbackError
+			if !errors.As(got, &fe) || len(fe.Errors) != 2 || fe.Errors[0] != limited || fe.Errors[1] != tooLong {
+				t.Fatalf("ErrorDelta = %v, want a FallbackError with both failures in order", got)
+			}
+			var pe *types.ProviderError
+			if !errors.Is(got, types.ErrContextLength) || errors.Is(got, types.ErrRateLimited) || !errors.As(got, &pe) || pe != tooLong {
+				t.Errorf("ErrorDelta = %v: it does not match the last failure alone", got)
+			}
+		})
+	}
+}
+
 func TestFallbackProvider_MidStreamAllFail(t *testing.T) {
 	err1 := &types.ProviderError{Provider: "a", Kind: types.ErrorKindTransient, Err: errors.New("fail-a")}
 	err2 := &types.ProviderError{Provider: "b", Kind: types.ErrorKindTransient, Err: errors.New("fail-b")}
