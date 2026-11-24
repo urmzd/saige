@@ -152,7 +152,9 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		return "", err
 	}
 	if approve {
-		approve = s.c.cfg.MayApprove(ctx, ref.Owner, ref.Repo, review)
+		asked := review
+		asked.Comments = slices.Clone(review.Comments)
+		approve = s.c.cfg.MayApprove(ctx, ref.Owner, ref.Repo, asked)
 		if !approve {
 			review.Event = "COMMENT"
 		} else if err := s.stillPinned(ctx, ref, pinned); err != nil {

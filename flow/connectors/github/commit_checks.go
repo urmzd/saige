@@ -42,7 +42,7 @@ type CommitCheck struct {
 // the conclusions GitHub's required status checks accept. Anything pending,
 // failed, cancelled, timed out or waiting for action has not passed.
 func (c CommitCheck) Passed() bool {
-	if c.Status != "completed" {
+	if c.Status != checkCompleted {
 		return false
 	}
 	switch c.Conclusion {
@@ -52,7 +52,11 @@ func (c CommitCheck) Passed() bool {
 	return false
 }
 
-const commitChecksPage = 100
+const (
+	commitChecksPage = 100
+	checkCompleted   = "completed"
+	checkPending     = "pending"
+)
 
 // CommitChecks reads the latest check run of every check and the latest commit
 // status of every context on sha. It follows pages until one comes back short,
@@ -125,9 +129,9 @@ func (a *HTTPAPI) CommitChecks(ctx context.Context, owner, repo, sha string) ([]
 }
 
 func statusCheck(name, state, url string) CommitCheck {
-	check := CommitCheck{Kind: CheckKindStatus, Name: name, Status: "completed", Conclusion: state, URL: url}
-	if state == "pending" {
-		check.Status, check.Conclusion = "pending", ""
+	check := CommitCheck{Kind: CheckKindStatus, Name: name, Status: checkCompleted, Conclusion: state, URL: url}
+	if state == checkPending {
+		check.Status, check.Conclusion = checkPending, ""
 	}
 	return check
 }

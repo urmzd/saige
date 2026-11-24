@@ -121,12 +121,7 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 	if !ok {
 		return "", fmt.Errorf("github: existing review no longer has a reproducible finding mapping")
 	}
-	// An approval the host's MayApprove refused was posted as a comment. A
-	// plan that still says APPROVE reproduces that comment, never a new event.
-	if planned.Event == "APPROVE" && event == "COMMENT" && s.c.cfg.MayApprove != nil {
-		planned.Event = "COMMENT"
-	}
-	planned, err = prepareReview(planned, files, true)
+	planned, err = prepareReview(s.refusedApproval(planned, event), files, true)
 	if err != nil {
 		return "", err
 	}
@@ -136,4 +131,14 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 	}
 	planned.Body = row.Body
 	return reviewReceipt(row.ID, planned, view)
+}
+
+// refusedApproval reproduces an approval the host's MayApprove refused, which
+// was posted as a comment: a plan that still says APPROVE becomes that comment,
+// never a new event.
+func (s reviewSurface) refusedApproval(planned Review, posted string) Review {
+	if planned.Event == "APPROVE" && posted == "COMMENT" && s.c.cfg.MayApprove != nil {
+		planned.Event = "COMMENT"
+	}
+	return planned
 }
