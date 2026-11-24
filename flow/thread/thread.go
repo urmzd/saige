@@ -191,7 +191,9 @@ type Entry struct {
 	Seq uint64 `json:"seq"`
 	// Role is who the message is from.
 	Role Role `json:"role"`
-	// Text is the message.
+	// Text is the message. For a run's request it is the request as it was
+	// asked (the trigger as the catalog renders it), not the passages a turn
+	// retrieved for it: each later run retrieves its own.
 	Text string `json:"text"`
 	// Actor is who said it: a person for a user message, the agent for its
 	// own answer.

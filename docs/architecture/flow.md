@@ -339,10 +339,10 @@ ended, and a replay reads the outcome and announces the same stop.
 
 ### What the thread and the surfaces show
 
-A stopped run journals its exchange like a completed one: the request as the
-agent renders it, then an assistant entry holding the partial answer followed
-by a fixed marker line, or the marker alone when the turn was stopped before it
-said anything.
+A stopped run journals its exchange like a completed one: the request as it
+was asked (see [What the thread journal holds](#what-the-thread-journal-holds)),
+then an assistant entry holding the partial answer followed by a fixed marker
+line, or the marker alone when the turn was stopped before it said anything.
 
 ```
 The deploy failed because
@@ -1043,6 +1043,26 @@ with one catalog tool for agents with sub-agents. The host tool must check the
 caller's pinned spawn grant. Without that option, flow retains its existing per-target tools.
 The runtime still owns execution, streaming and sandboxing; the host owns its
 input references, output contracts and answer delivery policy.
+
+### What the thread journal holds
+
+A run's thread journal (`flow/thread`, keyed by tenant, agent and place) holds
+each exchange as it was asked and answered: a user entry with the request as
+it was asked, the trigger as the catalog renders it (its trigger context, then
+its request text), with the request's attachment references, then an assistant
+entry with the answer. Every later run on the same key is shown those entries
+as its history, and `session_read` and session waits read them.
+
+The passages a turn retrieves from its knowledge sources (`runtime.WithKnowledge`,
+`native.Runtime.Knowledge`) are retrieved for that turn's request and sent
+with it, and are not journaled. Each later turn retrieves its own passages for
+its own request. The request exactly as the model was sent it, passages
+included, stays on the turn's own record (`Outcome.Prompt`, `turn.Result.Prompt`),
+which a continuation of a parked turn sends again unchanged. For a turn that
+retrieved nothing the journaled request is the same bytes the model was sent,
+so the next run's request starts with this one's and the prompt cache reads
+the whole conversation; after a turn that retrieved passages, the shared
+prefix ends before that turn's request.
 
 ### Trigger context and private host data
 

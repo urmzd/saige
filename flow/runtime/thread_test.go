@@ -152,7 +152,7 @@ func TestARunIsShownTheConversationSoFarInItsThread(t *testing.T) {
 
 	store := newThreads(t)
 	exec := newExecutor("")
-	exec.prompt = func(req runtime.Request) string { return "asked: " + req.Text }
+	exec.prompt = func(req runtime.Request) string { return "Passage retrieved for this turn.\n\n" + req.Text }
 	h := newHarness(t, exec, runtime.WithThreads(store))
 	h.specs.revise("docs-bot", "v1")
 	h.work(t)
@@ -174,11 +174,11 @@ func TestARunIsShownTheConversationSoFarInItsThread(t *testing.T) {
 				}
 			}
 		}
-		want = append(want, fmt.Sprintf("user: asked: question %d", k), fmt.Sprintf("assistant: answer %d", k))
+		want = append(want, fmt.Sprintf("user: question %d", k), fmt.Sprintf("assistant: answer %d", k))
 	}
 
-	// The journal is the record: what the model was asked, then what it
-	// answered, attributed to who said it and the run that produced it.
+	// The journal is the record: the request as it was asked, then what the
+	// agent answered, attributed to who said it and the run that produced it.
 	got := journal(t, store, tag("docs-bot", "any", "").key())
 	if !reflect.DeepEqual(said(got), want) {
 		t.Fatalf("journal = %q, want %q", said(got), want)
@@ -330,7 +330,7 @@ func TestACompletedRunAppendsItsExchangeExactlyOnce(t *testing.T) {
 
 	store := newThreads(t)
 	exec := newExecutor("answered")
-	exec.prompt = func(req runtime.Request) string { return "Context from the trigger:\n- pr: 7\n\n" + req.Text }
+	exec.prompt = func(req runtime.Request) string { return "Passage retrieved for this turn.\n\n" + req.Text }
 	h := newHarness(t, exec,
 		runtime.WithThreads(store),
 		runtime.WithMessageID(func(e event.Envelope) string { return contextOf(e, "slack_ts") }),
@@ -368,7 +368,7 @@ func TestACompletedRunAppendsItsExchangeExactlyOnce(t *testing.T) {
 
 	execute(1)
 	first := journal(t, store, key)
-	if got, want := said(first), []string{"user: Context from the trigger:\n- pr: 7\n\nhello", "assistant: answered"}; !reflect.DeepEqual(got, want) {
+	if got, want := said(first), []string{"user: Context from the trigger:\n- slack_ts: 1699.042\n\nhello", "assistant: answered"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("journal after the run = %q, want %q", got, want)
 	}
 	if e := first[0]; e.RunID != acc.RunID || e.SurfaceID != "1699.042" || e.Actor != tg.Actor {
