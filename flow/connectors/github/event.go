@@ -56,6 +56,8 @@ type repository struct {
 
 type user struct {
 	Login string `json:"login"`
+	// ID is the numeric user ID, which a rename does not change.
+	ID int64 `json:"id"`
 	// Type is "User", "Bot" or "Organization". A Bot sender is never acted on:
 	// this connector's own comments arrive back as issue_comment events, and
 	// answering them would make the mesh answer itself.
@@ -134,13 +136,14 @@ func (b *body) at() time.Time {
 
 // subject is the issue or pull request an event is about, normalized.
 type subject struct {
-	number int
-	title  string
-	body   string
-	state  string
-	author string
-	labels []string
-	url    string
+	number   int
+	title    string
+	body     string
+	state    string
+	author   string
+	authorID int64
+	labels   []string
+	url      string
 	// pull reports whether the address should say /pull/ rather than /issues/.
 	pull  bool
 	base  string
@@ -403,6 +406,12 @@ func refOf(h hook, subj subject) event.GitHubRef {
 		HeadSHA: subj.sha,
 		Labels:  subj.labels,
 		Draft:   subj.pull && subj.draft,
+		// IDs survive a rename; a host compares people by them.
+		SenderID: h.Sender.ID,
+		AuthorID: subj.authorID,
+	}
+	if h.Reviewer != nil {
+		ref.RequestedReviewer, ref.RequestedReviewerID = h.Reviewer.Login, h.Reviewer.ID
 	}
 	if h.Installation != nil {
 		ref.InstallationID = h.Installation.ID
@@ -462,31 +471,33 @@ func subjectOf(h hook) subject {
 	if h.PullRequest != nil {
 		p := h.PullRequest
 		return subject{
-			number: p.Number,
-			title:  p.Title,
-			body:   p.Body,
-			state:  p.State,
-			author: p.User.Login,
-			labels: labelNames(p.Labels),
-			url:    p.HTMLURL,
-			pull:   true,
-			base:   p.Base.Ref,
-			head:   p.Head.Ref,
-			sha:    p.Head.SHA,
-			draft:  p.Draft,
-			at:     latest(p.UpdatedAt, p.CreatedAt),
+			number:   p.Number,
+			title:    p.Title,
+			body:     p.Body,
+			state:    p.State,
+			author:   p.User.Login,
+			authorID: p.User.ID,
+			labels:   labelNames(p.Labels),
+			url:      p.HTMLURL,
+			pull:     true,
+			base:     p.Base.Ref,
+			head:     p.Head.Ref,
+			sha:      p.Head.SHA,
+			draft:    p.Draft,
+			at:       latest(p.UpdatedAt, p.CreatedAt),
 		}
 	}
 	if h.Issue != nil {
 		i := h.Issue
 		s := subject{
-			number: i.Number,
-			title:  i.Title,
-			body:   i.Body,
-			state:  i.State,
-			author: i.User.Login,
-			labels: labelNames(i.Labels),
-			url:    i.HTMLURL,
+			number:   i.Number,
+			title:    i.Title,
+			body:     i.Body,
+			state:    i.State,
+			author:   i.User.Login,
+			authorID: i.User.ID,
+			labels:   labelNames(i.Labels),
+			url:      i.HTMLURL,
 			// An issue_comment on a pull request arrives as an issue with a
 			// pull_request member. Addressing it as an issue would still resolve
 			// on GitHub, but it would tell the agent's tools the wrong thing

@@ -87,6 +87,15 @@ the app's own reviews on a pull request with their ID, state, commit and
 author; it fails when the pull request has 1000 or more reviews. No model
 tool offers either.
 
+A host that refuses an approval asked for by someone who wrote the change
+reads the pull request's commits with `PullRequestCommits(ctx, owner, repo,
+number)` on the HTTP API or the fake. Each `PRCommit` has the SHA and the
+numeric ID and login of the GitHub accounts linked to its author and
+committer; an ID is 0 when GitHub links no account. GitHub lists at most 250
+commits of a pull request, so the read fails at `MaxPullRequestCommits`
+(250) rather than return a list that may be cut short. The model has no tool
+for this read.
+
 ## What a webhook publishes
 
 Each verified delivery becomes one typed event on the issue or pull request's
@@ -103,6 +112,14 @@ channel, `github://<owner>/<repo>/issues/<number>` or
 | `github.pull_request.opened.v1`, `.ready_for_review.v1`, `.labeled.v1` | A pull request opened, marked ready, or labeled |
 | `github.pull_request.review_requested.v1` | A review requested from an agent's login |
 | `github.pull_request.synchronize.v1` | New commits pushed to a pull request |
+
+Each body carries the logins and the numeric user IDs of the sender
+(`Sender`, `SenderID`) and of the issue or pull request's author (`Author`,
+`AuthorID`), and a review request also those of the requested reviewer
+(`RequestedReviewer`, `RequestedReviewerID`). A login can be renamed and
+reused; an ID cannot, so a host compares people by ID. An ID is 0, and left
+out of the trigger context, when the payload has none. `ContextSubject.User`
+carries the author's login and ID on a context read.
 
 When checks are on, the head commit (`head_sha`) is pinned on the body before
 it is published. A bot's delivery publishes nothing, except `synchronize`,

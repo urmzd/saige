@@ -213,6 +213,15 @@ type GitHubRef struct {
 	Labels         []string `json:"labels,omitempty"`
 	Draft          bool     `json:"draft,omitempty"`
 	InstallationID int64    `json:"installation_id,omitempty"`
+	// SenderID and AuthorID are the numeric GitHub user IDs of Sender and
+	// Author: a login can be renamed and reused, an ID cannot. Zero when the
+	// payload has none.
+	SenderID int64 `json:"sender_id,omitempty"`
+	AuthorID int64 `json:"author_id,omitempty"`
+	// RequestedReviewer is the login a review was requested from, and
+	// RequestedReviewerID its numeric user ID, on a review request.
+	RequestedReviewer   string `json:"requested_reviewer,omitempty"`
+	RequestedReviewerID int64  `json:"requested_reviewer_id,omitempty"`
 }
 
 // GitHubIssueCommentCreated is the body of github.issue_comment.created.v1.
@@ -500,6 +509,16 @@ func (g GitHubRef) meta(m map[string]string, typ string, commentID int64) {
 	}
 	if g.InstallationID != 0 {
 		m["github_installation_id"] = strconv.FormatInt(g.InstallationID, 10)
+	}
+	setNonZero(m, "github_sender_id", g.SenderID)
+	setNonZero(m, "github_author_id", g.AuthorID)
+	setNonEmpty(m, "github_requested_reviewer", g.RequestedReviewer)
+	setNonZero(m, "github_requested_reviewer_id", g.RequestedReviewerID)
+}
+
+func setNonZero(m map[string]string, key string, v int64) {
+	if v != 0 {
+		m[key] = strconv.FormatInt(v, 10)
 	}
 }
 
