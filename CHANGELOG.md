@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.53.0 (2026-11-24)
+
+### Features
+
+- **github**: carry user IDs and read a pull request's commits ([39e2843](https://github.com/urmzd/saige/commit/39e2843666df841f9938b2df7f77aac268cf4429))
+- **github**: let the host dismiss the app's own review ([b3f9558](https://github.com/urmzd/saige/commit/b3f95580c7b7c004a3245c5ba9189c7a6882d1ba))
+- **github**: let a host hook approve through the review sink ([6bab03d](https://github.com/urmzd/saige/commit/6bab03d9596a583dc0d2a6c89c88bb6402355264))
+
+### Bug Fixes
+
+- **github**: bound each approval confirmation step and keep the hook's reviews with the delivery state ([f56e520](https://github.com/urmzd/saige/commit/f56e520977a841bb977d3118839159eed90df801))
+- **github**: confirm a recovered approval, detach confirmation from the delivery, and source required checks ([f8ebdbb](https://github.com/urmzd/saige/commit/f8ebdbb1d7b01f982b86255075b1f0b30805b280))
+- **github**: confirm a posted approval against the app's reviews, read check suites and commit verification ([5e8b020](https://github.com/urmzd/saige/commit/5e8b0202d59c608db817fac8b84a90405ee31505))
+- **github**: base the approval check rule on the app, and expose reviews and commit authorship ([a29d523](https://github.com/urmzd/saige/commit/a29d52382a647f99bbd2b1a3eb84c2c6ac664eed))
+- **github**: recover only the app's bot review ([dc9fab8](https://github.com/urmzd/saige/commit/dc9fab8a20bc3470b1ee813c2e46a540d65d8126))
+- **github**: own a review only by the app's bot account ([634a40f](https://github.com/urmzd/saige/commit/634a40f0d8dc5f730d1217785c27fc9efbd45da4))
+- **github**: scope the own check to this app and run ([e1f622e](https://github.com/urmzd/saige/commit/e1f622e0881ffad14ee9cda5ac51de50d2dc2982))
+- **github**: tighten host approvals and the commit checks read ([714c4e1](https://github.com/urmzd/saige/commit/714c4e122f8f3d02817f6728dc1eaf0a7071f805))
+
+### Refactoring
+
+- **github**: pass the approval hook a copy and keep recovery under the complexity bound ([f8cad7f](https://github.com/urmzd/saige/commit/f8cad7f38734fa00ea8c3cb001140847f75887c8))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.2...v0.53.0)
+
+
 ## 0.52.2 (2026-11-24)
 
 ### Bug Fixes
