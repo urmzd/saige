@@ -108,9 +108,16 @@ func TestFootnoteTitleIsShownAsText(t *testing.T) {
 		raw               []string
 	}{
 		{"mention", "by @octocat", "by @\u200docto", []string{"@octocat"}},
-		{"image", "![img](https://example.com/i.png)", `\!\[img\]\(https://example.com/i.png\)`, []string{"![img]", "](https://example.com/i.png)"}},
+		{"image", "![img](https://example.com/i.png)", "\\!\\[img\\]\\(https:\u200d//example.com/i.png\\)", []string{"![img]", "](https://example.com/i.png)"}},
 		{"raw html", `<img src="x">`, `\<img src="x"\>`, []string{"<img"}},
-		{"autolink", "<https://example.com/x>", `\<https://example.com/x\>`, []string{"<https://example.com/x>"}},
+		{"autolink", "<https://example.com/x>", "\\<https:\u200d//example.com/x\\>", []string{"<https://example.com/x>"}},
+		{"bare url", "see https://example.com/x", "see https:\u200d//example.com/x", []string{"see https://"}},
+		{"www", "see WWW.example.com", "see WWW\u200d.example.com", []string{"WWW.example"}},
+		{"issue", "fixes #123", "fixes #\u200d123", []string{"#123"}},
+		{"cross-repo issue", "see owner/repo#5", "see owner/repo#\u200d5", []string{"repo#5"}},
+		{"GH reference", "see GH-12", "see GH-\u200d12", []string{"GH-12"}},
+		{"emoji", "a :smile: b", "a :\u200dsmile:\u200d b", []string{":smile:"}},
+		{"math", "cost $x+1$", `cost \$x+1\$`, []string{"$x"}},
 		{"brackets", "a]b[c", `a\]b\[c`, []string{"a]b[c"}},
 		{"trailing backslash", `path\`, `path\\`, nil},
 		{"backticks", "use `x`", "use \\`x\\`", []string{"`x`"}},

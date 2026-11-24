@@ -494,10 +494,16 @@ func (d *Doc) tool(id string, seq uint64) int {
 // not kept: a surface shows where a cited passage is, not what it says.
 //
 // A nested agent's citation (one with a Parent) is filed with its labels
-// kept apart from the run's own agent's labels. The agent loop gives a
-// nested agent's source one label across the run, so the run's answer may
-// cite it by that label; a View matches it only for a label no citation of
-// the run's own agent gives (see cited).
+// kept apart from the run's own agent's labels. Its label is the one the
+// nested agent gave the source, numbered within that agent: two sibling
+// delegations can each publish "[1]" for different sources. The run's own
+// agent reads a delegation's answer with those labels, so its answer may
+// cite a nested source by one. A View matches a nested label only when no
+// citation of the run's own agent gives it (see cited); a label two nested
+// sources share lists both.
+//
+// Each list is capped at MaxLabelsPerSource on its own, so nested labels
+// cannot take the place of the run's own agent's labels.
 func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 	c := Citation{
 		Title: first(b.Source.DocumentTitle, b.Source.SectionHeading),
@@ -519,7 +525,7 @@ func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 		if nested {
 			list = &ci.NestedLabels
 		}
-		if label != "" && !slices.Contains(*list, label) && len(ci.Labels)+len(ci.NestedLabels) < MaxLabelsPerSource {
+		if label != "" && !slices.Contains(*list, label) && len(*list) < MaxLabelsPerSource {
 			*list = append(*list, label)
 			changed = true
 		}

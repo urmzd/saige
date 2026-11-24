@@ -72,18 +72,31 @@ var linkURI = strings.NewReplacer(
 func (markdown) Item(s string) string { return "- " + s }
 
 // escapeText makes s read as plain text in GitHub Markdown within a line,
-// inline or as a link's label. The ASCII punctuation Markdown reads as inline
-// syntax (emphasis, code spans, links and images, raw HTML, autolinks,
-// strikethrough, table cells, entities) is backslash-escaped, and so is a
-// backslash, so a trailing one cannot escape what follows. An "@" is
-// followed by a zero-width joiner, so it does not start a mention.
+// inline or as a link's label.
+//
+// The ASCII punctuation Markdown reads as inline syntax (emphasis, code
+// spans, links and images, raw HTML, autolinks, strikethrough, table cells,
+// entities, math) is backslash-escaped, and so is a backslash, so a trailing
+// one cannot escape what follows. GitHub also turns plain text into links
+// and references; a zero-width joiner is put where it breaks each pattern:
+// after every "@" (mentions), "#" (issue references such as #12 and
+// owner/repo#5) and ":" (bare URLs and :emoji: codes), between "www" and the
+// "." after it, and after the "-" of "GH-".
 func escapeText(s string) string {
+	const zwj = "\u200d"
 	var b strings.Builder
 	b.Grow(len(s) + len(s)/4)
-	for _, r := range s {
+	for i, r := range s {
 		switch {
-		case r == '@':
-			b.WriteString("@\u200d")
+		case r == '@' || r == '#' || r == ':':
+			b.WriteRune(r)
+			b.WriteString(zwj)
+		case r == '.' && i >= 3 && strings.EqualFold(s[i-3:i], "www"):
+			b.WriteString(zwj)
+			b.WriteRune(r)
+		case r == '-' && i >= 2 && strings.EqualFold(s[i-2:i], "gh"):
+			b.WriteRune(r)
+			b.WriteString(zwj)
 		case r < 0x80 && strings.ContainsRune(markdownPunct, r):
 			b.WriteByte('\\')
 			b.WriteRune(r)
@@ -95,4 +108,4 @@ func escapeText(s string) string {
 }
 
 // markdownPunct is the ASCII punctuation escapeText backslash-escapes.
-const markdownPunct = "\\`*_{}[]()<>!|~&"
+const markdownPunct = "\\`*_{}[]()<>!|~&$"

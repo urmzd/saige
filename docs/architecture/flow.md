@@ -922,8 +922,13 @@ Verified against the code, and honest.
   https URI with a host is linked, without any user information and encoded
   for the surface's link syntax; any other source is listed by its title
   alone. A nested agent's citation (one with a `Parent`) is matched too,
-  but only for a label no citation of the run's own agent gives. On GitHub a
-  title is escaped as Markdown text, so it cannot add markup or a mention.
+  but only for a label no citation of the run's own agent gives. Its label
+  is the one the nested agent numbered it with, so sibling delegations can
+  each publish `[1]`, and an answer citing `[1]` then lists both sources. On
+  GitHub a title is shown as text: inline Markdown and HTML punctuation is
+  backslash-escaped, and a zero-width joiner breaks mentions, issue
+  references (`#12`, `owner/repo#5`, `GH-12`), bare URLs and `:emoji:`
+  codes.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover

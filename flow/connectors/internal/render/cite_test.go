@@ -163,3 +163,47 @@ func TestViewJoinsANestedLabelOfARunAgentsSource(t *testing.T) {
 		t.Fatalf("citations = %+v, want alpha referred to as 1, 3", got)
 	}
 }
+
+// The events below are the shape native.Translator publishes when the run's
+// agent delegates and the delegated agent's tool cites a source (see
+// flow/turn/native's subagent citation tests): the child's label, with
+// Parent naming the delegating call.
+
+func TestViewListsASubAgentsSourceAsTranslated(t *testing.T) {
+	d := render.New()
+	d.Apply(ev(1, event.TypeToolCall, `{"id":"d1","name":"delegate_to_researcher","phase":"start"}`))
+	d.Apply(ev(2, event.TypeCitation, `{"label":"[1]","text":"","source":{"document_title":"Alpha","source_uri":"https://example.com/a"},"index":0,"tool_call_id":"s1","parent":["d1"]}`))
+	d.Apply(ev(3, event.TypeText, `{"text":"Found [1].","parent":["d1"]}`))
+	d.Apply(ev(4, event.TypeCompleted, `{"text":"The researcher found it [1]."}`))
+	got := d.View().Citations
+	if len(got) != 1 || got[0].Title != "Alpha" || got[0].URI != "https://example.com/a" || got[0].Ref() != "1" {
+		t.Fatalf("citations = %+v, want Alpha referred to as 1", got)
+	}
+}
+
+func TestViewListsSiblingSubAgentSourcesThatShareALabel(t *testing.T) {
+	d := render.New()
+	d.Apply(ev(1, event.TypeCitation, `{"label":"[1]","source":{"document_title":"A","source_uri":"https://example.com/a"},"tool_call_id":"s1","parent":["d1"]}`))
+	d.Apply(ev(2, event.TypeCitation, `{"label":"[1]","source":{"document_title":"B","source_uri":"https://example.com/b"},"tool_call_id":"s1","parent":["d2"]}`))
+	d.Apply(ev(3, event.TypeCompleted, `{"text":"Both found it [1]."}`))
+	got := d.View().Citations
+	if len(got) != 2 || got[0].Title != "A" || got[1].Title != "B" {
+		t.Fatalf("citations = %+v, want A and B", got)
+	}
+}
+
+func TestNestedLabelsDoNotDisplaceTheRunAgentsLabels(t *testing.T) {
+	d := render.New()
+	for i := 1; i <= render.MaxLabelsPerSource+5; i++ {
+		d.Apply(nestedCitation(uint64(i), fmt.Sprintf("[n%d]", i), "alpha"))
+	}
+	d.Apply(citation(100, "[1]", "alpha"))
+	d.Apply(text(101, "See [1]."))
+	got := d.View().Citations
+	if len(got) != 1 || got[0].Ref() != "1" {
+		t.Fatalf("citations = %+v, want alpha referred to as 1", got)
+	}
+	if len(got[0].NestedLabels) != render.MaxLabelsPerSource {
+		t.Errorf("kept %d nested labels, want %d", len(got[0].NestedLabels), render.MaxLabelsPerSource)
+	}
+}

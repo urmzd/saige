@@ -13,7 +13,9 @@ const (
 	// MaxSources is the most distinct sources a document keeps. Citation
 	// events for further sources are ignored.
 	MaxSources = 256
-	// MaxLabelsPerSource is the most labels a document keeps for one source.
+	// MaxLabelsPerSource is the most labels a document keeps for one
+	// source, counted separately for the run's own agent's labels and for
+	// nested agents' labels.
 	MaxLabelsPerSource = 32
 	// maxLabelLen is the longest bracketed reference CitedLabels reads as
 	// a citation; anything longer is prose in brackets, not a label.
