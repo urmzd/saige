@@ -254,8 +254,11 @@ type Result struct {
 	// Text is the final answer: the concatenation of the run.delta.text.v1
 	// bodies emitted.
 	Text string `json:"text"`
-	// Prompt is the request message exactly as the model was sent it. A host
-	// that keeps history records it as what the user said.
+	// Prompt is the request message exactly as the model was sent it,
+	// retrieved passages included. It is the turn's own record: a host that
+	// keeps history for later turns records the request as it was asked (the
+	// trigger as the catalog renders it), so each later turn retrieves its own
+	// passages for its own request.
 	Prompt string `json:"prompt,omitempty"`
 	// Citations counts the retrieved passages the turn was grounded in.
 	Citations int `json:"citations,omitempty"`
