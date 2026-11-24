@@ -52,6 +52,9 @@
 // CommitChecks reads every check run and commit status on a commit, and
 // AllPassed decides from them, skipping only the check that
 // ApprovalRequest.OwnCheck names: this app's check for the run being reviewed.
+// Connector.DismissReview dismisses the app's own approval or change request,
+// and Connector.OwnReviews lists the app's own reviews; no model tool offers
+// either.
 //
 // # Reads
 //

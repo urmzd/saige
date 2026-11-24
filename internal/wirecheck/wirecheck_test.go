@@ -330,6 +330,7 @@ func sentinels() []sentinel {
 		{"flow/connectors/cron", "ErrSchedule", f4cron.ErrSchedule},
 		{"flow/connectors/github", "ErrCommentsChanged", f4github.ErrCommentsChanged},
 		{"flow/connectors/github", "ErrNoApproval", f4github.ErrNoApproval},
+		{"flow/connectors/github", "ErrNotOwnReview", f4github.ErrNotOwnReview},
 		{"flow/connectors/github", "ErrReadRedirected", f4github.ErrReadRedirected},
 		{"flow/credential", "ErrNoCredential", f4credential.ErrNoCredential},
 		{"flow/egress", "ErrInvalid", f4egress.ErrInvalid},

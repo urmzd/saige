@@ -54,10 +54,7 @@ func (f *Fake) ListReviews(_ context.Context, ref Ref, page int) ([]ReviewRecord
 	var all []ReviewRecord
 	for _, entry := range f.submitted {
 		if entry.Ref == ref {
-			v := ReviewRecord{ReviewResult: entry.Result, Body: entry.Review.Body, CommitID: entry.Review.CommitID}
-			v.State = map[string]string{"COMMENT": "COMMENTED", "APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"}[entry.Review.Event]
-			v.User.Login = "humagen[bot]"
-			all = append(all, v)
+			all = append(all, entry.record())
 		}
 	}
 	start := (page - 1) * 100

@@ -72,6 +72,16 @@ GitHub answers for another commit. The model has no tool for this read.
   `MaxCommitChecks`. An empty list is not passed: checks that have not
   registered yet are not a pass.
 
+A host clears its own earlier verdict with `Connector.DismissReview(ctx,
+owner, repo, number, reviewID, message)`, for example an approval left on an
+older head after a push, or a change request that a later clean review
+replaces. It reads the review first and refuses with `ErrNotOwnReview` unless
+`Config.Login` wrote it and it is an approval or a change request. A comment,
+a dismissed review and another login's review are refused before any
+dismissal is sent. `Connector.OwnReviews(ctx, owner, repo, number)` lists the
+app's own reviews on a pull request with their ID, state, commit and author.
+No model tool offers either.
+
 ## What a webhook publishes
 
 Each verified delivery becomes one typed event on the issue or pull request's
