@@ -148,8 +148,13 @@ type Config struct {
 	// github_create_review refuses APPROVE whatever this hook would say. A
 	// host that requires passing checks reads them with CommitChecks and
 	// decides with req.ChecksAllow(checks), which leaves out every check of
-	// this app. After a yes, the sink reads the head again once the approval
-	// is posted, and dismisses that approval when the head moved.
+	// this app. Once a yes is posted, the sink reads the head and the app's
+	// reviews again and dismisses that approval when the head moved, when a
+	// change request of the app appeared that the hook was not shown, or
+	// when either read fails. A push after those reads is the host's to
+	// handle on synchronize, or GitHub's, with the branch rule that
+	// dismisses stale approvals. New refuses a Config that sets MayApprove
+	// with an API that does not implement ReviewDismissAPI.
 	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
 	// AppID is the numeric ID of the GitHub App the connector acts as. It
 	// identifies the app's own check runs in ApprovalRequest.OwnCheck, by ID
@@ -329,6 +334,9 @@ func New(cfg Config) (*Connector, error) {
 	if cfg.AppID < 0 {
 		return nil, fmt.Errorf("github: AppID must not be negative")
 	}
+	if _, ok := cfg.API.(ReviewDismissAPI); cfg.MayApprove != nil && !ok {
+		return nil, fmt.Errorf("github: MayApprove requires an API that implements ReviewDismissAPI")
+	}
 	if cfg.FixPullRequests {
 		if _, ok := cfg.API.(FixPullAPI); !ok || cfg.AuthorizeFixPull == nil {
 			return nil, fmt.Errorf("github: fix PRs require FixPullAPI and host authorization")
@@ -420,7 +428,8 @@ func New(cfg Config) (*Connector, error) {
 		if cfg.Login == "" {
 			return nil, fmt.Errorf("github: native reviews require the app login for recovery")
 		}
-		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
+		dismiss, _ := cfg.API.(ReviewDismissAPI)
+		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI, dismiss: dismiss}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
 	}
 	return c, nil
 }

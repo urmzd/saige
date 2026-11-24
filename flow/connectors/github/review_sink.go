@@ -71,6 +71,9 @@ type reviewSurface struct {
 	api     ReviewAPI
 	history ReviewHistoryAPI
 	context ContextAPI
+	// dismiss withdraws a posted approval that confirmApproval finds stale.
+	// New requires it whenever Config.MayApprove is set.
+	dismiss ReviewDismissAPI
 }
 
 func reviewBody(v render.View) string {
@@ -154,8 +157,9 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	if err != nil {
 		return "", err
 	}
+	var seen []AppReview
 	if approve {
-		if approve, err = s.mayApprove(ctx, ref, pinned, view.RunID, subject, review); err != nil {
+		if approve, seen, err = s.mayApprove(ctx, ref, pinned, view.RunID, subject, review); err != nil {
 			return "", err
 		}
 		if !approve {
@@ -164,7 +168,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	}
 	review = markFindings(review)
 	review.Body += "\n\n" + marker + "\n\n" + reviewPayloadMarker(view, review)
-	result, err := s.post(ctx, ref, review, approve)
+	result, err := s.post(ctx, ref, review, approve, seen)
 	if err != nil {
 		return "", err
 	}
@@ -172,8 +176,9 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 }
 
 // post submits review. An approval carries the sink's single-use grant, and
-// once posted is checked against the head with dismissIfHeadMoved.
-func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve bool) (ReviewResult, error) {
+// once posted is checked with confirmApproval against seen, the app's
+// outstanding reviews the hook was shown.
+func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve bool, seen []AppReview) (ReviewResult, error) {
 	if !approve {
 		return s.api.CreateReview(ctx, ref, review)
 	}
@@ -181,38 +186,68 @@ func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve
 	if err != nil {
 		return result, err
 	}
-	s.dismissIfHeadMoved(ctx, ref, review.CommitID, result.ID)
+	s.confirmApproval(ctx, ref, review.CommitID, result.ID, seen)
 	return result, nil
 }
 
-// dismissIfHeadMoved reads the pull request again after an approval is posted
-// and, when its head is no longer the approved commit, dismisses that
-// approval: a push may land between the last check and the post. It is best
-// effort; what it cannot do is logged, and the posted review stands.
-func (s reviewSurface) dismissIfHeadMoved(ctx context.Context, ref Ref, pinned string, id int64) {
+// confirmApproval reads the pull request and the app's reviews again once an
+// approval is posted, and dismisses that approval when the head is no longer
+// the approved commit, when a change request of the app is outstanding that
+// the hook was not shown (another agent's, posted while the hook decided,
+// which the approval would replace as the account's latest review), or when
+// either read fails. The posted review stands only when both reads confirm
+// it. A failed dismissal is logged, and the delivery still completes: the
+// approval was posted. A push after these reads is the host's to handle on
+// synchronize, or GitHub's, with the branch rule that dismisses stale
+// approvals.
+func (s reviewSurface) confirmApproval(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview) {
+	log := s.c.log().With("connector", Name, "pull_request", ref.String(), "review", id)
+	reason := s.approvalStale(ctx, ref, pinned, id, seen)
+	if reason == "" {
+		return
+	}
+	if err := s.dismiss.DismissReview(ctx, ref, id, reason); err != nil {
+		log.Warn("github: could not dismiss a posted approval", "reason", reason, "error", err)
+		return
+	}
+	log.Info("github: dismissed a posted approval", "reason", reason)
+}
+
+// approvalStale returns why a posted approval must be dismissed, or "".
+func (s reviewSurface) approvalStale(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview) string {
 	log := s.c.log().With("connector", Name, "pull_request", ref.String(), "review", id)
 	got, err := s.context.ReadContext(ctx, ref, 1)
 	if err != nil {
 		log.Warn("github: could not read the head after posting an approval", "error", err)
-		return
+		return unconfirmedDismissal
 	}
-	if got.Subject.Head.SHA == pinned {
-		return
+	if got.Subject.Head.SHA != pinned {
+		return headMovedDismissal
 	}
-	api, ok := s.c.cfg.API.(ReviewDismissAPI)
-	if !ok {
-		log.Warn("github: the head moved after an approval was posted, and the API cannot dismiss reviews")
-		return
+	reviews, err := ownReviews(ctx, s.history, s.c.cfg.Login, ref)
+	if err != nil {
+		log.Warn("github: could not read the app's reviews after posting an approval", "error", err)
+		return unconfirmedDismissal
 	}
-	if err := api.DismissReview(ctx, ref, id, headMovedDismissal); err != nil {
-		log.Warn("github: could not dismiss an approval whose head moved", "error", err)
-		return
+	known := make(map[int64]bool, len(seen)+1)
+	for _, review := range seen {
+		known[review.ID] = true
 	}
-	log.Info("github: dismissed an approval whose head moved after it was posted")
+	known[id] = true
+	for _, review := range outstandingReviews(reviews) {
+		if review.State == reviewChangesRequested && !known[review.ID] {
+			return changesRequestedDismissal
+		}
+	}
+	return ""
 }
 
-// headMovedDismissal is the message GitHub shows on such a dismissed approval.
-const headMovedDismissal = "The pull request head moved after this approval was posted; it applies to an earlier commit."
+// The messages GitHub shows on an approval the sink dismissed.
+const (
+	headMovedDismissal        = "The pull request head moved after this approval was posted; it applies to an earlier commit."
+	changesRequestedDismissal = "A change request was posted while this approval was decided; the approval does not replace it."
+	unconfirmedDismissal      = "The pull request could not be read again after this approval was posted."
+)
 
 // stateOpen is GitHub's state of an open issue or pull request.
 const stateOpen = "open"
@@ -229,14 +264,14 @@ func approvable(subject ContextSubject) bool {
 // outstanding reviews can be told apart. Otherwise the host's hook
 // decides, and a yes holds only if the pull request read again is still open,
 // not a draft, and on the reviewed commit: the hook may take time.
-func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned, run string, subject ContextSubject, review Review) (bool, error) {
-	if !approvable(subject) || appSlug(s.c.cfg.Login) == "" {
-		return false, nil
+func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned, run string, subject ContextSubject, review Review) (bool, []AppReview, error) {
+	if !approvable(subject) || appSlug(s.c.cfg.Login) == "" || s.dismiss == nil {
+		return false, nil, nil
 	}
 	review.Comments = slices.Clone(review.Comments)
 	reviews, err := ownReviews(ctx, s.history, s.c.cfg.Login, ref)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	outstanding := outstandingReviews(reviews)
 	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{
@@ -246,16 +281,16 @@ func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned, run stri
 		AppReviews: outstanding, Review: review,
 	})
 	if err != nil || !yes {
-		return false, err
+		return false, nil, err
 	}
 	got, err := s.context.ReadContext(ctx, ref, 1)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if got.Subject.Head.SHA != pinned {
-		return false, fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
+		return false, nil, fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
 	}
-	return approvable(got.Subject), nil
+	return approvable(got.Subject), outstanding, nil
 }
 
 func (s reviewSurface) Update(_ context.Context, _ address.Address, _ string, _ string) error {

@@ -100,7 +100,7 @@ type ApprovalRequest struct {
 	// "[bot]", in lower case. Empty when Config.Login is empty.
 	App string
 	// AppID is the numeric ID of the connector's own app, Config.AppID. 0
-	// when Config.AppID is unset.
+	// when Config.AppID is unset; a value below 1 is read as no ID.
 	AppID int64
 	// AppReviews are the outstanding reviews of the app's bot account on the
 	// pull request: each approval or change request it posted that is not
@@ -141,26 +141,33 @@ func (r ApprovalRequest) ChangesRequested() []AppReview {
 }
 
 // OwnCheck reports whether check comes from the connector's own app, from any
-// of its runs and under any name. A check run is own when its AppID is
-// AppID, or when its App is App: a slug names one app, and it is how a check
-// run whose response carries no app ID is told apart. A commit status is own
-// when its Creator is the app's bot account, "<App>[bot]". With AppID 0 and
-// App empty, nothing is own.
+// of its runs and under any name. A check run or check suite is own when its
+// AppID is AppID, or when its App is App: a slug names one app, and it is how
+// a check whose response carries no app ID is told apart. A commit status is
+// own when its Creator is the app's bot account, "<App>[bot]". An AppID below
+// 1 on the request is no ID. With no ID and App empty, nothing is own.
 func (r ApprovalRequest) OwnCheck(check CommitCheck) bool {
 	switch check.Kind {
-	case CheckKindRun:
-		return r.AppID != 0 && check.AppID == r.AppID || r.App != "" && strings.EqualFold(check.App, r.App)
+	case CheckKindRun, CheckKindSuite:
+		return r.AppID > 0 && check.AppID == r.AppID || r.App != "" && strings.EqualFold(check.App, r.App)
 	case CheckKindStatus:
 		return r.App != "" && strings.EqualFold(check.Creator, r.App+"[bot]")
 	}
 	return false
 }
 
-// conflicting reports a check run whose app ID and slug disagree about
-// whether it is the connector's own: one matches and the other names another
-// app.
+// AuthoredByApp reports whether the pull request was opened by the app's bot
+// account, "<App>[bot]", compared ignoring case. With App empty the account
+// cannot be told apart, and it reports true.
+func (r ApprovalRequest) AuthoredByApp() bool {
+	return r.App == "" || strings.EqualFold(r.Author, r.App+"[bot]")
+}
+
+// conflicting reports a check run or suite whose app ID and slug disagree
+// about whether it is the connector's own: one matches and the other names
+// another app.
 func (r ApprovalRequest) conflicting(check CommitCheck) bool {
-	if check.Kind != CheckKindRun || r.AppID == 0 || check.AppID == 0 || r.App == "" || check.App == "" {
+	if check.Kind == CheckKindStatus || r.AppID <= 0 || check.AppID == 0 || r.App == "" || check.App == "" {
 		return false
 	}
 	return (check.AppID == r.AppID) != strings.EqualFold(check.App, r.App)
@@ -170,13 +177,26 @@ func (r ApprovalRequest) conflicting(check CommitCheck) bool {
 // itself with CommitChecks on Commit. It is true only when the request names
 // the app (AppID or App), every check of the app's own is left out (OwnCheck:
 // any run, any name, and the app's own result never counts), at least one
-// remaining check passed with the conclusion success, none of them is pending
-// or failed, and the list is shorter than MaxCommitChecks. A check run of
-// another app that concluded neutral or skipped neither satisfies the rule
-// nor fails it. A check run whose app ID and slug disagree about being own
-// fails it.
+// remaining check run or status passed with the conclusion success, none of
+// them is pending or failed (a check suite that has not completed is
+// pending), and the list is shorter than MaxCommitChecks. A check run or
+// suite of another app that concluded neutral or skipped neither satisfies
+// the rule nor fails it. A check whose app ID and slug disagree about being
+// own fails it.
 func (r ApprovalRequest) ChecksAllow(checks []CommitCheck) bool {
-	if r.AppID == 0 && r.App == "" {
+	return r.ChecksAllowRequiring(checks, nil)
+}
+
+// MaxRequiredChecks bounds the names ChecksAllowRequiring takes.
+const MaxRequiredChecks = 100
+
+// ChecksAllowRequiring is ChecksAllow that also requires each of names, at
+// most MaxRequiredChecks, to be present: at least one check run or commit
+// status of that name, not own, and every such check of that name passed
+// with success. An empty name, or more than MaxRequiredChecks names, fails
+// it. Nil names is ChecksAllow.
+func (r ApprovalRequest) ChecksAllowRequiring(checks []CommitCheck, names []string) bool {
+	if r.AppID <= 0 && r.App == "" || len(names) > MaxRequiredChecks {
 		return false
 	}
 	for _, check := range checks {
@@ -184,7 +204,31 @@ func (r ApprovalRequest) ChecksAllow(checks []CommitCheck) bool {
 			return false
 		}
 	}
+	for _, name := range names {
+		if !r.requiredPassed(checks, name) {
+			return false
+		}
+	}
 	return AllPassed(checks, r.OwnCheck)
+}
+
+// requiredPassed reports whether the check name is present from another app
+// and every check of that name passed.
+func (r ApprovalRequest) requiredPassed(checks []CommitCheck, name string) bool {
+	if name == "" {
+		return false
+	}
+	found := false
+	for _, check := range checks {
+		if check.Kind == CheckKindSuite || check.Name != name || r.OwnCheck(check) {
+			continue
+		}
+		if !check.Passed() {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // appSlug is the app slug a login names: "humagen[bot]" and "humagen" are both

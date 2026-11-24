@@ -35,8 +35,23 @@ type commitStatus struct {
 	} `json:"creator,omitempty"`
 }
 
-// checksServer serves runs and statuses for commitSHA in pages of 100.
+type checkSuite struct {
+	HeadSHA    string   `json:"head_sha"`
+	Status     string   `json:"status"`
+	Conclusion string   `json:"conclusion,omitempty"`
+	Runs       int      `json:"latest_check_runs_count"`
+	App        checkApp `json:"app"`
+}
+
+// checksServer serves runs and statuses, and no suites, for commitSHA in pages
+// of 100.
 func checksServer(t *testing.T, runs []checkRun, statuses []commitStatus, sha string) *httptest.Server {
+	t.Helper()
+	return suitesServer(t, runs, nil, statuses, sha)
+}
+
+// suitesServer serves runs, suites and statuses for commitSHA in pages of 100.
+func suitesServer(t *testing.T, runs []checkRun, suites []checkSuite, statuses []commitStatus, sha string) *httptest.Server {
 	t.Helper()
 	page := func(r *http.Request, n int) (int, int) {
 		if r.URL.Query().Get("per_page") != "100" {
@@ -54,6 +69,9 @@ func checksServer(t *testing.T, runs []checkRun, statuses []commitStatus, sha st
 			}
 			start, end := page(r, len(runs))
 			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs[start:end]})
+		case "/repos/acme/repo/commits/" + commitSHA + "/check-suites":
+			start, end := page(r, len(suites))
+			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(suites), "check_suites": suites[start:end]})
 		case "/repos/acme/repo/commits/" + commitSHA + "/status":
 			start, end := page(r, len(statuses))
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "total_count": len(statuses), "statuses": statuses[start:end]})
@@ -313,5 +331,38 @@ func TestCommitChecksReadStatusCreatorAndAppID(t *testing.T) {
 	req := github.ApprovalRequest{App: "humagen", AppID: 1001}
 	if !req.OwnCheck(got[1]) || req.OwnCheck(got[2]) {
 		t.Fatalf("own status by creator: %v, other status: %v", req.OwnCheck(got[1]), req.OwnCheck(got[2]))
+	}
+}
+
+// Check suites are read with their status, conclusion, app and run count; a
+// queued suite without runs keeps ChecksAllow false, and a suite for another
+// commit fails the read.
+func TestCommitChecksReadSuites(t *testing.T) {
+	runs := []checkRun{{Name: "ci", HeadSHA: commitSHA, Status: "completed", Conclusion: "success", App: checkApp{ID: 15368, Slug: "actions"}}}
+	suites := []checkSuite{
+		{HeadSHA: commitSHA, Status: "completed", Conclusion: "success", Runs: 1, App: checkApp{ID: 15368, Slug: "actions"}},
+		{HeadSHA: commitSHA, Status: "queued", Runs: 0, App: checkApp{ID: 2002, Slug: "scanner"}},
+	}
+	server := suitesServer(t, runs, suites, nil, commitSHA)
+	defer server.Close()
+	api := github.NewHTTPAPIAt(server.URL, "token", server.Client())
+	got, err := api.CommitChecks(context.Background(), "acme", "repo", commitSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[1].Kind != github.CheckKindSuite || got[1].Name != "actions" || got[1].AppID != 15368 || got[1].Runs != 1 || got[2].Status != "queued" || got[2].Runs != 0 {
+		t.Fatalf("read %+v", got)
+	}
+	req := github.ApprovalRequest{App: "humagen", AppID: 1001}
+	if req.ChecksAllow(got) {
+		t.Fatal("a queued suite without runs allowed the approval")
+	}
+	if !req.ChecksAllow(got[:2]) {
+		t.Fatal("completed suite and run did not allow the approval")
+	}
+	other := suitesServer(t, nil, []checkSuite{{HeadSHA: strings.Repeat("b", 40), Status: "queued"}}, nil, commitSHA)
+	defer other.Close()
+	if _, err := github.NewHTTPAPIAt(other.URL, "token", other.Client()).CommitChecks(context.Background(), "acme", "repo", commitSHA); err == nil {
+		t.Fatal("read a suite of another commit")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -17,8 +18,8 @@ type PullRequestCommitsAPI interface {
 }
 
 // PRCommit is one commit of a pull request: the GitHub accounts linked to its
-// author and committer, the git author and committer emails, and the people
-// its message names as co-authors.
+// author and committer, the git author and committer emails, the people its
+// message names as co-authors, and GitHub's verdict on its signature.
 //
 // An ID of 0 is unknown and matches nobody: GitHub links no account, such as
 // for a commit made with an email no account claims. A host that refuses an
@@ -41,6 +42,19 @@ type PRCommit struct {
 	// CoAuthors are the Co-authored-by trailers of the commit message, in
 	// order, at most MaxCoAuthors.
 	CoAuthors []CoAuthor `json:"co_authors,omitempty"`
+	// Verification is GitHub's verdict on the commit's signature.
+	Verification CommitVerification `json:"verification,omitzero"`
+}
+
+// CommitVerification is GitHub's verdict on a commit's signature: Verified,
+// and Reason, such as "valid", "unsigned" or "unknown_key". The author,
+// committer and co-authors of a commit are whatever its maker wrote; only a
+// verified signature ties a commit to a key its account holds. A host that
+// needs proof of who wrote a change requires every commit to be verified.
+// GitHub's REST response names no signer, so none is read.
+type CommitVerification struct {
+	Verified bool   `json:"verified"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // CoAuthor is one "Co-authored-by: Name <email>" line of a commit message.
@@ -67,26 +81,37 @@ func (c PRCommit) CommittedByWebFlow() bool {
 // that names more fails the read rather than returning a part of them.
 const MaxCoAuthors = 50
 
-// coAuthorTrailer starts a co-author line, compared ignoring case.
-const coAuthorTrailer = "co-authored-by:"
+// coAuthorKey is the trailer key of a co-author line, compared ignoring case.
+const coAuthorKey = "co-authored-by"
 
-// coAuthors reads every line of message that starts with Co-authored-by:,
-// ignoring case and surrounding space. A line anywhere in the message counts,
-// not only in the final trailer block. It fails past MaxCoAuthors.
+// coAuthorAddress is the first address in angle brackets on a co-author line.
+var coAuthorAddress = regexp.MustCompile(`^([^<]*)<([^<>]*)>`)
+
+// coAuthors reads every line of message whose key is Co-authored-by, ignoring
+// case and any space or tab before and after the colon. A line anywhere in the
+// message counts, not only in the final trailer block, and a line ends at
+// "\n", "\r\n" or a lone "\r". The email is the first address in angle
+// brackets, whatever follows it. It fails past MaxCoAuthors.
 func coAuthors(message string) ([]CoAuthor, error) {
+	message = strings.ReplaceAll(message, "\r\n", "\n")
+	message = strings.ReplaceAll(message, "\r", "\n")
 	var out []CoAuthor
 	for _, line := range strings.Split(message, "\n") {
 		line = strings.TrimSpace(line)
-		if len(line) < len(coAuthorTrailer) || !strings.EqualFold(line[:len(coAuthorTrailer)], coAuthorTrailer) {
+		if len(line) < len(coAuthorKey) || !strings.EqualFold(line[:len(coAuthorKey)], coAuthorKey) {
+			continue
+		}
+		rest := strings.TrimLeft(line[len(coAuthorKey):], " \t")
+		if !strings.HasPrefix(rest, ":") {
 			continue
 		}
 		if len(out) == MaxCoAuthors {
 			return nil, fmt.Errorf("github: commit names more than %d co-authors", MaxCoAuthors)
 		}
-		value := strings.TrimSpace(line[len(coAuthorTrailer):])
+		value := strings.TrimSpace(rest[1:])
 		person := CoAuthor{Name: value}
-		if open := strings.LastIndex(value, "<"); open >= 0 && strings.HasSuffix(value, ">") {
-			person = CoAuthor{Name: strings.TrimSpace(value[:open]), Email: strings.TrimSpace(value[open+1 : len(value)-1])}
+		if m := coAuthorAddress.FindStringSubmatch(value); m != nil {
+			person = CoAuthor{Name: strings.TrimSpace(m[1]), Email: strings.TrimSpace(m[2])}
 		}
 		out = append(out, person)
 	}
@@ -121,9 +146,10 @@ func (a *HTTPAPI) PullRequestCommits(ctx context.Context, owner, repo string, nu
 		var rows []struct {
 			SHA    string `json:"sha"`
 			Commit struct {
-				Message   string  `json:"message"`
-				Author    *person `json:"author"`
-				Committer *person `json:"committer"`
+				Message      string             `json:"message"`
+				Author       *person            `json:"author"`
+				Committer    *person            `json:"committer"`
+				Verification CommitVerification `json:"verification"`
 			} `json:"commit"`
 			Author    *account `json:"author"`
 			Committer *account `json:"committer"`
@@ -136,7 +162,7 @@ func (a *HTTPAPI) PullRequestCommits(ctx context.Context, owner, repo string, nu
 			if !validSHA(row.SHA) {
 				return nil, fmt.Errorf("github: commit list of %s has an invalid SHA", ref)
 			}
-			c := PRCommit{SHA: row.SHA}
+			c := PRCommit{SHA: row.SHA, Verification: row.Commit.Verification}
 			if row.Author != nil {
 				c.AuthorID, c.AuthorLogin = knownID(row.Author.ID), row.Author.Login
 			}

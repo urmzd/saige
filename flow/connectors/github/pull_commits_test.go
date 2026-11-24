@@ -201,3 +201,42 @@ func TestFakePullRequestCommitsReadIDsBelowOneAsZero(t *testing.T) {
 		t.Fatalf("fake commits %+v, %v", got, err)
 	}
 }
+
+// Co-author lines allow space before the colon, end at a lone CR, and give
+// the first address in angle brackets whatever follows it.
+func TestPullRequestCommitsCoAuthorForms(t *testing.T) {
+	message := "subject\r\rCo-authored-by : Ada <ada@example.com>\rCo-Authored-By\t:Bob <bob@example.com> (pairing)\r\nco-authored-by:Cy <cy@example.com> <cy2@example.com>\nCo-authored-byX: Not <not@example.com>\nCo-authored-by Dee <dee@example.com>"
+	api := commitsOf(t, []map[string]any{{"sha": fmt.Sprintf("%040x", 1), "commit": map[string]any{"message": message}}})
+	got, err := api.PullRequestCommits(context.Background(), "acme", "repo", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []github.CoAuthor{{Name: "Ada", Email: "ada@example.com"}, {Name: "Bob", Email: "bob@example.com"}, {Name: "Cy", Email: "cy@example.com"}}
+	if len(got[0].CoAuthors) != len(want) {
+		t.Fatalf("co-authors %+v, want %+v", got[0].CoAuthors, want)
+	}
+	for i := range want {
+		if got[0].CoAuthors[i] != want[i] {
+			t.Errorf("co-author %d = %+v, want %+v", i, got[0].CoAuthors[i], want[i])
+		}
+	}
+}
+
+// A commit carries GitHub's signature verdict.
+func TestPullRequestCommitsReadVerification(t *testing.T) {
+	api := commitsOf(t, []map[string]any{
+		{"sha": fmt.Sprintf("%040x", 1), "commit": map[string]any{"message": "a", "verification": map[string]any{"verified": true, "reason": "valid", "signature": "sig", "payload": "p"}}},
+		{"sha": fmt.Sprintf("%040x", 2), "commit": map[string]any{"message": "b", "verification": map[string]any{"verified": false, "reason": "unsigned"}}},
+		{"sha": fmt.Sprintf("%040x", 3), "commit": map[string]any{"message": "c"}},
+	})
+	got, err := api.PullRequestCommits(context.Background(), "acme", "repo", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []github.CommitVerification{{Verified: true, Reason: "valid"}, {Reason: "unsigned"}, {}}
+	for i := range want {
+		if got[i].Verification != want[i] {
+			t.Errorf("commit %d verification %+v, want %+v", i, got[i].Verification, want[i])
+		}
+	}
+}

@@ -52,23 +52,39 @@ commit. Recovery reads back an approval the host posted, so a retried
 delivery matches it instead of posting another. Recovery never asks the hook:
 it posts nothing.
 
-After an approval is posted, the sink reads the pull request once more. When
-its head is no longer the approved commit, because a push landed between the
-last read and the post, the sink dismisses that approval. This is best
-effort: a failed read or dismissal is logged to `Config.Log` (or
-`slog.Default()`), and the posted review stands.
+After an approval is posted, the sink reads the pull request and the app's
+reviews once more, and dismisses that approval when:
+
+- the head is no longer the approved commit, because a push landed between
+  the last read and the post;
+- a change request of the app's account is outstanding that the hook was not
+  shown, such as another agent's posted while the hook decided, which the
+  approval would otherwise replace as the account's latest review; or
+- either read fails.
+
+A failed dismissal is logged to `Config.Log` (or `slog.Default()`), and the
+delivery still completes. `New` refuses a `Config` that sets `MayApprove`
+with an API that does not implement `ReviewDismissAPI`. A push after these
+reads is the host's to handle on `synchronize` (for example with
+`Connector.DismissReview`), or GitHub's, with the branch rule that dismisses
+stale approvals when new commits are pushed.
 
 A host that requires passing checks reads them with `CommitChecks(ctx, owner,
-repo, sha)`. It returns every check run (the latest of each) and every commit
-status (the latest of each context) on the commit, as a `CommitCheck` with
+repo, sha)`. It returns every check run (the latest of each), every check
+suite, and every commit status (the latest of each context) on the commit,
+as a `CommitCheck` with
 its kind, name, status, conclusion, and for a check run the slug of the app
 that published it and its external ID. It follows pages of 100 until one is
 short, and fails when a kind has `MaxCommitChecks` (1000) or more, or when
 GitHub answers for another commit. The model has no tool for this read.
 
-Each check run also carries `AppID`, the numeric ID of the app that
-published it (0 when GitHub's response has none), and each commit status
-`Creator`, the login that set it.
+Each check run and check suite also carries `AppID`, the numeric ID of the
+app that published it (0 when GitHub's response has none), each check suite
+`Runs`, its number of check runs, and each commit status `Creator`, the
+login that set it. A check suite is read so that one queued before any of its
+runs registered counts as pending: a suite that has not completed blocks,
+with or without runs, and a suite never counts as a pass on its own. An app
+that leaves its suite queued without ever reporting keeps it pending.
 
 - `CommitCheck.Passed` is true for a completed check that concluded
   `success`. `CommitCheck.Blocks` is true for a check that has not completed,
@@ -90,6 +106,12 @@ published it (0 when GitHub's response has none), and each commit status
   `MaxCommitChecks`. A check run of another app that concluded `neutral` or
   `skipped` neither satisfies the rule nor fails it. An empty list is not a
   pass: checks that have not registered yet are not a pass.
+- `ApprovalRequest.ChecksAllowRequiring(checks, names)` also requires each
+  named check (at most `MaxRequiredChecks`, 100) to be present as a check
+  run or commit status not of the app's own, with every check of that name
+  concluded `success`.
+- `ApprovalRequest.AuthoredByApp()` reports whether the app's bot account
+  opened the pull request; with no app named it reports true.
 - `AllPassed(checks, own)` is the same rule with the own check given by the
   caller and without the app requirement; `AllPassed(checks, req.OwnCheck)`
   differs from `ChecksAllow` only there.
@@ -128,10 +150,16 @@ reads the pull request's commits with `PullRequestCommits(ctx, owner, repo,
 number)` on the HTTP API or the fake. Each `PRCommit` has the SHA; the
 numeric ID and login of the GitHub accounts linked to its author and
 committer; the git author and committer emails (`AuthorEmail`,
-`CommitterEmail`); and `CoAuthors`, every `Co-authored-by: Name <email>` line
-of the message, matched ignoring case anywhere in it, with `Email` empty when
-a line names no address. A commit that names more than `MaxCoAuthors` (50)
-fails the read. An ID of 0 is unknown and matches nobody. A host denies a
+`CommitterEmail`); `CoAuthors`, every `Co-authored-by: Name <email>` line
+of the message, matched ignoring case anywhere in it, with space allowed
+before the colon, lines ending at LF, CRLF or a lone CR, the first address in
+angle brackets as `Email` whatever follows it, and `Email` empty when a line
+names no address; and `Verification`, GitHub's verdict on the commit's
+signature (`Verified` and `Reason`; the REST response names no signer). A
+commit that names more than `MaxCoAuthors` (50) fails the read. The git
+author, committer and co-authors are whatever the commit's maker wrote: a
+host that needs proof of who wrote a change requires every commit to be
+verified. An ID of 0 is unknown and matches nobody. A host denies a
 requested approval when any commit has an author or committer it cannot map
 to a person (an ID of 0, or an ID, email or co-author it does not know), and
 when the asker is any of them. GitHub commits merges, squashes and web edits

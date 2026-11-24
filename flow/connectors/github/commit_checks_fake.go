@@ -14,12 +14,12 @@ func commitChecksKey(owner, repo, sha string) string {
 // SeedCommitCheck reports a check run or commit status on a commit. Every seed
 // is kept, two of the same name included, as the HTTP API returns them. A
 // status keeps no App, AppID or ExternalID, as GitHub reports none, and a
-// check run keeps no Creator. A negative AppID is read as 0.
+// check run or check suite keeps no Creator. A negative AppID is read as 0.
 func (f *Fake) SeedCommitCheck(owner, repo, sha string, check CommitCheck) error {
 	if err := validCommitRef(owner, repo, sha); err != nil {
 		return err
 	}
-	if check.Kind != CheckKindRun && check.Kind != CheckKindStatus || check.Name == "" || check.Status == "" {
+	if check.Kind != CheckKindRun && check.Kind != CheckKindStatus && check.Kind != CheckKindSuite || check.Name == "" || check.Status == "" {
 		return fmt.Errorf("github: invalid commit check seed")
 	}
 	if check.Kind == CheckKindStatus {
@@ -46,9 +46,10 @@ const (
 	FakeAppID int64 = 1001
 )
 
-// CommitChecks returns the checks on sha: the connector's own checks made with
-// EnsureCheck (App FakeApp, AppID FakeAppID, with their external ID) and the seeded check runs,
-// then the seeded statuses, as the HTTP API reads them.
+// CommitChecks returns the checks on sha: the connector's own checks made
+// with EnsureCheck (App FakeApp, AppID FakeAppID, with their external ID) and
+// the seeded check runs, then the seeded check suites and statuses, as the
+// HTTP API reads them. The fake makes no suite for its own checks.
 func (f *Fake) CommitChecks(_ context.Context, owner, repo, sha string) ([]CommitCheck, error) {
 	if err := validCommitRef(owner, repo, sha); err != nil {
 		return nil, err
@@ -70,18 +71,21 @@ func (f *Fake) CommitChecks(_ context.Context, owner, repo, sha string) ([]Commi
 			runs = append(runs, CommitCheck{Kind: CheckKindRun, Name: c.Check.Name, Status: c.Check.Status, Conclusion: c.Check.Conclusion, App: FakeApp, AppID: FakeAppID, ExternalID: c.Check.ExternalID})
 		}
 	}
-	var statuses []CommitCheck
+	var suites, statuses []CommitCheck
 	for _, check := range f.commitChecks[commitChecksKey(owner, repo, sha)] {
-		if check.Kind == CheckKindRun {
+		switch check.Kind {
+		case CheckKindRun:
 			runs = append(runs, check)
-		} else {
+		case CheckKindSuite:
+			suites = append(suites, check)
+		default:
 			statuses = append(statuses, check)
 		}
 	}
-	if len(runs) >= MaxCommitChecks || len(statuses) >= MaxCommitChecks {
+	if len(runs) >= MaxCommitChecks || len(suites) >= MaxCommitChecks || len(statuses) >= MaxCommitChecks {
 		return nil, fmt.Errorf("github: commit has %d or more checks of one kind", MaxCommitChecks)
 	}
-	return append(runs, statuses...), nil
+	return slices.Concat(runs, suites, statuses), nil
 }
 
 var _ CommitChecksAPI = (*Fake)(nil)
