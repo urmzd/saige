@@ -7,7 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/urmzd/saige/flow/address"
 	"github.com/urmzd/saige/flow/deliverystate"
@@ -583,5 +585,101 @@ func TestApprovalConfirmedAfterDeliveryCancelled(t *testing.T) {
 	_ = c.Deliver(ctx, a.target, a.env)
 	if got := a.approval(t); got.Dismissal != changesRequestedDismissal {
 		t.Fatalf("approval %+v, want it dismissed for the change request", got)
+	}
+}
+
+// stallAfterApproval blocks the head read until its context is done once an
+// approval is posted, and refuses a dismissal whose context is done.
+type stallAfterApproval struct {
+	*Fake
+	posted atomic.Bool
+}
+
+func (s *stallAfterApproval) CreateReview(ctx context.Context, ref Ref, r Review) (ReviewResult, error) {
+	res, err := s.Fake.CreateReview(ctx, ref, r)
+	if err == nil && r.Event == "APPROVE" {
+		s.posted.Store(true)
+	}
+	return res, err
+}
+
+func (s *stallAfterApproval) ReadContext(ctx context.Context, ref Ref, page int) (Context, error) {
+	if s.posted.Load() {
+		<-ctx.Done()
+		return Context{}, ctx.Err()
+	}
+	return s.Fake.ReadContext(ctx, ref, page)
+}
+
+func (s *stallAfterApproval) DismissReview(ctx context.Context, ref Ref, id int64, message string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Fake.DismissReview(ctx, ref, id, message)
+}
+
+// A read that stalls after the post runs out its own time bound, and the
+// dismissal still has its own.
+func TestApprovalDismissedWhenReReadStalls(t *testing.T) {
+	a := newApprovalCase(t)
+	a.cfg.API = &stallAfterApproval{Fake: a.api}
+	a.cfg.MayApprove = func(context.Context, ApprovalRequest) (bool, error) {
+		_, err := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha)
+		return true, err
+	}
+	a.cfg.DeliveryState = deliverystate.NewMemory()
+	c, err := New(a.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.confirmTimeout = 20 * time.Millisecond
+	if err := c.Deliver(context.Background(), a.target, a.env); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.approval(t); got.Dismissal != unconfirmedDismissal {
+		t.Fatalf("approval %+v, want it dismissed as unconfirmed", got)
+	}
+}
+
+// noNestedUpdates fails an Update that starts inside another.
+type noNestedUpdates struct {
+	deliverystate.Store
+	depth atomic.Int32
+}
+
+func (s *noNestedUpdates) Update(ctx context.Context, key deliverystate.Key, fn func([]byte) ([]byte, bool, error)) error {
+	if s.depth.Add(1) > 1 {
+		s.depth.Add(-1)
+		return errors.New("nested delivery state update")
+	}
+	defer s.depth.Add(-1)
+	return s.Store.Update(ctx, key, fn)
+}
+
+// The reviews the hook was shown are kept with the delivery's own state, in
+// the same update: posting, losing the response and recovering never open a
+// second update inside the first.
+func TestApprovalKeepsTheHookReviewsWithoutNestedUpdates(t *testing.T) {
+	a := newApprovalCase(t)
+	if _, err := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.API = &flakyReviews{Fake: a.api, failAfter: 1}
+	var logs bytes.Buffer
+	a.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	a.cfg.MayApprove = a.hook(true)
+	store := &noNestedUpdates{Store: deliverystate.NewMemory()}
+	if err := a.deliverWith(t, store); err == nil || strings.Contains(err.Error(), "nested") {
+		t.Fatalf("first delivery answered %v, want the lost response", err)
+	}
+	if err := a.deliverWith(t, store); err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+	// The hook saw the change request, so the recovered approval stands.
+	if got := a.approval(t); got.Dismissal != "" {
+		t.Fatalf("approval dismissed: %q", got.Dismissal)
+	}
+	if strings.Contains(logs.String(), "nested") {
+		t.Fatalf("logged a nested update: %s", logs.String())
 	}
 }

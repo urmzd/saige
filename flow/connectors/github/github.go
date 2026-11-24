@@ -308,7 +308,10 @@ type Connector struct {
 	reviewsSink   *sink.Engine
 	reactionsSink *sink.Engine
 	feedbackState deliverystate.Store
-	readRepos     map[string]bool
+	// confirmTimeout bounds each step of confirming a posted approval; zero
+	// uses approvalConfirmTimeout.
+	confirmTimeout time.Duration
+	readRepos      map[string]bool
 	// fetcher downloads attached files; nil when file intake is off.
 	fetcher *intake.Fetcher
 	// redirectForTest, set only by tests, points a GitHub file URL at a

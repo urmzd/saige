@@ -62,10 +62,11 @@ reviews once more, and dismisses that approval when:
   approval would otherwise replace as the account's latest review; or
 - either read fails.
 
-These reads and the dismissal run without the delivery's cancellation, under
-their own time bound, so a delivery cancelled right after the post still
-confirms it. The sink keeps the IDs of the reviews the hook was shown in the
-delivery state before it posts. When the post's response is lost and a retry
+These reads and the dismissal run without the delivery's cancellation, each
+under its own time bound, so a delivery cancelled right after the post still
+confirms it and a read that stalls still leaves the dismissal its time. The
+sink keeps the IDs of the reviews the hook was shown with the delivery's own
+state record, in the same write as the delivery, also when the post fails. When the post's response is lost and a retry
 recovers the approval, the sink confirms it there against the same set; if
 that set was not kept, any outstanding change request other than the
 approval dismisses it. A failed dismissal is logged to `Config.Log` (or

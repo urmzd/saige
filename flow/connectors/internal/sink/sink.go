@@ -86,6 +86,18 @@ type Surface interface {
 	Update(ctx context.Context, target address.Address, handle, body string) error
 }
 
+// MemoCreator optionally creates a message with a memo: a short record the
+// surface keeps with this delivery's state, such as what it decided before a
+// create whose response may be lost. The engine passes the memo the last
+// attempt returned ("" at first) and keeps the memo returned, also when the
+// create fails, so a retried create reads it back. It is stored with the
+// delivery, in the same write, so the surface never opens a store update of
+// its own from inside the engine's. When a surface implements it, the engine
+// calls CreateMemo instead of Create.
+type MemoCreator interface {
+	CreateMemo(ctx context.Context, target address.Address, body, memo string) (handle, newMemo string, err error)
+}
+
 // AfterDelivery optionally indexes a delivered message outside the delivery
 // store transaction. It must be idempotent: failures remain pending across
 // restarts, and a crash before acknowledgement can repeat the callback.
@@ -194,6 +206,8 @@ type state struct {
 	dirty        bool
 	afterPending bool
 	lastFlush    time.Time
+	// memo is what a MemoCreator keeps with this delivery.
+	memo string
 }
 
 // Deliver applies e and writes the run's message if it is due.
@@ -352,7 +366,7 @@ func (eng *Engine) write(ctx context.Context, st *state, v render.View) error {
 	}
 
 	if st.handle == "" {
-		handle, err := eng.surface.Create(ctx, st.target, body)
+		handle, err := eng.create(ctx, st, body)
 		if err != nil {
 			retire(st, err)
 			return fmt.Errorf("sink: create message for run %s on %s: %w", v.RunID, st.target, err)
@@ -373,6 +387,18 @@ func (eng *Engine) write(ctx context.Context, st *state, v render.View) error {
 	_, st.afterPending = eng.surface.(AfterDelivery)
 	st.lastFlush = eng.now()
 	return nil
+}
+
+// create creates the message, through CreateMemo when the surface keeps a
+// memo, and records the memo it returns whatever the outcome.
+func (eng *Engine) create(ctx context.Context, st *state, body string) (string, error) {
+	creator, ok := eng.surface.(MemoCreator)
+	if !ok {
+		return eng.surface.Create(ctx, st.target, body)
+	}
+	handle, memo, err := creator.CreateMemo(ctx, st.target, body, st.memo)
+	st.memo = memo
+	return handle, err
 }
 
 // retire stops the retries of a write the surface refused as undeliverable.
@@ -470,6 +496,7 @@ type savedState struct {
 	Dirty           bool
 	AfterPending    bool
 	LastFlush       time.Time
+	Memo            string `json:",omitempty"`
 }
 
 // persist always reloads under the store's cross-replica lock. The cache is
@@ -488,14 +515,14 @@ func (eng *Engine) persist(ctx context.Context, st *state, apply func(*state) er
 				return nil, false, fmt.Errorf("sink: unsupported state format %d", saved.Format)
 			}
 		}
-		current := &state{key: st.key, target: st.target, durableKey: st.durableKey, doc: saved.Doc, handle: saved.Handle, written: saved.Written, dirty: saved.Dirty, afterPending: saved.AfterPending, lastFlush: saved.LastFlush}
+		current := &state{key: st.key, target: st.target, durableKey: st.durableKey, doc: saved.Doc, handle: saved.Handle, written: saved.Written, dirty: saved.Dirty, afterPending: saved.AfterPending, lastFlush: saved.LastFlush, memo: saved.Memo}
 		deliveryErr = apply(current)
-		data, err := json.Marshal(savedState{Format: 1, Doc: current.doc, Handle: current.handle, Written: current.written, Dirty: current.dirty, AfterPending: current.afterPending, LastFlush: current.lastFlush})
+		data, err := json.Marshal(savedState{Format: 1, Doc: current.doc, Handle: current.handle, Written: current.written, Dirty: current.dirty, AfterPending: current.afterPending, LastFlush: current.lastFlush, Memo: current.memo})
 		if err != nil {
 			return nil, false, err
 		}
 		st.doc, st.handle, st.written, st.dirty, st.lastFlush = current.doc, current.handle, current.written, current.dirty, current.lastFlush
-		st.afterPending = current.afterPending
+		st.afterPending, st.memo = current.afterPending, current.memo
 		return data, current.dirty || current.afterPending, nil
 	})
 	return errors.Join(err, deliveryErr)
