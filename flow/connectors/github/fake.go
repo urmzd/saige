@@ -16,6 +16,8 @@ type Fake struct {
 	reviewThreads map[string]ReviewThreadState
 	submitted     []FakeReview
 	workflows     map[string]map[int64]WorkflowRun
+	commitChecks  map[string][]CommitCheck
+	pullCommits   map[string][]PRCommit
 	writers       map[string]bool
 	files         map[string]map[string]string
 	commits       []FakeCommit

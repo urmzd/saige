@@ -113,7 +113,7 @@ func validSHA(s string) bool {
 }
 
 func (c *Connector) checkBody(v render.View) string {
-	check := Check{Name: "fiber/" + v.Agent, ExternalID: v.RunID, Status: "in_progress", Output: CheckOutput{Title: sink.StatusLabel(v.Status)}}
+	check := Check{Name: ownCheckPrefix + v.Agent, ExternalID: v.RunID, Status: "in_progress", Output: CheckOutput{Title: sink.StatusLabel(v.Status)}}
 	if check.Output.Title == "" {
 		check.Output.Title = "working"
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -13,8 +14,35 @@ import (
 )
 
 func reviewMarker(view render.View, pinned string) string {
-	sum := sha256.Sum256([]byte(view.Tenant + "\x00" + view.RunID + "\x00" + pinned))
+	return ReviewMarker(view.Tenant, view.RunID, pinned)
+}
+
+// ReviewMarker is the delivery marker the review sink writes into the body of
+// a review it posts for a run of tenant on commit. A host that keeps its runs
+// can match AppReview.Marker against it to tell which run, and so which
+// agent, posted a review.
+func ReviewMarker(tenant, run, commit string) string {
+	sum := sha256.Sum256([]byte(tenant + "\x00" + run + "\x00" + commit))
 	return "<!-- humagen-review:" + hex.EncodeToString(sum[:]) + " -->"
+}
+
+// reviewMarkerPattern matches the two markers the review sink ends a body
+// with: the delivery marker, then the payload marker.
+var reviewMarkerPattern = regexp.MustCompile(`(<!-- humagen-review:[0-9a-f]{64} -->)\n\n<!-- humagen-review-payload:[0-9a-f]{64} -->$`)
+
+// bodyReviewMarker returns the delivery marker a review body ends with, as
+// the review sink writes it, or "".
+func bodyReviewMarker(body string) string {
+	if m := reviewMarkerPattern.FindStringSubmatch(body); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// carriesReviewMarker reports whether text holds anything that reads as one of
+// the review sink's markers.
+func carriesReviewMarker(text string) bool {
+	return strings.Contains(text, "<!-- humagen-review")
 }
 
 func markFindings(review Review) Review {
@@ -44,11 +72,12 @@ func reviewPayloadMarker(view render.View, review Review) string {
 	return "<!-- humagen-review-payload:" + hex.EncodeToString(sum[:]) + " -->"
 }
 
-// Recover only a previously submitted, exact app-owned payload. The current
-// head guards creation, not observation of an existing
-// review. Its original remote diff hunks supply evidence for finding mapping.
+// Recover only a previously submitted, exact app-owned payload, an approval the
+// host posted included. The current head guards creation, not observation of
+// an existing review, and recovery never asks MayApprove: it posts nothing.
+// Its original remote diff hunks supply evidence for finding mapping.
 func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRecord, marker string, view render.View) (string, error) {
-	event := map[string]string{"COMMENTED": "COMMENT", "APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES"}[row.State]
+	event := map[string]string{"COMMENTED": "COMMENT", "APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES", reviewDismissed: reviewDismissed}[row.State]
 	if row.ID <= 0 || event == "" {
 		return "", fmt.Errorf("github: invalid submitted review disposition")
 	}
@@ -68,7 +97,7 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 				return "", err
 			}
 			for _, c := range comments {
-				if len(remote.Comments) >= 100 || c.ID <= 0 || c.Path == "" || c.DiffHunk == "" || !strings.EqualFold(c.User.Login, s.c.cfg.Login) || c.OriginalCommitID != row.CommitID && c.CommitID != row.CommitID {
+				if len(remote.Comments) >= 100 || c.ID <= 0 || c.Path == "" || c.DiffHunk == "" || !ownReviewAuthor(s.c.cfg.Login, c.User.Login) || c.OriginalCommitID != row.CommitID && c.CommitID != row.CommitID {
 					return "", fmt.Errorf("github: existing review comment proof is invalid")
 				}
 				line, start := c.OriginalLine, c.OriginalStartLine
@@ -101,6 +130,10 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 			}
 		}
 	}
+	if event == reviewDismissed {
+		event = dismissedEvent(view, remote, payload)
+		remote.Event = event
+	}
 	if reviewPayloadMarker(view, remote) != payload {
 		return "", fmt.Errorf("github: existing review payload differs from immutable delivery intent")
 	}
@@ -120,7 +153,7 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 	if !ok {
 		return "", fmt.Errorf("github: existing review no longer has a reproducible finding mapping")
 	}
-	planned, err = prepareReview(planned, files, true)
+	planned, err = prepareReview(s.refusedApproval(planned, event), files, true)
 	if err != nil {
 		return "", err
 	}
@@ -130,4 +163,29 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 	}
 	planned.Body = row.Body
 	return reviewReceipt(row.ID, planned, view)
+}
+
+// refusedApproval reproduces an approval the host's MayApprove refused, which
+// was posted as a comment: a plan that still says APPROVE becomes that comment,
+// never a new event.
+func (s reviewSurface) refusedApproval(planned Review, posted string) Review {
+	if planned.Event == "APPROVE" && posted == "COMMENT" && s.c.cfg.MayApprove != nil {
+		planned.Event = "COMMENT"
+	}
+	return planned
+}
+
+// reviewDismissed is GitHub's state of a dismissed review.
+const reviewDismissed = "DISMISSED"
+
+// dismissedEvent is the event of a dismissed review, an approval or a change
+// request, as its payload proof says; "" when neither matches.
+func dismissedEvent(view render.View, remote Review, payload string) string {
+	for _, candidate := range []string{"APPROVE", "REQUEST_CHANGES"} {
+		remote.Event = candidate
+		if reviewPayloadMarker(view, remote) == payload {
+			return candidate
+		}
+	}
+	return ""
 }

@@ -119,9 +119,11 @@ var entryPoints = map[string]struct {
 	"action github_create_fix_pr":  {writes, `{"address":"github://acme/docs/pull/7","base":{"name":"main","sha":"` + hookSHA + `"},"title":"Fix","body":"Fix","changes":{"message":"fix","files":[{"path":"a.txt","content":"a"}]}}`},
 	"method Deliver":               {writes, ""},
 	"method Flush":                 {writes, ""},
+	"method DismissReview":         {writes, ""},
 
 	"method Messages":     {bound, ""},
 	"method PollFeedback": {bound, ""},
+	"method OwnReviews":   {bound, ""},
 
 	"method ServeHTTP": {ingress, ""},
 	"method Ingest":    {ingress, ""},
@@ -162,6 +164,11 @@ func enter(t *testing.T, c *github.Connector, name string, source address.Addres
 		return c.Deliver(ctx, docs, event.Envelope{})
 	case "Flush":
 		return c.Flush(ctx)
+	case "DismissReview":
+		return c.DismissReview(ctx, "acme", "docs", 7, 1, "superseded")
+	case "OwnReviews":
+		_, err := c.OwnReviews(ctx, "acme", "docs", 7)
+		return err
 	case "ServeHTTP":
 		c.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")))
 	case "Ingest":

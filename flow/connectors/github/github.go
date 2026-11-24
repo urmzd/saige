@@ -40,6 +40,23 @@
 // github_comment, github_request_review and github_add_labels. Each returns the
 // address of what it changed, so the action.taken event can cite it.
 //
+// # Reviews
+//
+// The model reviews through github_create_review, which comments or requests
+// changes and never approves: APPROVE is refused with ErrNoApproval. The host
+// may approve through the review sink alone. Config.Review plans the review,
+// and Config.MayApprove decides an APPROVE it planned on an open pull request
+// that is not a draft: nil fails it with ErrNoApproval, no posts it as a
+// comment, an error retries the delivery, and yes posts the approval while the
+// pull request is still open, not a draft, and on the reviewed commit.
+// CommitChecks reads every check run and commit status on a commit, and
+// ApprovalRequest.ChecksAllow decides from them, leaving out every check of
+// the app's own (ApprovalRequest.OwnCheck). ApprovalRequest.AppReviews lists
+// the app's outstanding reviews, and PullRequestCommits who wrote the change.
+// Connector.DismissReview dismisses the app's own approval or change request,
+// and Connector.OwnReviews lists the app's own reviews; no model tool offers
+// either.
+//
 // # Reads
 //
 // github_read_context, github_read_file, github_workflow_status,
@@ -61,6 +78,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -117,6 +135,37 @@ type Config struct {
 	// callback grants no new write and must preserve the host's evidence checks.
 	// Nil reuses Review, which must then reproduce the same historical payload.
 	RecoverReview func(View, []ContextFile, string) (Review, bool, error)
+	// MayApprove is the host's last word on an approval. When Review plans an
+	// APPROVE on an open pull request that is not a draft, the review sink
+	// asks it once, with the pull request and the review it would post
+	// (locations checked, before the delivery markers). Yes posts the
+	// approval, after the sink reads the pull request again and finds it
+	// still open, not a draft, and on the reviewed commit. No posts the same
+	// review as a COMMENT, and so does a closed or draft pull request. An
+	// error posts nothing and the delivery is retried, asking again. Nil
+	// keeps the rule that nothing approves: the planned approval fails with
+	// ErrNoApproval. The model never approves either way:
+	// github_create_review refuses APPROVE whatever this hook would say. A
+	// host that requires passing checks reads them with CommitChecks and
+	// decides with req.ChecksAllow(checks), which leaves out every check of
+	// this app. Once a yes is posted, the sink reads the head and the app's
+	// reviews again and dismisses that approval when the head moved, when a
+	// change request of the app appeared that the hook was not shown, or
+	// when either read fails, also when a retry recovers an approval whose
+	// response was lost, and also when the delivery was cancelled after the
+	// post. A push after those reads is the host's to
+	// handle on synchronize, or GitHub's, with the branch rule that
+	// dismisses stale approvals. New refuses a Config that sets MayApprove
+	// with an API that does not implement ReviewDismissAPI.
+	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
+	// AppID is the numeric ID of the GitHub App the connector acts as. It
+	// identifies the app's own check runs in ApprovalRequest.OwnCheck, by ID
+	// and not only by slug. 0 leaves the slug from Login as the only means.
+	AppID int64
+	// Log receives what the connector does on a best-effort basis, such as
+	// dismissing an approval whose head moved after it was posted. Nil uses
+	// slog.Default().
+	Log *slog.Logger
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.
 	ActionRepositories []string
@@ -259,7 +308,10 @@ type Connector struct {
 	reviewsSink   *sink.Engine
 	reactionsSink *sink.Engine
 	feedbackState deliverystate.Store
-	readRepos     map[string]bool
+	// confirmTimeout bounds each step of confirming a posted approval; zero
+	// uses approvalConfirmTimeout.
+	confirmTimeout time.Duration
+	readRepos      map[string]bool
 	// fetcher downloads attached files; nil when file intake is off.
 	fetcher *intake.Fetcher
 	// redirectForTest, set only by tests, points a GitHub file URL at a
@@ -283,6 +335,12 @@ func New(cfg Config) (*Connector, error) {
 	}
 	if cfg.API == nil {
 		return nil, fmt.Errorf("github: config needs an API")
+	}
+	if cfg.AppID < 0 {
+		return nil, fmt.Errorf("github: AppID must not be negative")
+	}
+	if _, ok := cfg.API.(ReviewDismissAPI); cfg.MayApprove != nil && !ok {
+		return nil, fmt.Errorf("github: MayApprove requires an API that implements ReviewDismissAPI")
 	}
 	if cfg.FixPullRequests {
 		if _, ok := cfg.API.(FixPullAPI); !ok || cfg.AuthorizeFixPull == nil {
@@ -375,7 +433,8 @@ func New(cfg Config) (*Connector, error) {
 		if cfg.Login == "" {
 			return nil, fmt.Errorf("github: native reviews require the app login for recovery")
 		}
-		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
+		dismiss, _ := cfg.API.(ReviewDismissAPI)
+		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI, dismiss: dismiss}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
 	}
 	return c, nil
 }
@@ -869,4 +928,18 @@ func deliveryScope(tenant, scope string) string {
 	}
 	key, _ := json.Marshal([]string{Name, tenant, scope})
 	return string(key)
+}
+
+// log is Config.Log, or slog.Default() when it is nil.
+func (c *Connector) log() *slog.Logger {
+	if c.cfg.Log != nil {
+		return c.cfg.Log
+	}
+	return slog.Default()
+}
+
+// knownID maps a user or app ID GitHub sent to the one value that means
+// unknown: anything below 1 is 0, and an ID of 0 matches nobody.
+func knownID(id int64) int64 {
+	return max(id, 0)
 }

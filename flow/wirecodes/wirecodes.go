@@ -106,6 +106,7 @@ func init() {
 		"flow.connectors.cron.schedule":             cron.ErrSchedule,
 		"flow.connectors.github.comments_changed":   github.ErrCommentsChanged,
 		"flow.connectors.github.no_approval":        github.ErrNoApproval,
+		"flow.connectors.github.not_own_review":     github.ErrNotOwnReview,
 		"flow.connectors.github.read_redirected":    github.ErrReadRedirected,
 		"flow.credential.no_credential":             credential.ErrNoCredential,
 		"flow.egress.invalid":                       egress.ErrInvalid,

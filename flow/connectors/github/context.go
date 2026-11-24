@@ -31,12 +31,21 @@ type Context struct {
 
 // ContextSubject describes an issue or pull request and its exact head revision.
 type ContextSubject struct {
-	Reactions   *ReactionCounts `json:"reactions,omitempty"`
-	Number      int             `json:"number"`
-	Title       string          `json:"title"`
-	Body        string          `json:"body"`
-	State       string          `json:"state"`
-	URL         string          `json:"html_url"`
+	Reactions *ReactionCounts `json:"reactions,omitempty"`
+	Number    int             `json:"number"`
+	Title     string          `json:"title"`
+	Body      string          `json:"body"`
+	State     string          `json:"state"`
+	// Draft is true for a draft pull request.
+	Draft bool   `json:"draft,omitempty"`
+	URL   string `json:"html_url"`
+	// User is who opened the issue or pull request.
+	User struct {
+		Login string `json:"login"`
+		// ID is the numeric user ID, which a rename does not change. 0 is
+		// unknown and matches nobody.
+		ID int64 `json:"id,omitempty"`
+	} `json:"user,omitzero"`
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request,omitempty"`
@@ -98,6 +107,7 @@ func (a *HTTPAPI) ReadContext(ctx context.Context, ref Ref, page int) (Context, 
 	if err := get(fmt.Sprintf("/issues/%d", ref.Number), &out.Subject); err != nil {
 		return Context{}, err
 	}
+	out.Subject.User.ID = knownID(out.Subject.User.ID)
 	suffix := fmt.Sprintf("?per_page=%d&page=%d", contextPageSize, page)
 	if err := get(fmt.Sprintf("/issues/%d/comments", ref.Number)+suffix, &out.Comments); err != nil {
 		return Context{}, err
@@ -108,6 +118,7 @@ func (a *HTTPAPI) ReadContext(ctx context.Context, ref Ref, page int) (Context, 
 			return Context{}, err
 		}
 		out.Subject.Head = pr.Head
+		out.Subject.Draft = pr.Draft
 		for _, read := range []struct {
 			path string
 			dst  any
