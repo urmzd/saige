@@ -69,7 +69,7 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 				return "", err
 			}
 			for _, c := range comments {
-				if len(remote.Comments) >= 100 || c.ID <= 0 || c.Path == "" || c.DiffHunk == "" || !strings.EqualFold(c.User.Login, s.c.cfg.Login) || c.OriginalCommitID != row.CommitID && c.CommitID != row.CommitID {
+				if len(remote.Comments) >= 100 || c.ID <= 0 || c.Path == "" || c.DiffHunk == "" || !ownReviewAuthor(s.c.cfg.Login, c.User.Login) || c.OriginalCommitID != row.CommitID && c.CommitID != row.CommitID {
 					return "", fmt.Errorf("github: existing review comment proof is invalid")
 				}
 				line, start := c.OriginalLine, c.OriginalStartLine

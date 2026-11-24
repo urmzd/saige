@@ -108,7 +108,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 			return "", err
 		}
 		for _, row := range rows {
-			if row.CommitID == pinned && strings.EqualFold(row.User.Login, s.c.cfg.Login) && strings.Contains(row.Body, marker) {
+			if row.CommitID == pinned && ownReviewAuthor(s.c.cfg.Login, row.User.Login) && strings.Contains(row.Body, marker) {
 				return s.recoverReview(ctx, ref, row, marker, view)
 			}
 		}
