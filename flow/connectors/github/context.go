@@ -42,7 +42,8 @@ type ContextSubject struct {
 	// User is who opened the issue or pull request.
 	User struct {
 		Login string `json:"login"`
-		// ID is the numeric user ID, which a rename does not change.
+		// ID is the numeric user ID, which a rename does not change. 0 is
+		// unknown and matches nobody.
 		ID int64 `json:"id,omitempty"`
 	} `json:"user,omitzero"`
 	PullRequest *struct {
@@ -106,6 +107,7 @@ func (a *HTTPAPI) ReadContext(ctx context.Context, ref Ref, page int) (Context, 
 	if err := get(fmt.Sprintf("/issues/%d", ref.Number), &out.Subject); err != nil {
 		return Context{}, err
 	}
+	out.Subject.User.ID = knownID(out.Subject.User.ID)
 	suffix := fmt.Sprintf("?per_page=%d&page=%d", contextPageSize, page)
 	if err := get(fmt.Sprintf("/issues/%d/comments", ref.Number)+suffix, &out.Comments); err != nil {
 		return Context{}, err

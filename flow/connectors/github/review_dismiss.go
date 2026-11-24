@@ -96,7 +96,9 @@ func dismissable(state string) bool {
 
 // OwnReviews reads the reviews the app Config.Login names wrote on a pull
 // request, as its bot account "<slug>[bot]": each with its ID, state, commit
-// and author. It reads up to 10 pages of 100 and fails when a pull request has
+// and author. The account is the app's, shared by every agent that posts
+// through it: a host tells which agent wrote a review from its own records,
+// such as the review IDs it kept or ReviewMarker. It reads up to 10 pages of 100 and fails when a pull request has
 // 1000 or more reviews. With Config.Login empty it fails: no review is the
 // app's own.
 func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number int) ([]ReviewRecord, error) {
@@ -108,6 +110,12 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 	if !ok {
 		return nil, fmt.Errorf("%w: GitHub review history", connector.ErrUnsupported)
 	}
+	return ownReviews(ctx, api, c.cfg.Login, ref)
+}
+
+// ownReviews reads the reviews login's bot account wrote on ref, up to 10
+// pages of 100.
+func ownReviews(ctx context.Context, api ReviewHistoryAPI, login string, ref Ref) ([]ReviewRecord, error) {
 	var out []ReviewRecord
 	for page := 1; ; page++ {
 		rows, err := api.ListReviews(ctx, ref, page)
@@ -115,7 +123,7 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 			return nil, err
 		}
 		for _, row := range rows {
-			if ownReviewAuthor(c.cfg.Login, row.User.Login) {
+			if ownReviewAuthor(login, row.User.Login) {
 				out = append(out, row)
 			}
 		}
@@ -128,11 +136,26 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 	}
 }
 
+// outstandingReviews keeps the approvals and change requests of reviews, the
+// ones GitHub has not dismissed, with the sink's delivery marker of each.
+func outstandingReviews(reviews []ReviewRecord) []AppReview {
+	var out []AppReview
+	for _, review := range reviews {
+		if dismissable(review.State) {
+			out = append(out, AppReview{ID: review.ID, State: review.State, CommitID: review.CommitID, Marker: bodyReviewMarker(review.Body)})
+		}
+	}
+	return out
+}
+
 // DismissReview dismisses the app's own approval or change request on a pull
 // request, such as an approval left on an older head after a push, or a
 // change request a later clean review clears. It reads the review first and
 // refuses with ErrNotOwnReview unless the app's bot account ("<slug>[bot]",
-// from Config.Login) wrote it and it is an approval or a change request. It is for the host: no model tool calls it.
+// from Config.Login) wrote it and it is an approval or a change request. Like
+// OwnReviews it knows the app, not the agent: a host that dismisses one
+// agent's review checks its own records first. It is for the host: no model
+// tool calls it.
 func (c *Connector) DismissReview(ctx context.Context, owner, repo string, number int, reviewID int64, message string) error {
 	ref, err := c.hostPull(owner, repo, number)
 	if err != nil {

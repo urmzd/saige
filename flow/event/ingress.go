@@ -215,7 +215,8 @@ type GitHubRef struct {
 	InstallationID int64    `json:"installation_id,omitempty"`
 	// SenderID and AuthorID are the numeric GitHub user IDs of Sender and
 	// Author: a login can be renamed and reused, an ID cannot. Zero when the
-	// payload has none.
+	// payload has none or a value below 1; an ID of 0 is unknown and matches
+	// nobody.
 	SenderID int64 `json:"sender_id,omitempty"`
 	AuthorID int64 `json:"author_id,omitempty"`
 	// RequestedReviewer is the login a review was requested from, and

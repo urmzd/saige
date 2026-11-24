@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -13,8 +14,35 @@ import (
 )
 
 func reviewMarker(view render.View, pinned string) string {
-	sum := sha256.Sum256([]byte(view.Tenant + "\x00" + view.RunID + "\x00" + pinned))
+	return ReviewMarker(view.Tenant, view.RunID, pinned)
+}
+
+// ReviewMarker is the delivery marker the review sink writes into the body of
+// a review it posts for a run of tenant on commit. A host that keeps its runs
+// can match AppReview.Marker against it to tell which run, and so which
+// agent, posted a review.
+func ReviewMarker(tenant, run, commit string) string {
+	sum := sha256.Sum256([]byte(tenant + "\x00" + run + "\x00" + commit))
 	return "<!-- humagen-review:" + hex.EncodeToString(sum[:]) + " -->"
+}
+
+// reviewMarkerPattern matches the two markers the review sink ends a body
+// with: the delivery marker, then the payload marker.
+var reviewMarkerPattern = regexp.MustCompile(`(<!-- humagen-review:[0-9a-f]{64} -->)\n\n<!-- humagen-review-payload:[0-9a-f]{64} -->$`)
+
+// bodyReviewMarker returns the delivery marker a review body ends with, as
+// the review sink writes it, or "".
+func bodyReviewMarker(body string) string {
+	if m := reviewMarkerPattern.FindStringSubmatch(body); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// carriesReviewMarker reports whether text holds anything that reads as one of
+// the review sink's markers.
+func carriesReviewMarker(text string) bool {
+	return strings.Contains(text, "<!-- humagen-review")
 }
 
 func markFindings(review Review) Review {

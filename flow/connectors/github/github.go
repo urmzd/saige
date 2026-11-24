@@ -50,8 +50,9 @@
 // comment, an error retries the delivery, and yes posts the approval while the
 // pull request is still open, not a draft, and on the reviewed commit.
 // CommitChecks reads every check run and commit status on a commit, and
-// AllPassed decides from them, skipping only the check that
-// ApprovalRequest.OwnCheck names: this app's check for the run being reviewed.
+// ApprovalRequest.ChecksAllow decides from them, leaving out every check of
+// the app's own (ApprovalRequest.OwnCheck). ApprovalRequest.AppReviews lists
+// the app's outstanding reviews, and PullRequestCommits who wrote the change.
 // Connector.DismissReview dismisses the app's own approval or change request,
 // and Connector.OwnReviews lists the app's own reviews; no model tool offers
 // either.
@@ -77,6 +78,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -145,9 +147,18 @@ type Config struct {
 	// ErrNoApproval. The model never approves either way:
 	// github_create_review refuses APPROVE whatever this hook would say. A
 	// host that requires passing checks reads them with CommitChecks and
-	// decides with AllPassed(checks, req.OwnCheck), which skips only this
-	// app's check for the run being reviewed.
+	// decides with req.ChecksAllow(checks), which leaves out every check of
+	// this app. After a yes, the sink reads the head again once the approval
+	// is posted, and dismisses that approval when the head moved.
 	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
+	// AppID is the numeric ID of the GitHub App the connector acts as. It
+	// identifies the app's own check runs in ApprovalRequest.OwnCheck, by ID
+	// and not only by slug. 0 leaves the slug from Login as the only means.
+	AppID int64
+	// Log receives what the connector does on a best-effort basis, such as
+	// dismissing an approval whose head moved after it was posted. Nil uses
+	// slog.Default().
+	Log *slog.Logger
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.
 	ActionRepositories []string
@@ -314,6 +325,9 @@ func New(cfg Config) (*Connector, error) {
 	}
 	if cfg.API == nil {
 		return nil, fmt.Errorf("github: config needs an API")
+	}
+	if cfg.AppID < 0 {
+		return nil, fmt.Errorf("github: AppID must not be negative")
 	}
 	if cfg.FixPullRequests {
 		if _, ok := cfg.API.(FixPullAPI); !ok || cfg.AuthorizeFixPull == nil {
@@ -900,4 +914,18 @@ func deliveryScope(tenant, scope string) string {
 	}
 	key, _ := json.Marshal([]string{Name, tenant, scope})
 	return string(key)
+}
+
+// log is Config.Log, or slog.Default() when it is nil.
+func (c *Connector) log() *slog.Logger {
+	if c.cfg.Log != nil {
+		return c.cfg.Log
+	}
+	return slog.Default()
+}
+
+// knownID maps a user or app ID GitHub sent to the one value that means
+// unknown: anything below 1 is 0, and an ID of 0 matches nobody.
+func knownID(id int64) int64 {
+	return max(id, 0)
 }

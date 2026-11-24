@@ -16,7 +16,7 @@ presentation, agent definitions and deployment configuration belong to the
 host. `github.New(github.Config{...})` takes transport configuration: the API
 client, the webhook verifier, owners, bot mappings, read repositories and
 read hooks (see [what a read may reach](#what-a-read-may-reach)), whether to
-publish checks, and the app's own login. For the API client's token, see
+publish checks, and the app's own login and numeric app ID. For the API client's token, see
 [credentials](#credentials).
 
 **The model never approves; a host hook may.** A review the model submits
@@ -30,9 +30,11 @@ An approval comes only from the host, in two steps:
 
 1. `Config.Review` plans the review, with `APPROVE` as its event.
 2. `Config.MayApprove(ctx, req)` decides. `req` is an `ApprovalRequest`: the
-   owner, repository, number, reviewed commit, author and draft flag of the
-   pull request, the run ID and the connector's app slug, and the review the
-   sink would post. The sink asks once.
+   owner, repository, number, reviewed commit, author login and numeric
+   `AuthorID` and draft flag of the pull request, the run ID, the
+   connector's app slug (`App`) and numeric ID (`AppID`, from
+   `Config.AppID`), the app's outstanding reviews on the pull request
+   (`AppReviews`), and the review the sink would post. The sink asks once.
 
 | Case | What the sink posts |
 |------|---------------------|
@@ -41,6 +43,7 @@ An approval comes only from the host, in two steps:
 | The hook answers no | The same review as `COMMENT` |
 | The hook returns an error | Nothing: the delivery is retried, and the hook is asked again |
 | The hook answers yes | `APPROVE`, after it reads the pull request again and finds it open, not a draft, and on the reviewed commit; otherwise `COMMENT` |
+| `Config.Login` names no app | The same review as `COMMENT`, without asking the hook |
 
 A head that moved off the reviewed commit, before or while the hook decides,
 is refused as `ErrUndeliverable`. The sink posts the approval under a grant
@@ -48,6 +51,12 @@ that the HTTP API and the fake spend on one post for that pull request and
 commit. Recovery reads back an approval the host posted, so a retried
 delivery matches it instead of posting another. Recovery never asks the hook:
 it posts nothing.
+
+After an approval is posted, the sink reads the pull request once more. When
+its head is no longer the approved commit, because a push landed between the
+last read and the post, the sink dismisses that approval. This is best
+effort: a failed read or dismissal is logged to `Config.Log` (or
+`slog.Default()`), and the posted review stands.
 
 A host that requires passing checks reads them with `CommitChecks(ctx, owner,
 repo, sha)`. It returns every check run (the latest of each) and every commit
@@ -57,20 +66,46 @@ that published it and its external ID. It follows pages of 100 until one is
 short, and fails when a kind has `MaxCommitChecks` (1000) or more, or when
 GitHub answers for another commit. The model has no tool for this read.
 
+Each check run also carries `AppID`, the numeric ID of the app that
+published it (0 when GitHub's response has none), and each commit status
+`Creator`, the login that set it.
+
 - `CommitCheck.Passed` is true for a completed check that concluded
-  `success`, `neutral` or `skipped`, the conclusions GitHub's required checks
-  accept.
-- `ApprovalRequest.OwnCheck(check)` is true only for the connector's own
-  check of the run being reviewed: a check run named `fiber/...`, published
-  by the app `Config.Login` names (`ApprovalRequest.App`), whose external ID
-  is the run (`ApprovalRequest.RunID`). With `Config.Checks` on, that check
-  is still in progress when the hook runs. Another app's `fiber/...` check,
-  another run's check and every commit status are never own. With
-  `Config.Login` empty, nothing is own.
-- `AllPassed(checks, req.OwnCheck)` is true only when every check that is not
-  own passed, at least one such check exists, and the list is shorter than
-  `MaxCommitChecks`. An empty list is not passed: checks that have not
-  registered yet are not a pass.
+  `success`. `CommitCheck.Blocks` is true for a check that has not completed,
+  or that completed with any other conclusion, except that a check run that
+  concluded `neutral` or `skipped` does not block. A commit status has no
+  neutral state: it blocks unless it passed.
+- `ApprovalRequest.OwnCheck(check)` is true for every check of the
+  connector's own app, from any run and under any name: a check run whose
+  `AppID` is `ApprovalRequest.AppID`, or whose app slug is
+  `ApprovalRequest.App` (a slug names one app, and it is how a check run
+  without an app ID in the response is recognized), and a commit status set
+  by the app's bot account `<slug>[bot]`. The app's own result never counts
+  toward an approval, so a finished run's `neutral` check, or an earlier
+  run's, does not make a commit approvable.
+- `ApprovalRequest.ChecksAllow(checks)` is the call a host makes. It is true
+  only when the request names the app (`AppID` or `App`), at least one check
+  that is not own passed with `success`, none blocks, no check run's app ID
+  and slug disagree about being own, and the list is shorter than
+  `MaxCommitChecks`. A check run of another app that concluded `neutral` or
+  `skipped` neither satisfies the rule nor fails it. An empty list is not a
+  pass: checks that have not registered yet are not a pass.
+- `AllPassed(checks, own)` is the same rule with the own check given by the
+  caller and without the app requirement; `AllPassed(checks, req.OwnCheck)`
+  differs from `ChecksAllow` only there.
+
+Every agent posts reviews as the same bot account, and GitHub counts only a
+reviewer's latest approval or change request. An approval from one agent
+therefore replaces a change request another agent left outstanding.
+`ApprovalRequest.AppReviews` lists the bot account's outstanding approvals and
+change requests on the pull request (`ID`, `State`, `CommitID`, and `Marker`,
+the delivery marker of the run whose review the sink posted, empty for any
+other); `ChangesRequested()` keeps the change requests. `ReviewMarker(tenant,
+run, commit)` computes a run's marker, so a host matches reviews to the runs,
+and so the agents, it keeps records of. A host refuses an approval while any
+change request remains that it cannot attribute to the agent approving. The
+model's `github_create_review` refuses a body or comment that carries one of
+the sink's markers.
 
 A host clears its own earlier verdict with `Connector.DismissReview(ctx,
 owner, repo, number, reviewID, message)`, for example an approval left on an
@@ -85,16 +120,27 @@ review and a review GitHub reports on another pull request are refused before
 any dismissal is sent. `Connector.OwnReviews(ctx, owner, repo, number)` lists
 the app's own reviews on a pull request with their ID, state, commit and
 author; it fails when the pull request has 1000 or more reviews. No model
-tool offers either.
+tool offers either. Both know the app, not the agent: a host attributes a
+review to an agent from its own records before it dismisses one.
 
 A host that refuses an approval asked for by someone who wrote the change
 reads the pull request's commits with `PullRequestCommits(ctx, owner, repo,
-number)` on the HTTP API or the fake. Each `PRCommit` has the SHA and the
+number)` on the HTTP API or the fake. Each `PRCommit` has the SHA; the
 numeric ID and login of the GitHub accounts linked to its author and
-committer; an ID is 0 when GitHub links no account. GitHub lists at most 250
-commits of a pull request, so the read fails at `MaxPullRequestCommits`
-(250) rather than return a list that may be cut short. The model has no tool
-for this read.
+committer; the git author and committer emails (`AuthorEmail`,
+`CommitterEmail`); and `CoAuthors`, every `Co-authored-by: Name <email>` line
+of the message, matched ignoring case anywhere in it, with `Email` empty when
+a line names no address. A commit that names more than `MaxCoAuthors` (50)
+fails the read. An ID of 0 is unknown and matches nobody. A host denies a
+requested approval when any commit has an author or committer it cannot map
+to a person (an ID of 0, or an ID, email or co-author it does not know), and
+when the asker is any of them. GitHub commits merges, squashes and web edits
+as its `web-flow` account (`WebFlowLogin`, `WebFlowID`);
+`PRCommit.CommittedByWebFlow` tells that committer apart by ID and login, so a
+host may ignore it as committer while it still checks the author. GitHub
+lists at most 250 commits of a pull request, so the read fails at
+`MaxPullRequestCommits` (250) rather than return a list that may be cut
+short. The model has no tool for this read.
 
 ## What a webhook publishes
 
@@ -118,7 +164,8 @@ Each body carries the logins and the numeric user IDs of the sender
 `AuthorID`), and a review request also those of the requested reviewer
 (`RequestedReviewer`, `RequestedReviewerID`). A login can be renamed and
 reused; an ID cannot, so a host compares people by ID. An ID is 0, and left
-out of the trigger context, when the payload has none. `ContextSubject.User`
+out of the trigger context, when the payload has none or one below 1: 0 is
+the only value for unknown, and an ID of 0 matches nobody. `ContextSubject.User`
 carries the author's login and ID on a context read.
 
 When checks are on, the head commit (`head_sha`) is pinned on the body before

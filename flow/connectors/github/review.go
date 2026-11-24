@@ -89,25 +89,102 @@ type ApprovalRequest struct {
 	Commit string
 	// Author is the login that opened the pull request.
 	Author string
-	Draft  bool
+	// AuthorID is the numeric user ID of Author, which a rename does not
+	// change. An ID of 0 is unknown and matches nobody.
+	AuthorID int64
+	Draft    bool
 	// RunID is the run whose review this is. The connector's check for it
 	// carries it as its external ID.
 	RunID string
 	// App is the slug of the connector's own app, from Config.Login without
 	// "[bot]", in lower case. Empty when Config.Login is empty.
-	App    string
-	Review Review
+	App string
+	// AppID is the numeric ID of the connector's own app, Config.AppID. 0
+	// when Config.AppID is unset.
+	AppID int64
+	// AppReviews are the outstanding reviews of the app's bot account on the
+	// pull request: each approval or change request it posted that is not
+	// dismissed, oldest first. Every agent posts as the same bot account, and
+	// GitHub counts only a reviewer's latest approval or change request, so
+	// an approval replaces any change request the account has outstanding,
+	// whichever agent made it. A host attributes each review to an agent from
+	// its own records (Marker, or the review ID it kept) and refuses the
+	// approval while any change request remains that it cannot attribute to
+	// the agent approving.
+	AppReviews []AppReview
+	Review     Review
 }
 
-// OwnCheck reports whether check is the connector's own check for the run
-// being reviewed: a check run named "fiber/...", published by App, whose
-// external ID is RunID. That check is still in progress while MayApprove runs.
-// Another app's check, or the check of another run, is never own, and neither
-// is a commit status. With App or RunID empty, nothing is own.
+// AppReview is one outstanding review of the app's bot account on a pull
+// request.
+type AppReview struct {
+	ID int64
+	// State is APPROVED or CHANGES_REQUESTED.
+	State string
+	// CommitID is the commit the review was posted on.
+	CommitID string
+	// Marker is the review's delivery marker, ReviewMarker of the tenant, run
+	// and commit the review sink posted it for. Empty for a review the sink
+	// did not post, such as one through github_create_review.
+	Marker string
+}
+
+// ChangesRequested returns the outstanding change requests in AppReviews.
+func (r ApprovalRequest) ChangesRequested() []AppReview {
+	var out []AppReview
+	for _, review := range r.AppReviews {
+		if review.State == reviewChangesRequested {
+			out = append(out, review)
+		}
+	}
+	return out
+}
+
+// OwnCheck reports whether check comes from the connector's own app, from any
+// of its runs and under any name. A check run is own when its AppID is
+// AppID, or when its App is App: a slug names one app, and it is how a check
+// run whose response carries no app ID is told apart. A commit status is own
+// when its Creator is the app's bot account, "<App>[bot]". With AppID 0 and
+// App empty, nothing is own.
 func (r ApprovalRequest) OwnCheck(check CommitCheck) bool {
-	return r.App != "" && r.RunID != "" && check.Kind == CheckKindRun &&
-		strings.HasPrefix(check.Name, ownCheckPrefix) &&
-		strings.EqualFold(check.App, r.App) && check.ExternalID == r.RunID
+	switch check.Kind {
+	case CheckKindRun:
+		return r.AppID != 0 && check.AppID == r.AppID || r.App != "" && strings.EqualFold(check.App, r.App)
+	case CheckKindStatus:
+		return r.App != "" && strings.EqualFold(check.Creator, r.App+"[bot]")
+	}
+	return false
+}
+
+// conflicting reports a check run whose app ID and slug disagree about
+// whether it is the connector's own: one matches and the other names another
+// app.
+func (r ApprovalRequest) conflicting(check CommitCheck) bool {
+	if check.Kind != CheckKindRun || r.AppID == 0 || check.AppID == 0 || r.App == "" || check.App == "" {
+		return false
+	}
+	return (check.AppID == r.AppID) != strings.EqualFold(check.App, r.App)
+}
+
+// ChecksAllow is the check rule for an approval, from checks the host read
+// itself with CommitChecks on Commit. It is true only when the request names
+// the app (AppID or App), every check of the app's own is left out (OwnCheck:
+// any run, any name, and the app's own result never counts), at least one
+// remaining check passed with the conclusion success, none of them is pending
+// or failed, and the list is shorter than MaxCommitChecks. A check run of
+// another app that concluded neutral or skipped neither satisfies the rule
+// nor fails it. A check run whose app ID and slug disagree about being own
+// fails it.
+func (r ApprovalRequest) ChecksAllow(checks []CommitCheck) bool {
+	if r.AppID == 0 && r.App == "" {
+		return false
+	}
+	for _, check := range checks {
+		if r.conflicting(check) {
+			return false
+		}
+	}
+	return AllPassed(checks, r.OwnCheck)
 }
 
 // appSlug is the app slug a login names: "humagen[bot]" and "humagen" are both
@@ -311,6 +388,16 @@ func (c *Connector) createReview(ctx context.Context, target address.Address, ra
 	}
 	if len(target.Path) != 3 || target.Path[1] != "pull" {
 		return connector.Result{}, fmt.Errorf("github: reviews require a pull request")
+	}
+	// The review sink's markers identify the reviews it posted; a review
+	// through this tool carries none.
+	if carriesReviewMarker(input.Body) {
+		return connector.Result{}, fmt.Errorf("github: a review body may not carry a review sink marker")
+	}
+	for _, v := range input.Comments {
+		if carriesReviewMarker(v.Body) || v.Change != nil && carriesReviewMarker(*v.Change) {
+			return connector.Result{}, fmt.Errorf("github: a review comment may not carry a review sink marker")
+		}
 	}
 	review := Review{CommitID: input.CommitID, Event: input.Event, Body: input.Body}
 	for _, v := range input.Comments {

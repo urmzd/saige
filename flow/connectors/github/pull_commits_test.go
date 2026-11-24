@@ -99,3 +99,105 @@ func TestFakePullRequestCommitsKeepUnlinkedAccounts(t *testing.T) {
 		t.Fatalf("another pull request reads %+v", other)
 	}
 }
+
+// commitsOf serves one page of the given commit rows for acme/repo#7.
+func commitsOf(t *testing.T, rows []map[string]any) *github.HTTPAPI {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(rows)
+	}))
+	t.Cleanup(server.Close)
+	return github.NewHTTPAPIAt(server.URL, "token", server.Client())
+}
+
+// A commit carries its git author and committer emails and the co-authors its
+// message names; GitHub's web-flow committer is told apart by ID and login.
+func TestPullRequestCommitsReadEmailsCoAuthorsAndWebFlow(t *testing.T) {
+	message := "Merge the change\n\nBody text.\nCo-authored-by: Ada Lovelace <ada@example.com>\n  co-AUTHORED-BY:   Grace <grace@example.com>  \r\nCo-authored-by: no address here\nNot co-authored-by: x <x@example.com>\n"
+	api := commitsOf(t, []map[string]any{
+		{
+			"sha":       fmt.Sprintf("%040x", 1),
+			"commit":    map[string]any{"message": message, "author": map[string]any{"name": "Ada", "email": "ada@example.com"}, "committer": map[string]any{"name": "GitHub", "email": "noreply@github.com"}},
+			"author":    map[string]any{"login": "ada", "id": 11},
+			"committer": map[string]any{"login": "web-flow", "id": 19864447},
+		},
+		{
+			"sha":       fmt.Sprintf("%040x", 2),
+			"commit":    map[string]any{"message": "plain", "author": map[string]any{"email": "someone@example.com"}, "committer": map[string]any{"email": "someone@example.com"}},
+			"author":    map[string]any{"login": "x", "id": -5},
+			"committer": map[string]any{"login": "web-flow", "id": 1},
+		},
+	})
+	got, err := api.PullRequestCommits(context.Background(), "acme", "repo", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := got[0]
+	if first.AuthorEmail != "ada@example.com" || first.CommitterEmail != "noreply@github.com" || !first.CommittedByWebFlow() {
+		t.Errorf("first commit read as %+v", first)
+	}
+	want := []github.CoAuthor{{Name: "Ada Lovelace", Email: "ada@example.com"}, {Name: "Grace", Email: "grace@example.com"}, {Name: "no address here"}}
+	if len(first.CoAuthors) != len(want) {
+		t.Fatalf("co-authors %+v, want %+v", first.CoAuthors, want)
+	}
+	for i := range want {
+		if first.CoAuthors[i] != want[i] {
+			t.Errorf("co-author %d = %+v, want %+v", i, first.CoAuthors[i], want[i])
+		}
+	}
+	second := got[1]
+	if second.AuthorID != 0 || second.AuthorEmail != "someone@example.com" || second.CommittedByWebFlow() || len(second.CoAuthors) != 0 {
+		t.Errorf("second commit read as %+v, want author ID 0 and no web-flow committer", second)
+	}
+}
+
+// A commit that names more than MaxCoAuthors co-authors fails the read.
+func TestPullRequestCommitsBoundCoAuthors(t *testing.T) {
+	for _, tc := range []struct {
+		n  int
+		ok bool
+	}{{github.MaxCoAuthors, true}, {github.MaxCoAuthors + 1, false}} {
+		message := "subject\n"
+		for i := range tc.n {
+			message += fmt.Sprintf("\nCo-authored-by: P%d <p%d@example.com>", i, i)
+		}
+		api := commitsOf(t, []map[string]any{{"sha": fmt.Sprintf("%040x", 1), "commit": map[string]any{"message": message}}})
+		got, err := api.PullRequestCommits(context.Background(), "acme", "repo", 7)
+		if (err == nil) != tc.ok || tc.ok && len(got[0].CoAuthors) != tc.n {
+			t.Errorf("%d co-authors: read %+v, error %v", tc.n, got, err)
+		}
+	}
+}
+
+// A mid-list read error fails the read rather than return part of the list.
+func TestPullRequestCommitsFailOnALaterPageError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"message":"bad gateway"}`))
+			return
+		}
+		rows := make([]map[string]any, 100)
+		for i := range rows {
+			rows[i] = map[string]any{"sha": fmt.Sprintf("%040x", i+1)}
+		}
+		_ = json.NewEncoder(w).Encode(rows)
+	}))
+	t.Cleanup(server.Close)
+	if got, err := github.NewHTTPAPIAt(server.URL, "token", server.Client()).PullRequestCommits(context.Background(), "acme", "repo", 7); err == nil {
+		t.Fatalf("read %d commits despite a failed page", len(got))
+	}
+}
+
+// The fake reads an ID below 1 as 0, as the HTTP API does.
+func TestFakePullRequestCommitsReadIDsBelowOneAsZero(t *testing.T) {
+	fake := github.NewFake()
+	ref := github.Ref{Owner: "acme", Repo: "repo", Number: 7}
+	if err := fake.SeedPullRequestCommits(ref, []github.PRCommit{{SHA: commitSHA, AuthorID: -2, CommitterID: -1}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fake.PullRequestCommits(context.Background(), "acme", "repo", 7)
+	if err != nil || got[0].AuthorID != 0 || got[0].CommitterID != 0 {
+		t.Fatalf("fake commits %+v, %v", got, err)
+	}
+}

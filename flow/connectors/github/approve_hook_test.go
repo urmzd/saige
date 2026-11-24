@@ -363,8 +363,8 @@ func TestHostApprovalLandsOnceAcrossPostFailures(t *testing.T) {
 }
 
 // With Config.Checks on, the connector's own check is still in progress when
-// the hook runs. ApprovalRequest.OwnCheck names it by app and run, so
-// AllPassed skips it and the commit's other checks decide.
+// the hook runs. ApprovalRequest.OwnCheck names it by its app, so ChecksAllow
+// leaves it out and the commit's other checks decide.
 func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	a := newApprovalCase(t)
 	a.cfg.Checks = true
@@ -376,8 +376,9 @@ func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	a.cfg.MayApprove = func(ctx context.Context, req ApprovalRequest) (bool, error) {
 		checks, err := a.api.CommitChecks(ctx, req.Owner, req.Repo, req.Commit)
 		seen, asked = checks, req
-		return AllPassed(checks, req.OwnCheck), err
+		return req.ChecksAllow(checks), err
 	}
+	a.cfg.AppID = FakeAppID
 	a.cfg.DeliveryState = deliverystate.NewMemory()
 	c, err := New(a.cfg)
 	if err != nil {
@@ -392,8 +393,8 @@ func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	if err := c.Deliver(ctx, a.target, a.env); err != nil {
 		t.Fatal(err)
 	}
-	if asked.RunID != "r1" || asked.App != FakeApp {
-		t.Fatalf("hook asked for run %q of app %q, want r1 of %q", asked.RunID, asked.App, FakeApp)
+	if asked.RunID != "r1" || asked.App != FakeApp || asked.AppID != FakeAppID {
+		t.Fatalf("hook asked for run %q of app %q (%d), want r1 of %q (%d)", asked.RunID, asked.App, asked.AppID, FakeApp, FakeAppID)
 	}
 	own := 0
 	for _, check := range seen {
@@ -409,52 +410,102 @@ func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	}
 }
 
-// Only the check of this app for this run is own. A failing check named
-// fiber/... from another app, or from another run of this app on the same
-// commit, still blocks; so does a status of that name.
-func TestOnlyThisRunsCheckIsOwn(t *testing.T) {
-	req := ApprovalRequest{RunID: "r1", App: "humagen"}
-	pass := CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions"}
-	mine := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", ExternalID: "r1"}
+// Every check of the connector's own app is own, from any run and under any
+// name, and a status the app's bot account set is too. A check named
+// fiber/... from another app is not, and still blocks.
+func TestEveryCheckOfTheOwnAppIsOwn(t *testing.T) {
+	req := ApprovalRequest{RunID: "r1", App: "humagen", AppID: 1001}
+	pass := CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions", AppID: 15368}
+	mine := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", AppID: 1001, ExternalID: "r1"}
 	for _, tc := range []struct {
 		name  string
 		check CommitCheck
+		own   bool
 	}{
-		{"another app", CommitCheck{Kind: CheckKindRun, Name: "fiber/security-scan", Status: "completed", Conclusion: "failure", App: "scanner", ExternalID: "r1"}},
-		{"another run", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen", ExternalID: "r0"}},
-		{"no external id", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen"}},
-		{"a status", CommitCheck{Kind: CheckKindStatus, Name: "fiber/reviewer", Status: "completed", Conclusion: "failure", App: "humagen", ExternalID: "r1"}},
+		{"another run", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen", AppID: 1001, ExternalID: "r0"}, true},
+		{"another name", CommitCheck{Kind: CheckKindRun, Name: "summary", Status: "completed", Conclusion: "success", App: "humagen", AppID: 1001}, true},
+		{"no external id", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen", AppID: 1001}, true},
+		{"by ID alone", CommitCheck{Kind: CheckKindRun, Name: "x", Status: "completed", Conclusion: "failure", AppID: 1001}, true},
+		{"by slug without an ID", CommitCheck{Kind: CheckKindRun, Name: "x", Status: "completed", Conclusion: "failure", App: "Humagen"}, true},
+		{"a status by the bot account", CommitCheck{Kind: CheckKindStatus, Name: "fiber/reviewer", Status: "completed", Conclusion: "failure", Creator: "humagen[bot]"}, true},
+		{"another app", CommitCheck{Kind: CheckKindRun, Name: "fiber/security-scan", Status: "completed", Conclusion: "failure", App: "scanner", AppID: 2002, ExternalID: "r1"}, false},
+		{"a status by a person", CommitCheck{Kind: CheckKindStatus, Name: "fiber/reviewer", Status: "completed", Conclusion: "failure", Creator: "humagen"}, false},
+		{"a status without creator", CommitCheck{Kind: CheckKindStatus, Name: "fiber/reviewer", Status: "completed", Conclusion: "failure"}, false},
 	} {
-		if req.OwnCheck(tc.check) {
-			t.Errorf("%s: marked own", tc.name)
+		if got := req.OwnCheck(tc.check); got != tc.own {
+			t.Errorf("%s: own = %v, want %v", tc.name, got, tc.own)
 		}
-		if AllPassed([]CommitCheck{pass, mine, tc.check}, req.OwnCheck) {
-			t.Errorf("%s: a failing check was skipped", tc.name)
-		}
-	}
-	if !AllPassed([]CommitCheck{pass, mine}, req.OwnCheck) {
-		t.Fatal("this run's own check blocked the approval")
-	}
-	for _, empty := range []ApprovalRequest{{App: "humagen"}, {RunID: "r1"}} {
-		if empty.OwnCheck(mine) {
-			t.Errorf("%+v marked a check own", empty)
+		if got := req.ChecksAllow([]CommitCheck{pass, mine, tc.check}); got != tc.own {
+			t.Errorf("%s: ChecksAllow = %v, want %v", tc.name, got, tc.own)
 		}
 	}
-	if !req.OwnCheck(CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", App: "Humagen", ExternalID: "r1"}) {
-		t.Error("app slug compared with case")
+	if !req.ChecksAllow([]CommitCheck{pass, mine}) {
+		t.Fatal("the app's own check blocked the approval")
+	}
+	if (ApprovalRequest{}).OwnCheck(mine) {
+		t.Error("a request naming no app marked a check own")
 	}
 }
 
-// Another agent's failed run on the same commit, read through the fake, blocks.
-func TestOtherRunsFailedCheckBlocksThroughFake(t *testing.T) {
+// The app's own result never satisfies the rule: a commit whose only other
+// check is an earlier run of the app, which concludes neutral, or whose only
+// other checks concluded neutral or skipped, is not approvable.
+func TestChecksAllowNeedsASuccessFromAnotherApp(t *testing.T) {
+	req := ApprovalRequest{RunID: "r1", App: "humagen", AppID: 1001}
+	mine := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", AppID: 1001, ExternalID: "r1"}
+	earlier := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "completed", Conclusion: "neutral", App: "humagen", AppID: 1001, ExternalID: "r0"}
+	ownSuccess := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "completed", Conclusion: "success", App: "humagen", AppID: 1001, ExternalID: "r0"}
+	skipped := CommitCheck{Kind: CheckKindRun, Name: "deploy", Status: "completed", Conclusion: "skipped", App: "actions", AppID: 15368}
+	neutral := CommitCheck{Kind: CheckKindRun, Name: "docs", Status: "completed", Conclusion: "neutral", App: "actions", AppID: 15368}
+	success := CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions", AppID: 15368}
+	statusOK := CommitCheck{Kind: CheckKindStatus, Name: "ci/legacy", Status: "completed", Conclusion: "success"}
+	statusNeutral := CommitCheck{Kind: CheckKindStatus, Name: "ci/odd", Status: "completed", Conclusion: "neutral"}
+	pending := CommitCheck{Kind: CheckKindRun, Name: "slow", Status: "queued", App: "actions", AppID: 15368}
+	for _, tc := range []struct {
+		name   string
+		req    ApprovalRequest
+		checks []CommitCheck
+		want   bool
+	}{
+		{"only an earlier own run", req, []CommitCheck{earlier, mine}, false},
+		{"an own success", req, []CommitCheck{ownSuccess, mine}, false},
+		{"only skipped", req, []CommitCheck{skipped, mine}, false},
+		{"only neutral", req, []CommitCheck{neutral, earlier, mine}, false},
+		{"a success among neutral and skipped", req, []CommitCheck{success, neutral, skipped, earlier, mine}, true},
+		{"a status success", req, []CommitCheck{statusOK, mine}, true},
+		{"a status that is not success", req, []CommitCheck{success, statusNeutral}, false},
+		{"one pending", req, []CommitCheck{success, pending}, false},
+		{"empty", req, nil, false},
+		{"no app named", ApprovalRequest{RunID: "r1"}, []CommitCheck{success}, false},
+		{"ID alone names the app", ApprovalRequest{AppID: 1001}, []CommitCheck{success, ownSuccess}, true},
+		{"slug alone names the app", ApprovalRequest{App: "humagen"}, []CommitCheck{success, earlier}, true},
+		{"ID and slug disagree", req, []CommitCheck{success, {Kind: CheckKindRun, Name: "x", Status: "completed", Conclusion: "success", App: "humagen", AppID: 3003}}, false},
+		{"slug and ID disagree", req, []CommitCheck{success, {Kind: CheckKindRun, Name: "x", Status: "completed", Conclusion: "success", App: "other", AppID: 1001}}, false},
+	} {
+		if got := tc.req.ChecksAllow(tc.checks); got != tc.want {
+			t.Errorf("%s: ChecksAllow = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Through the fake: the connector's own earlier check does not count, and a
+// success from another app does.
+func TestEarlierOwnRunDoesNotCountThroughFake(t *testing.T) {
 	a := newApprovalCase(t)
-	_ = a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions"})
-	_ = a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: FakeApp, ExternalID: "r0"})
-	got, err := a.api.CommitChecks(context.Background(), "acme", "project", a.sha)
+	ctx := context.Background()
+	if _, err := a.api.EnsureCheck(ctx, a.ref, Check{Name: "fiber/reviewer", HeadSHA: a.sha, ExternalID: "r0", Status: "completed", Conclusion: "neutral"}); err != nil {
+		t.Fatal(err)
+	}
+	req := ApprovalRequest{RunID: "r1", App: FakeApp, AppID: FakeAppID}
+	got, err := a.api.CommitChecks(ctx, "acme", "project", a.sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if AllPassed(got, ApprovalRequest{RunID: "r1", App: FakeApp}.OwnCheck) {
-		t.Fatalf("another run's failed check was skipped: %+v", got)
+	if req.ChecksAllow(got) {
+		t.Fatalf("an earlier own run allowed the approval: %+v", got)
+	}
+	_ = a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions", AppID: 15368})
+	if got, _ = a.api.CommitChecks(ctx, "acme", "project", a.sha); !req.ChecksAllow(got) {
+		t.Fatalf("a success from another app did not allow the approval: %+v", got)
 	}
 }

@@ -407,11 +407,11 @@ func refOf(h hook, subj subject) event.GitHubRef {
 		Labels:  subj.labels,
 		Draft:   subj.pull && subj.draft,
 		// IDs survive a rename; a host compares people by them.
-		SenderID: h.Sender.ID,
+		SenderID: knownID(h.Sender.ID),
 		AuthorID: subj.authorID,
 	}
 	if h.Reviewer != nil {
-		ref.RequestedReviewer, ref.RequestedReviewerID = h.Reviewer.Login, h.Reviewer.ID
+		ref.RequestedReviewer, ref.RequestedReviewerID = h.Reviewer.Login, knownID(h.Reviewer.ID)
 	}
 	if h.Installation != nil {
 		ref.InstallationID = h.Installation.ID
@@ -476,7 +476,7 @@ func subjectOf(h hook) subject {
 			body:     p.Body,
 			state:    p.State,
 			author:   p.User.Login,
-			authorID: p.User.ID,
+			authorID: knownID(p.User.ID),
 			labels:   labelNames(p.Labels),
 			url:      p.HTMLURL,
 			pull:     true,
@@ -495,7 +495,7 @@ func subjectOf(h hook) subject {
 			body:     i.Body,
 			state:    i.State,
 			author:   i.User.Login,
-			authorID: i.User.ID,
+			authorID: knownID(i.User.ID),
 			labels:   labelNames(i.Labels),
 			url:      i.HTMLURL,
 			// An issue_comment on a pull request arrives as an issue with a

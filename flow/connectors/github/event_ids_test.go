@@ -96,3 +96,31 @@ func TestEventsWithoutUserIDsLeaveThemZero(t *testing.T) {
 		t.Fatalf("trigger context shows missing IDs:\n%s", rendered)
 	}
 }
+
+// An ID below 1 in a payload is read as 0, the one value for unknown, and is
+// left out of the trigger context.
+func TestEventsReadUserIDsBelowOneAsZero(t *testing.T) {
+	requested := strings.Replace(reviewRequested, `"requested_reviewer": {"login": "docs-bot[bot]", "type": "Bot"}`, `"requested_reviewer": {"login": "docs-bot[bot]", "id": -3, "type": "Bot"}`, 1)
+	for _, tc := range []struct {
+		name, event, body string
+	}{
+		{"issue comment", "issue_comment", issueComment},
+		{"review requested", "pull_request", requested},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, tags := start(t, github.Config{
+				Agents: mention.NewNames("docs-bot"),
+				Bots:   map[string]string{"docs-bot": "docs-bot"},
+			})
+			c.ServeHTTP(httptest.NewRecorder(), deliver(t, tc.event, "d-neg-"+tc.name, withIDs(tc.body, -7, -1)))
+			e := receive(t, tags)
+			if got := ref(t, e); got.SenderID != 0 || got.AuthorID != 0 || got.RequestedReviewerID != 0 {
+				t.Fatalf("ref %+v, want every ID 0", got)
+			}
+			rendered, _ := event.Render(e)
+			if strings.Contains(rendered, "_id: -") {
+				t.Fatalf("trigger context shows a negative ID:\n%s", rendered)
+			}
+		})
+	}
+}

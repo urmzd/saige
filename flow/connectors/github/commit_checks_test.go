@@ -14,6 +14,7 @@ import (
 )
 
 type checkApp struct {
+	ID   int64  `json:"id,omitempty"`
 	Slug string `json:"slug"`
 }
 
@@ -29,6 +30,9 @@ type checkRun struct {
 type commitStatus struct {
 	Context string `json:"context"`
 	State   string `json:"state"`
+	Creator *struct {
+		Login string `json:"login"`
+	} `json:"creator,omitempty"`
 }
 
 // checksServer serves runs and statuses for commitSHA in pages of 100.
@@ -83,24 +87,25 @@ func TestCommitChecksReadsEveryRunAndStatusAcrossPages(t *testing.T) {
 	if len(got) != len(runs)+len(statuses) {
 		t.Fatalf("read %d checks, want %d", len(got), len(runs)+len(statuses))
 	}
-	passed := map[string]bool{}
+	type verdict struct{ passed, blocks bool }
+	seen := map[string]verdict{}
 	for _, check := range got {
-		passed[check.Kind+":"+check.Name] = check.Passed()
+		seen[check.Kind+":"+check.Name] = verdict{check.Passed(), check.Blocks()}
 	}
-	want := map[string]bool{
-		"check_run:build-100": true,
-		"check_run:lint":      false, // pending
-		"check_run:test":      false, // failure
-		"check_run:docs":      true,  // neutral
-		"check_run:deploy":    true,  // skipped
-		"check_run:gate":      false,
-		"status:ci/legacy":    true,
-		"status:ci/slow":      false, // pending
-		"status:ci/broken":    false, // error
+	want := map[string]verdict{
+		"check_run:build-100": {true, false},
+		"check_run:lint":      {false, true},  // pending
+		"check_run:test":      {false, true},  // failure
+		"check_run:docs":      {false, false}, // neutral: neither
+		"check_run:deploy":    {false, false}, // skipped: neither
+		"check_run:gate":      {false, true},
+		"status:ci/legacy":    {true, false},
+		"status:ci/slow":      {false, true}, // pending
+		"status:ci/broken":    {false, true}, // error
 	}
-	for name, ok := range want {
-		if have, found := passed[name]; !found || have != ok {
-			t.Errorf("%s passed = %v (found %v), want %v", name, have, found, ok)
+	for name, v := range want {
+		if have, found := seen[name]; !found || have != v {
+			t.Errorf("%s = %+v (found %v), want %+v", name, have, found, v)
 		}
 	}
 	for _, check := range got {
@@ -188,7 +193,7 @@ func readChecks(t *testing.T, runs []checkRun, statuses []commitStatus) ([]githu
 	return github.NewHTTPAPIAt(server.URL, "token", server.Client()).CommitChecks(context.Background(), "acme", "repo", commitSHA)
 }
 
-func TestCommitChecksOnlySuccessNeutralSkippedPass(t *testing.T) {
+func TestCommitChecksOnlySuccessPasses(t *testing.T) {
 	var runs []checkRun
 	for _, c := range []string{"cancelled", "timed_out", "action_required", "stale", "startup_failure", "failure", ""} {
 		runs = append(runs, checkRun{Name: "c-" + c, HeadSHA: commitSHA, Status: "completed", Conclusion: c})
@@ -201,8 +206,8 @@ func TestCommitChecksOnlySuccessNeutralSkippedPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range got {
-		if c.Passed() {
-			t.Errorf("%s %s/%s passed", c.Name, c.Status, c.Conclusion)
+		if c.Passed() || !c.Blocks() {
+			t.Errorf("%s %s/%s passed = %v, blocks = %v", c.Name, c.Status, c.Conclusion, c.Passed(), c.Blocks())
 		}
 	}
 }
@@ -240,15 +245,15 @@ func TestCommitChecksReadAppAndExternalID(t *testing.T) {
 	got, err := readChecks(t, []checkRun{
 		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure", App: checkApp{Slug: "actions"}},
 		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "success", App: checkApp{Slug: "actions"}},
-		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "in_progress", App: checkApp{Slug: "humagen"}, ExternalID: "r1"},
-		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure", App: checkApp{Slug: "scanner"}, ExternalID: "r1"},
+		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "in_progress", App: checkApp{ID: 1001, Slug: "humagen"}, ExternalID: "r1"},
+		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure", App: checkApp{ID: 2002, Slug: "scanner"}, ExternalID: "r1"},
 	}, []commitStatus{{Context: "fiber/reviewer", State: "pending"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	own := github.ApprovalRequest{RunID: "r1", App: "humagen"}.OwnCheck
-	if len(got) != 5 || got[2].App != "humagen" || got[2].ExternalID != "r1" {
-		t.Fatalf("read %+v, want every run with its app and external ID", got)
+	if len(got) != 5 || got[2].App != "humagen" || got[2].AppID != 1001 || got[2].ExternalID != "r1" || got[3].AppID != 2002 || got[0].AppID != 0 {
+		t.Fatalf("read %+v, want every run with its app, app ID and external ID", got)
 	}
 	for i, want := range []bool{false, false, true, false, false} {
 		if own(got[i]) != want {
@@ -278,11 +283,35 @@ func TestAllPassed(t *testing.T) {
 		{"passed and own", []github.CommitCheck{pass, skipped, mine}, own, true},
 		{"own not skipped without a rule", []github.CommitCheck{pass, mine}, nil, false},
 		{"one pending", []github.CommitCheck{pass, pending}, own, false},
+		{"only skipped besides own", []github.CommitCheck{skipped, mine}, own, false},
+		{"only neutral besides own", []github.CommitCheck{{Kind: github.CheckKindRun, Name: "lint", Status: "completed", Conclusion: "neutral"}, mine}, own, false},
 		{"at the bound", full, own, false},
 		{"below the bound", full[:github.MaxCommitChecks-1], own, true},
 	} {
 		if got := github.AllPassed(tc.checks, tc.own); got != tc.want {
 			t.Errorf("%s: AllPassed = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A commit status keeps the login that set it, and a check run its app ID; an
+// app ID below 1 is read as 0.
+func TestCommitChecksReadStatusCreatorAndAppID(t *testing.T) {
+	bot := commitStatus{Context: "fiber/summary", State: "success"}
+	bot.Creator = &struct {
+		Login string `json:"login"`
+	}{Login: "humagen[bot]"}
+	got, err := readChecks(t, []checkRun{
+		{Name: "odd", HeadSHA: commitSHA, Status: "completed", Conclusion: "success", App: checkApp{ID: -4, Slug: "odd"}},
+	}, []commitStatus{bot, {Context: "ci", State: "success"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].AppID != 0 || got[0].Creator != "" || got[1].Creator != "humagen[bot]" || got[2].Creator != "" {
+		t.Fatalf("read %+v", got)
+	}
+	req := github.ApprovalRequest{App: "humagen", AppID: 1001}
+	if !req.OwnCheck(got[1]) || req.OwnCheck(got[2]) {
+		t.Fatalf("own status by creator: %v, other status: %v", req.OwnCheck(got[1]), req.OwnCheck(got[2]))
 	}
 }

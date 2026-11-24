@@ -164,16 +164,55 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	}
 	review = markFindings(review)
 	review.Body += "\n\n" + marker + "\n\n" + reviewPayloadMarker(view, review)
-	posting := ctx
-	if approve {
-		posting = withApproval(ctx, ref, review.CommitID)
-	}
-	result, err := s.api.CreateReview(posting, ref, review)
+	result, err := s.post(ctx, ref, review, approve)
 	if err != nil {
 		return "", err
 	}
 	return reviewReceipt(result.ID, review, view)
 }
+
+// post submits review. An approval carries the sink's single-use grant, and
+// once posted is checked against the head with dismissIfHeadMoved.
+func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve bool) (ReviewResult, error) {
+	if !approve {
+		return s.api.CreateReview(ctx, ref, review)
+	}
+	result, err := s.api.CreateReview(withApproval(ctx, ref, review.CommitID), ref, review)
+	if err != nil {
+		return result, err
+	}
+	s.dismissIfHeadMoved(ctx, ref, review.CommitID, result.ID)
+	return result, nil
+}
+
+// dismissIfHeadMoved reads the pull request again after an approval is posted
+// and, when its head is no longer the approved commit, dismisses that
+// approval: a push may land between the last check and the post. It is best
+// effort; what it cannot do is logged, and the posted review stands.
+func (s reviewSurface) dismissIfHeadMoved(ctx context.Context, ref Ref, pinned string, id int64) {
+	log := s.c.log().With("connector", Name, "pull_request", ref.String(), "review", id)
+	got, err := s.context.ReadContext(ctx, ref, 1)
+	if err != nil {
+		log.Warn("github: could not read the head after posting an approval", "error", err)
+		return
+	}
+	if got.Subject.Head.SHA == pinned {
+		return
+	}
+	api, ok := s.c.cfg.API.(ReviewDismissAPI)
+	if !ok {
+		log.Warn("github: the head moved after an approval was posted, and the API cannot dismiss reviews")
+		return
+	}
+	if err := api.DismissReview(ctx, ref, id, headMovedDismissal); err != nil {
+		log.Warn("github: could not dismiss an approval whose head moved", "error", err)
+		return
+	}
+	log.Info("github: dismissed an approval whose head moved after it was posted")
+}
+
+// headMovedDismissal is the message GitHub shows on such a dismissed approval.
+const headMovedDismissal = "The pull request head moved after this approval was posted; it applies to an earlier commit."
 
 // stateOpen is GitHub's state of an open issue or pull request.
 const stateOpen = "open"
@@ -184,16 +223,28 @@ func approvable(subject ContextSubject) bool {
 	return subject.State == stateOpen && !subject.Draft
 }
 
-// mayApprove decides a planned approval. A closed or draft pull request is
-// not asked about: its review posts as a comment. Otherwise the host's hook
+// mayApprove decides a planned approval. A closed or draft pull request, or a
+// Config.Login that names no app, is not asked about: its review posts as a
+// comment, since without the app's account neither its checks nor its
+// outstanding reviews can be told apart. Otherwise the host's hook
 // decides, and a yes holds only if the pull request read again is still open,
 // not a draft, and on the reviewed commit: the hook may take time.
 func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned, run string, subject ContextSubject, review Review) (bool, error) {
-	if !approvable(subject) {
+	if !approvable(subject) || appSlug(s.c.cfg.Login) == "" {
 		return false, nil
 	}
 	review.Comments = slices.Clone(review.Comments)
-	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{Owner: ref.Owner, Repo: ref.Repo, Number: ref.Number, Commit: pinned, Author: subject.User.Login, Draft: subject.Draft, RunID: run, App: appSlug(s.c.cfg.Login), Review: review})
+	reviews, err := ownReviews(ctx, s.history, s.c.cfg.Login, ref)
+	if err != nil {
+		return false, err
+	}
+	outstanding := outstandingReviews(reviews)
+	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{
+		Owner: ref.Owner, Repo: ref.Repo, Number: ref.Number, Commit: pinned,
+		Author: subject.User.Login, AuthorID: knownID(subject.User.ID), Draft: subject.Draft,
+		RunID: run, App: appSlug(s.c.cfg.Login), AppID: s.c.cfg.AppID,
+		AppReviews: outstanding, Review: review,
+	})
 	if err != nil || !yes {
 		return false, err
 	}

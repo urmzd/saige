@@ -1,0 +1,225 @@
+package github
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
+	"testing"
+
+	"github.com/urmzd/saige/flow/address"
+)
+
+// The request carries the author's numeric ID and the app's ID.
+func TestApprovalRequestCarriesAuthorIDAndAppID(t *testing.T) {
+	a := newApprovalCase(t)
+	snapshot := Context{Files: []ContextFile{{Filename: "a.go", Patch: "@@ -1 +1 @@\n-old\n+new"}}}
+	snapshot.Subject.Head.SHA = a.sha
+	snapshot.Subject.State = "open"
+	snapshot.Subject.User.Login, snapshot.Subject.User.ID = "author", 4242
+	if err := a.api.SeedContext(a.ref, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.AppID = FakeAppID
+	a.cfg.MayApprove = a.hook(false)
+	if err := a.deliver(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.asked) != 1 || a.asked[0].AuthorID != 4242 || a.asked[0].AppID != FakeAppID {
+		t.Fatalf("hook asked %+v, want author ID 4242 and app ID %d", a.asked, FakeAppID)
+	}
+}
+
+// An author ID GitHub reports below 1 reaches the hook as 0.
+func TestApprovalRequestAuthorIDBelowOneIsZero(t *testing.T) {
+	a := newApprovalCase(t)
+	snapshot := Context{Files: []ContextFile{{Filename: "a.go", Patch: "@@ -1 +1 @@\n-old\n+new"}}}
+	snapshot.Subject.Head.SHA = a.sha
+	snapshot.Subject.State = "open"
+	snapshot.Subject.User.Login, snapshot.Subject.User.ID = "author", -9
+	if err := a.api.SeedContext(a.ref, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.MayApprove = a.hook(false)
+	if err := a.deliver(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.asked) != 1 || a.asked[0].AuthorID != 0 {
+		t.Fatalf("hook asked %+v, want author ID 0", a.asked)
+	}
+}
+
+// The request lists the app's outstanding approvals and change requests, each
+// with the delivery marker of the run that posted it, so a host can refuse an
+// approval while a change request it cannot attribute remains.
+func TestApprovalRequestListsAppReviews(t *testing.T) {
+	a := newApprovalCase(t)
+	ctx := context.Background()
+	// An earlier run requested changes through the review sink.
+	earlier := a.cfg
+	earlier.Review = func(View, []ContextFile) (Review, bool, error) {
+		return Review{CommitID: a.sha, Event: "REQUEST_CHANGES", Body: "Fix this"}, true, nil
+	}
+	c, err := New(earlier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := a.env
+	env.Run = "r0"
+	if err := c.Deliver(ctx, a.target, env); err != nil {
+		t.Fatal(err)
+	}
+	// A comment, a dismissed approval and a person's change request are not
+	// outstanding reviews of the app.
+	if _, err := a.api.SeedReview(a.ref, fakeLogin, "COMMENT", a.sha); err != nil {
+		t.Fatal(err)
+	}
+	dismissed, _ := a.api.SeedReview(a.ref, fakeLogin, "APPROVE", a.sha)
+	if err := a.api.DismissReview(ctx, a.ref, dismissed, "older head"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.api.SeedReview(a.ref, "humagen", "REQUEST_CHANGES", a.sha); err != nil {
+		t.Fatal(err)
+	}
+	direct, _ := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha)
+
+	a.cfg.MayApprove = a.hook(false)
+	if err := a.deliver(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.asked) != 1 {
+		t.Fatalf("hook asked %d times", len(a.asked))
+	}
+	got := a.asked[0].AppReviews
+	if len(got) != 2 {
+		t.Fatalf("app reviews %+v, want the sink's change request and the direct one", got)
+	}
+	if got[0].State != "CHANGES_REQUESTED" || got[0].CommitID != a.sha || got[0].Marker != ReviewMarker("tenant", "r0", a.sha) {
+		t.Errorf("sink review read as %+v, want its marker for run r0", got[0])
+	}
+	if got[1].ID != direct || got[1].Marker != "" {
+		t.Errorf("direct review read as %+v, want no marker", got[1])
+	}
+	if n := len(a.asked[0].ChangesRequested()); n != 2 {
+		t.Errorf("ChangesRequested has %d reviews, want 2", n)
+	}
+}
+
+// A marker is read only where the review sink writes it: just before the
+// payload marker at the end of the body.
+func TestBodyReviewMarkerReadsOnlyTheSinksPlace(t *testing.T) {
+	marker := ReviewMarker("tenant", "r1", strings.Repeat("a", 40))
+	payload := "<!-- humagen-review-payload:" + strings.Repeat("0", 64) + " -->"
+	for _, tc := range []struct {
+		body, want string
+	}{
+		{"text\n\n" + marker + "\n\n" + payload, marker},
+		{marker + "\n\ntext", ""},
+		{"text\n\n" + marker, ""},
+		{"text\n\n" + marker + "\n\n" + payload + "\nmore", ""},
+	} {
+		if got := bodyReviewMarker(tc.body); got != tc.want {
+			t.Errorf("bodyReviewMarker(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
+// A review through github_create_review carries none of the sink's markers.
+func TestCreateReviewToolRefusesSinkMarkers(t *testing.T) {
+	a := newApprovalCase(t)
+	c, err := New(a.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := ReviewMarker("tenant", "r1", a.sha)
+	target := address.MustParse("github://acme/project/pull/7")
+	for _, raw := range []map[string]any{
+		{"commit_id": a.sha, "event": "REQUEST_CHANGES", "body": "x\n\n" + marker},
+		{"commit_id": a.sha, "event": "COMMENT", "body": "x", "comments": []map[string]any{{"path": "a.go", "line": 1, "body": "<!-- humagen-review-payload:00 -->"}}},
+		{"commit_id": a.sha, "event": "COMMENT", "body": "x", "comments": []map[string]any{{"path": "a.go", "line": 1, "body": "y", "change": marker}}},
+	} {
+		body, _ := json.Marshal(raw)
+		if _, err := c.createReview(context.Background(), target, body); err == nil {
+			t.Errorf("review %s was posted", body)
+		}
+	}
+	if n := len(a.api.SubmittedReviews()); n != 0 {
+		t.Fatalf("posted %d reviews", n)
+	}
+	body, _ := json.Marshal(map[string]any{"commit_id": a.sha, "event": "COMMENT", "body": "<!-- a note -->"})
+	if _, err := c.createReview(context.Background(), target, body); err != nil {
+		t.Fatalf("a plain comment was refused: %v", err)
+	}
+}
+
+// pushAfterApproval moves the head right after GitHub records an approval.
+type pushAfterApproval struct {
+	*Fake
+	t          *testing.T
+	a          *approvalCase
+	dismissErr error
+}
+
+func (p *pushAfterApproval) CreateReview(ctx context.Context, ref Ref, r Review) (ReviewResult, error) {
+	res, err := p.Fake.CreateReview(ctx, ref, r)
+	if err == nil && r.Event == "APPROVE" {
+		p.a.seedHead(p.t, strings.Repeat("b", 40))
+	}
+	return res, err
+}
+
+func (p *pushAfterApproval) DismissReview(ctx context.Context, ref Ref, id int64, message string) error {
+	if p.dismissErr != nil {
+		return p.dismissErr
+	}
+	return p.Fake.DismissReview(ctx, ref, id, message)
+}
+
+// An approval whose head moved after it was posted is dismissed; when the
+// dismissal fails, that is logged and the delivery still completes.
+func TestApprovalDismissedWhenHeadMovesAfterPost(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		a := newApprovalCase(t)
+		api := &pushAfterApproval{Fake: a.api, t: t, a: a}
+		if fail {
+			api.dismissErr = errors.New("dismissal refused")
+		}
+		var logs bytes.Buffer
+		a.cfg.API = api
+		a.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		a.cfg.MayApprove = a.hook(true)
+		if err := a.deliver(t); err != nil {
+			t.Fatalf("fail=%v: %v", fail, err)
+		}
+		got := a.api.SubmittedReviews()
+		if len(got) != 1 || got[0].Review.Event != "APPROVE" {
+			t.Fatalf("fail=%v: submitted %+v, want one approval", fail, got)
+		}
+		if dismissed := got[0].Dismissal != ""; dismissed == fail {
+			t.Errorf("fail=%v: dismissed = %v", fail, dismissed)
+		}
+		if !strings.Contains(logs.String(), "head moved") {
+			t.Errorf("fail=%v: logged %q", fail, logs.String())
+		}
+	}
+}
+
+// An approval whose head did not move stands.
+func TestApprovalStandsWhenHeadIsUnchanged(t *testing.T) {
+	a := newApprovalCase(t)
+	a.cfg.MayApprove = a.hook(true)
+	if err := a.deliver(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.api.SubmittedReviews(); len(got) != 1 || got[0].Dismissal != "" {
+		t.Fatalf("submitted %+v, want one approval left standing", got)
+	}
+}
+
+func TestNewRefusesNegativeAppID(t *testing.T) {
+	if _, err := New(Config{API: NewFake(), AppID: -1}); err == nil {
+		t.Fatal("a negative AppID was accepted")
+	}
+}
