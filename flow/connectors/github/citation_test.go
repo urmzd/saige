@@ -64,3 +64,40 @@ func TestCommentListsOnlyTheSourcesTheAnswerCites(t *testing.T) {
 		})
 	}
 }
+
+func TestFootnoteLinkStaysOneMarkdownLink(t *testing.T) {
+	tests := []struct {
+		name, uri, want string
+	}{
+		{"delimiters in the uri", "https://example.com/a b(c)?q=<x>\\y", "[1] [Guide](https://example.com/a%20b%28c%29?q=%3Cx%3E%5Cy)"},
+		{"userinfo", "https://user:secret@example.com/a", "[1] [Guide](https://example.com/a)"},
+		{"not http", "javascript:alert(1)", "[1] Guide"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := github.NewFake()
+			c := sinkConnector(t, fake)
+			for _, e := range []event.Envelope{
+				ev(1, event.TypeAccepted, ""),
+				ev(2, event.TypeCitation, fmt.Sprintf(`{"label":"[1]","source":{"document_title":"Guide","source_uri":%q}}`, tc.uri)),
+				textEvent(3, "See [1]."),
+				ev(4, event.TypeCompleted, ""),
+			} {
+				if err := c.Deliver(context.Background(), target, e); err != nil {
+					t.Fatalf("Deliver(seq %d): %v", e.Seq, err)
+				}
+			}
+			comments := fake.Comments()
+			if len(comments) != 1 {
+				t.Fatalf("github holds %d comments, want 1", len(comments))
+			}
+			body := comments[0].Body
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("comment lacks %q:\n%s", tc.want, body)
+			}
+			if strings.Contains(body, "secret") || strings.Contains(body, "javascript") {
+				t.Errorf("comment carries a uri it should not link:\n%s", body)
+			}
+		})
+	}
+}

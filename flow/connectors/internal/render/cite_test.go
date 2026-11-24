@@ -126,3 +126,27 @@ func TestDocumentBoundsTheSourcesAndLabelsItKeeps(t *testing.T) {
 		t.Errorf("kept %d labels for one source, want %d", len(got[0].Labels), render.MaxLabelsPerSource)
 	}
 }
+
+func TestViewMatchesOnlyTheRunAgentsCitations(t *testing.T) {
+	d := render.New()
+	// A nested agent's citation reuses the label the run's answer gives
+	// another source.
+	d.Apply(ev(1, event.TypeCitation, `{"label":"[1]","text":"nested passage","source":{"document_title":"nested","source_uri":"https://example.com/nested"},"parent":["call_1"]}`))
+	d.Apply(citation(2, "[1]", "alpha"))
+	// The same source cited at both levels keeps only the run agent's labels.
+	d.Apply(ev(3, event.TypeCitation, `{"label":"[9]","text":"nested passage","source":{"document_title":"alpha","source_uri":"https://example.com/alpha"},"parent":["call_1"]}`))
+	d.Apply(text(4, "Alpha says so [1], and [9]."))
+	got := d.View().Citations
+	if len(got) != 1 || got[0].Title != "alpha" || got[0].Ref() != "1" {
+		t.Fatalf("citations = %+v, want only alpha referred to as 1", got)
+	}
+}
+
+func TestViewListsNoNestedCitationsAlone(t *testing.T) {
+	d := render.New()
+	d.Apply(ev(1, event.TypeCitation, `{"label":"[1]","text":"nested passage","source":{"document_title":"nested","source_uri":"https://example.com/nested"},"parent":["call_1"]}`))
+	d.Apply(text(2, "See [1]."))
+	if got := d.View().Citations; len(got) != 0 {
+		t.Errorf("citations = %+v, want none", got)
+	}
+}

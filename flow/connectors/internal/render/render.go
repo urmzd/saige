@@ -487,7 +487,15 @@ func (d *Doc) tool(id string, seq uint64) int {
 
 // addCitation files a citation event's source. The event's passage text is
 // not kept: a surface shows where a cited passage is, not what it says.
+//
+// Only the run's own agent's citations are filed. A nested agent's citation
+// (one with a Parent) carries labels from that agent's own answer, which can
+// repeat labels the run's answer uses for other sources, so it is not
+// matched against the run's answer.
 func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
+	if len(b.Parent) > 0 {
+		return false
+	}
 	c := Citation{
 		Title: first(b.Source.DocumentTitle, b.Source.SectionHeading),
 		URI:   b.Source.SourceURI,

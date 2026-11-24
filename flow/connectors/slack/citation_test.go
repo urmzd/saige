@@ -68,3 +68,37 @@ func TestMessageListsOnlyTheSourcesTheAnswerCites(t *testing.T) {
 		})
 	}
 }
+
+func TestFootnoteLinkStaysOneSlackLink(t *testing.T) {
+	tests := []struct {
+		name, title, uri, want string
+	}{
+		{"delimiters in the uri", "Guide", "https://example.com/a?q=<x>|y&z=1", "[1] <https://example.com/a?q=%3Cx%3E%7Cy&amp;z=1|Guide>"},
+		{"delimiters in the title", "a|b <c>", "https://example.com/a", "[1] <https://example.com/a|a-b &lt;c&gt;>"},
+		{"userinfo", "Guide", "https://user:secret@example.com/a", "[1] <https://example.com/a|Guide>"},
+		{"not http", "Guide", "javascript:alert(1)", "[1] Guide"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := slack.NewFake()
+			c := sinkConnector(t, fake)
+			deliverAll(t, c, []event.Envelope{
+				ev(1, event.TypeAccepted, ""),
+				ev(2, event.TypeCitation, fmt.Sprintf(`{"label":"[1]","source":{"document_title":%q,"source_uri":%q}}`, tc.title, tc.uri)),
+				textEvent(3, "See [1]."),
+				ev(4, event.TypeCompleted, ""),
+			})
+			messages := fake.Messages()
+			if len(messages) != 1 {
+				t.Fatalf("slack holds %d messages, want 1", len(messages))
+			}
+			body := messages[0].Text
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("message lacks %q:\n%s", tc.want, body)
+			}
+			if strings.Contains(body, "secret") || strings.Contains(body, "javascript") {
+				t.Errorf("message carries a uri it should not link:\n%s", body)
+			}
+		})
+	}
+}

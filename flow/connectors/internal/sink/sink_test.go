@@ -616,3 +616,41 @@ func TestAStoppedRunWithNothingToShowStillSaysItStopped(t *testing.T) {
 		t.Errorf("the reason is not escaped with the rest of the prose: %q", escaped.Reason)
 	}
 }
+
+func TestLayoutLinksOnlyHTTPFootnotes(t *testing.T) {
+	tests := []struct {
+		name, uri, want string
+	}{
+		{"https", "https://example.com/d", "[1] Design <https://example.com/d>"},
+		{"http, upper-case scheme", "HTTP://example.com/d", "[1] Design <http://example.com/d>"},
+		{"userinfo dropped", "https://user:secret@example.com/d", "[1] Design <https://example.com/d>"},
+		{"delimiters encoded", "https://example.com/a b(c)?q=<x>|y\\z&w=1#\"f\"", "[1] Design <https://example.com/a%20b%28c%29?q=%3Cx%3E%7Cy%5Cz&w=1#%22f%22>"},
+		{"javascript", "javascript:alert(1)", "[1] Design"},
+		{"file", "file:///etc/hosts", "[1] Design"},
+		{"mailto", "mailto:someone@example.com", "[1] Design"},
+		{"relative", "/docs/design", "[1] Design"},
+		{"no host", "https:///d", "[1] Design"},
+		{"scheme-relative", "//example.com/d", "[1] Design"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := render.New()
+			d.Apply(text(1, "see [1]"))
+			d.Apply(ev(2, event.TypeCitation, fmt.Sprintf(`{"label":"[1]","source":{"document_title":"Design","source_uri":%q}}`, tc.uri)))
+			got := layout(d.View())
+			if !strings.HasSuffix(got, "\n\n"+tc.want) {
+				t.Errorf("layout =\n%q\nwant it to end with %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLayoutListsAnUnlinkableUntitledSourceWithoutItsURI(t *testing.T) {
+	d := render.New()
+	d.Apply(text(1, "see [1]"))
+	d.Apply(ev(2, event.TypeCitation, `{"label":"[1]","source":{"source_uri":"javascript:alert(1)"}}`))
+	got := layout(d.View())
+	if !strings.HasSuffix(got, "\n\n[1] source") || strings.Contains(got, "javascript") {
+		t.Errorf("layout =\n%q\nwant the footnote without the uri", got)
+	}
+}

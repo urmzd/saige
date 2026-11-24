@@ -14,13 +14,23 @@ func (mrkdwn) Code(s string) string   { return "`" + s + "`" }
 
 // Link renders <uri|text>, and falls back to the bare uri when there is nothing
 // to label it with.
+//
+// The uri is encoded for the link construct: "<", ">" and "|" are
+// percent-encoded, since any of them would end the construct or its uri
+// early, and "&" is written as "&amp;", as Slack reads entities in message
+// text, links included.
 func (mrkdwn) Link(text, uri string) string {
+	target := linkURI.Replace(uri)
 	if text == "" || text == uri {
-		return "<" + uri + ">"
+		return "<" + target + ">"
 	}
 	// A "|" inside the label would end it early and leave the rest as text.
-	return "<" + uri + "|" + strings.ReplaceAll(text, "|", "-") + ">"
+	return "<" + target + "|" + strings.ReplaceAll(text, "|", "-") + ">"
 }
+
+// linkURI encodes the characters of a uri that Slack's link construct reads
+// as delimiters or entities.
+var linkURI = strings.NewReplacer("&", "&amp;", "<", "%3C", ">", "%3E", "|", "%7C")
 
 // Item renders a list line. Slack has no list syntax that renders reliably
 // across its clients, so a bullet character is used and the line stands on its

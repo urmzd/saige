@@ -21,13 +21,23 @@ func (markdown) Code(s string) string {
 	return "`" + s + "`"
 }
 
-// Link renders [text](uri). Brackets in the label would close it early.
+// Link renders [text](uri). Brackets in the label would close it early. In
+// the uri, whitespace, parentheses, angle brackets and backslashes are
+// percent-encoded, since Markdown reads them as the end of the destination or
+// as escapes.
 func (markdown) Link(text, uri string) string {
 	if text == "" {
 		text = uri
 	}
 	text = strings.NewReplacer("[", "(", "]", ")").Replace(text)
-	return "[" + text + "](" + uri + ")"
+	return "[" + text + "](" + linkURI.Replace(uri) + ")"
 }
+
+// linkURI encodes the characters of a uri that end or alter a Markdown link
+// destination.
+var linkURI = strings.NewReplacer(
+	" ", "%20", "\t", "%09", "\n", "%0A", "\r", "%0D",
+	"(", "%28", ")", "%29", "<", "%3C", ">", "%3E", "\\", "%5C",
+)
 
 func (markdown) Item(s string) string { return "- " + s }
