@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.52.1 (2026-11-24)
+
+### Bug Fixes
+
+- **flow/runtime**: journal each request as it was asked ([4b60f2c](https://github.com/urmzd/saige/commit/4b60f2c12e310b1eb4a06d7097bc1713ddf3b308))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.0...v0.52.1)
+
+
 ## 0.52.0 (2026-11-24)
 
 ### Features
