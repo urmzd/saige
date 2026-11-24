@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.52.0 (2026-11-24)
+
+### Features
+
+- **github**: typed read refusals, ReadComments and read hook tests ([a3eefd7](https://github.com/urmzd/saige/commit/a3eefd7ea3e6ab02faecd49499a4e9c1d57fbaf8))
+- **github**: MayRead and ReadRefused read hooks; refuse ambiguous read arguments (WIP) ([9620145](https://github.com/urmzd/saige/commit/9620145ffdb6763efce1f470368f4ee4ee5531dd))
+
+### Bug Fixes
+
+- **github**: read a redirect's repository from its escaped path ([f1ab0d0](https://github.com/urmzd/saige/commit/f1ab0d0c9126e044be64d9cfb8e15768ecbde7fb))
+- **github**: give the read hooks lower-case names ([8ab4c05](https://github.com/urmzd/saige/commit/8ab4c051309756d63e5f6238f1a117bff7dd5685))
+- **github**: ask the read hooks for a redirected read's target ([c1aab8c](https://github.com/urmzd/saige/commit/c1aab8c9abe6b7cd0af87381822b65a6b803d2f1))
+- **github**: answer a cross-source read where it was named; bound references ([b93f83b](https://github.com/urmzd/saige/commit/b93f83bb6c54d61905557963769e56efa62ea8a6))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.51.0...v0.52.0)
+
+
 ## 0.50.0 (2026-11-23)
 
 ### Features
