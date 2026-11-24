@@ -31,7 +31,8 @@ An approval comes only from the host, in two steps:
 1. `Config.Review` plans the review, with `APPROVE` as its event.
 2. `Config.MayApprove(ctx, req)` decides. `req` is an `ApprovalRequest`: the
    owner, repository, number, reviewed commit, author and draft flag of the
-   pull request, and the review the sink would post. The sink asks once.
+   pull request, the run ID and the connector's app slug, and the review the
+   sink would post. The sink asks once.
 
 | Case | What the sink posts |
 |------|---------------------|
@@ -51,19 +52,23 @@ it posts nothing.
 A host that requires passing checks reads them with `CommitChecks(ctx, owner,
 repo, sha)`. It returns every check run (the latest of each) and every commit
 status (the latest of each context) on the commit, as a `CommitCheck` with
-its kind, name, status, conclusion and `Own`. It follows pages of 100 until
-one is short, and fails when a kind has `MaxCommitChecks` (1000) or more, or
-when GitHub answers for another commit. The model has no tool for this read.
+its kind, name, status, conclusion, and for a check run the slug of the app
+that published it and its external ID. It follows pages of 100 until one is
+short, and fails when a kind has `MaxCommitChecks` (1000) or more, or when
+GitHub answers for another commit. The model has no tool for this read.
 
 - `CommitCheck.Passed` is true for a completed check that concluded
   `success`, `neutral` or `skipped`, the conclusions GitHub's required checks
   accept.
-- `Own` marks a check run named `fiber/<agent>`, the connector's own run
-  check. With `Config.Checks` on, it is still in progress when the hook runs.
-  `Own` comes from the name alone, so another app can publish a check that is
-  marked the same way.
-- `AllPassed(checks)` is true only when every check that is not `Own` passed,
-  at least one such check exists, and the list is shorter than
+- `ApprovalRequest.OwnCheck(check)` is true only for the connector's own
+  check of the run being reviewed: a check run named `fiber/...`, published
+  by the app `Config.Login` names (`ApprovalRequest.App`), whose external ID
+  is the run (`ApprovalRequest.RunID`). With `Config.Checks` on, that check
+  is still in progress when the hook runs. Another app's `fiber/...` check,
+  another run's check and every commit status are never own. With
+  `Config.Login` empty, nothing is own.
+- `AllPassed(checks, req.OwnCheck)` is true only when every check that is not
+  own passed, at least one such check exists, and the list is shorter than
   `MaxCommitChecks`. An empty list is not passed: checks that have not
   registered yet are not a pass.
 

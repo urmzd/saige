@@ -90,7 +90,30 @@ type ApprovalRequest struct {
 	// Author is the login that opened the pull request.
 	Author string
 	Draft  bool
+	// RunID is the run whose review this is. The connector's check for it
+	// carries it as its external ID.
+	RunID string
+	// App is the slug of the connector's own app, from Config.Login without
+	// "[bot]", in lower case. Empty when Config.Login is empty.
+	App    string
 	Review Review
+}
+
+// OwnCheck reports whether check is the connector's own check for the run
+// being reviewed: a check run named "fiber/...", published by App, whose
+// external ID is RunID. That check is still in progress while MayApprove runs.
+// Another app's check, or the check of another run, is never own, and neither
+// is a commit status. With App or RunID empty, nothing is own.
+func (r ApprovalRequest) OwnCheck(check CommitCheck) bool {
+	return r.App != "" && r.RunID != "" && check.Kind == CheckKindRun &&
+		strings.HasPrefix(check.Name, ownCheckPrefix) &&
+		strings.EqualFold(check.App, r.App) && check.ExternalID == r.RunID
+}
+
+// appSlug is the app slug a login names: "humagen[bot]" and "humagen" are both
+// the app "humagen".
+func appSlug(login string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(login)), "[bot]")
 }
 
 // PrepareReview checks every inline location against actual changed-file

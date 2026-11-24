@@ -156,7 +156,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		return "", err
 	}
 	if approve {
-		if approve, err = s.mayApprove(ctx, ref, pinned, subject, review); err != nil {
+		if approve, err = s.mayApprove(ctx, ref, pinned, view.RunID, subject, review); err != nil {
 			return "", err
 		}
 		if !approve {
@@ -189,12 +189,12 @@ func approvable(subject ContextSubject) bool {
 // not asked about: its review posts as a comment. Otherwise the host's hook
 // decides, and a yes holds only if the pull request read again is still open,
 // not a draft, and on the reviewed commit: the hook may take time.
-func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned string, subject ContextSubject, review Review) (bool, error) {
+func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned, run string, subject ContextSubject, review Review) (bool, error) {
 	if !approvable(subject) {
 		return false, nil
 	}
 	review.Comments = slices.Clone(review.Comments)
-	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{Owner: ref.Owner, Repo: ref.Repo, Number: ref.Number, Commit: pinned, Author: subject.User.Login, Draft: subject.Draft, Review: review})
+	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{Owner: ref.Owner, Repo: ref.Repo, Number: ref.Number, Commit: pinned, Author: subject.User.Login, Draft: subject.Draft, RunID: run, App: appSlug(s.c.cfg.Login), Review: review})
 	if err != nil || !yes {
 		return false, err
 	}

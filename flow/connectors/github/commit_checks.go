@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/urmzd/saige/flow/address"
 )
@@ -28,41 +27,37 @@ const MaxCommitChecks = 1000
 // CommitCheck is one check run or one commit status on a commit.
 //
 // A check run keeps GitHub's status (queued, in_progress, completed and the
-// rest) and its conclusion. A commit status is the latest one for its context:
+// rest) and its conclusion, and names the app that published it (App, its
+// slug) and its ExternalID. A commit status is the latest one for its context:
 // pending is Status "pending" with no conclusion, and success, failure and
-// error are Status "completed" with that state as the conclusion.
-//
-// Own marks a check run named like the connector's own run check
-// ("fiber/<agent>", published when Config.Checks is on). That check is still
-// in progress while the review sink asks MayApprove, so a host skips it. Own
-// is decided by the name alone: another app may publish a check of that name.
+// error are Status "completed" with that state as the conclusion. A status has
+// no App or ExternalID.
 type CommitCheck struct {
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion,omitempty"`
 	URL        string `json:"url,omitempty"`
-	Own        bool   `json:"own,omitempty"`
+	App        string `json:"app,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
 }
 
 // ownCheckPrefix starts the name of the check the connector publishes for a run.
 const ownCheckPrefix = "fiber/"
 
-func ownCheck(kind, name string) bool {
-	return kind == CheckKindRun && strings.HasPrefix(name, ownCheckPrefix)
-}
-
 // AllPassed reports whether a commit's checks allow an approval: at least one
-// check that is not Own, every check that is not Own Passed, and fewer than
-// MaxCommitChecks in the list. An empty list, or one with only Own checks, has
-// not passed: checks that have not registered yet are not a pass.
-func AllPassed(checks []CommitCheck) bool {
+// check that own does not skip, every such check Passed, and fewer than
+// MaxCommitChecks in the list. An empty list, or one where own skips every
+// check, has not passed: checks that have not registered yet are not a pass.
+// Pass ApprovalRequest.OwnCheck as own to skip only the check of the run being
+// reviewed; nil skips nothing.
+func AllPassed(checks []CommitCheck, own func(CommitCheck) bool) bool {
 	if len(checks) >= MaxCommitChecks {
 		return false
 	}
 	counted := 0
 	for _, check := range checks {
-		if check.Own {
+		if own != nil && own(check) {
 			continue
 		}
 		if !check.Passed() {
@@ -108,10 +103,14 @@ func (a *HTTPAPI) CommitChecks(ctx context.Context, owner, repo, sha string) ([]
 		var list struct {
 			Checks []struct {
 				Name       string `json:"name"`
+				ExternalID string `json:"external_id"`
 				HeadSHA    string `json:"head_sha"`
 				Status     string `json:"status"`
 				Conclusion string `json:"conclusion"`
 				URL        string `json:"html_url"`
+				App        struct {
+					Slug string `json:"slug"`
+				} `json:"app"`
 			} `json:"check_runs"`
 		}
 		path := fmt.Sprintf("%s/check-runs?filter=latest&per_page=%d&page=%d", base, commitChecksPage, page)
@@ -122,7 +121,7 @@ func (a *HTTPAPI) CommitChecks(ctx context.Context, owner, repo, sha string) ([]
 			if run.HeadSHA != sha {
 				return nil, fmt.Errorf("github: check run response did not match requested commit")
 			}
-			out = append(out, CommitCheck{Kind: CheckKindRun, Name: run.Name, Status: run.Status, Conclusion: run.Conclusion, URL: run.URL, Own: ownCheck(CheckKindRun, run.Name)})
+			out = append(out, CommitCheck{Kind: CheckKindRun, Name: run.Name, Status: run.Status, Conclusion: run.Conclusion, URL: run.URL, App: run.App.Slug, ExternalID: run.ExternalID})
 		}
 		runs += len(list.Checks)
 		if len(list.Checks) < commitChecksPage {

@@ -50,7 +50,8 @@
 // comment, an error retries the delivery, and yes posts the approval while the
 // pull request is still open, not a draft, and on the reviewed commit.
 // CommitChecks reads every check run and commit status on a commit, and
-// AllPassed decides from them, skipping the connector's own check.
+// AllPassed decides from them, skipping only the check that
+// ApprovalRequest.OwnCheck names: this app's check for the run being reviewed.
 //
 // # Reads
 //
@@ -141,7 +142,8 @@ type Config struct {
 	// ErrNoApproval. The model never approves either way:
 	// github_create_review refuses APPROVE whatever this hook would say. A
 	// host that requires passing checks reads them with CommitChecks and
-	// decides with AllPassed, which skips the connector's own check.
+	// decides with AllPassed(checks, req.OwnCheck), which skips only this
+	// app's check for the run being reviewed.
 	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.

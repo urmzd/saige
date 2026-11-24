@@ -13,11 +13,17 @@ import (
 	"github.com/urmzd/saige/flow/connectors/github"
 )
 
+type checkApp struct {
+	Slug string `json:"slug"`
+}
+
 type checkRun struct {
-	Name       string `json:"name"`
-	HeadSHA    string `json:"head_sha"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion,omitempty"`
+	Name       string   `json:"name"`
+	HeadSHA    string   `json:"head_sha"`
+	Status     string   `json:"status"`
+	Conclusion string   `json:"conclusion,omitempty"`
+	App        checkApp `json:"app"`
+	ExternalID string   `json:"external_id,omitempty"`
 }
 
 type commitStatus struct {
@@ -148,7 +154,8 @@ func TestFakeCommitChecksKeepsRepeatedNames(t *testing.T) {
 		{Kind: github.CheckKindRun, Name: "build", Status: "completed", Conclusion: "failure"},
 		{Kind: github.CheckKindStatus, Name: "ci", Status: "completed", Conclusion: "success"},
 		{Kind: github.CheckKindRun, Name: "build", Status: "completed", Conclusion: "success"},
-		{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress"},
+		{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", ExternalID: "r1"},
+		{Kind: github.CheckKindStatus, Name: "fiber/reviewer", Status: "pending", App: "humagen", ExternalID: "r1"},
 	}
 	for _, check := range seed {
 		if err := api.SeedCommitCheck("acme", "repo", commitSHA, check); err != nil {
@@ -159,10 +166,11 @@ func TestFakeCommitChecksKeepsRepeatedNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 4 || got[3].Kind != github.CheckKindStatus || !got[2].Own || got[0].Own {
-		t.Fatalf("fake checks %+v, want both builds, the own check, then the status", got)
+	own := github.ApprovalRequest{RunID: "r1", App: "humagen"}.OwnCheck
+	if len(got) != 5 || got[3].Kind != github.CheckKindStatus || !own(got[2]) || own(got[0]) || got[4].App != "" || got[4].ExternalID != "" {
+		t.Fatalf("fake checks %+v, want both builds, the own check, then the statuses without app", got)
 	}
-	if github.AllPassed(got) {
+	if github.AllPassed(got, own) {
 		t.Fatal("a failed build of a repeated name passed")
 	}
 	if other, _ := api.CommitChecks(context.Background(), "acme", "repo", strings.Repeat("c", 40)); len(other) != 0 {
@@ -228,25 +236,33 @@ func TestCommitChecksBounds(t *testing.T) {
 	}
 }
 
-func TestCommitChecksMarkOwnAndKeepRepeatedNames(t *testing.T) {
+func TestCommitChecksReadAppAndExternalID(t *testing.T) {
 	got, err := readChecks(t, []checkRun{
-		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure"},
-		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "success"},
-		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "in_progress"},
+		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure", App: checkApp{Slug: "actions"}},
+		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "success", App: checkApp{Slug: "actions"}},
+		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "in_progress", App: checkApp{Slug: "humagen"}, ExternalID: "r1"},
+		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure", App: checkApp{Slug: "scanner"}, ExternalID: "r1"},
 	}, []commitStatus{{Context: "fiber/reviewer", State: "pending"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 4 || got[0].Own || got[1].Own || !got[2].Own || got[3].Own {
-		t.Fatalf("read %+v, want both builds, the own check run marked, the status not", got)
+	own := github.ApprovalRequest{RunID: "r1", App: "humagen"}.OwnCheck
+	if len(got) != 5 || got[2].App != "humagen" || got[2].ExternalID != "r1" {
+		t.Fatalf("read %+v, want every run with its app and external ID", got)
+	}
+	for i, want := range []bool{false, false, true, false, false} {
+		if own(got[i]) != want {
+			t.Errorf("check %d %+v own = %v, want %v", i, got[i], !want, want)
+		}
 	}
 }
 
 func TestAllPassed(t *testing.T) {
 	pass := github.CommitCheck{Kind: github.CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success"}
 	skipped := github.CommitCheck{Kind: github.CheckKindRun, Name: "docs", Status: "completed", Conclusion: "skipped"}
-	own := github.CommitCheck{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", Own: true}
+	mine := github.CommitCheck{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", ExternalID: "r1"}
 	pending := github.CommitCheck{Kind: github.CheckKindStatus, Name: "slow", Status: "pending"}
+	own := github.ApprovalRequest{RunID: "r1", App: "humagen"}.OwnCheck
 	full := make([]github.CommitCheck, github.MaxCommitChecks)
 	for i := range full {
 		full[i] = pass
@@ -254,16 +270,18 @@ func TestAllPassed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		checks []github.CommitCheck
+		own    func(github.CommitCheck) bool
 		want   bool
 	}{
-		{"empty", nil, false},
-		{"only own", []github.CommitCheck{own}, false},
-		{"passed and own", []github.CommitCheck{pass, skipped, own}, true},
-		{"one pending", []github.CommitCheck{pass, pending}, false},
-		{"at the bound", full, false},
-		{"below the bound", full[:github.MaxCommitChecks-1], true},
+		{"empty", nil, own, false},
+		{"only own", []github.CommitCheck{mine}, own, false},
+		{"passed and own", []github.CommitCheck{pass, skipped, mine}, own, true},
+		{"own not skipped without a rule", []github.CommitCheck{pass, mine}, nil, false},
+		{"one pending", []github.CommitCheck{pass, pending}, own, false},
+		{"at the bound", full, own, false},
+		{"below the bound", full[:github.MaxCommitChecks-1], own, true},
 	} {
-		if got := github.AllPassed(tc.checks); got != tc.want {
+		if got := github.AllPassed(tc.checks, tc.own); got != tc.want {
 			t.Errorf("%s: AllPassed = %v, want %v", tc.name, got, tc.want)
 		}
 	}

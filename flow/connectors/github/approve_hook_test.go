@@ -363,19 +363,20 @@ func TestHostApprovalLandsOnceAcrossPostFailures(t *testing.T) {
 }
 
 // With Config.Checks on, the connector's own check is still in progress when
-// the hook runs. CommitChecks marks it Own, so AllPassed skips it and the
-// commit's other checks decide.
+// the hook runs. ApprovalRequest.OwnCheck names it by app and run, so
+// AllPassed skips it and the commit's other checks decide.
 func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	a := newApprovalCase(t)
 	a.cfg.Checks = true
-	if err := a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success"}); err != nil {
+	if err := a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions"}); err != nil {
 		t.Fatal(err)
 	}
 	var seen []CommitCheck
+	var asked ApprovalRequest
 	a.cfg.MayApprove = func(ctx context.Context, req ApprovalRequest) (bool, error) {
 		checks, err := a.api.CommitChecks(ctx, req.Owner, req.Repo, req.Commit)
-		seen = checks
-		return AllPassed(checks), err
+		seen, asked = checks, req
+		return AllPassed(checks, req.OwnCheck), err
 	}
 	a.cfg.DeliveryState = deliverystate.NewMemory()
 	c, err := New(a.cfg)
@@ -391,9 +392,12 @@ func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	if err := c.Deliver(ctx, a.target, a.env); err != nil {
 		t.Fatal(err)
 	}
+	if asked.RunID != "r1" || asked.App != FakeApp {
+		t.Fatalf("hook asked for run %q of app %q, want r1 of %q", asked.RunID, asked.App, FakeApp)
+	}
 	own := 0
 	for _, check := range seen {
-		if check.Own {
+		if asked.OwnCheck(check) {
 			own++
 			if check.Passed() {
 				t.Fatalf("own check already passed: %+v", check)
@@ -402,5 +406,55 @@ func TestOwnCheckInProgressWhenHookRuns(t *testing.T) {
 	}
 	if own != 1 || a.approvals() != 1 {
 		t.Fatalf("hook saw %+v and %d approvals posted, want the own check skipped", seen, a.approvals())
+	}
+}
+
+// Only the check of this app for this run is own. A failing check named
+// fiber/... from another app, or from another run of this app on the same
+// commit, still blocks; so does a status of that name.
+func TestOnlyThisRunsCheckIsOwn(t *testing.T) {
+	req := ApprovalRequest{RunID: "r1", App: "humagen"}
+	pass := CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions"}
+	mine := CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", App: "humagen", ExternalID: "r1"}
+	for _, tc := range []struct {
+		name  string
+		check CommitCheck
+	}{
+		{"another app", CommitCheck{Kind: CheckKindRun, Name: "fiber/security-scan", Status: "completed", Conclusion: "failure", App: "scanner", ExternalID: "r1"}},
+		{"another run", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen", ExternalID: "r0"}},
+		{"no external id", CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: "humagen"}},
+		{"a status", CommitCheck{Kind: CheckKindStatus, Name: "fiber/reviewer", Status: "completed", Conclusion: "failure", App: "humagen", ExternalID: "r1"}},
+	} {
+		if req.OwnCheck(tc.check) {
+			t.Errorf("%s: marked own", tc.name)
+		}
+		if AllPassed([]CommitCheck{pass, mine, tc.check}, req.OwnCheck) {
+			t.Errorf("%s: a failing check was skipped", tc.name)
+		}
+	}
+	if !AllPassed([]CommitCheck{pass, mine}, req.OwnCheck) {
+		t.Fatal("this run's own check blocked the approval")
+	}
+	for _, empty := range []ApprovalRequest{{App: "humagen"}, {RunID: "r1"}} {
+		if empty.OwnCheck(mine) {
+			t.Errorf("%+v marked a check own", empty)
+		}
+	}
+	if !req.OwnCheck(CommitCheck{Kind: CheckKindRun, Name: "fiber/reviewer", App: "Humagen", ExternalID: "r1"}) {
+		t.Error("app slug compared with case")
+	}
+}
+
+// Another agent's failed run on the same commit, read through the fake, blocks.
+func TestOtherRunsFailedCheckBlocksThroughFake(t *testing.T) {
+	a := newApprovalCase(t)
+	_ = a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success", App: "actions"})
+	_ = a.api.SeedCommitCheck("acme", "project", a.sha, CommitCheck{Kind: CheckKindRun, Name: "fiber/security", Status: "completed", Conclusion: "failure", App: FakeApp, ExternalID: "r0"})
+	got, err := a.api.CommitChecks(context.Background(), "acme", "project", a.sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if AllPassed(got, ApprovalRequest{RunID: "r1", App: FakeApp}.OwnCheck) {
+		t.Fatalf("another run's failed check was skipped: %+v", got)
 	}
 }
