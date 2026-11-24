@@ -65,7 +65,7 @@ func TestModelNeverApprovesHostHookMay(t *testing.T) {
 		t.Fatal("a refused approval was recorded")
 	}
 	asked := false
-	c, err := New(Config{API: api, MayApprove: func(context.Context, string, string, Review) bool { asked = true; return true }})
+	c, err := New(Config{API: api, MayApprove: func(context.Context, ApprovalRequest) (bool, error) { asked = true; return true, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

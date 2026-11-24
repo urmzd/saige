@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/urmzd/saige/flow/address"
 )
@@ -30,12 +31,46 @@ const MaxCommitChecks = 1000
 // rest) and its conclusion. A commit status is the latest one for its context:
 // pending is Status "pending" with no conclusion, and success, failure and
 // error are Status "completed" with that state as the conclusion.
+//
+// Own marks a check run named like the connector's own run check
+// ("fiber/<agent>", published when Config.Checks is on). That check is still
+// in progress while the review sink asks MayApprove, so a host skips it. Own
+// is decided by the name alone: another app may publish a check of that name.
 type CommitCheck struct {
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion,omitempty"`
 	URL        string `json:"url,omitempty"`
+	Own        bool   `json:"own,omitempty"`
+}
+
+// ownCheckPrefix starts the name of the check the connector publishes for a run.
+const ownCheckPrefix = "fiber/"
+
+func ownCheck(kind, name string) bool {
+	return kind == CheckKindRun && strings.HasPrefix(name, ownCheckPrefix)
+}
+
+// AllPassed reports whether a commit's checks allow an approval: at least one
+// check that is not Own, every check that is not Own Passed, and fewer than
+// MaxCommitChecks in the list. An empty list, or one with only Own checks, has
+// not passed: checks that have not registered yet are not a pass.
+func AllPassed(checks []CommitCheck) bool {
+	if len(checks) >= MaxCommitChecks {
+		return false
+	}
+	counted := 0
+	for _, check := range checks {
+		if check.Own {
+			continue
+		}
+		if !check.Passed() {
+			return false
+		}
+		counted++
+	}
+	return counted > 0
 }
 
 // Passed reports whether the check completed as success, neutral or skipped,
@@ -87,7 +122,7 @@ func (a *HTTPAPI) CommitChecks(ctx context.Context, owner, repo, sha string) ([]
 			if run.HeadSHA != sha {
 				return nil, fmt.Errorf("github: check run response did not match requested commit")
 			}
-			out = append(out, CommitCheck{Kind: CheckKindRun, Name: run.Name, Status: run.Status, Conclusion: run.Conclusion, URL: run.URL})
+			out = append(out, CommitCheck{Kind: CheckKindRun, Name: run.Name, Status: run.Status, Conclusion: run.Conclusion, URL: run.URL, Own: ownCheck(CheckKindRun, run.Name)})
 		}
 		runs += len(list.Checks)
 		if len(list.Checks) < commitChecksPage {

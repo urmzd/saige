@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/urmzd/saige/flow/address"
 	"github.com/urmzd/saige/flow/connector"
@@ -61,18 +62,35 @@ type approvalKey struct{}
 type approvalGrant struct {
 	ref    Ref
 	commit string
+	used   atomic.Bool
 }
 
-// withApproval grants an approving CreateReview for exactly this pull request
+// withApproval grants one approving CreateReview for exactly this pull request
 // and commit. Only the review sink calls it, after Config.MayApprove said yes.
 func withApproval(ctx context.Context, ref Ref, commit string) context.Context {
-	return context.WithValue(ctx, approvalKey{}, approvalGrant{ref: ref, commit: commit})
+	return context.WithValue(ctx, approvalKey{}, &approvalGrant{ref: ref, commit: commit})
 }
 
-// approvalGranted reports whether ctx holds the sink's grant for this review.
+// approvalGranted reports whether ctx holds the sink's grant for this review,
+// and spends it: a grant posts one approval.
 func approvalGranted(ctx context.Context, ref Ref, review Review) bool {
-	grant, ok := ctx.Value(approvalKey{}).(approvalGrant)
-	return ok && grant.commit != "" && grant.commit == review.CommitID && grant.ref == ref
+	grant, ok := ctx.Value(approvalKey{}).(*approvalGrant)
+	return ok && grant.commit != "" && grant.commit == review.CommitID && grant.ref == ref && grant.used.CompareAndSwap(false, true)
+}
+
+// ApprovalRequest is what Config.MayApprove decides: the pull request as the
+// review sink read it, and the review it would post as an approval. Draft is
+// always false today, since the sink posts a draft's review as a comment
+// without asking; it is here so a host can state the rule itself.
+type ApprovalRequest struct {
+	Owner, Repo string
+	Number      int
+	// Commit is the reviewed head, the commit an approval lands on.
+	Commit string
+	// Author is the login that opened the pull request.
+	Author string
+	Draft  bool
+	Review Review
 }
 
 // PrepareReview checks every inline location against actual changed-file

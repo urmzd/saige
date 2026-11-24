@@ -45,11 +45,12 @@
 // The model reviews through github_create_review, which comments or requests
 // changes and never approves: APPROVE is refused with ErrNoApproval. The host
 // may approve through the review sink alone. Config.Review plans the review,
-// and Config.MayApprove decides an APPROVE it planned: nil fails it with
-// ErrNoApproval, no posts it as a comment, and yes posts the approval while the
-// pull request's head is still the reviewed commit. CommitChecks reads every
-// check run and commit status on a commit, so the hook can require them all to
-// pass.
+// and Config.MayApprove decides an APPROVE it planned on an open pull request
+// that is not a draft: nil fails it with ErrNoApproval, no posts it as a
+// comment, an error retries the delivery, and yes posts the approval while the
+// pull request is still open, not a draft, and on the reviewed commit.
+// CommitChecks reads every check run and commit status on a commit, and
+// AllPassed decides from them, skipping the connector's own check.
 //
 // # Reads
 //
@@ -129,16 +130,19 @@ type Config struct {
 	// Nil reuses Review, which must then reproduce the same historical payload.
 	RecoverReview func(View, []ContextFile, string) (Review, bool, error)
 	// MayApprove is the host's last word on an approval. When Review plans an
-	// APPROVE, the review sink asks it once, with the owner and repository of
-	// the pull request and the review it would post (locations checked,
-	// before the delivery markers). Yes posts the approval, after the sink
-	// reads the pull request again and finds its head still on the reviewed
-	// commit. No posts the same review as a COMMENT. Nil keeps the rule that
-	// nothing approves: the planned approval fails with ErrNoApproval. The
-	// model never approves either way: github_create_review refuses APPROVE
-	// whatever this hook would say. A host that requires passing checks reads
-	// them with CommitChecks.
-	MayApprove func(ctx context.Context, owner, repo string, review Review) bool
+	// APPROVE on an open pull request that is not a draft, the review sink
+	// asks it once, with the pull request and the review it would post
+	// (locations checked, before the delivery markers). Yes posts the
+	// approval, after the sink reads the pull request again and finds it
+	// still open, not a draft, and on the reviewed commit. No posts the same
+	// review as a COMMENT, and so does a closed or draft pull request. An
+	// error posts nothing and the delivery is retried, asking again. Nil
+	// keeps the rule that nothing approves: the planned approval fails with
+	// ErrNoApproval. The model never approves either way:
+	// github_create_review refuses APPROVE whatever this hook would say. A
+	// host that requires passing checks reads them with CommitChecks and
+	// decides with AllPassed, which skips the connector's own check.
+	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.
 	ActionRepositories []string

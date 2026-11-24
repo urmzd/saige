@@ -31,12 +31,18 @@ type Context struct {
 
 // ContextSubject describes an issue or pull request and its exact head revision.
 type ContextSubject struct {
-	Reactions   *ReactionCounts `json:"reactions,omitempty"`
-	Number      int             `json:"number"`
-	Title       string          `json:"title"`
-	Body        string          `json:"body"`
-	State       string          `json:"state"`
-	URL         string          `json:"html_url"`
+	Reactions *ReactionCounts `json:"reactions,omitempty"`
+	Number    int             `json:"number"`
+	Title     string          `json:"title"`
+	Body      string          `json:"body"`
+	State     string          `json:"state"`
+	// Draft is true for a draft pull request.
+	Draft bool   `json:"draft,omitempty"`
+	URL   string `json:"html_url"`
+	// User is who opened the issue or pull request.
+	User struct {
+		Login string `json:"login"`
+	} `json:"user,omitzero"`
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request,omitempty"`
@@ -108,6 +114,7 @@ func (a *HTTPAPI) ReadContext(ctx context.Context, ref Ref, page int) (Context, 
 			return Context{}, err
 		}
 		out.Subject.Head = pr.Head
+		out.Subject.Draft = pr.Draft
 		for _, read := range []struct {
 			path string
 			dst  any

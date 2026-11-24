@@ -142,12 +142,13 @@ func TestCommitChecksFailClosed(t *testing.T) {
 	})
 }
 
-func TestFakeCommitChecks(t *testing.T) {
+func TestFakeCommitChecksKeepsRepeatedNames(t *testing.T) {
 	api := github.NewFake()
 	seed := []github.CommitCheck{
-		{Kind: github.CheckKindRun, Name: "build", Status: "in_progress"},
+		{Kind: github.CheckKindRun, Name: "build", Status: "completed", Conclusion: "failure"},
 		{Kind: github.CheckKindStatus, Name: "ci", Status: "completed", Conclusion: "success"},
 		{Kind: github.CheckKindRun, Name: "build", Status: "completed", Conclusion: "success"},
+		{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress"},
 	}
 	for _, check := range seed {
 		if err := api.SeedCommitCheck("acme", "repo", commitSHA, check); err != nil {
@@ -158,13 +159,112 @@ func TestFakeCommitChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || !got[0].Passed() || !got[1].Passed() || got[0].Kind != github.CheckKindRun {
-		t.Fatalf("fake checks %+v, want the newer build run and the status", got)
+	if len(got) != 4 || got[3].Kind != github.CheckKindStatus || !got[2].Own || got[0].Own {
+		t.Fatalf("fake checks %+v, want both builds, the own check, then the status", got)
+	}
+	if github.AllPassed(got) {
+		t.Fatal("a failed build of a repeated name passed")
 	}
 	if other, _ := api.CommitChecks(context.Background(), "acme", "repo", strings.Repeat("c", 40)); len(other) != 0 {
 		t.Fatalf("another commit reads %+v", other)
 	}
 	if err := api.SeedCommitCheck("acme", "repo", commitSHA, github.CommitCheck{Kind: "other", Name: "x", Status: "completed"}); err == nil {
 		t.Fatal("seeded an unknown kind")
+	}
+}
+
+func readChecks(t *testing.T, runs []checkRun, statuses []commitStatus) ([]github.CommitCheck, error) {
+	t.Helper()
+	server := checksServer(t, runs, statuses, commitSHA)
+	defer server.Close()
+	return github.NewHTTPAPIAt(server.URL, "token", server.Client()).CommitChecks(context.Background(), "acme", "repo", commitSHA)
+}
+
+func TestCommitChecksOnlySuccessNeutralSkippedPass(t *testing.T) {
+	var runs []checkRun
+	for _, c := range []string{"cancelled", "timed_out", "action_required", "stale", "startup_failure", "failure", ""} {
+		runs = append(runs, checkRun{Name: "c-" + c, HeadSHA: commitSHA, Status: "completed", Conclusion: c})
+	}
+	for _, s := range []string{"queued", "in_progress", "waiting", "requested", "pending"} {
+		runs = append(runs, checkRun{Name: "s-" + s, HeadSHA: commitSHA, Status: s})
+	}
+	got, err := readChecks(t, runs, []commitStatus{{Context: "x", State: "failure"}, {Context: "y", State: "error"}, {Context: "z", State: "unknown"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if c.Passed() {
+			t.Errorf("%s %s/%s passed", c.Name, c.Status, c.Conclusion)
+		}
+	}
+}
+
+func TestCommitChecksBounds(t *testing.T) {
+	runsOf := func(n int) []checkRun {
+		out := make([]checkRun, n)
+		for i := range out {
+			out[i] = checkRun{Name: fmt.Sprint(i), HeadSHA: commitSHA, Status: "completed", Conclusion: "success"}
+		}
+		return out
+	}
+	statusesOf := func(n int) []commitStatus {
+		out := make([]commitStatus, n)
+		for i := range out {
+			out[i] = commitStatus{Context: fmt.Sprint(i), State: "success"}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		runs, statuses int
+		ok             bool
+	}{{100, 0, true}, {200, 100, true}, {999, 999, true}, {1000, 0, false}, {0, 1000, false}, {1001, 0, false}} {
+		got, err := readChecks(t, runsOf(tc.runs), statusesOf(tc.statuses))
+		if (err == nil) != tc.ok {
+			t.Errorf("runs=%d statuses=%d err=%v", tc.runs, tc.statuses, err)
+		}
+		if err == nil && len(got) != tc.runs+tc.statuses {
+			t.Errorf("runs=%d statuses=%d read %d", tc.runs, tc.statuses, len(got))
+		}
+	}
+}
+
+func TestCommitChecksMarkOwnAndKeepRepeatedNames(t *testing.T) {
+	got, err := readChecks(t, []checkRun{
+		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "failure"},
+		{Name: "build", HeadSHA: commitSHA, Status: "completed", Conclusion: "success"},
+		{Name: "fiber/reviewer", HeadSHA: commitSHA, Status: "in_progress"},
+	}, []commitStatus{{Context: "fiber/reviewer", State: "pending"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[0].Own || got[1].Own || !got[2].Own || got[3].Own {
+		t.Fatalf("read %+v, want both builds, the own check run marked, the status not", got)
+	}
+}
+
+func TestAllPassed(t *testing.T) {
+	pass := github.CommitCheck{Kind: github.CheckKindRun, Name: "ci", Status: "completed", Conclusion: "success"}
+	skipped := github.CommitCheck{Kind: github.CheckKindRun, Name: "docs", Status: "completed", Conclusion: "skipped"}
+	own := github.CommitCheck{Kind: github.CheckKindRun, Name: "fiber/reviewer", Status: "in_progress", Own: true}
+	pending := github.CommitCheck{Kind: github.CheckKindStatus, Name: "slow", Status: "pending"}
+	full := make([]github.CommitCheck, github.MaxCommitChecks)
+	for i := range full {
+		full[i] = pass
+	}
+	for _, tc := range []struct {
+		name   string
+		checks []github.CommitCheck
+		want   bool
+	}{
+		{"empty", nil, false},
+		{"only own", []github.CommitCheck{own}, false},
+		{"passed and own", []github.CommitCheck{pass, skipped, own}, true},
+		{"one pending", []github.CommitCheck{pass, pending}, false},
+		{"at the bound", full, false},
+		{"below the bound", full[:github.MaxCommitChecks-1], true},
+	} {
+		if got := github.AllPassed(tc.checks); got != tc.want {
+			t.Errorf("%s: AllPassed = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

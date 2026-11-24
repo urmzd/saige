@@ -121,6 +121,7 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		}
 	}
 	var files []ContextFile
+	var subject ContextSubject
 	for page := 1; page <= 10; page++ {
 		got, err := s.context.ReadContext(ctx, ref, page)
 		if err != nil {
@@ -128,6 +129,9 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		}
 		if got.Subject.Head.SHA != pinned {
 			return "", fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
+		}
+		if page == 1 {
+			subject = got.Subject
 		}
 		files = append(files, got.Files...)
 		if got.NextPage == 0 {
@@ -152,13 +156,11 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		return "", err
 	}
 	if approve {
-		asked := review
-		asked.Comments = slices.Clone(review.Comments)
-		approve = s.c.cfg.MayApprove(ctx, ref.Owner, ref.Repo, asked)
+		if approve, err = s.mayApprove(ctx, ref, pinned, subject, review); err != nil {
+			return "", err
+		}
 		if !approve {
 			review.Event = "COMMENT"
-		} else if err := s.stillPinned(ctx, ref, pinned); err != nil {
-			return "", err
 		}
 	}
 	review = markFindings(review)
@@ -174,18 +176,36 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	return reviewReceipt(result.ID, review, view)
 }
 
-// stillPinned reads the pull request again just before an approval is posted:
-// the host's hook may take time, and an approval must not land on a head that
-// moved off the reviewed commit meanwhile.
-func (s reviewSurface) stillPinned(ctx context.Context, ref Ref, pinned string) error {
+// stateOpen is GitHub's state of an open issue or pull request.
+const stateOpen = "open"
+
+// approvable reports whether GitHub's view of the pull request allows an
+// approval: open and not a draft.
+func approvable(subject ContextSubject) bool {
+	return subject.State == stateOpen && !subject.Draft
+}
+
+// mayApprove decides a planned approval. A closed or draft pull request is
+// not asked about: its review posts as a comment. Otherwise the host's hook
+// decides, and a yes holds only if the pull request read again is still open,
+// not a draft, and on the reviewed commit: the hook may take time.
+func (s reviewSurface) mayApprove(ctx context.Context, ref Ref, pinned string, subject ContextSubject, review Review) (bool, error) {
+	if !approvable(subject) {
+		return false, nil
+	}
+	review.Comments = slices.Clone(review.Comments)
+	yes, err := s.c.cfg.MayApprove(ctx, ApprovalRequest{Owner: ref.Owner, Repo: ref.Repo, Number: ref.Number, Commit: pinned, Author: subject.User.Login, Draft: subject.Draft, Review: review})
+	if err != nil || !yes {
+		return false, err
+	}
 	got, err := s.context.ReadContext(ctx, ref, 1)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if got.Subject.Head.SHA != pinned {
-		return fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
+		return false, fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
 	}
-	return nil
+	return approvable(got.Subject), nil
 }
 
 func (s reviewSurface) Update(_ context.Context, _ address.Address, _ string, _ string) error {

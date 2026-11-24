@@ -29,29 +29,43 @@ make, for that one pull request and commit.
 An approval comes only from the host, in two steps:
 
 1. `Config.Review` plans the review, with `APPROVE` as its event.
-2. `Config.MayApprove(ctx, owner, repo, review)` decides. The sink asks it
-   once, with the review it would post.
+2. `Config.MayApprove(ctx, req)` decides. `req` is an `ApprovalRequest`: the
+   owner, repository, number, reviewed commit, author and draft flag of the
+   pull request, and the review the sink would post. The sink asks once.
 
-| `MayApprove` | What the sink posts |
-|--------------|---------------------|
-| nil (the default) | Nothing: the delivery fails with `ErrNoApproval`, as before the hook |
-| answers no | The same review as `COMMENT` |
-| answers yes | `APPROVE`, after it reads the pull request again and finds the head still on the reviewed commit |
+| Case | What the sink posts |
+|------|---------------------|
+| `MayApprove` is nil (the default) | Nothing: the delivery fails with `ErrNoApproval`, as before the hook |
+| The pull request is closed or a draft | The same review as `COMMENT`, without asking the hook |
+| The hook answers no | The same review as `COMMENT` |
+| The hook returns an error | Nothing: the delivery is retried, and the hook is asked again |
+| The hook answers yes | `APPROVE`, after it reads the pull request again and finds it open, not a draft, and on the reviewed commit; otherwise `COMMENT` |
 
 A head that moved off the reviewed commit, before or while the hook decides,
-is refused as `ErrUndeliverable`. Recovery reads back an approval the host
-posted, so a retried delivery matches it instead of posting another. Recovery
-never asks the hook: it posts nothing.
+is refused as `ErrUndeliverable`. The sink posts the approval under a grant
+that the HTTP API and the fake spend on one post for that pull request and
+commit. Recovery reads back an approval the host posted, so a retried
+delivery matches it instead of posting another. Recovery never asks the hook:
+it posts nothing.
 
 A host that requires passing checks reads them with `CommitChecks(ctx, owner,
 repo, sha)`. It returns every check run (the latest of each) and every commit
 status (the latest of each context) on the commit, as a `CommitCheck` with
-its kind, name, status and conclusion. It follows pages of 100 until one is
-short, and fails when a kind has `MaxCommitChecks` (1000) or more, or when
-GitHub answers for another commit. `CommitCheck.Passed` is true for a
-completed check that concluded `success`, `neutral` or `skipped`, the
-conclusions GitHub's required checks accept. The model has no tool for this
-read.
+its kind, name, status, conclusion and `Own`. It follows pages of 100 until
+one is short, and fails when a kind has `MaxCommitChecks` (1000) or more, or
+when GitHub answers for another commit. The model has no tool for this read.
+
+- `CommitCheck.Passed` is true for a completed check that concluded
+  `success`, `neutral` or `skipped`, the conclusions GitHub's required checks
+  accept.
+- `Own` marks a check run named `fiber/<agent>`, the connector's own run
+  check. With `Config.Checks` on, it is still in progress when the hook runs.
+  `Own` comes from the name alone, so another app can publish a check that is
+  marked the same way.
+- `AllPassed(checks)` is true only when every check that is not `Own` passed,
+  at least one such check exists, and the list is shorter than
+  `MaxCommitChecks`. An empty list is not passed: checks that have not
+  registered yet are not a pass.
 
 ## What a webhook publishes
 
