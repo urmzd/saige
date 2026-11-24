@@ -40,6 +40,17 @@
 // github_comment, github_request_review and github_add_labels. Each returns the
 // address of what it changed, so the action.taken event can cite it.
 //
+// # Reviews
+//
+// The model reviews through github_create_review, which comments or requests
+// changes and never approves: APPROVE is refused with ErrNoApproval. The host
+// may approve through the review sink alone. Config.Review plans the review,
+// and Config.MayApprove decides an APPROVE it planned: nil fails it with
+// ErrNoApproval, no posts it as a comment, and yes posts the approval while the
+// pull request's head is still the reviewed commit. CommitChecks reads every
+// check run and commit status on a commit, so the hook can require them all to
+// pass.
+//
 // # Reads
 //
 // github_read_context, github_read_file, github_workflow_status,
@@ -117,6 +128,17 @@ type Config struct {
 	// callback grants no new write and must preserve the host's evidence checks.
 	// Nil reuses Review, which must then reproduce the same historical payload.
 	RecoverReview func(View, []ContextFile, string) (Review, bool, error)
+	// MayApprove is the host's last word on an approval. When Review plans an
+	// APPROVE, the review sink asks it once, with the owner and repository of
+	// the pull request and the review it would post (locations checked,
+	// before the delivery markers). Yes posts the approval, after the sink
+	// reads the pull request again and finds its head still on the reviewed
+	// commit. No posts the same review as a COMMENT. Nil keeps the rule that
+	// nothing approves: the planned approval fails with ErrNoApproval. The
+	// model never approves either way: github_create_review refuses APPROVE
+	// whatever this hook would say. A host that requires passing checks reads
+	// them with CommitChecks.
+	MayApprove func(ctx context.Context, owner, repo string, review Review) bool
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.
 	ActionRepositories []string

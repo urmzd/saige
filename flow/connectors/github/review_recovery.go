@@ -44,9 +44,10 @@ func reviewPayloadMarker(view render.View, review Review) string {
 	return "<!-- humagen-review-payload:" + hex.EncodeToString(sum[:]) + " -->"
 }
 
-// Recover only a previously submitted, exact app-owned payload. The current
-// head guards creation, not observation of an existing
-// review. Its original remote diff hunks supply evidence for finding mapping.
+// Recover only a previously submitted, exact app-owned payload, an approval the
+// host posted included. The current head guards creation, not observation of
+// an existing review, and recovery never asks MayApprove: it posts nothing.
+// Its original remote diff hunks supply evidence for finding mapping.
 func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRecord, marker string, view render.View) (string, error) {
 	event := map[string]string{"COMMENTED": "COMMENT", "APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES"}[row.State]
 	if row.ID <= 0 || event == "" {
@@ -119,6 +120,11 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 	}
 	if !ok {
 		return "", fmt.Errorf("github: existing review no longer has a reproducible finding mapping")
+	}
+	// An approval the host's MayApprove refused was posted as a comment. A
+	// plan that still says APPROVE reproduces that comment, never a new event.
+	if planned.Event == "APPROVE" && event == "COMMENT" && s.c.cfg.MayApprove != nil {
+		planned.Event = "COMMENT"
 	}
 	planned, err = prepareReview(planned, files, true)
 	if err != nil {

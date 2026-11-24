@@ -144,18 +144,48 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	if review.CommitID != pinned {
 		return "", fmt.Errorf("%w: github: review commit differs from pinned PR head", connector.ErrUndeliverable)
 	}
-	review, err = PrepareReview(review, files)
+	// Only the host approves: an APPROVE planned by Review passes when
+	// MayApprove is set, and posts only when it says yes.
+	approve := review.Event == "APPROVE" && s.c.cfg.MayApprove != nil
+	review, err = prepareReview(review, files, approve)
 	if err != nil {
 		return "", err
 	}
+	if approve {
+		approve = s.c.cfg.MayApprove(ctx, ref.Owner, ref.Repo, review)
+		if !approve {
+			review.Event = "COMMENT"
+		} else if err := s.stillPinned(ctx, ref, pinned); err != nil {
+			return "", err
+		}
+	}
 	review = markFindings(review)
 	review.Body += "\n\n" + marker + "\n\n" + reviewPayloadMarker(view, review)
-	result, err := s.api.CreateReview(ctx, ref, review)
+	posting := ctx
+	if approve {
+		posting = withApproval(ctx, ref, review.CommitID)
+	}
+	result, err := s.api.CreateReview(posting, ref, review)
 	if err != nil {
 		return "", err
 	}
 	return reviewReceipt(result.ID, review, view)
 }
+
+// stillPinned reads the pull request again just before an approval is posted:
+// the host's hook may take time, and an approval must not land on a head that
+// moved off the reviewed commit meanwhile.
+func (s reviewSurface) stillPinned(ctx context.Context, ref Ref, pinned string) error {
+	got, err := s.context.ReadContext(ctx, ref, 1)
+	if err != nil {
+		return err
+	}
+	if got.Subject.Head.SHA != pinned {
+		return fmt.Errorf("%w: github: reviewed head changed; refusing stale review", connector.ErrUndeliverable)
+	}
+	return nil
+}
+
 func (s reviewSurface) Update(_ context.Context, _ address.Address, _ string, _ string) error {
 	// A submitted review is immutable. Late earlier events can update the status
 	// comment, but cannot submit a second review for the same completed run.

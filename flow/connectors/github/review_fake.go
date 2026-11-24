@@ -14,7 +14,7 @@ type FakeReview struct {
 	Files  []ContextFile
 }
 
-func (f *Fake) CreateReview(_ context.Context, ref Ref, review Review) (ReviewResult, error) {
+func (f *Fake) CreateReview(ctx context.Context, ref Ref, review Review) (ReviewResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.Err != nil {
@@ -23,11 +23,8 @@ func (f *Fake) CreateReview(_ context.Context, ref Ref, review Review) (ReviewRe
 	if ref.Number <= 0 || review.CommitID == "" {
 		return ReviewResult{}, fmt.Errorf("github: review needs a pull request and commit")
 	}
-	if review.Event == "APPROVE" {
-		return ReviewResult{}, ErrNoApproval
-	}
-	if review.Event != "COMMENT" && review.Event != "REQUEST_CHANGES" {
-		return ReviewResult{}, fmt.Errorf("github: review event is required")
+	if err := reviewEventAllowed(ctx, ref, review); err != nil {
+		return ReviewResult{}, err
 	}
 	f.nextID++
 	result := ReviewResult{ID: f.nextID, URL: fmt.Sprintf("https://github.com/%s/%s/pull/%d#pullrequestreview-%d", ref.Owner, ref.Repo, ref.Number, f.nextID)}

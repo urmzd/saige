@@ -49,9 +49,31 @@ type ReviewResult struct {
 
 var diffHeader = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
-// ErrNoApproval refuses an approving review: agents comment or request
-// changes, and a person approves and merges.
+// ErrNoApproval refuses an approving review: the model comments or requests
+// changes. Only the host's review sink posts an approval, and only when
+// Config.MayApprove says yes.
 var ErrNoApproval = errors.New("github: agents never approve pull requests")
+
+// approvalKey carries the one approval the review sink was granted. The type is
+// unexported, so nothing outside this package can put a grant on a context.
+type approvalKey struct{}
+
+type approvalGrant struct {
+	ref    Ref
+	commit string
+}
+
+// withApproval grants an approving CreateReview for exactly this pull request
+// and commit. Only the review sink calls it, after Config.MayApprove said yes.
+func withApproval(ctx context.Context, ref Ref, commit string) context.Context {
+	return context.WithValue(ctx, approvalKey{}, approvalGrant{ref: ref, commit: commit})
+}
+
+// approvalGranted reports whether ctx holds the sink's grant for this review.
+func approvalGranted(ctx context.Context, ref Ref, review Review) bool {
+	grant, ok := ctx.Value(approvalKey{}).(approvalGrant)
+	return ok && grant.commit != "" && grant.commit == review.CommitID && grant.ref == ref
+}
 
 // PrepareReview checks every inline location against actual changed-file
 // patches. Unavailable or invalid anchors degrade to the review body; they do
@@ -60,16 +82,17 @@ func PrepareReview(review Review, files []ContextFile) (Review, error) {
 	return prepareReview(review, files, false)
 }
 
-// prepareReview also reads back an approval submitted before agents stopped
-// approving, so recovery can match an existing review; it never creates one.
-func prepareReview(review Review, files []ContextFile, recovering bool) (Review, error) {
+// prepareReview with allowApproval accepts an APPROVE event. The review sink
+// passes it after Config.MayApprove said yes, and recovery passes it to read
+// back an approval already posted; neither path is reachable from a tool.
+func prepareReview(review Review, files []ContextFile, allowApproval bool) (Review, error) {
 	if review.CommitID == "" {
 		return Review{}, fmt.Errorf("github: review needs the inspected commit")
 	}
 	switch review.Event {
 	case "COMMENT", "REQUEST_CHANGES":
 	case "APPROVE":
-		if !recovering {
+		if !allowApproval {
 			return Review{}, ErrNoApproval
 		}
 	default:
@@ -127,6 +150,23 @@ func prepareReview(review Review, files []ContextFile, recovering bool) (Review,
 	return out, nil
 }
 
+// reviewEventAllowed refuses an APPROVE that does not carry the review sink's
+// grant for this pull request and commit, and any event GitHub would read as a
+// draft.
+func reviewEventAllowed(ctx context.Context, ref Ref, review Review) error {
+	switch review.Event {
+	case "COMMENT", "REQUEST_CHANGES":
+		return nil
+	case "APPROVE":
+		if approvalGranted(ctx, ref, review) {
+			return nil
+		}
+		return ErrNoApproval
+	default:
+		return fmt.Errorf("github: review event is required")
+	}
+}
+
 func diffLines(patch string) map[string]map[int]bool {
 	lines := map[string]map[int]bool{"LEFT": {}, "RIGHT": {}}
 	old, next := 0, 0
@@ -171,11 +211,8 @@ func (a *HTTPAPI) CreateReview(ctx context.Context, ref Ref, review Review) (Rev
 	if ref.Number <= 0 || review.CommitID == "" {
 		return ReviewResult{}, fmt.Errorf("github: review needs a pull request and commit")
 	}
-	if review.Event == "APPROVE" {
-		return ReviewResult{}, ErrNoApproval
-	}
-	if review.Event != "COMMENT" && review.Event != "REQUEST_CHANGES" {
-		return ReviewResult{}, fmt.Errorf("github: review event is required")
+	if err := reviewEventAllowed(ctx, ref, review); err != nil {
+		return ReviewResult{}, err
 	}
 	var out ReviewResult
 	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", ref.Owner, ref.Repo, ref.Number)

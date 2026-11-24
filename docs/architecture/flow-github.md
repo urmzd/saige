@@ -19,11 +19,39 @@ read hooks (see [what a read may reach](#what-a-read-may-reach)), whether to
 publish checks, and the app's own login. For the API client's token, see
 [credentials](#credentials).
 
-**Agents never approve.** A review an agent submits is `COMMENT` or
-`REQUEST_CHANGES`. `PrepareReview`, the HTTP API and the fake refuse `APPROVE`
-with `ErrNoApproval`, and the `github_create_review` tool offers only the two.
-Recovery still reads back an approval posted by an earlier version, so a
-retried delivery matches it instead of posting another.
+**The model never approves; a host hook may.** A review the model submits
+through `github_create_review` is `COMMENT` or `REQUEST_CHANGES`: the tool
+offers only the two, and `PrepareReview` refuses `APPROVE` with
+`ErrNoApproval` whatever the host allows. The HTTP API and the fake refuse
+`APPROVE` too, unless the call carries a grant that only the review sink can
+make, for that one pull request and commit.
+
+An approval comes only from the host, in two steps:
+
+1. `Config.Review` plans the review, with `APPROVE` as its event.
+2. `Config.MayApprove(ctx, owner, repo, review)` decides. The sink asks it
+   once, with the review it would post.
+
+| `MayApprove` | What the sink posts |
+|--------------|---------------------|
+| nil (the default) | Nothing: the delivery fails with `ErrNoApproval`, as before the hook |
+| answers no | The same review as `COMMENT` |
+| answers yes | `APPROVE`, after it reads the pull request again and finds the head still on the reviewed commit |
+
+A head that moved off the reviewed commit, before or while the hook decides,
+is refused as `ErrUndeliverable`. Recovery reads back an approval the host
+posted, so a retried delivery matches it instead of posting another. Recovery
+never asks the hook: it posts nothing.
+
+A host that requires passing checks reads them with `CommitChecks(ctx, owner,
+repo, sha)`. It returns every check run (the latest of each) and every commit
+status (the latest of each context) on the commit, as a `CommitCheck` with
+its kind, name, status and conclusion. It follows pages of 100 until one is
+short, and fails when a kind has `MaxCommitChecks` (1000) or more, or when
+GitHub answers for another commit. `CommitCheck.Passed` is true for a
+completed check that concluded `success`, `neutral` or `skipped`, the
+conclusions GitHub's required checks accept. The model has no tool for this
+read.
 
 ## What a webhook publishes
 
