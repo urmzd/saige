@@ -23,3 +23,6 @@ func MediaIn(body string) [][2]string {
 	}
 	return out
 }
+
+// LastPage exposes the Link header reader.
+var LastPage = lastPage

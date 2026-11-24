@@ -81,7 +81,7 @@ func (c *Connector) readFile(ctx context.Context, target address.Address, raw js
 	if err := decodeArguments(raw, &args); err != nil {
 		return connector.Result{}, err
 	}
-	target, err := c.readTarget(target, args.Address)
+	ctx, target, err := c.readTarget(ctx, target, args.Address)
 	if err != nil {
 		return connector.Result{}, err
 	}

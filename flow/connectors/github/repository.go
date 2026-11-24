@@ -227,6 +227,12 @@ func githubURL(u *url.URL) bool {
 	return u.Scheme == httpsScheme && u.Host == "github.com" && u.User == nil && u.RawQuery == ""
 }
 
+// GitHub's limits on the length of an owner's login and a repository's name.
+const (
+	maxOwnerLength      = 39
+	maxRepositoryLength = 100
+)
+
 const readFormsHint = "use github://owner/repo/pull/12, github://owner/repo/issues/12, https://github.com/owner/repo/pull/12, owner/repo#12, or owner/repo for the repository"
 
 // ParseReadReference reads a reference a read action was given: an issue
@@ -273,9 +279,17 @@ func ParseReadReference(reference string) (address.Address, error) {
 			target.Path = append(target.Path, "issues", number)
 		}
 	}
-	// A clone URL's ".git" names the same repository.
+	// A clone URL's ".git" names the same repository. It is taken off once:
+	// GitHub names no repository with that ending, so one that still has it
+	// is no repository's name.
 	if len(target.Path) > 0 {
 		target.Path[0] = strings.TrimSuffix(target.Path[0], ".git")
+		if strings.HasSuffix(strings.ToLower(target.Path[0]), ".git") {
+			return address.Address{}, fmt.Errorf("%w: a repository name does not end in .git; %s", connector.ErrUndeliverable, readFormsHint)
+		}
+	}
+	if len(target.Workspace) > maxOwnerLength || len(target.Path) > 0 && len(target.Path[0]) > maxRepositoryLength {
+		return address.Address{}, fmt.Errorf("%w: a GitHub owner has at most %d characters and a repository name at most %d; %s", connector.ErrUndeliverable, maxOwnerLength, maxRepositoryLength, readFormsHint)
 	}
 	if target.Workspace == "" || address.ValidWorkspace(target.Workspace) != nil || len(target.Path) == 0 || !validRepository(target.Path[0]) {
 		return address.Address{}, fmt.Errorf("%w: invalid GitHub repository; %s", connector.ErrUndeliverable, readFormsHint)
@@ -299,20 +313,23 @@ func isRepository(target address.Address) bool {
 
 // repositoryTarget checks a repository address the way readTarget checks
 // an issue: the connector serves its owner, and it is the run's own
-// repository or one granted for cross-source reads.
-func (c *Connector) repositoryTarget(source, target address.Address) (owner, repo string, err error) {
+// repository or one granted for cross-source reads (crossSourceRead).
+//
+// cross says the repository is not the run's own, so the caller reads it
+// with a context marked ReadWhereNamed.
+func (c *Connector) repositoryTarget(ctx context.Context, source, target address.Address) (owner, repo string, cross bool, err error) {
 	owner, repo = target.Workspace, target.Path[0]
 	if c.owners != nil && !c.owners[strings.ToLower(owner)] {
-		return "", "", fmt.Errorf("%w: %s is owned by %q, which this connector does not serve", connector.ErrUndeliverable, target, owner)
+		return "", "", false, fmt.Errorf("%w: %s is owned by %q, which this connector does not serve", connector.ErrUndeliverable, target, owner)
 	}
 	if address.ValidWorkspace(owner) != nil || !validRepository(repo) {
-		return "", "", fmt.Errorf("%w: invalid GitHub repository", connector.ErrUndeliverable)
+		return "", "", false, fmt.Errorf("%w: invalid GitHub repository", connector.ErrUndeliverable)
 	}
-	if source.Connector == Name && len(source.Path) > 0 && strings.EqualFold(source.Workspace, owner) && strings.EqualFold(source.Path[0], repo) {
-		return owner, repo, nil
+	if ownRepository(source, owner, repo) {
+		return owner, repo, false, nil
 	}
-	if !c.readRepos[strings.ToLower(owner+"/"+repo)] {
-		return "", "", fmt.Errorf("%w: repository %s/%s is not granted for cross-source reads", connector.ErrUndeliverable, owner, repo)
+	if err := c.crossSourceRead(ctx, owner, repo); err != nil {
+		return "", "", false, err
 	}
-	return owner, repo, nil
+	return owner, repo, true, nil
 }

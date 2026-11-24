@@ -39,6 +39,21 @@
 //
 // github_comment, github_request_review and github_add_labels. Each returns the
 // address of what it changed, so the action.taken event can cite it.
+//
+// # Reads
+//
+// github_read_context, github_read_file, github_workflow_status,
+// github_fix_base and ReadComments take a reference to an issue, a pull
+// request or a repository. A run reads its own repository; any other is a
+// cross-source read, which Config.ReadRepositories or Config.MayRead grants
+// and Config.ReadRefused refuses, before any request is made. A refusal is
+// a *ReadError. The hooks hear the owner and repository in lower case. A
+// cross-source read follows no redirect (ErrReadRedirected), so it returns
+// only the repository the grant was decided for. A run's read of its own
+// repository that is redirected to another repository is decided as a
+// cross-source read of that repository before it is requested, and fails
+// with ErrReadRedirected when it is not granted. No write asks the read
+// hooks.
 package github
 
 import (
@@ -128,6 +143,37 @@ type Config struct {
 	// ReadRepositories grants cross-source read access to exact owner/repo
 	// names. It never grants mutation or delivery access.
 	ReadRepositories []string
+	// MayRead grants a cross-source read of a repository ReadRepositories
+	// does not name, such as one a GitHub App installation covers. A read
+	// that takes a reference (github_read_context, github_read_file,
+	// github_workflow_status, github_fix_base and ReadComments) asks it
+	// before any request, once, with the owner and repository the read
+	// would then request, in lower case: GitHub names are case-insensitive.
+	// It is asked after the owners check, after ReadRefused and after the
+	// ReadRepositories list, and only for a repository other than the
+	// run's own. A read of the run's own repository that GitHub redirects
+	// to another repository asks it about that repository, before the
+	// redirect is followed; the redirect fails with ErrReadRedirected when
+	// it is not granted. A write
+	// never asks it, and neither does a read of an address the host bound
+	// (Messages, PollFeedback). The hook is not told which read is asking:
+	// what it grants, it grants to all of them. Nil grants nothing more,
+	// which is the behavior of a Config without the hooks: a run reads its
+	// own repository and the ReadRepositories, and a refusal is a
+	// *ReadError. A read it grants is answered by that repository or fails
+	// with ErrReadRedirected.
+	MayRead func(ctx context.Context, owner, repo string) bool
+	// ReadRefused keeps a repository to its own runs: a cross-source read of
+	// it is refused whatever ReadRepositories or MayRead grant, while a run
+	// on one of its own issues or pull requests still reads it. It is asked
+	// where MayRead is, first, also in lower case, and also for the
+	// repository a redirect of a run's own read names. Nil refuses nothing.
+	//
+	// With either hook set, a read action refuses arguments whose keys are
+	// ambiguous (a key given twice, two keys that differ only by case, a key
+	// its schema does not declare) before decoding them. With both nil the
+	// arguments are decoded as they were before the hooks existed.
+	ReadRefused func(ctx context.Context, owner, repo string) bool
 
 	// Bots maps a GitHub login to the agent it stands for, and is how a review
 	// request is resolved: GitHub names the reviewer, not the agent. A GitHub App
@@ -683,6 +729,13 @@ func (c *Connector) Actions() []connector.Action {
 	actions = append(actions, c.fileAction(), c.workflowStatusAction(), c.reviewAction())
 	if c.cfg.FixPullRequests {
 		actions = append(actions, c.fixBaseAction(), c.fixPullAction())
+	}
+	if c.cfg.MayRead != nil || c.cfg.ReadRefused != nil {
+		for i, a := range actions {
+			if readActionNames[a.Name] {
+				actions[i] = c.oneKeyEach(a)
+			}
+		}
 	}
 	return actions
 }
