@@ -46,6 +46,7 @@ package render
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,18 +105,30 @@ type Tool struct {
 	seq uint64
 }
 
-// Citation is one source the agent cited.
+// Citation is one source the agent's answer cites.
+//
+// It carries where the source is, never what it says: a citation event's
+// passage text is not kept, so a surface lists a source by its title and
+// link only (see View).
 type Citation struct {
 	// N is the footnote number, assigned in sequence order so that the same
 	// events always number the same way.
 	N int
-	// Label is what the agent's own text refers to, when it supplied one.
-	// Renderers prefer it over N.
-	Label   string
-	Title   string
-	URI     string
-	Snippet string
-	seq     uint64
+	// Label is what the answer refers to this source by, without brackets.
+	// In a View it holds the labels the answer cites, joined by ", ";
+	// renderers prefer it over N.
+	Label string
+	// Labels are every label the run's own agent's citation events gave
+	// this source, as they gave them. A View reads them to decide whether
+	// the answer cites it.
+	Labels []string `json:",omitempty"`
+	// NestedLabels are the labels citation events from nested agents (those
+	// with a Parent) gave this source. A View matches one only when no
+	// source has it among its Labels.
+	NestedLabels []string `json:",omitempty"`
+	Title        string
+	URI          string
+	seq          uint64
 }
 
 // Ref returns the footnote marker for this citation: the agent's own label when
@@ -201,7 +214,10 @@ type View struct {
 	// Thinking is the agent's extended reasoning, if the route asked for it.
 	Thinking string
 
-	Tools     []Tool
+	Tools []Tool
+	// Citations are the sources the answer cites: those with a label that
+	// appears in Text outside code (see CitedLabels), in sequence order. A
+	// source the run was given but the answer does not cite is not listed.
 	Citations []Citation
 	Actions   []Action
 
@@ -474,25 +490,60 @@ func (d *Doc) tool(id string, seq uint64) int {
 	return i
 }
 
+// addCitation files a citation event's source. The event's passage text is
+// not kept: a surface shows where a cited passage is, not what it says.
+//
+// A nested agent's citation (one with a Parent) is filed with its labels
+// kept apart from the run's own agent's labels. Its label is the one the
+// nested agent gave the source, numbered within that agent: two sibling
+// delegations can each publish "[1]" for different sources. The run's own
+// agent reads a delegation's answer with those labels, so its answer may
+// cite a nested source by one. A View matches a nested label only when no
+// citation of the run's own agent gives it (see cited); a label two nested
+// sources share lists both.
+//
+// Each list is capped at MaxLabelsPerSource on its own, so nested labels
+// cannot take the place of the run's own agent's labels.
 func (d *Doc) addCitation(seq uint64, b event.Citation) bool {
 	c := Citation{
-		Label:   b.Label,
-		Title:   first(b.Source.DocumentTitle, b.Source.SectionHeading),
-		URI:     b.Source.SourceURI,
-		Snippet: b.Text,
+		Title: first(b.Source.DocumentTitle, b.Source.SectionHeading),
+		URI:   b.Source.SourceURI,
 	}
 	if c.URI == "" && c.Title == "" {
 		return false
 	}
+	label := strings.TrimSpace(b.Label)
+	nested := len(b.Parent) > 0
 	key := c.URI + "\x00" + c.Title
 	if i, ok := d.citeAt[key]; ok {
-		// The same source cited twice is one footnote. Keep the earliest
-		// sequence number so numbering does not shuffle on redelivery.
-		if seq != 0 && seq < d.cites[i].seq {
-			d.cites[i].seq = seq
-			return true
+		// The same source cited twice is one footnote, which the answer
+		// may refer to by any of its labels. Keep the earliest sequence
+		// number so numbering does not shuffle on redelivery.
+		changed := false
+		ci := &d.cites[i]
+		list := &ci.Labels
+		if nested {
+			list = &ci.NestedLabels
 		}
+		if label != "" && !slices.Contains(*list, label) && len(*list) < MaxLabelsPerSource {
+			*list = append(*list, label)
+			changed = true
+		}
+		if seq != 0 && seq < ci.seq {
+			ci.seq = seq
+			changed = true
+		}
+		return changed
+	}
+	if len(d.cites) >= MaxSources {
 		return false
+	}
+	if label != "" {
+		if nested {
+			c.NestedLabels = []string{label}
+		} else {
+			c.Labels = []string{label}
+		}
 	}
 	c.seq = seq
 	d.cites = append(d.cites, c)
@@ -655,13 +706,7 @@ func (d *Doc) View() View {
 		v.Tools = append([]Tool(nil), d.tools...)
 		sort.SliceStable(v.Tools, func(i, j int) bool { return v.Tools[i].seq < v.Tools[j].seq })
 	}
-	if len(d.cites) > 0 {
-		v.Citations = append([]Citation(nil), d.cites...)
-		sort.SliceStable(v.Citations, func(i, j int) bool { return v.Citations[i].seq < v.Citations[j].seq })
-		for i := range v.Citations {
-			v.Citations[i].N = i + 1
-		}
-	}
+	v.Citations = cited(d.cites, v.Text)
 	if len(d.actions) > 0 {
 		v.Actions = append([]Action(nil), d.actions...)
 		sort.SliceStable(v.Actions, func(i, j int) bool { return v.Actions[i].seq < v.Actions[j].seq })

@@ -458,8 +458,8 @@ func TestDeliveringTheSameEventsTwiceKeepsOneEditedMessage(t *testing.T) {
 	events := []event.Envelope{
 		ev(1, event.TypeAccepted, ""),
 		textEvent(2, "The design doc says "),
-		textEvent(3, "three things."),
-		ev(4, event.TypeCitation, `{"source":{"document_title":"Design doc","source_uri":"https://example.com/design"}}`),
+		textEvent(3, "three things [1]."),
+		ev(4, event.TypeCitation, `{"label":"[1]","source":{"document_title":"Design doc","source_uri":"https://example.com/design"}}`),
 		ev(5, event.TypeCompleted, ""),
 	}
 	for range 2 {
@@ -481,7 +481,7 @@ func TestDeliveringTheSameEventsTwiceKeepsOneEditedMessage(t *testing.T) {
 	if msg.ThreadTS != "1700000000.000100" {
 		t.Errorf("thread_ts = %q, want the answer threaded under the mention", msg.ThreadTS)
 	}
-	if got := strings.Count(msg.Text, "The design doc says three things."); got != 1 {
+	if got := strings.Count(msg.Text, "The design doc says three things [1]."); got != 1 {
 		t.Errorf("body contains the answer %d times, want 1:\n%s", got, msg.Text)
 	}
 	if !strings.Contains(msg.Text, "*docs-bot* _(done)_") {

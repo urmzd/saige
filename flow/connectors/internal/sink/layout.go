@@ -1,6 +1,8 @@
 package sink
 
 import (
+	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/urmzd/saige/flow/connectors/internal/render"
@@ -59,7 +61,7 @@ func MapText(v render.View, fn func(string) string) render.View {
 	if len(v.Citations) > 0 {
 		out.Citations = make([]render.Citation, len(v.Citations))
 		for i, c := range v.Citations {
-			c.Title, c.Snippet = fn(c.Title), fn(c.Snippet)
+			c.Title, c.Label = fn(c.Title), fn(c.Label)
 			out.Citations[i] = c
 		}
 	}
@@ -243,27 +245,110 @@ func layoutTools(m Markup, v render.View) string {
 	return strings.Join(lines, "\n")
 }
 
+// Bounds on the footnotes a surface message carries.
+const (
+	// MaxFootnotes is the most footnotes rendered; the rest are counted on
+	// one closing line.
+	MaxFootnotes = 20
+	// maxFootnoteTitle bounds a footnote's title, in bytes.
+	maxFootnoteTitle = 200
+	// maxFootnoteURI is the longest URI rendered as a link. A longer one is
+	// not rendered: a cut URI is a broken link.
+	maxFootnoteURI = 2048
+	// maxFootnoteRef bounds a footnote's marker, in bytes.
+	maxFootnoteRef = 64
+)
+
 // layoutCitations renders footnotes, which is the whole point of carrying
 // citations as their own event kind: the agent's text refers to [1], and the
 // reader needs [1] to be a link they can follow on the surface they are reading.
+//
+// A footnote is the source's title and link only. The view lists only the
+// sources the answer cites (see render.View), and carries no passage text.
+// A source whose URI is not a usable http or https link is listed by its
+// title alone (see footnoteURI).
 func layoutCitations(m Markup, v render.View) string {
 	var lines []string
-	for _, c := range v.Citations {
-		label := c.Title
+	for i, c := range v.Citations {
+		if i == MaxFootnotes {
+			lines = append(lines, m.Italic(fmt.Sprintf("and %d more cited sources", len(v.Citations)-MaxFootnotes)))
+			break
+		}
+		uri := footnoteURI(c.URI)
+		label := truncate(collapse(c.Title), maxFootnoteTitle)
 		if label == "" {
-			label = c.URI
+			label = uri
+		}
+		if label == "" {
+			label = "source"
 		}
 		text := label
-		if c.URI != "" {
-			text = m.Link(label, c.URI)
+		if uri != "" {
+			text = m.Link(label, uri)
 		}
-		line := "[" + c.Ref() + "] " + text
-		if c.Snippet != "" {
-			line += " " + m.Italic(truncate(collapse(c.Snippet), 200))
-		}
-		lines = append(lines, line)
+		lines = append(lines, "["+truncate(collapse(c.Ref()), maxFootnoteRef)+"] "+text)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// footnoteURI returns the link a footnote points at, or "" when the source's
+// URI is not one to link to.
+//
+// Only an absolute http or https URI with a host is linked. Any user
+// information is dropped, and every byte outside a conservative set of URI
+// characters is percent-encoded, so the result holds nothing that a surface's
+// link markup treats as a delimiter: no spaces, quotes, angle brackets,
+// parentheses, pipes, backslashes or braces. A surface's Markup may encode
+// further for its own syntax. A URI longer than maxFootnoteURI is not linked:
+// a cut URI is a broken link.
+func footnoteURI(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > maxFootnoteURI {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Opaque != "" || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return ""
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.User = nil
+	out := encodeURIBytes(u.String())
+	if len(out) > maxFootnoteURI {
+		return ""
+	}
+	return out
+}
+
+// encodeURIBytes percent-encodes every byte of s that is not an ASCII letter
+// or digit, an existing percent sign, or one of -._~:/?#@!$&'*+,;=[] .
+func encodeURIBytes(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if uriSafe(c) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0F])
+	}
+	return b.String()
+}
+
+func uriSafe(c byte) bool {
+	switch {
+	case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		return true
+	}
+	return strings.IndexByte("-._~:/?#@!$&'*+,;=[]%", c) >= 0
 }
 
 func layoutActions(m Markup, v render.View) string {
