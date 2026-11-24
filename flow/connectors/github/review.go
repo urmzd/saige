@@ -187,16 +187,33 @@ func (r ApprovalRequest) ChecksAllow(checks []CommitCheck) bool {
 	return r.ChecksAllowRequiring(checks, nil)
 }
 
-// MaxRequiredChecks bounds the names ChecksAllowRequiring takes.
+// MaxRequiredChecks bounds the checks ChecksAllowRequiring takes.
 const MaxRequiredChecks = 100
 
-// ChecksAllowRequiring is ChecksAllow that also requires each of names, at
-// most MaxRequiredChecks, to be present: at least one check run or commit
-// status of that name, not own, and every such check of that name passed
-// with success. An empty name, or more than MaxRequiredChecks names, fails
-// it. Nil names is ChecksAllow.
-func (r ApprovalRequest) ChecksAllowRequiring(checks []CommitCheck, names []string) bool {
-	if r.AppID <= 0 && r.App == "" || len(names) > MaxRequiredChecks {
+// RequiredCheck names a check an approval requires and where it must come
+// from: a check run named Name published by the app with AppID, or a commit
+// status of context Name set by the login Creator. Exactly one of AppID and
+// Creator is set. A name alone is not a requirement: anyone who can write a
+// commit status or run a workflow can report a check of any name. For a check
+// a workflow defines, the app is GitHub Actions, and the workflow file the
+// pull request carries may define it; branch protection, or a workflow run
+// from the base branch (pull_request_target), is what ties such a check to
+// the base branch's definition.
+type RequiredCheck struct {
+	Name    string
+	AppID   int64
+	Creator string
+}
+
+// ChecksAllowRequiring is ChecksAllow that also requires each of required, at
+// most MaxRequiredChecks, to be present: at least one check of its name from
+// its source (a check run from its AppID, or a commit status from its
+// Creator, compared ignoring case), and every such check passed with
+// success. A requirement with an empty name, with both or neither of AppID
+// and Creator, or whose source is the connector's own app fails it, and so do
+// more than MaxRequiredChecks. Nil required is ChecksAllow.
+func (r ApprovalRequest) ChecksAllowRequiring(checks []CommitCheck, required []RequiredCheck) bool {
+	if r.AppID <= 0 && r.App == "" || len(required) > MaxRequiredChecks {
 		return false
 	}
 	for _, check := range checks {
@@ -204,23 +221,32 @@ func (r ApprovalRequest) ChecksAllowRequiring(checks []CommitCheck, names []stri
 			return false
 		}
 	}
-	for _, name := range names {
-		if !r.requiredPassed(checks, name) {
+	for _, need := range required {
+		if !r.requiredPassed(checks, need) {
 			return false
 		}
 	}
 	return AllPassed(checks, r.OwnCheck)
 }
 
-// requiredPassed reports whether the check name is present from another app
-// and every check of that name passed.
-func (r ApprovalRequest) requiredPassed(checks []CommitCheck, name string) bool {
-	if name == "" {
+// requiredPassed reports whether need is present from its source and every
+// check of its name from that source passed.
+func (r ApprovalRequest) requiredPassed(checks []CommitCheck, need RequiredCheck) bool {
+	byApp, byCreator := need.AppID > 0, need.Creator != ""
+	if need.Name == "" || byApp == byCreator || need.AppID < 0 {
+		return false
+	}
+	if byApp && r.AppID > 0 && need.AppID == r.AppID || byCreator && r.App != "" && strings.EqualFold(need.Creator, r.App+"[bot]") {
 		return false
 	}
 	found := false
 	for _, check := range checks {
-		if check.Kind == CheckKindSuite || check.Name != name || r.OwnCheck(check) {
+		if check.Name != need.Name || r.OwnCheck(check) {
+			continue
+		}
+		from := byApp && check.Kind == CheckKindRun && check.AppID == need.AppID ||
+			byCreator && check.Kind == CheckKindStatus && strings.EqualFold(check.Creator, need.Creator)
+		if !from {
 			continue
 		}
 		if !check.Passed() {

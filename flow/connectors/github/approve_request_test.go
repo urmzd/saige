@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/urmzd/saige/flow/address"
+	"github.com/urmzd/saige/flow/deliverystate"
 )
 
 // The request carries the author's numeric ID and the app's ID.
@@ -400,40 +401,187 @@ func TestChecksAllowRequiring(t *testing.T) {
 	run := func(name, conclusion, app string, id int64) CommitCheck {
 		return CommitCheck{Kind: CheckKindRun, Name: name, Status: "completed", Conclusion: conclusion, App: app, AppID: id}
 	}
+	status := func(name, conclusion, creator string) CommitCheck {
+		return CommitCheck{Kind: CheckKindStatus, Name: name, Status: "completed", Conclusion: conclusion, Creator: creator}
+	}
 	ci := run("ci", "success", "actions", 15368)
 	lint := run("lint", "success", "actions", 15368)
-	status := CommitCheck{Kind: CheckKindStatus, Name: "legacy", Status: "completed", Conclusion: "success"}
-	many := make([]string, MaxRequiredChecks+1)
+	legacy := status("legacy", "success", "ci-bot")
+	needCI := RequiredCheck{Name: "ci", AppID: 15368}
+	needLint := RequiredCheck{Name: "lint", AppID: 15368}
+	needLegacy := RequiredCheck{Name: "legacy", Creator: "ci-bot"}
+	many := make([]RequiredCheck, MaxRequiredChecks+1)
 	for i := range many {
-		many[i] = "ci"
+		many[i] = needCI
 	}
 	for _, tc := range []struct {
 		name   string
+		req    ApprovalRequest
 		checks []CommitCheck
-		names  []string
+		need   []RequiredCheck
 		want   bool
 	}{
-		{"none required", []CommitCheck{ci}, nil, true},
-		{"present", []CommitCheck{ci, lint, status}, []string{"ci", "lint", "legacy"}, true},
-		{"missing", []CommitCheck{ci}, []string{"ci", "lint"}, false},
-		{"only from the own app", []CommitCheck{ci, run("review", "success", "humagen", 1001)}, []string{"review"}, false},
-		{"neutral", []CommitCheck{ci, run("lint", "neutral", "actions", 15368)}, []string{"lint"}, false},
-		{"skipped", []CommitCheck{ci, run("lint", "skipped", "actions", 15368)}, []string{"lint"}, false},
-		{"one of two neutral", []CommitCheck{ci, lint, run("lint", "neutral", "other", 4004)}, []string{"lint"}, false},
-		{"a suite of that name", []CommitCheck{ci, {Kind: CheckKindSuite, Name: "scanner", Status: "completed", Conclusion: "success", App: "scanner", AppID: 2002}}, []string{"scanner"}, false},
-		{"empty name", []CommitCheck{ci}, []string{""}, false},
-		{"too many names", []CommitCheck{ci}, many, false},
-		{"no app named", []CommitCheck{ci}, []string{"ci"}, false},
+		{"none required", req, []CommitCheck{ci}, nil, true},
+		{"present", req, []CommitCheck{ci, lint, legacy}, []RequiredCheck{needCI, needLint, needLegacy}, true},
+		{"status creator ignores case", req, []CommitCheck{ci, legacy}, []RequiredCheck{{Name: "legacy", Creator: "CI-Bot"}}, true},
+		{"missing", req, []CommitCheck{ci}, []RequiredCheck{needCI, needLint}, false},
+		{"same name from another app", req, []CommitCheck{ci, run("lint", "success", "other", 4004)}, []RequiredCheck{needLint}, false},
+		{"same name as a status", req, []CommitCheck{ci, status("lint", "success", "pr-author")}, []RequiredCheck{needLint}, false},
+		{"status from another creator", req, []CommitCheck{ci, status("legacy", "success", "pr-author")}, []RequiredCheck{needLegacy}, false},
+		{"neutral", req, []CommitCheck{ci, run("lint", "neutral", "actions", 15368)}, []RequiredCheck{needLint}, false},
+		{"one of two failed", req, []CommitCheck{ci, lint, run("lint", "failure", "actions", 15368)}, []RequiredCheck{needLint}, false},
+		{"another app's failure of that name blocks anyway", req, []CommitCheck{ci, lint, run("lint", "failure", "other", 4004)}, []RequiredCheck{needLint}, false},
+		{"name case differs", req, []CommitCheck{ci}, []RequiredCheck{{Name: "CI", AppID: 15368}}, false},
+		{"own app as source", req, []CommitCheck{ci, run("review", "success", "humagen", 1001)}, []RequiredCheck{{Name: "review", AppID: 1001}}, false},
+		{"own bot as creator", req, []CommitCheck{ci, status("review", "success", "humagen[bot]")}, []RequiredCheck{{Name: "review", Creator: "humagen[bot]"}}, false},
+		{"no source", req, []CommitCheck{ci}, []RequiredCheck{{Name: "ci"}}, false},
+		{"both sources", req, []CommitCheck{ci}, []RequiredCheck{{Name: "ci", AppID: 15368, Creator: "x"}}, false},
+		{"negative app ID", req, []CommitCheck{ci}, []RequiredCheck{{Name: "ci", AppID: -1}}, false},
+		{"empty name", req, []CommitCheck{ci}, []RequiredCheck{{AppID: 15368}}, false},
+		{"a suite of that name", req, []CommitCheck{ci, {Kind: CheckKindSuite, Name: "scanner", Status: "completed", Conclusion: "success", App: "scanner", AppID: 2002}}, []RequiredCheck{{Name: "scanner", AppID: 2002}}, false},
+		{"too many", req, []CommitCheck{ci}, many, false},
+		{"at the bound", req, []CommitCheck{ci}, many[:MaxRequiredChecks], true},
+		{"no app named", ApprovalRequest{}, []CommitCheck{ci}, []RequiredCheck{needCI}, false},
 	} {
-		r := req
-		if tc.name == "no app named" {
-			r = ApprovalRequest{}
-		}
-		if got := r.ChecksAllowRequiring(tc.checks, tc.names); got != tc.want {
+		if got := tc.req.ChecksAllowRequiring(tc.checks, tc.need); got != tc.want {
 			t.Errorf("%s: ChecksAllowRequiring = %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	if !req.ChecksAllowRequiring([]CommitCheck{ci}, many[:MaxRequiredChecks]) {
-		t.Error("MaxRequiredChecks names were refused")
+}
+
+// deliverWith delivers once with store as the delivery state.
+func (a *approvalCase) deliverWith(t *testing.T, store deliverystate.Store) error {
+	t.Helper()
+	a.cfg.DeliveryState = store
+	c, err := New(a.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Deliver(context.Background(), a.target, a.env)
+}
+
+func (a *approvalCase) approval(t *testing.T) FakeReview {
+	t.Helper()
+	for _, r := range a.api.SubmittedReviews() {
+		if r.Review.Event == "APPROVE" {
+			return r
+		}
+	}
+	t.Fatal("no approval posted")
+	return FakeReview{}
+}
+
+// An approval whose response was lost is recovered on the retry, and
+// confirmed there: a change request posted while the hook decided dismisses
+// it, as it does when the response arrives.
+func TestRecoveredApprovalIsConfirmed(t *testing.T) {
+	a := newApprovalCase(t)
+	a.cfg.API = &flakyReviews{Fake: a.api, failAfter: 1}
+	asked := 0
+	a.cfg.MayApprove = func(context.Context, ApprovalRequest) (bool, error) {
+		asked++
+		_, err := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha)
+		return true, err
+	}
+	store := deliverystate.NewMemory()
+	if err := a.deliverWith(t, store); err == nil {
+		t.Fatal("a lost response was reported as delivered")
+	}
+	if err := a.deliverWith(t, store); err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+	if got := a.approval(t); got.Dismissal != changesRequestedDismissal || asked != 1 {
+		t.Fatalf("approval %+v after %d hook calls, want it dismissed for the change request", got, asked)
+	}
+	// A further retry, with the delivery record lost, recovers the dismissed
+	// approval without posting again.
+	if err := a.deliverWith(t, deliverystate.NewMemory()); err != nil {
+		t.Fatalf("recovering the dismissed approval: %v", err)
+	}
+	if n := a.approvals(); n != 1 {
+		t.Fatalf("%d approvals posted", n)
+	}
+}
+
+// Recovery confirms against the reviews the hook was shown when they were
+// kept, and against every outstanding change request when they were not.
+func TestRecoveredApprovalUsesTheReviewsTheHookSaw(t *testing.T) {
+	for _, kept := range []bool{true, false} {
+		a := newApprovalCase(t)
+		if _, err := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha); err != nil {
+			t.Fatal(err)
+		}
+		a.cfg.API = &flakyReviews{Fake: a.api, failAfter: 1}
+		a.cfg.MayApprove = a.hook(true)
+		store := deliverystate.NewMemory()
+		_ = a.deliverWith(t, store)
+		if !kept {
+			store = deliverystate.NewMemory()
+		}
+		if err := a.deliverWith(t, store); err != nil {
+			t.Fatalf("kept=%v: recovery: %v", kept, err)
+		}
+		dismissed := a.approval(t).Dismissal != ""
+		if dismissed == kept {
+			t.Errorf("kept=%v: approval dismissed = %v", kept, dismissed)
+		}
+	}
+}
+
+// cancelAfterApproval fails reads and dismissals once their context is done,
+// as HTTP calls do, and cancels the delivery right after an approval is
+// recorded.
+type cancelAfterApproval struct {
+	*Fake
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterApproval) CreateReview(ctx context.Context, ref Ref, r Review) (ReviewResult, error) {
+	res, err := c.Fake.CreateReview(ctx, ref, r)
+	if err == nil && r.Event == "APPROVE" {
+		c.cancel()
+	}
+	return res, err
+}
+
+func (c *cancelAfterApproval) ReadContext(ctx context.Context, ref Ref, page int) (Context, error) {
+	if err := ctx.Err(); err != nil {
+		return Context{}, err
+	}
+	return c.Fake.ReadContext(ctx, ref, page)
+}
+
+func (c *cancelAfterApproval) ListReviews(ctx context.Context, ref Ref, page int) ([]ReviewRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.Fake.ListReviews(ctx, ref, page)
+}
+
+func (c *cancelAfterApproval) DismissReview(ctx context.Context, ref Ref, id int64, message string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Fake.DismissReview(ctx, ref, id, message)
+}
+
+// A delivery cancelled right after the approval is posted still confirms it.
+func TestApprovalConfirmedAfterDeliveryCancelled(t *testing.T) {
+	a := newApprovalCase(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.cfg.API = &cancelAfterApproval{Fake: a.api, cancel: cancel}
+	a.cfg.MayApprove = func(context.Context, ApprovalRequest) (bool, error) {
+		_, err := a.api.SeedReview(a.ref, fakeLogin, "REQUEST_CHANGES", a.sha)
+		return true, err
+	}
+	a.cfg.DeliveryState = deliverystate.NewMemory()
+	c, err := New(a.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Deliver(ctx, a.target, a.env)
+	if got := a.approval(t); got.Dismissal != changesRequestedDismissal {
+		t.Fatalf("approval %+v, want it dismissed for the change request", got)
 	}
 }

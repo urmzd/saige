@@ -62,8 +62,14 @@ reviews once more, and dismisses that approval when:
   approval would otherwise replace as the account's latest review; or
 - either read fails.
 
-A failed dismissal is logged to `Config.Log` (or `slog.Default()`), and the
-delivery still completes. `New` refuses a `Config` that sets `MayApprove`
+These reads and the dismissal run without the delivery's cancellation, under
+their own time bound, so a delivery cancelled right after the post still
+confirms it. The sink keeps the IDs of the reviews the hook was shown in the
+delivery state before it posts. When the post's response is lost and a retry
+recovers the approval, the sink confirms it there against the same set; if
+that set was not kept, any outstanding change request other than the
+approval dismisses it. A failed dismissal is logged to `Config.Log` (or
+`slog.Default()`), and the delivery still completes. `New` refuses a `Config` that sets `MayApprove`
 with an API that does not implement `ReviewDismissAPI`. A push after these
 reads is the host's to handle on `synchronize` (for example with
 `Connector.DismissReview`), or GitHub's, with the branch rule that dismisses
@@ -106,10 +112,17 @@ that leaves its suite queued without ever reporting keeps it pending.
   `MaxCommitChecks`. A check run of another app that concluded `neutral` or
   `skipped` neither satisfies the rule nor fails it. An empty list is not a
   pass: checks that have not registered yet are not a pass.
-- `ApprovalRequest.ChecksAllowRequiring(checks, names)` also requires each
-  named check (at most `MaxRequiredChecks`, 100) to be present as a check
-  run or commit status not of the app's own, with every check of that name
-  concluded `success`.
+- `ApprovalRequest.ChecksAllowRequiring(checks, required)` also requires
+  each `RequiredCheck` (at most `MaxRequiredChecks`, 100) to be present from
+  its source: a check run of that name from the app `AppID`, or a commit
+  status of that context set by the login `Creator`, each such check
+  concluded `success`. A requirement names exactly one source and never the
+  connector's own app. There is no requirement by name alone, since anyone
+  who can write a commit status or run a workflow can report a check of any
+  name. For a check a workflow defines, the app is GitHub Actions and the
+  pull request's own workflow files may define it: branch protection, or a
+  workflow run from the base branch (`pull_request_target`), is what ties
+  such a check to the base branch's definition.
 - `ApprovalRequest.AuthoredByApp()` reports whether the app's bot account
   opened the pull request; with no app named it reports true.
 - `AllPassed(checks, own)` is the same rule with the own check given by the
@@ -152,9 +165,12 @@ numeric ID and login of the GitHub accounts linked to its author and
 committer; the git author and committer emails (`AuthorEmail`,
 `CommitterEmail`); `CoAuthors`, every `Co-authored-by: Name <email>` line
 of the message, matched ignoring case anywhere in it, with space allowed
-before the colon, lines ending at LF, CRLF or a lone CR, the first address in
-angle brackets as `Email` whatever follows it, and `Email` empty when a line
-names no address; and `Verification`, GitHub's verdict on the commit's
+before the colon and lines ending at LF, CRLF or a lone CR. A line names one
+co-author for each part between commas outside angle brackets, so
+`Doe, Jo <jo@example.com>` names `Doe` without an email and `Jo`. A part's
+`Email` is its first address in angle brackets that holds no other bracket,
+whatever follows it (the innermost, so `Name<<a@example.com>>` gives
+`a@example.com`), and empty when the part names no address; and `Verification`, GitHub's verdict on the commit's
 signature (`Verified` and `Reason`; the REST response names no signer). A
 commit that names more than `MaxCoAuthors` (50) fails the read. The git
 author, committer and co-authors are whatever the commit's maker wrote: a

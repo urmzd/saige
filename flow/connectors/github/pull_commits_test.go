@@ -240,3 +240,29 @@ func TestPullRequestCommitsReadVerification(t *testing.T) {
 		}
 	}
 }
+
+// One line can name several co-authors between commas outside angle
+// brackets; nested brackets give the innermost address.
+func TestPullRequestCommitsCoAuthorLists(t *testing.T) {
+	message := "subject\n\nCo-authored-by: F <f@example.com>, G <g@example.com>\nCo-authored-by: Doe, Jo <jo@example.com>\nCo-authored-by: Name<<a@example.com>>\nCo-authored-by: Q <q,r@example.com>\nCo-authored-by: <>\nCo-authored-by:  ,  "
+	api := commitsOf(t, []map[string]any{{"sha": fmt.Sprintf("%040x", 1), "commit": map[string]any{"message": message}}})
+	got, err := api.PullRequestCommits(context.Background(), "acme", "repo", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []github.CoAuthor{
+		{Name: "F", Email: "f@example.com"}, {Name: "G", Email: "g@example.com"},
+		{Name: "Doe"}, {Name: "Jo", Email: "jo@example.com"},
+		{Name: "Name", Email: "a@example.com"},
+		{Name: "Q", Email: "q,r@example.com"},
+		{},
+	}
+	if len(got[0].CoAuthors) != len(want) {
+		t.Fatalf("co-authors %+v, want %+v", got[0].CoAuthors, want)
+	}
+	for i := range want {
+		if got[0].CoAuthors[i] != want[i] {
+			t.Errorf("co-author %d = %+v, want %+v", i, got[0].CoAuthors[i], want[i])
+		}
+	}
+}

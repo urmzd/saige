@@ -84,14 +84,18 @@ const MaxCoAuthors = 50
 // coAuthorKey is the trailer key of a co-author line, compared ignoring case.
 const coAuthorKey = "co-authored-by"
 
-// coAuthorAddress is the first address in angle brackets on a co-author line.
-var coAuthorAddress = regexp.MustCompile(`^([^<]*)<([^<>]*)>`)
+// coAuthorAddress is an address in angle brackets that holds no other bracket.
+var coAuthorAddress = regexp.MustCompile(`<([^<>]*)>`)
 
 // coAuthors reads every line of message whose key is Co-authored-by, ignoring
 // case and any space or tab before and after the colon. A line anywhere in the
 // message counts, not only in the final trailer block, and a line ends at
-// "\n", "\r\n" or a lone "\r". The email is the first address in angle
-// brackets, whatever follows it. It fails past MaxCoAuthors.
+// "\n", "\r\n" or a lone "\r". A line names one co-author for each part
+// between commas outside angle brackets, so "Doe, Jo <jo@example.com>" names
+// "Doe" without an email and "Jo". The email of a part is its first address
+// in angle brackets that holds no other bracket, whatever follows it: the
+// innermost one, so "Name<<a@example.com>>" gives a@example.com. It fails past
+// MaxCoAuthors.
 func coAuthors(message string) ([]CoAuthor, error) {
 	message = strings.ReplaceAll(message, "\r\n", "\n")
 	message = strings.ReplaceAll(message, "\r", "\n")
@@ -105,17 +109,51 @@ func coAuthors(message string) ([]CoAuthor, error) {
 		if !strings.HasPrefix(rest, ":") {
 			continue
 		}
-		if len(out) == MaxCoAuthors {
-			return nil, fmt.Errorf("github: commit names more than %d co-authors", MaxCoAuthors)
+		for _, part := range splitOutsideBrackets(rest[1:]) {
+			if len(out) == MaxCoAuthors {
+				return nil, fmt.Errorf("github: commit names more than %d co-authors", MaxCoAuthors)
+			}
+			out = append(out, coAuthorOf(part))
 		}
-		value := strings.TrimSpace(rest[1:])
-		person := CoAuthor{Name: value}
-		if m := coAuthorAddress.FindStringSubmatch(value); m != nil {
-			person = CoAuthor{Name: strings.TrimSpace(m[1]), Email: strings.TrimSpace(m[2])}
-		}
-		out = append(out, person)
 	}
 	return out, nil
+}
+
+// coAuthorOf reads one co-author: the text before the address is the name.
+func coAuthorOf(part string) CoAuthor {
+	loc := coAuthorAddress.FindStringSubmatchIndex(part)
+	if loc == nil {
+		return CoAuthor{Name: part}
+	}
+	return CoAuthor{Name: strings.TrimSpace(strings.TrimRight(part[:loc[0]], "< \t")), Email: strings.TrimSpace(part[loc[2]:loc[3]])}
+}
+
+// splitOutsideBrackets splits value at commas outside angle brackets, trims
+// each part, and drops empty ones.
+func splitOutsideBrackets(value string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for i, r := range value {
+		switch r {
+		case '<':
+			depth++
+		case '>':
+			depth = max(depth-1, 0)
+		case ',':
+			if depth == 0 {
+				parts = append(parts, value[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, value[start:])
+	out := parts[:0]
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // MaxPullRequestCommits is how many commits GitHub lists for a pull request.

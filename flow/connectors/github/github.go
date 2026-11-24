@@ -151,7 +151,9 @@ type Config struct {
 	// this app. Once a yes is posted, the sink reads the head and the app's
 	// reviews again and dismisses that approval when the head moved, when a
 	// change request of the app appeared that the hook was not shown, or
-	// when either read fails. A push after those reads is the host's to
+	// when either read fails, also when a retry recovers an approval whose
+	// response was lost, and also when the delivery was cancelled after the
+	// post. A push after those reads is the host's to
 	// handle on synchronize, or GitHub's, with the branch rule that
 	// dismisses stale approvals. New refuses a Config that sets MayApprove
 	// with an API that does not implement ReviewDismissAPI.

@@ -77,7 +77,7 @@ func reviewPayloadMarker(view render.View, review Review) string {
 // an existing review, and recovery never asks MayApprove: it posts nothing.
 // Its original remote diff hunks supply evidence for finding mapping.
 func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRecord, marker string, view render.View) (string, error) {
-	event := map[string]string{"COMMENTED": "COMMENT", "APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES"}[row.State]
+	event := map[string]string{"COMMENTED": "COMMENT", "APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES", reviewDismissed: reviewDismissed}[row.State]
 	if row.ID <= 0 || event == "" {
 		return "", fmt.Errorf("github: invalid submitted review disposition")
 	}
@@ -130,6 +130,10 @@ func (s reviewSurface) recoverReview(ctx context.Context, ref Ref, row ReviewRec
 			}
 		}
 	}
+	if event == reviewDismissed {
+		event = dismissedEvent(view, remote, payload)
+		remote.Event = event
+	}
 	if reviewPayloadMarker(view, remote) != payload {
 		return "", fmt.Errorf("github: existing review payload differs from immutable delivery intent")
 	}
@@ -169,4 +173,19 @@ func (s reviewSurface) refusedApproval(planned Review, posted string) Review {
 		planned.Event = "COMMENT"
 	}
 	return planned
+}
+
+// reviewDismissed is GitHub's state of a dismissed review.
+const reviewDismissed = "DISMISSED"
+
+// dismissedEvent is the event of a dismissed review, an approval or a change
+// request, as its payload proof says; "" when neither matches.
+func dismissedEvent(view render.View, remote Review, payload string) string {
+	for _, candidate := range []string{"APPROVE", "REQUEST_CHANGES"} {
+		remote.Event = candidate
+		if reviewPayloadMarker(view, remote) == payload {
+			return candidate
+		}
+	}
+	return ""
 }

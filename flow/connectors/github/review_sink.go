@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/urmzd/saige/flow/address"
 	"github.com/urmzd/saige/flow/connector"
 	"github.com/urmzd/saige/flow/connectors"
 	"github.com/urmzd/saige/flow/connectors/internal/render"
+	"github.com/urmzd/saige/flow/deliverystate"
 )
 
 // ReviewRecord supports recovery after a review was created but its local
@@ -105,22 +107,12 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 		return "", fmt.Errorf("%w: github: native review needs a pinned PR head", connector.ErrUndeliverable)
 	}
 	marker := reviewMarker(view, pinned)
-	for page := 1; page <= 10; page++ {
-		rows, err := s.history.ListReviews(ctx, ref, page)
-		if err != nil {
-			return "", err
-		}
-		for _, row := range rows {
-			if row.CommitID == pinned && ownReviewAuthor(s.c.cfg.Login, row.User.Login) && strings.Contains(row.Body, marker) {
-				return s.recoverReview(ctx, ref, row, marker, view)
-			}
-		}
-		if len(rows) < 100 {
-			break
-		}
-		if page == 10 {
-			return "", fmt.Errorf("github: review recovery exceeds 1000 reviews")
-		}
+	row, found, err := s.postedReview(ctx, ref, pinned, marker)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return s.recoverAndConfirm(ctx, ref, pinned, row, marker, view)
 	}
 	var files []ContextFile
 	var subject ContextSubject
@@ -168,11 +160,95 @@ func (s reviewSurface) Create(ctx context.Context, target address.Address, body 
 	}
 	review = markFindings(review)
 	review.Body += "\n\n" + marker + "\n\n" + reviewPayloadMarker(view, review)
+	if approve {
+		s.rememberSeen(ctx, view, marker, seen)
+	}
 	result, err := s.post(ctx, ref, review, approve, seen)
 	if err != nil {
 		return "", err
 	}
 	return reviewReceipt(result.ID, review, view)
+}
+
+// postedReview finds the review the sink already posted for marker on pinned.
+func (s reviewSurface) postedReview(ctx context.Context, ref Ref, pinned, marker string) (ReviewRecord, bool, error) {
+	for page := 1; page <= 10; page++ {
+		rows, err := s.history.ListReviews(ctx, ref, page)
+		if err != nil {
+			return ReviewRecord{}, false, err
+		}
+		for _, row := range rows {
+			if row.CommitID == pinned && ownReviewAuthor(s.c.cfg.Login, row.User.Login) && strings.Contains(row.Body, marker) {
+				return row, true, nil
+			}
+		}
+		if len(rows) < 100 {
+			break
+		}
+		if page == 10 {
+			return ReviewRecord{}, false, fmt.Errorf("github: review recovery exceeds 1000 reviews")
+		}
+	}
+	return ReviewRecord{}, false, nil
+}
+
+// recoverAndConfirm recovers a posted review. An approval whose response was
+// lost was never confirmed, so it is confirmed here.
+func (s reviewSurface) recoverAndConfirm(ctx context.Context, ref Ref, pinned string, row ReviewRecord, marker string, view render.View) (string, error) {
+	receipt, err := s.recoverReview(ctx, ref, row, marker, view)
+	if err == nil && row.State == reviewApproved && s.dismiss != nil {
+		seen, known := s.seenReviews(ctx, view, marker)
+		s.confirmApproval(ctx, ref, pinned, row.ID, seen, known)
+	}
+	return receipt, err
+}
+
+// seenKey is where the review IDs the hook was shown for a run's approval
+// are kept, so a recovered approval is confirmed against the same set.
+func (s reviewSurface) seenKey(view render.View, marker string) deliverystate.Key {
+	return deliverystate.Key{Tenant: s.c.cfg.Tenant, Scope: "approval:" + deliveryScope(s.c.cfg.Tenant, s.c.cfg.DeliveryScope), Run: view.RunID, Channel: view.Channel, Target: marker}
+}
+
+type seenRecord struct {
+	Reviews []int64 `json:"reviews"`
+}
+
+// rememberSeen keeps the IDs of the reviews the hook was shown, before the
+// approval is posted. It is best effort: without the record, recovery
+// confirms the approval against every outstanding change request.
+func (s reviewSurface) rememberSeen(ctx context.Context, view render.View, marker string, seen []AppReview) {
+	record := seenRecord{Reviews: []int64{}}
+	for _, review := range seen {
+		record.Reviews = append(record.Reviews, review.ID)
+	}
+	raw, err := json.Marshal(record)
+	if err == nil {
+		err = s.c.feedbackState.Update(ctx, s.seenKey(view, marker), func([]byte) ([]byte, bool, error) { return raw, false, nil })
+	}
+	if err != nil {
+		s.c.log().Warn("github: could not keep the reviews an approval was decided on", "connector", Name, "run", view.RunID, "error", err)
+	}
+}
+
+// seenReviews reads what rememberSeen kept; known is false when nothing was.
+func (s reviewSurface) seenReviews(ctx context.Context, view render.View, marker string) (seen []AppReview, known bool) {
+	var record *seenRecord
+	err := s.c.feedbackState.Update(ctx, s.seenKey(view, marker), func(raw []byte) ([]byte, bool, error) {
+		if len(raw) > 0 {
+			var r seenRecord
+			if json.Unmarshal(raw, &r) == nil && r.Reviews != nil {
+				record = &r
+			}
+		}
+		return raw, false, nil
+	})
+	if err != nil || record == nil {
+		return nil, false
+	}
+	for _, id := range record.Reviews {
+		seen = append(seen, AppReview{ID: id})
+	}
+	return seen, true
 }
 
 // post submits review. An approval carries the sink's single-use grant, and
@@ -186,7 +262,7 @@ func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve
 	if err != nil {
 		return result, err
 	}
-	s.confirmApproval(ctx, ref, review.CommitID, result.ID, seen)
+	s.confirmApproval(ctx, ref, review.CommitID, result.ID, seen, true)
 	return result, nil
 }
 
@@ -196,13 +272,19 @@ func (s reviewSurface) post(ctx context.Context, ref Ref, review Review, approve
 // the hook was not shown (another agent's, posted while the hook decided,
 // which the approval would replace as the account's latest review), or when
 // either read fails. The posted review stands only when both reads confirm
-// it. A failed dismissal is logged, and the delivery still completes: the
-// approval was posted. A push after these reads is the host's to handle on
+// it. With known false the set the hook was shown is lost, and any
+// outstanding change request other than this approval dismisses it. The reads
+// and the dismissal run without the delivery's cancellation, under their own
+// time bound, so a delivery cancelled after the post still confirms it. A
+// failed dismissal is logged, and the delivery still completes: the approval
+// was posted. A push after these reads is the host's to handle on
 // synchronize, or GitHub's, with the branch rule that dismisses stale
 // approvals.
-func (s reviewSurface) confirmApproval(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview) {
+func (s reviewSurface) confirmApproval(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview, known bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), approvalConfirmTimeout)
+	defer cancel()
 	log := s.c.log().With("connector", Name, "pull_request", ref.String(), "review", id)
-	reason := s.approvalStale(ctx, ref, pinned, id, seen)
+	reason := s.approvalStale(ctx, ref, pinned, id, seen, known)
 	if reason == "" {
 		return
 	}
@@ -214,7 +296,7 @@ func (s reviewSurface) confirmApproval(ctx context.Context, ref Ref, pinned stri
 }
 
 // approvalStale returns why a posted approval must be dismissed, or "".
-func (s reviewSurface) approvalStale(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview) string {
+func (s reviewSurface) approvalStale(ctx context.Context, ref Ref, pinned string, id int64, seen []AppReview, known bool) string {
 	log := s.c.log().With("connector", Name, "pull_request", ref.String(), "review", id)
 	got, err := s.context.ReadContext(ctx, ref, 1)
 	if err != nil {
@@ -229,18 +311,22 @@ func (s reviewSurface) approvalStale(ctx context.Context, ref Ref, pinned string
 		log.Warn("github: could not read the app's reviews after posting an approval", "error", err)
 		return unconfirmedDismissal
 	}
-	known := make(map[int64]bool, len(seen)+1)
-	for _, review := range seen {
-		known[review.ID] = true
+	shown := map[int64]bool{id: true}
+	if known {
+		for _, review := range seen {
+			shown[review.ID] = true
+		}
 	}
-	known[id] = true
 	for _, review := range outstandingReviews(reviews) {
-		if review.State == reviewChangesRequested && !known[review.ID] {
+		if review.State == reviewChangesRequested && !shown[review.ID] {
 			return changesRequestedDismissal
 		}
 	}
 	return ""
 }
+
+// approvalConfirmTimeout bounds confirmApproval's reads and dismissal.
+const approvalConfirmTimeout = 30 * time.Second
 
 // The messages GitHub shows on an approval the sink dismissed.
 const (
