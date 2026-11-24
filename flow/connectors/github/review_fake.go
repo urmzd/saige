@@ -44,6 +44,7 @@ func reviewState(event string) string {
 
 func (entry FakeReview) record() ReviewRecord {
 	v := ReviewRecord{ReviewResult: entry.Result, Body: entry.Review.Body, CommitID: entry.Review.CommitID, State: reviewState(entry.Review.Event)}
+	v.PullRequestURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", entry.Ref.Owner, entry.Ref.Repo, entry.Ref.Number)
 	if entry.Dismissal != "" {
 		v.State = "DISMISSED"
 	}

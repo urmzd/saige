@@ -24,7 +24,9 @@ type ReviewRecord struct {
 	Body     string `json:"body"`
 	CommitID string `json:"commit_id"`
 	State    string `json:"state"`
-	User     struct {
+	// PullRequestURL is the API URL of the pull request the review is on.
+	PullRequestURL string `json:"pull_request_url,omitempty"`
+	User           struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }

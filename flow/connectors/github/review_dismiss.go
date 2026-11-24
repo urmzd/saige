@@ -36,7 +36,7 @@ func (a *HTTPAPI) Review(ctx context.Context, ref Ref, reviewID int64) (ReviewRe
 	if err := a.client.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return ReviewRecord{}, fmt.Errorf("github: read review %d on %s: %w", reviewID, ref, err)
 	}
-	if out.ID != reviewID {
+	if out.ID != reviewID || !reviewOn(out.PullRequestURL, ref) {
 		return ReviewRecord{}, fmt.Errorf("github: review response did not match requested review")
 	}
 	return out, nil
@@ -56,6 +56,20 @@ func (a *HTTPAPI) DismissReview(ctx context.Context, ref Ref, reviewID int64, me
 		return fmt.Errorf("github: dismiss review %d on %s: %w", reviewID, ref, err)
 	}
 	return nil
+}
+
+// reviewOn reports whether a review's pull_request_url names ref's pull request.
+func reviewOn(pullRequestURL string, ref Ref) bool {
+	want := fmt.Sprintf("/repos/%s/%s/pulls/%d", ref.Owner, ref.Repo, ref.Number)
+	return strings.HasSuffix(strings.ToLower(pullRequestURL), strings.ToLower(want))
+}
+
+// ownReviewAuthor reports whether a review's author is the app Config.Login
+// names: its bot account, "<slug>[bot]", compared ignoring case. A person whose
+// login is the slug is not the app, and an empty Login owns nothing.
+func ownReviewAuthor(login, author string) bool {
+	slug := appSlug(login)
+	return slug != "" && strings.EqualFold(author, slug+"[bot]")
 }
 
 func validDismissal(ref Ref, reviewID int64, message string) error {
@@ -80,10 +94,11 @@ func dismissable(state string) bool {
 	return state == reviewApproved || state == reviewChangesRequested
 }
 
-// OwnReviews reads the reviews the connector's own login (Config.Login) wrote
-// on a pull request: each with its ID, state, commit and author. It reads at
-// most 1000 reviews and fails beyond that. With Config.Login empty it fails:
-// no review is the app's own.
+// OwnReviews reads the reviews the app Config.Login names wrote on a pull
+// request, as its bot account "<slug>[bot]": each with its ID, state, commit
+// and author. It reads up to 10 pages of 100 and fails when a pull request has
+// 1000 or more reviews. With Config.Login empty it fails: no review is the
+// app's own.
 func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number int) ([]ReviewRecord, error) {
 	ref, err := c.hostPull(owner, repo, number)
 	if err != nil {
@@ -100,7 +115,7 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 			return nil, err
 		}
 		for _, row := range rows {
-			if strings.EqualFold(row.User.Login, c.cfg.Login) {
+			if ownReviewAuthor(c.cfg.Login, row.User.Login) {
 				out = append(out, row)
 			}
 		}
@@ -108,7 +123,7 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 			return out, nil
 		}
 		if page == 10 {
-			return nil, fmt.Errorf("github: pull request has more than 1000 reviews")
+			return nil, fmt.Errorf("github: pull request has 1000 or more reviews")
 		}
 	}
 }
@@ -116,8 +131,8 @@ func (c *Connector) OwnReviews(ctx context.Context, owner, repo string, number i
 // DismissReview dismisses the app's own approval or change request on a pull
 // request, such as an approval left on an older head after a push, or a
 // change request a later clean review clears. It reads the review first and
-// refuses with ErrNotOwnReview when Config.Login did not write it, or when it
-// is a comment or already dismissed. It is for the host: no model tool calls it.
+// refuses with ErrNotOwnReview unless the app's bot account ("<slug>[bot]",
+// from Config.Login) wrote it and it is an approval or a change request. It is for the host: no model tool calls it.
 func (c *Connector) DismissReview(ctx context.Context, owner, repo string, number int, reviewID int64, message string) error {
 	ref, err := c.hostPull(owner, repo, number)
 	if err != nil {
@@ -134,7 +149,7 @@ func (c *Connector) DismissReview(ctx context.Context, owner, repo string, numbe
 	if err != nil {
 		return err
 	}
-	if !strings.EqualFold(review.User.Login, c.cfg.Login) || !dismissable(review.State) {
+	if !ownReviewAuthor(c.cfg.Login, review.User.Login) || !dismissable(review.State) {
 		return fmt.Errorf("%w: review %d is %s by %q", ErrNotOwnReview, reviewID, review.State, review.User.Login)
 	}
 	return api.DismissReview(ctx, ref, reviewID, message)
@@ -143,7 +158,7 @@ func (c *Connector) DismissReview(ctx context.Context, owner, repo string, numbe
 // hostPull checks a host's pull request reference the way a delivery address is
 // checked: a served owner and a valid repository, and a login to act as.
 func (c *Connector) hostPull(owner, repo string, number int) (Ref, error) {
-	if strings.TrimSpace(c.cfg.Login) == "" {
+	if appSlug(c.cfg.Login) == "" {
 		return Ref{}, fmt.Errorf("%w: Config.Login names no app", ErrNotOwnReview)
 	}
 	ref, err := c.ref(refAddress(Ref{Owner: owner, Repo: repo, Number: number}, "pull"))

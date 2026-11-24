@@ -47,10 +47,11 @@ func fakeDismissBackend() dismissBackend {
 }
 
 type serverReview struct {
-	ID       int64  `json:"id"`
-	State    string `json:"state"`
-	CommitID string `json:"commit_id"`
-	User     struct {
+	ID             int64  `json:"id"`
+	State          string `json:"state"`
+	CommitID       string `json:"commit_id"`
+	PullRequestURL string `json:"pull_request_url"`
+	User           struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
@@ -103,7 +104,7 @@ func httpDismissBackend(t *testing.T) dismissBackend {
 		seed: func(_ *testing.T, author, event string) int64 {
 			mu.Lock()
 			defer mu.Unlock()
-			v := &serverReview{ID: int64(len(reviews) + 1), State: states[event], CommitID: commitSHA}
+			v := &serverReview{ID: int64(len(reviews) + 1), State: states[event], CommitID: commitSHA, PullRequestURL: server.URL + "/repos/acme/repo/pulls/7"}
 			v.User.Login = author
 			reviews = append(reviews, v)
 			return v.ID
@@ -196,5 +197,64 @@ func TestNoModelToolDismisses(t *testing.T) {
 		if strings.Contains(strings.ToLower(action.Name+" "+action.Description+" "+string(action.Schema)), "dismiss") {
 			t.Fatalf("model action %s offers dismissal", action.Name)
 		}
+	}
+}
+
+// A review is the app's own only when its bot account wrote it: "<slug>[bot]"
+// from Config.Login, ignoring case. A person whose login is the slug is not
+// the app, whichever form Config.Login takes.
+func TestOwnReviewIsTheAppsBotAccount(t *testing.T) {
+	ref := github.Ref{Owner: "acme", Repo: "repo", Number: 7}
+	for _, tc := range []struct {
+		login, author string
+		own           bool
+	}{
+		{"humagen[bot]", "humagen[bot]", true},
+		{"humagen[bot]", "HUMAGEN[BOT]", true},
+		{"humagen[bot]", "humagen", false},
+		{"humagen[bot]", "humagen[bot]x", false},
+		{"humagen", "humagen[bot]", true},
+		{"humagen", "humagen", false},
+		{"humagen", "Humagen", false},
+	} {
+		api := github.NewFake()
+		id, err := api.SeedReview(ref, tc.author, "APPROVE", commitSHA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := github.New(github.Config{API: api, Login: tc.login})
+		if err != nil {
+			t.Fatal(err)
+		}
+		own, _ := c.OwnReviews(context.Background(), "acme", "repo", 7)
+		if (len(own) == 1) != tc.own {
+			t.Errorf("Login %q, author %q: OwnReviews %+v, want own %v", tc.login, tc.author, own, tc.own)
+		}
+		err = c.DismissReview(context.Background(), "acme", "repo", 7, id, "superseded")
+		if (err == nil) != tc.own {
+			t.Errorf("Login %q, author %q: dismiss answered %v, want own %v", tc.login, tc.author, err, tc.own)
+		}
+	}
+}
+
+// A review GitHub reports on another pull request is not dismissed.
+func TestDismissRefusesAReviewOfAnotherPullRequest(t *testing.T) {
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts++
+			return
+		}
+		v := serverReview{ID: 1, State: "APPROVED", CommitID: commitSHA, PullRequestURL: "https://api.github.com/repos/acme/repo/pulls/8"}
+		v.User.Login = "humagen[bot]"
+		_ = json.NewEncoder(w).Encode(v)
+	}))
+	defer server.Close()
+	c, err := github.New(github.Config{API: github.NewHTTPAPIAt(server.URL, "token", server.Client()), Login: "humagen[bot]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DismissReview(context.Background(), "acme", "repo", 7, 1, "superseded"); err == nil || puts != 0 {
+		t.Fatalf("dismissed a review of another pull request: %v, %d requests", err, puts)
 	}
 }

@@ -76,11 +76,16 @@ A host clears its own earlier verdict with `Connector.DismissReview(ctx,
 owner, repo, number, reviewID, message)`, for example an approval left on an
 older head after a push, or a change request that a later clean review
 replaces. It reads the review first and refuses with `ErrNotOwnReview` unless
-`Config.Login` wrote it and it is an approval or a change request. A comment,
-a dismissed review and another login's review are refused before any
-dismissal is sent. `Connector.OwnReviews(ctx, owner, repo, number)` lists the
-app's own reviews on a pull request with their ID, state, commit and author.
-No model tool offers either.
+the app's bot account wrote it and it is an approval or a change request. The
+bot account is `<slug>[bot]`, where the slug is `Config.Login` without
+`[bot]`, compared ignoring case: with `Login` `humagen` or `humagen[bot]`, a
+review by `humagen[bot]` is own and one by a person named `humagen` is not.
+An empty `Login` owns nothing. A comment, a dismissed review, another login's
+review and a review GitHub reports on another pull request are refused before
+any dismissal is sent. `Connector.OwnReviews(ctx, owner, repo, number)` lists
+the app's own reviews on a pull request with their ID, state, commit and
+author; it fails when the pull request has 1000 or more reviews. No model
+tool offers either.
 
 ## What a webhook publishes
 
