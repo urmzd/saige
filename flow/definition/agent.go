@@ -69,11 +69,10 @@ type Budget struct {
 type Agent struct {
 	Definition *sdef.Definition
 	Policy     Policy
-	// Budget is limits.budget, and Subagents the budget of each sub-agent
-	// delegation by name.
-	Budget    Budget
-	Subagents map[string]Budget
-	Spec      turn.Spec
+	// Budget is limits.budget. It is also what a caller reserves for this
+	// agent when it delegates to it.
+	Budget Budget
+	Spec   turn.Spec
 }
 
 // Parse reads one .agent.md file and its policy and checks both: saige's
@@ -198,25 +197,15 @@ func check(def *sdef.Definition, policy Policy, checks Checks) (Agent, error) {
 		}
 	}
 
-	// Sub-agents are what the agent may delegate to.
+	// Sub-agents are what the agent may delegate to. Each one's budget is
+	// its own limits.budget.
 	var spawn []string
-	subBudgets := map[string]Budget{}
 	for _, s := range def.Subagents {
-		if s.EffectiveMode() != sdef.SubagentDelegate {
-			return fail("sub-agent %q is a %s; fiber delegates only", s.Ref, s.EffectiveMode())
-		}
 		ref, err := sdef.ParseRef(s.Ref)
 		if err != nil {
 			return fail("sub-agent %q: %v", s.Ref, err)
 		}
 		spawn = append(spawn, ref.Name)
-		if s.Budget != nil {
-			b, err := budget(s.Budget.MaxCost, s.Budget.MaxTokens, s.Budget.MaxRequests)
-			if err != nil {
-				return fail("sub-agent %q budget: %v", ref.Name, err)
-			}
-			subBudgets[ref.Name] = b
-		}
 	}
 
 	// Approvals: only ask, and only for tools the agent holds.
@@ -277,10 +266,7 @@ func check(def *sdef.Definition, policy Policy, checks Checks) (Agent, error) {
 	for _, c := range policy.Knowledge {
 		spec.Sources = append(spec.Sources, turn.Source{Name: c.Name, URI: c.URI, Options: c.Options})
 	}
-	if len(subBudgets) == 0 {
-		subBudgets = nil
-	}
-	return Agent{Definition: def, Policy: policy, Budget: limits, Subagents: subBudgets, Spec: spec}, nil
+	return Agent{Definition: def, Policy: policy, Budget: limits, Spec: spec}, nil
 }
 
 // maxUSD keeps a converted budget well inside int64 micro-USD and inside

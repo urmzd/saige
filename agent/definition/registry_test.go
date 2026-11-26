@@ -69,13 +69,13 @@ func TestResolveNotLoaded(t *testing.T) {
 func TestResolveSubagentsAndDigest(t *testing.T) {
 	leaf := def(t, "leaf", "1.0.0", "")
 	mid := def(t, "mid", "1.0.0", "subagents: [leaf@^1]\n")
-	top := def(t, "top", "1.0.0", "subagents:\n  - ref: mid\n    mode: spawn\n  - leaf\n")
+	top := def(t, "top", "1.0.0", "subagents:\n  - ref: mid\n  - leaf\n")
 	r := loaded(t, Checks{}, leaf, mid, top)
 	res, err := r.Resolve("top")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Subagents) != 2 || res.Subagents[0].Agent.Name != "mid" || res.Subagents[0].Mode != "spawn" ||
+	if len(res.Subagents) != 2 || res.Subagents[0].Agent.Name != "mid" || res.Subagents[0].Ref != "mid" ||
 		res.Subagents[0].Agent.Subagents[0].Agent != res.Subagents[1].Agent {
 		t.Fatalf("got %+v", res.Subagents)
 	}

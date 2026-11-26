@@ -58,12 +58,28 @@ func (r *Runtime) reserveChildBudget(ctx context.Context, parent Input, in *Inpu
 	if parent.Budget == nil {
 		return session.ErrBudget
 	}
-	loaded, err := r.defs.Verify(ctx, parent.Trigger.Tenant, parent.Pin)
+	// The child's allowance is its own limits.budget, read from the version
+	// it will run: the one its parent pinned for it, or its latest.
+	name := definition.NormalizeName(in.Subscriber)
+	var (
+		pin definition.Pin
+		err error
+	)
+	if version, ok := parent.Pin.SubagentVersion(name); ok {
+		pin, err = r.defs.ResolveAt(ctx, parent.Trigger.Tenant, name, version)
+	} else {
+		pin, err = r.defs.Resolve(ctx, parent.Trigger.Tenant, name)
+	}
 	if err != nil {
 		return err
 	}
-	want := allowance(loaded.Agent.Subagents[definition.NormalizeName(in.Subscriber)])
-	// Calling an agent grants neither an unbounded nor an implicit money budget.
+	loaded, err := r.defs.Verify(ctx, parent.Trigger.Tenant, pin)
+	if err != nil {
+		return err
+	}
+	want := allowance(loaded.Agent.Budget)
+	// Calling an agent grants neither an unbounded nor an implicit money
+	// budget: a callee without limits.budget cannot be called.
 	if !want.Valid() {
 		return session.ErrBudget
 	}

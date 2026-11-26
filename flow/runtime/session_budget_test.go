@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/urmzd/saige/durable/ledger"
 	"github.com/urmzd/saige/durable/run"
+	"github.com/urmzd/saige/flow/definition"
 	"github.com/urmzd/saige/flow/event"
 	"github.com/urmzd/saige/flow/session"
 )
@@ -178,5 +180,47 @@ func TestBudgetSettlementIncludesRootAtMaximumSessionDepth(t *testing.T) {
 	a, err := s.BudgetAccount(ctx, "t", chain[0].runID())
 	if err != nil || !a.Ready() {
 		t.Fatal("maximum-depth root remained unsettled", a, err)
+	}
+}
+
+// A delegation reserves the callee's own limits.budget, and a callee without
+// one cannot be called.
+func TestChildBudgetIsTheCalleesOwnLimit(t *testing.T) {
+	ctx := context.Background()
+	src := definition.NewMemory()
+	put := func(name, front string) {
+		t.Helper()
+		content := "---\napiVersion: saige/v1\nname: " + name + "\nversion: 1.0.0\nmodel: offline/echo\n" + front + "---\nPrompt.\n"
+		if _, err := src.Put(ctx, definition.Record{Tenant: "t", Content: content, CreatedBy: "ada"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("child", "limits:\n  budget:\n    max_requests: 3\n")
+	put("bare", "")
+	put("root", "subagents: [child, bare]\nlimits:\n  budget:\n    max_requests: 10\n")
+	defs := definition.NewResolver(src, definition.Checks{})
+	pin, err := defs.Resolve(ctx, "t", "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trigger := func(id string) event.Envelope {
+		return event.Envelope{Tenant: "t", ID: id, Source: "console://t/root", Channel: "console://t/root", Type: event.TypeMessagePosted, Time: time.Now(), Data: event.MessagePosted{Request: event.Request{Text: "test"}}}
+	}
+	s := session.NewMemory()
+	rt := &Runtime{sessions: s, defs: defs}
+	parent := Input{Trigger: trigger("root"), Subscriber: "root", Pin: pin, Budget: &session.Budget{Requests: 10}}
+	if err := s.OpenBudget(ctx, "t", parent.runID(), *parent.Budget); err != nil {
+		t.Fatal(err)
+	}
+	child := Input{Trigger: trigger("child"), Subscriber: "child", Parent: &ParentRef{RunID: parent.runID()}}
+	if err := rt.reserveChildBudget(ctx, parent, &child); err != nil {
+		t.Fatal(err)
+	}
+	if child.Budget == nil || child.Budget.Requests != 3 {
+		t.Fatalf("child budget %+v", child.Budget)
+	}
+	bare := Input{Trigger: trigger("bare"), Subscriber: "bare", Parent: &ParentRef{RunID: parent.runID()}}
+	if err := rt.reserveChildBudget(ctx, parent, &bare); !errors.Is(err, session.ErrBudget) {
+		t.Fatalf("a callee without limits.budget: %v", err)
 	}
 }

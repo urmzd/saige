@@ -56,6 +56,8 @@ type Definition struct {
 	// Memory connects the agent to a durable memory store.
 	Memory *MemorySpec `json:"memory,omitempty"`
 	// Subagents reference other definitions by name and version range.
+	// The parent delegates to each one, and finds and reads them with
+	// discover and load.
 	Subagents []SubagentRef `json:"subagents,omitempty"`
 	// Approval is the human-in-the-loop policy for tool calls.
 	Approval *ApprovalSpec `json:"approval,omitempty"`
@@ -128,7 +130,17 @@ type ToolsSpec struct {
 	MCP []MCPRef `json:"mcp,omitempty"`
 	// Registry names tools the host registers, such as rag_search.
 	Registry []string `json:"registry,omitempty"`
+	// Discover holds tools back from the agent's tool list until the model
+	// finds them with discover and loads them with load. Each entry is a
+	// tool name, a glob over tool names such as github_*, or mcp:<server>
+	// for every tool of one MCP server tools.mcp lists. Holding a tool back
+	// only hides it: once loaded it passes the same approval rules.
+	Discover []string `json:"discover,omitempty"`
 }
+
+// MCPDiscoverPrefix marks a tools.discover entry that holds back every tool
+// of one MCP server: mcp:<server>.
+const MCPDiscoverPrefix = "mcp:"
 
 // MCPRef names one MCP server. In the file it is either the server name or
 // an object.
@@ -147,7 +159,7 @@ type SkillMode string
 // Skill modes.
 const (
 	// SkillLazy lists the skill in the system prompt; the model loads it
-	// with load_skill when a task needs it. It is the default.
+	// with load when a task needs it. It is the default.
 	SkillLazy SkillMode = "lazy"
 	// SkillEager puts the skill's instructions in the system prompt.
 	SkillEager SkillMode = "eager"
@@ -155,7 +167,7 @@ const (
 	// must equal Hash, or binding fails.
 	SkillPinned SkillMode = "pinned"
 	// SkillSearch leaves the skill out of the prompt; the model finds it
-	// with search_skills.
+	// with discover and loads it with load.
 	SkillSearch SkillMode = "search"
 	// SkillTrigger adds the skill's instructions to a user message that
 	// matches one of Triggers, and lists it like SkillLazy otherwise.
@@ -215,46 +227,17 @@ type MemorySpec struct {
 	ReadOnly bool `json:"read_only,omitempty"`
 }
 
-// Sub-agent modes.
-const (
-	SubagentDelegate = "delegate"
-	SubagentSpawn    = "spawn"
-	SubagentHandoff  = "handoff"
-)
-
-// SubagentRef references another definition. In the file it is either the
-// reference or an object.
+// SubagentRef references another definition: an agent reference and
+// nothing more. In the file it is either the reference or an object with
+// only ref. What the sub-agent is for, and what it may spend, are the
+// sub-agent's own: its description and its limits. A sub-agent is always
+// delegated to: the parent waits for its answer.
 type SubagentRef struct {
 	// Ref is name or name@range, such as reviewer@^1.2.
 	Ref string `json:"ref"`
-	// Mode is delegate (the default), spawn or handoff.
-	Mode string `json:"mode,omitempty"`
-	// Description replaces the sub-agent's own description in the tool the
-	// parent sees.
-	Description string          `json:"description,omitempty"`
-	Budget      *SubagentBudget `json:"budget,omitempty"`
 }
 
 func (SubagentRef) shorthandField() string { return "ref" }
-
-// EffectiveMode returns Mode, or SubagentDelegate when it is empty.
-func (s SubagentRef) EffectiveMode() string {
-	if s.Mode == "" {
-		return SubagentDelegate
-	}
-	return s.Mode
-}
-
-// SubagentBudget bounds one delegation.
-type SubagentBudget struct {
-	MaxIterations int              `json:"max_iterations,omitempty"`
-	Timeout       catalog.Duration `json:"timeout,omitzero"`
-	// MaxCost, MaxTokens and MaxRequests give the sub-agent a budget of
-	// its own, separate from the parent's.
-	MaxCost     float64 `json:"max_cost,omitempty"`
-	MaxTokens   int     `json:"max_tokens,omitempty"`
-	MaxRequests int     `json:"max_requests,omitempty"`
-}
 
 // Approval decisions.
 const (

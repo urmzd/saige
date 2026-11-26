@@ -108,8 +108,6 @@ func (g *schemaGen) field(owner reflect.Type, name string, t reflect.Type) map[s
 		return strEnum(RecallTool, RecallInject, RecallSelect, RecallOff)
 	case owner == reflect.TypeFor[MemorySpec]() && name == "write":
 		return map[string]any{"type": "array", "items": strEnum(memoryKinds...)}
-	case owner == reflect.TypeFor[SubagentRef]() && name == "mode":
-		return strEnum(SubagentDelegate, SubagentSpawn, SubagentHandoff)
 	case owner == reflect.TypeFor[ApprovalSpec]() && name == "capabilities":
 		return map[string]any{"type": "object", "propertyNames": strEnum(capabilityClasses...),
 			"additionalProperties": strEnum(DecisionAllow, DecisionAsk, DecisionDeny)}

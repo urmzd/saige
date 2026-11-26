@@ -61,11 +61,7 @@ model:
 tools:
   harness: [read, exec]
 subagents:
-  - ref: assistant@^1.0
-    description: Hand the assistant a question that needs files read and summarized.
-    budget:
-      max_iterations: 4
-      timeout: 2m
+  - assistant@^1.0
 approval:
   allow:
     - Bash(git status:*)
@@ -109,13 +105,13 @@ The digest is `sha256:` over the file with line endings normalized, so a checkou
 | `apiVersion` | Required. `saige/v1`; any other value is rejected |
 | `name` | Required. Lowercase letters, digits and hyphens, starting with a letter, at most 48 characters. Also the agent's name at run time |
 | `version` | Required. A semantic version such as `1.4.0` |
-| `description` | What the agent is for. A parent shows it in the sub-agent's tool |
+| `description` | What the agent is for. A parent sees it in the sub-agent's tool, and `discover` searches it |
 | `model` | A catalog preset name or `provider/model` (`vertex/` selects Vertex AI), or an object with `use` and a `fallback` list of `provider/model`. A fallback without credentials is dropped with a warning |
 | `dials` | [Dials](dials.md): `creativity`, `reasoning`, `max_output`, `tools`, `parallel`, `reproducible`, `cache` |
-| `tools` | `harness` groups (`read`, `write`, `exec`, `web`), `mcp` servers by the host's name for them (with an optional `allow` list of remote tool names), and `registry` tools by name |
+| `tools` | `harness` groups (`read`, `write`, `exec`, `web`), `mcp` servers by the host's name for them (with an optional `allow` list of remote tool names), `registry` tools by name, and `discover`: tools held back until the model loads them (see below) |
 | `skills` | Skill names, or objects with `name`, `mode`, `triggers` and `hash` (see below) |
 | `memory` | `store` (a store the host names), `recall` (`tool`, `inject`, `select` or `off`), `write` kinds, `budget`, `retention`, `namespace`, `read_only` |
-| `subagents` | References `name@range`, or objects with `ref`, `mode` (`delegate`, `spawn` or `handoff`), `description` and `budget` (`max_iterations`, `timeout`, `max_cost`, `max_tokens`, `max_requests`) |
+| `subagents` | Agent references, `name` or `name@range` (or an object with only `ref`). The parent delegates to each one. Its description, prompt and limits are its own |
 | `approval` | `capabilities`, `allow`, `ask` and `deny` rules, `grant`, `deny_after`, `ramp_after`, `hide_denied` (see below) |
 | `compaction` | The catalog's compaction form: `strategy` and its parameters, or a `chain` (see [context management](context-management.md)) |
 | `guardrails` | `input` and `output` lists of built-ins: `pii`, `regex` (with `patterns` of `label` and `expr`), `max_length` (with `max`), `classifier` (with `policy`); `redact` and `parallel` where they apply |
@@ -126,13 +122,35 @@ The digest is `sha256:` over the file with line endings normalized, so a checkou
 
 | Mode | How the skill reaches the model |
 | --- | --- |
-| `lazy` (default) | Listed in the system prompt; the model loads it with `load_skill` |
+| `lazy` (default) | Listed in the system prompt; the model loads it with `load` |
 | `eager` | Its instructions are in the system prompt, from the snapshot taken at bind time |
 | `pinned` | `eager` for one exact snapshot: the skill's hash must equal `hash`, or binding fails. `saige agent show` prints the hash |
-| `search` | Left out of the prompt; the model finds it with `search_skills` |
+| `search` | Left out of the prompt; the model finds it with `discover` and loads it with `load` |
 | `trigger` | Listed like `lazy`, and its instructions are put in front of any user message that matches one of `triggers` (Go regular expressions) |
 
 Only the skills a definition names are reachable, as `skills.AllowNames` makes them. Skills supply content and never grant permission ([D-28](../adrs/0028-skills-supply-content-and-never-grant-permission.md)).
+
+### Discovery
+
+An agent finds and loads what it is not shown up front with two tools, the same way for tools, skills and agents (package `agent/discovery`):
+
+| Tool | What it does |
+| --- | --- |
+| `discover(query, kind, k)` | Ranks what the agent may load by name, description and text: a skill's instructions, a sub-agent's system prompt, a held tool's parameters. Answers with each match's kind, name, description and an excerpt. An empty query lists everything of `kind` |
+| `load(kind, name)` | A held tool becomes callable from the next turn and its schema is returned. A skill returns its instructions, through the skill toolset, so its `allowed-tools` applies. A sub-agent returns its description and instructions, so the model can decide whether to delegate to it |
+
+A definition gets both tools, and a `## Discovery` prompt section, when it holds tools back, has a `lazy`, `search` or `trigger` skill, or has a sub-agent.
+
+`tools.discover` holds tools back. Each entry is a tool name, a glob such as `github_*`, or `mcp:<server>` for every tool of a server `tools.mcp` lists:
+
+```yaml
+tools:
+  harness: [read]
+  mcp: [github, linear]
+  discover: ["mcp:linear", "github_*"]
+```
+
+Loading is disclosure, not permission: a loaded tool still passes the approval rules and the host's gate on every call. Which tools a conversation loaded is kept in a `discovery.Store`; the default keeps it in memory, and a host that resumes runs in another process passes a durable one.
 
 ### Approval rules
 
@@ -222,15 +240,16 @@ a, err := b.NewAgent()
 | `tools.harness` | A `tools.Harness` toolset under `Env.Harness.Root`, one per agent |
 | `tools.mcp` | An `mcp.Pool` over `Env.MCPServers`, its tools and its gate. `allow` may only narrow the host's own allow list |
 | `tools.registry` | Tools from `Env.Tools` |
-| `skills` | The skill tools and prompt section over `Env.Skills`; a `UserInput` hook for triggers |
+| `tools.discover` | A `discovery.Discovery` tool policy that holds the matching tools back until `load` |
+| `skills` | Discovery entries over `Env.Skills`, `read_skill_resource`, and the prompt section; a `UserInput` hook for triggers |
 | `memory` | `memory.Tools` over `Env.MemoryStores` and `Env.MemoryScope`; a `UserInput` hook for `inject` and `select` |
-| `subagents` | `agent.SubAgentDef` (delegate, spawn) or `agent.HandoffDef` (handoff) |
+| `subagents` | `agent.SubAgentDef` in delegate mode, and a discovery entry over its prompt |
 | `approval` | A `ToolGate` behind `Env.ToolGate`, and `agent.ApprovalPolicy` |
 | `compaction` | `agent.Config.CompactCfg` |
 | `guardrails` | `agent.InputGuardrail` and `agent.OutputGuardrail` from `agent/guardrail`; a classifier runs on the agent's model |
 | `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`. Each `Bound.NewAgent` call, and each delegation, gets a budget of its own |
 
-A sub-agent inherits its parent's run policy as every sub-agent does (see [delegation](delegation.md)), and its own definition replaces what it declares: its approval rules (still behind the host's gate), compaction, dials, timeouts and budget. A sub-agent with no approval block keeps its parent's. A handoff member shares its entry agent's run, so a definition used with `mode: handoff` may not declare approval, skills, memory, compaction, guardrails, MCP servers, sub-agents, a budget or timeouts; binding says which.
+A sub-agent inherits its parent's run policy as every sub-agent does (see [delegation](delegation.md)), and its own definition replaces what it declares: its approval rules (still behind the host's gate), compaction, dials, timeouts and budget. A sub-agent with no approval block keeps its parent's. What a delegation may spend is the sub-agent's own `limits`.
 
 Everything a definition names by reference must be in the `Env`. A missing preset, tool, MCP server, skill catalog or memory store fails with `bind.ErrUnsupported` and says what is missing.
 

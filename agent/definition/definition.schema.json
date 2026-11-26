@@ -445,45 +445,9 @@
       ],
       "type": "object"
     },
-    "SubagentBudget": {
-      "additionalProperties": false,
-      "properties": {
-        "max_cost": {
-          "type": "number"
-        },
-        "max_iterations": {
-          "type": "integer"
-        },
-        "max_requests": {
-          "type": "integer"
-        },
-        "max_tokens": {
-          "type": "integer"
-        },
-        "timeout": {
-          "description": "Go duration, for example \"30s\" or \"2m\"",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "SubagentRef": {
       "additionalProperties": false,
       "properties": {
-        "budget": {
-          "$ref": "#/$defs/SubagentBudget"
-        },
-        "description": {
-          "type": "string"
-        },
-        "mode": {
-          "enum": [
-            "delegate",
-            "spawn",
-            "handoff"
-          ],
-          "type": "string"
-        },
         "ref": {
           "type": "string"
         }
@@ -517,6 +481,12 @@
     "ToolsSpec": {
       "additionalProperties": false,
       "properties": {
+        "discover": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "harness": {
           "items": {
             "enum": [

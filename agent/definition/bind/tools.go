@@ -77,7 +77,20 @@ func bindTools(ctx context.Context, env *Env, d *definition.Definition, p *parts
 			p.tools = append(p.tools, unmark(t))
 		}
 		*mcpGate = pool.Gate()
+		// tools.discover may hold back a whole server, so remember which
+		// server each tool came from.
+		p.mcpServer = map[string]string{}
+		for _, c := range pool.Clients() {
+			list, err := c.Tools(ctx)
+			if err != nil {
+				return fmt.Errorf("agent %s: MCP tools of %s: %w", d.Name, c.Spec().Name, err)
+			}
+			for _, t := range list {
+				p.mcpServer[t.Definition().Name] = c.Spec().Name
+			}
+		}
 	}
+	p.hold = slices.Clone(spec.Discover)
 	return nil
 }
 

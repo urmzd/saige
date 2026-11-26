@@ -14,11 +14,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/definition"
+	"github.com/urmzd/saige/agent/discovery"
 	"github.com/urmzd/saige/agent/mcp"
 	"github.com/urmzd/saige/agent/memory"
 	"github.com/urmzd/saige/agent/provider/catalog"
@@ -180,9 +180,6 @@ func Bind(ctx context.Context, res *definition.Resolved, env Env) (*Bound, error
 	if p.toolPolicy != nil {
 		b.Config.ToolPolicy = p.toolPolicy(nil)
 	}
-	if len(p.handoffs) > 0 {
-		b.Options = append(b.Options, agent.WithHandoffs(p.handoffs...))
-	}
 	return b, nil
 }
 
@@ -206,8 +203,16 @@ type parts struct {
 	toolTimeout time.Duration
 	budget      *types.Budget
 	subagents   []agent.SubAgentDef
-	handoffs    []agent.HandoffDef
-	workspace   workspace.Workspace
+	// agents are the bound sub-agents, in the order of subagents.
+	agents []*parts
+	// entries are the skills and agents discover and load serve,
+	// listedSkills the skills the prompt lists, hold the tools.discover
+	// patterns, and mcpServer the MCP server of each MCP tool.
+	entries      []discovery.Entry
+	listedSkills []skills.SkillMeta
+	hold         []string
+	mcpServer    map[string]string
+	workspace    workspace.Workspace
 }
 
 func (p *parts) registry() *types.ToolRegistry {
@@ -296,24 +301,14 @@ func bindParts(ctx context.Context, env *Env, res *definition.Resolved, root boo
 		if err != nil {
 			return nil, err
 		}
-		switch sub.EffectiveMode() {
-		case definition.SubagentHandoff:
-			h, err := handoffDef(sub, cp)
-			if err != nil {
-				return nil, err
-			}
-			p.handoffs = append(p.handoffs, h)
-			if gate != nil {
-				gate.free["handoff_to_"+cp.def.Name] = true
-			}
-		default:
-			sd := subAgentDef(env, sub, cp)
-			p.subagents = append(p.subagents, sd)
-			if gate != nil {
-				gate.free["delegate_to_"+cp.def.Name] = true
-				gate.free["spawn_"+cp.def.Name] = true
-			}
+		p.subagents = append(p.subagents, subAgentDef(env, cp))
+		p.agents = append(p.agents, cp)
+		if gate != nil {
+			gate.free["delegate_to_"+cp.def.Name] = true
 		}
+	}
+	if err := bindDiscovery(d, p); err != nil {
+		return nil, err
 	}
 	if gate != nil {
 		p.gate = gates(mcpGate, gate)
@@ -340,8 +335,8 @@ func newBudget(maxCost float64, maxTokens, maxRequests int, spec *definition.Bud
 // the parent's run policy as every sub-agent does, and its own definition
 // replaces what it declares: its approval rules (behind the host's gate),
 // compaction, dials, limits and budget. Its guardrails and hooks run after
-// the inherited ones.
-func subAgentDef(env *Env, sub definition.ResolvedSubagent, cp *parts) agent.SubAgentDef {
+// the inherited ones. Its description is the one the parent sees.
+func subAgentDef(env *Env, cp *parts) agent.SubAgentDef {
 	sd := agent.SubAgentDef{
 		Name:         cp.def.Name,
 		Description:  cp.def.Description,
@@ -350,31 +345,15 @@ func subAgentDef(env *Env, sub definition.ResolvedSubagent, cp *parts) agent.Sub
 		SubAgents:    cp.subagents,
 		MaxIter:      cp.maxIter,
 	}
-	if sub.Description != "" {
-		sd.Description = sub.Description
-	}
 	if sd.Description == "" {
 		sd.Description = "Delegate a task to the " + cp.def.Name + " agent."
-	}
-	if sub.EffectiveMode() == definition.SubagentSpawn {
-		sd.Mode = agent.SubAgentSpawn
 	}
 	if cp.preset != nil {
 		sd.Provider = cp.preset.Provider()
 	}
-	budget := cp.budget
-	if bs := sub.Budget; bs != nil {
-		if bs.MaxIterations > 0 {
-			sd.MaxIter = bs.MaxIterations
-		}
-		sd.Timeout = time.Duration(bs.Timeout)
-		if bs.MaxCost > 0 || bs.MaxTokens > 0 || bs.MaxRequests > 0 {
-			budget = newBudget(bs.MaxCost, bs.MaxTokens, bs.MaxRequests, nil)
-		}
-	}
 	var budgetPolicy *types.BudgetPolicy
-	if budget != nil {
-		p := budget.Policy()
+	if cp.budget != nil {
+		p := cp.budget.Policy()
 		budgetPolicy = &p
 	}
 	hostGate := env.ToolGate
@@ -411,54 +390,5 @@ func subAgentDef(env *Env, sub definition.ResolvedSubagent, cp *parts) agent.Sub
 			c.Budget = types.NewBudget(*budgetPolicy)
 		}
 	})
-	if len(cp.handoffs) > 0 {
-		sd.Options = append(sd.Options, agent.WithHandoffs(cp.handoffs...))
-	}
 	return sd
-}
-
-// handoffDef turns a bound child into a handoff member. A member shares
-// the entry agent's run: its tree, gate, approvals, hooks, guardrails,
-// compaction and budget. A definition that declares any of those, or has
-// sub-agents of its own, cannot be a member.
-func handoffDef(sub definition.ResolvedSubagent, cp *parts) (agent.HandoffDef, error) {
-	d := cp.def
-	var refused []string
-	add := func(field string, set bool) {
-		if set {
-			refused = append(refused, field)
-		}
-	}
-	add("approval", d.Approval != nil)
-	add("skills", len(d.Skills) > 0)
-	add("memory", d.Memory != nil)
-	add("compaction", d.Compaction != nil)
-	add("guardrails", d.Guardrails != nil)
-	add("subagents", len(d.Subagents) > 0)
-	add("tools.mcp", d.Tools != nil && len(d.Tools.MCP) > 0)
-	add("limits.budget", d.Limits != nil && d.Limits.Budget != nil)
-	add("limits.llm_timeout", d.Limits != nil && d.Limits.LLMTimeout != 0)
-	add("limits.tool_timeout", d.Limits != nil && d.Limits.ToolTimeout != 0)
-	if len(refused) > 0 {
-		return agent.HandoffDef{}, fmt.Errorf("%w: %s is a handoff member and shares its entry agent's run, so it cannot declare %s; use mode delegate",
-			ErrUnsupported, d.Name, strings.Join(refused, ", "))
-	}
-	h := agent.HandoffDef{
-		Name:         d.Name,
-		Description:  d.Description,
-		SystemPrompt: cp.prompt,
-		Tools:        cp.registry(),
-		MaxIter:      cp.maxIter,
-		Dials:        cp.dials,
-	}
-	if sub.Description != "" {
-		h.Description = sub.Description
-	}
-	if sub.Budget != nil && sub.Budget.MaxIterations > 0 {
-		h.MaxIter = sub.Budget.MaxIterations
-	}
-	if cp.preset != nil {
-		h.Provider = cp.preset.Provider()
-	}
-	return h, nil
 }

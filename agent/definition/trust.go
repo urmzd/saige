@@ -38,12 +38,9 @@ var UntrustedFields = map[reflect.Type]map[string]bool{
 		"dials": false, "memory": false, "compaction": false,
 	},
 	reflect.TypeFor[ModelRef]():    {"use": true, "fallback": true},
-	reflect.TypeFor[ToolsSpec]():   {"harness": true, "registry": true, "mcp": false},
+	reflect.TypeFor[ToolsSpec]():   {"harness": true, "registry": true, "discover": true, "mcp": false},
 	reflect.TypeFor[SkillRef]():    {"name": true, "mode": true, "triggers": true, "hash": true},
-	reflect.TypeFor[SubagentRef](): {"ref": true, "mode": true, "description": true, "budget": true},
-	reflect.TypeFor[SubagentBudget](): {
-		"max_iterations": true, "timeout": true, "max_cost": true, "max_tokens": true, "max_requests": true,
-	},
+	reflect.TypeFor[SubagentRef](): {"ref": true},
 	reflect.TypeFor[ApprovalSpec](): {
 		"ask": true, "deny": true, "deny_after": true, "grant": true, "hide_denied": true,
 		"allow": false, "capabilities": false, "ramp_after": false,

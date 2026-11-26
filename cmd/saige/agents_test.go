@@ -86,7 +86,7 @@ func TestAgentCommands(t *testing.T) {
 	}
 
 	code, out = runCLI(t, "agent", "show", "repo-steward@^1", "--agents-dir", dir)
-	if code != 0 || !strings.Contains(out, "resolved: sha256:") || !strings.Contains(out, "subagent: assistant@^1.0 -> assistant@1.0.0 (delegate)") ||
+	if code != 0 || !strings.Contains(out, "resolved: sha256:") || !strings.Contains(out, "subagent: assistant@^1.0 -> assistant@1.0.0") ||
 		!strings.Contains(out, "Bash(git status:*)") {
 		t.Fatalf("show: %d %s", code, out)
 	}

@@ -49,12 +49,6 @@ memory:
 subagents:
   - researcher@^1.2
   - ref: summarizer@~2.0
-    mode: spawn
-    description: Summarize long files.
-    budget:
-      max_iterations: 4
-      timeout: 2m
-      max_cost: 0.1
 approval:
   capabilities:
     write: ask
@@ -117,8 +111,7 @@ func TestParseFullDefinition(t *testing.T) {
 	if d.Skills[0].Name != "go-style" || d.Skills[0].EffectiveMode() != SkillLazy || d.Skills[1].Triggers[0] != `(?i)\brelease\b` {
 		t.Fatalf("skills %+v", d.Skills)
 	}
-	if d.Subagents[0].Ref != "researcher@^1.2" || d.Subagents[0].EffectiveMode() != SubagentDelegate ||
-		d.Subagents[1].Budget.Timeout != catalog.Duration(2*time.Minute) {
+	if d.Subagents[0].Ref != "researcher@^1.2" || d.Subagents[1].Ref != "summarizer@~2.0" {
 		t.Fatalf("subagents %+v", d.Subagents)
 	}
 	if d.Memory.Retention != catalog.Duration(720*time.Hour) || d.Approval.Capabilities["destructive"] != "deny" {
@@ -169,6 +162,7 @@ func TestParseErrors(t *testing.T) {
 		{"syntax", "---\nname: [x\n---\n", CodeSyntax, "", "line", 0},
 		{"unknown key with suggestion", header("descriptio: x\n"), CodeUnknownKey, "descriptio", `did you mean "description"`, 5},
 		{"nested unknown key", header("tools:\n  harnes: [read]\n"), CodeUnknownKey, "tools.harnes", `"harness"`, 6},
+		{"subagent mode is gone", header("subagents:\n  - ref: y\n    mode: spawn\n"), CodeUnknownKey, "subagents[0].mode", "mode", 7},
 		{"duplicate key", header("name: y\n"), CodeDuplicateKey, "name", "duplicate", 5},
 		{"wrong type", header("skills: lazy\n"), CodeWrongType, "skills", "want a list", 5},
 		{"wrong scalar type", header("limits:\n  max_iterations: many\n"), CodeWrongType, "limits.max_iterations", "want an integer", 6},
@@ -231,8 +225,9 @@ func TestValidateErrors(t *testing.T) {
 		{"self subagent", "subagents: [x]\n", "subagents[0].ref", "own sub-agent"},
 		{"subagent ref", "subagents: [\"y@^nope\"]\n", "subagents[0].ref", "invalid"},
 		{"subagent twice", "subagents: [y, y@1.0.0]\n", "subagents[1].ref", "twice"},
-		{"subagent mode", "subagents:\n  - ref: y\n    mode: fork\n", "subagents[0].mode", "delegate"},
-		{"handoff budget", "subagents:\n  - ref: y\n    mode: handoff\n    budget:\n      max_cost: 1\n", "subagents[0].budget", "handoff"},
+		{"discover blank", "tools:\n  discover: [\"\"]\n", "tools.discover[0]", "required"},
+		{"discover glob", "tools:\n  discover: [\"git[\"]\n", "tools.discover[0]", "glob"},
+		{"discover unlisted server", "tools:\n  discover: [\"mcp:github\"]\n", "tools.discover[0]", "tools.mcp"},
 		{"capability class", "approval:\n  capabilities:\n    reads: allow\n", "approval.capabilities.reads", `"read"`},
 		{"capability decision", "approval:\n  capabilities:\n    read: maybe\n", "approval.capabilities.read", "allow"},
 		{"rule syntax", "approval:\n  allow: [\"Bash(git status\"]\n", "approval.allow[0]", "parenthesis"},
