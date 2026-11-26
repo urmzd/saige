@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.54.0 (2026-11-26)
+
+### Breaking
+
+- **rag**: hybrid and chunked by default, with retrieval ranking fixes (#162) ([8915e9a](https://github.com/urmzd/saige/commit/8915e9a498a3d3a08d20631eed44bbb725157785))
+
+### Features
+
+- **mcp**: pin approved tools and withhold ones a server rewrites (#175) ([930c6e3](https://github.com/urmzd/saige/commit/930c6e371f8229640032dadb6a6f0211c8eae6f4))
+
+### Misc
+
+- **deps**: bump github.com/coder/acp-go-sdk from 0.13.5 to 0.20.0 (#181) ([bbece44](https://github.com/urmzd/saige/commit/bbece447dc9056c1c07ed8bbcaf1e5e0986f2b62))
+- **bench**: add cross-framework agent benchmark (#167) ([73057f9](https://github.com/urmzd/saige/commit/73057f932b302f0743b998bbd5b1abbf151b1264))
+- **deps**: bump golang.org/x/net from 0.62.0 to 0.63.0 (#184) ([5b627c8](https://github.com/urmzd/saige/commit/5b627c8baa18e79713328dd805f6348583cf3f56))
+- **deps**: bump github.com/openai/openai-go/v3 from 3.98.0 to 3.105.0 (#183) ([2d6db31](https://github.com/urmzd/saige/commit/2d6db31092e60ff7ac17b50f553d6ab16a27d11c))
+- **deps**: bump github.com/jackc/pgx/v5 from 5.12.0 to 5.13.0 (#179) ([8e9b332](https://github.com/urmzd/saige/commit/8e9b332a10b92c00ef73a068afa15c7260030ad0))
+- **deps**: bump actions/setup-python from 6 to 7 (#180) ([8f7685a](https://github.com/urmzd/saige/commit/8f7685aeccedaaf6475c8dbd98a1417911b6643e))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.53.0...v0.54.0)
+
+
 ## 0.53.0 (2026-11-24)
 
 ### Features
