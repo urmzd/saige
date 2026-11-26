@@ -1355,9 +1355,11 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 	}
 	reserved, err := r.reserveChildBudget(ctx, parent, &in)
 	if err != nil {
-		// A refused budget is final; a store or source that failed may
-		// answer on a retry. Verify marks a broken pin final itself.
-		if errors.Is(err, session.ErrBudget) {
+		// A refused budget, a missing or broken definition and a missing
+		// or invalid account are final, as on every other path that
+		// resolves a pin; only a store or source that failed may answer on
+		// a retry.
+		if finalReserveError(err) {
 			err = durable.NonRetryable(err)
 		}
 		return finish("", err)
@@ -1489,4 +1491,16 @@ func (r *Runtime) answerParent(ctx context.Context, in Input, text string, stopp
 		return
 	}
 	r.wake(ctx, in.Parent.RunID)
+}
+
+// finalReserveError reports whether reserving a child's budget failed in a
+// way a retry would repeat.
+func finalReserveError(err error) bool {
+	for _, final := range []error{session.ErrBudget, session.ErrNotFound, session.ErrInvalid,
+		definition.ErrNotFound, definition.ErrInvalid, definition.ErrPin} {
+		if errors.Is(err, final) {
+			return true
+		}
+	}
+	return false
 }

@@ -231,3 +231,17 @@ func TestChildBudgetIsTheCalleesOwnLimit(t *testing.T) {
 		t.Fatalf("a callee without limits.budget: %v", err)
 	}
 }
+
+// Only a store or source that failed retries; a missing definition or
+// account fails the delegation at once.
+func TestFinalReserveErrors(t *testing.T) {
+	for _, err := range []error{session.ErrBudget, session.ErrNotFound, session.ErrInvalid,
+		fmt.Errorf("x: %w", definition.ErrNotFound), definition.ErrInvalid, definition.ErrPin} {
+		if !finalReserveError(err) {
+			t.Errorf("%v retries", err)
+		}
+	}
+	if finalReserveError(errors.New("connection reset")) {
+		t.Error("a transient error is final")
+	}
+}

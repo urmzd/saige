@@ -92,7 +92,9 @@ type Discovery struct {
 	// Owner is the agent the Discovery serves. A sub-agent inherits its
 	// parent's ToolPolicy, so the policy passes another agent's turns
 	// through unchanged: a parent's held tools are the parent's alone.
-	// Empty serves every agent.
+	// Empty serves every agent. Set it when the tools may run without an
+	// agent.RunScope in their context, so the policy and the tools share
+	// the owner's key.
 	Owner string
 	// Hold reports whether a tool is held back from the tool list until it
 	// is loaded. Nil holds none.
