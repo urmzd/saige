@@ -66,6 +66,9 @@ type Adapter struct {
 	dials         []types.DialLayer
 	dialPolicy    *types.DialPolicy
 	endpoint      string // workspace that scopes Files API IDs
+
+	// eagerToolInput streams each client tool's input as the model writes it.
+	eagerToolInput bool
 }
 
 // Option configures the Anthropic adapter.
@@ -120,6 +123,22 @@ func WithStopSequences(stop ...string) Option {
 // would break it.
 func WithParallelToolCalls(enabled bool) Option {
 	return func(a *Adapter) { a.parallelTools = &enabled }
+}
+
+// WithEagerToolInput asks Anthropic to stream each client tool's input as the
+// model writes it. Without it the API holds every tool-input parameter back
+// until it is whole and checked, so a call that carries a document sends no
+// argument fragment until the document is written: a subscriber sees the call
+// start, then nothing, then all of it at once. With it, fragments arrive as
+// they are generated and the API no longer checks the input. The agent loop
+// already does: arguments that do not decode, that the output limit cut off,
+// or that do not fit the tool's parameters are refused before the tool runs.
+//
+// It applies to the tools the caller defines, not to server tools or to the
+// hidden tool that carries structured output. Leave it unset behind a gateway
+// that may not know the field.
+func WithEagerToolInput() Option {
+	return func(a *Adapter) { a.eagerToolInput = true }
 }
 
 // WithBaseURL overrides the API base URL, for gateways and proxies.
@@ -386,7 +405,13 @@ func (a *Adapter) buildParams(messages []types.Message, tools []types.ToolDef, s
 	if err != nil {
 		return nil, params, false, err
 	}
-	aTools := append(toAnthropicTools(tools), c.serverToolParams()...)
+	clientTools := toAnthropicTools(tools)
+	if c.eagerToolInput {
+		for i := range clientTools {
+			clientTools[i].OfTool.EagerInputStreaming = anthropic.Bool(true)
+		}
+	}
+	aTools := append(clientTools, c.serverToolParams()...)
 	params = anthropic.MessageNewParams{Model: c.model, MaxTokens: c.maxTokens, Messages: msgs, System: systemBlocks}
 	c.applyParams(&params)
 	switch {
