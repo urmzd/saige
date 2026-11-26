@@ -53,8 +53,13 @@ func Compile(cfg Config) (*Transformer, error) {
 	return &Transformer{cfg: cfg, tmpl: tmpl}, nil
 }
 
+// HypotheticalQueries reports true: every query after the first is an
+// invented answer passage, so the pipeline sends them only to dense
+// retrievers (see types.HypotheticalExpander).
+func (t *Transformer) HypotheticalQueries() bool { return true }
+
 // Transform generates hypothetical documents and returns the original query
-// followed by every non-empty hypothetical.
+// followed by every distinct non-empty hypothetical.
 //
 // Generations run concurrently and independently: one failure does not
 // cancel the others. When some generations fail, Transform returns the
@@ -86,10 +91,14 @@ func (t *Transformer) Transform(ctx context.Context, query string) ([]string, er
 	}
 	wg.Wait()
 
+	// A deterministic model returns the same passage every time; identical
+	// queries would only add identical lists to fusion.
 	queries := make([]string, 0, 1+t.cfg.NumHypothetical)
 	queries = append(queries, query)
+	seen := map[string]bool{query: true}
 	for _, h := range hypotheticals {
-		if h != "" {
+		if h != "" && !seen[h] {
+			seen[h] = true
 			queries = append(queries, h)
 		}
 	}

@@ -90,14 +90,16 @@ func TestMMRRerankerScales(t *testing.T) {
 		},
 		{
 			// A hit without an embedding must not be favored as diverse.
-			name:   "missing embedding is not diverse",
+			// a and c are orthogonal, so the typical similarity is 0 and
+			// the more relevant keyword hit is not buried below c.
+			name:   "missing embedding takes the typical similarity",
 			lambda: 0.5,
 			hits: []types.SearchHit{
 				hit("a", 1.0, []float32{1, 0}),
 				hit("noemb", 0.9, nil),
 				hit("c", 0.8, []float32{0, 1}),
 			},
-			want: []string{"a", "c", "noemb"},
+			want: []string{"a", "noemb", "c"},
 		},
 		{
 			name:   "equal scores keep input order without embeddings",
