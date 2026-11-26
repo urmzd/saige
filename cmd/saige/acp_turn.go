@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -360,17 +361,24 @@ func (t *acpTurn) askPermission(m types.MarkerDelta) {
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, t.srv.opts.approvalTimeout)
 	defer cancel()
+	call := acp.ToolCallUpdate{
+		ToolCallId: acp.ToolCallId(m.ToolCallID),
+		Title:      acp.PatchSet(title),
+		Kind:       acp.PatchSet(t.kindOf(m.ToolName)),
+		Status:     acp.PatchSet(acp.ToolCallStatusPending),
+	}
+	if m.Arguments != nil {
+		if raw, err := json.Marshal(m.Arguments); err == nil {
+			call.RawInput = acp.PatchSet(json.RawMessage(raw))
+		}
+	}
+	if locs := t.locations(m.Arguments); len(locs) > 0 {
+		call.Locations = acp.PatchSet(locs)
+	}
 	resp, err := t.srv.client.RequestPermission(ctx, acp.RequestPermissionRequest{
 		SessionId: t.sid,
 		Options:   options,
-		ToolCall: acp.ToolCallUpdate{
-			ToolCallId: acp.ToolCallId(m.ToolCallID),
-			Title:      acp.Ptr(title),
-			Kind:       acp.Ptr(t.kindOf(m.ToolName)),
-			Status:     acp.Ptr(acp.ToolCallStatusPending),
-			RawInput:   m.Arguments,
-			Locations:  t.locations(m.Arguments),
-		},
+		ToolCall:  call,
 	})
 	res := agentsdk.Resolution{Approver: "acp-client"}
 	switch {

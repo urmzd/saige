@@ -86,6 +86,14 @@ func (c *acpTestClient) WaitForTerminalExit(context.Context, acp.WaitForTerminal
 	return acp.WaitForTerminalExitResponse{}, errors.New("not supported")
 }
 
+func (c *acpTestClient) CreateElicitation(context.Context, acp.CreateElicitationRequest) (acp.CreateElicitationResponse, error) {
+	return acp.CreateElicitationResponse{}, errors.New("not supported")
+}
+
+func (c *acpTestClient) CompleteElicitation(context.Context, acp.CompleteElicitationNotification) error {
+	return nil
+}
+
 func (c *acpTestClient) snapshot() ([]acp.SessionUpdate, []acp.RequestPermissionRequest) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -314,7 +322,7 @@ func TestACPPermissionRoundTrip(t *testing.T) {
 				t.Fatalf("asked %d times, want %d", len(perms), tt.wantAsks)
 			}
 			first := perms[0]
-			if first.ToolCall.ToolCallId != "c1" || first.ToolCall.Title == nil || *first.ToolCall.Title != "approve danger" {
+			if first.ToolCall.ToolCallId != "c1" || first.ToolCall.Title.Ptr() == nil || *first.ToolCall.Title.Ptr() != "approve danger" {
 				t.Fatalf("permission request = %+v", first)
 			}
 			kinds := map[acp.PermissionOptionKind]bool{}
@@ -330,8 +338,8 @@ func TestACPPermissionRoundTrip(t *testing.T) {
 				if u.ToolCall != nil && u.ToolCall.ToolCallId == "c1" {
 					started = u.ToolCall.Title != ""
 				}
-				if u.ToolCallUpdate != nil && u.ToolCallUpdate.ToolCallId == "c1" && u.ToolCallUpdate.Status != nil &&
-					(*u.ToolCallUpdate.Status == acp.ToolCallStatusCompleted || *u.ToolCallUpdate.Status == acp.ToolCallStatusFailed) {
+				if u.ToolCallUpdate != nil && u.ToolCallUpdate.ToolCallId == "c1" && u.ToolCallUpdate.Status.Ptr() != nil &&
+					(*u.ToolCallUpdate.Status.Ptr() == acp.ToolCallStatusCompleted || *u.ToolCallUpdate.Status.Ptr() == acp.ToolCallStatusFailed) {
 					ended = true
 				}
 			}
