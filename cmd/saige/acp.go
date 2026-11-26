@@ -317,6 +317,12 @@ func (s *acpServer) Logout(context.Context, acp.LogoutRequest) (acp.LogoutRespon
 	return acp.LogoutResponse{}, acp.NewMethodNotFound(acp.AgentMethodLogout)
 }
 
+// DeleteSession is not offered: Initialize does not advertise
+// sessionCapabilities.delete.
+func (s *acpServer) DeleteSession(context.Context, acp.DeleteSessionRequest) (acp.DeleteSessionResponse, error) {
+	return acp.DeleteSessionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionDelete)
+}
+
 func (s *acpServer) SetSessionMode(context.Context, acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
 	// Modes are deprecated; the agent and model are config options.
 	return acp.SetSessionModeResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionSetMode)
