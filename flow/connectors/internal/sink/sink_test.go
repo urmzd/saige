@@ -470,8 +470,8 @@ func TestLayoutOmitsEmptySectionsAndNumbersFootnotes(t *testing.T) {
 
 	d.Apply(ev(2, event.TypeToolCall, `{"id":"t1","name":"search","arguments":{"q":"x"}}`))
 	d.Apply(ev(3, event.TypeToolDone, `{"id":"t1","result":"3 hits"}`))
-	d.Apply(text(4, "the answer"))
-	d.Apply(ev(5, event.TypeCitation, `{"source":{"document_title":"Design","source_uri":"https://example.com/d"}}`))
+	d.Apply(text(4, "the answer [1]"))
+	d.Apply(ev(5, event.TypeCitation, `{"label":"[1]","text":"passage text","source":{"document_title":"Design","source_uri":"https://example.com/d"}}`))
 	d.Apply(ev(6, event.TypeAction, `{"summary":"commented","address":"github://urmzd/fiber/issues/42"}`))
 	d.Apply(ev(7, event.TypeCompleted, ""))
 
@@ -480,7 +480,7 @@ func TestLayoutOmitsEmptySectionsAndNumbersFootnotes(t *testing.T) {
 		"",
 		`- search {"q":"x"} -> 3 hits`,
 		"",
-		"the answer",
+		"the answer [1]",
 		"",
 		"[1] Design <https://example.com/d>",
 		"",
@@ -488,6 +488,43 @@ func TestLayoutOmitsEmptySectionsAndNumbersFootnotes(t *testing.T) {
 	}, "\n")
 	if got := layout(d.View()); got != want {
 		t.Errorf("layout =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestLayoutBoundsFootnotesAndQuotesNoPassageText(t *testing.T) {
+	d := render.New()
+	var answer strings.Builder
+	n := sink.MaxFootnotes + 5
+	for i := 1; i <= n; i++ {
+		d.Apply(ev(uint64(i), event.TypeCitation, fmt.Sprintf(
+			`{"label":"[%d]","text":"passage text %d","source":{"document_title":%q,"source_uri":"https://example.com/%d"}}`,
+			i, i, strings.Repeat("t", 500), i)))
+		fmt.Fprintf(&answer, "[%d] ", i)
+	}
+	d.Apply(ev(uint64(n+1), event.TypeCompleted, fmt.Sprintf(`{"text":%q}`, answer.String())))
+
+	got := layout(d.View())
+	if strings.Contains(got, "passage text") {
+		t.Errorf("layout quotes passage text:\n%s", got)
+	}
+	if links := strings.Count(got, "<https://example.com/"); links != sink.MaxFootnotes {
+		t.Errorf("layout has %d footnotes, want %d", links, sink.MaxFootnotes)
+	}
+	if !strings.Contains(got, "and 5 more cited sources") {
+		t.Errorf("layout does not count the footnotes left out:\n%s", got)
+	}
+	if strings.Contains(got, strings.Repeat("t", 201)) {
+		t.Error("layout renders an unbounded title")
+	}
+}
+
+func TestLayoutLeavesOutALinkTooLongToRender(t *testing.T) {
+	d := render.New()
+	d.Apply(text(1, "see [1]"))
+	d.Apply(ev(2, event.TypeCitation, `{"label":"[1]","source":{"document_title":"Design","source_uri":"https://example.com/`+strings.Repeat("a", 3000)+`"}}`))
+	got := layout(d.View())
+	if !strings.HasSuffix(got, "[1] Design") {
+		t.Errorf("layout =\n%q\nwant the title without the link", got)
 	}
 }
 
@@ -577,5 +614,43 @@ func TestAStoppedRunWithNothingToShowStillSaysItStopped(t *testing.T) {
 	escaped := sink.MapText(render.View{Reason: "a<b"}, func(s string) string { return strings.ReplaceAll(s, "<", "&lt;") })
 	if escaped.Reason != "a&lt;b" {
 		t.Errorf("the reason is not escaped with the rest of the prose: %q", escaped.Reason)
+	}
+}
+
+func TestLayoutLinksOnlyHTTPFootnotes(t *testing.T) {
+	tests := []struct {
+		name, uri, want string
+	}{
+		{"https", "https://example.com/d", "[1] Design <https://example.com/d>"},
+		{"http, upper-case scheme", "HTTP://example.com/d", "[1] Design <http://example.com/d>"},
+		{"userinfo dropped", "https://user:secret@example.com/d", "[1] Design <https://example.com/d>"},
+		{"delimiters encoded", "https://example.com/a b(c)?q=<x>|y\\z&w=1#\"f\"", "[1] Design <https://example.com/a%20b%28c%29?q=%3Cx%3E%7Cy%5Cz&w=1#%22f%22>"},
+		{"javascript", "javascript:alert(1)", "[1] Design"},
+		{"file", "file:///etc/hosts", "[1] Design"},
+		{"mailto", "mailto:someone@example.com", "[1] Design"},
+		{"relative", "/docs/design", "[1] Design"},
+		{"no host", "https:///d", "[1] Design"},
+		{"scheme-relative", "//example.com/d", "[1] Design"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := render.New()
+			d.Apply(text(1, "see [1]"))
+			d.Apply(ev(2, event.TypeCitation, fmt.Sprintf(`{"label":"[1]","source":{"document_title":"Design","source_uri":%q}}`, tc.uri)))
+			got := layout(d.View())
+			if !strings.HasSuffix(got, "\n\n"+tc.want) {
+				t.Errorf("layout =\n%q\nwant it to end with %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLayoutListsAnUnlinkableUntitledSourceWithoutItsURI(t *testing.T) {
+	d := render.New()
+	d.Apply(text(1, "see [1]"))
+	d.Apply(ev(2, event.TypeCitation, `{"label":"[1]","source":{"source_uri":"javascript:alert(1)"}}`))
+	got := layout(d.View())
+	if !strings.HasSuffix(got, "\n\n[1] source") || strings.Contains(got, "javascript") {
+		t.Errorf("layout =\n%q\nwant the footnote without the uri", got)
 	}
 }

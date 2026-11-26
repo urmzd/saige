@@ -7,6 +7,7 @@ import (
 
 	"github.com/urmzd/saige/flow/event"
 	"github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/turn/failure"
 )
 
 // Runtime is the native turn.Runtime: it runs each turn with a Runner built
@@ -80,7 +81,9 @@ func (rt *Runtime) Turn(ctx context.Context, def turn.Pinned, in turn.Input, emi
 	res, err := runner.Run(ctx, t, emit)
 	out, cerr := ResultOf(res)
 	if err != nil {
-		return out, err
+		// Decided here, where the error still has its structure: a caller
+		// that sees only its message (see turn/sandbox) keeps the decision.
+		return out, turn.WithRepeats(err, failure.Repeats(err))
 	}
 	return out, cerr
 }

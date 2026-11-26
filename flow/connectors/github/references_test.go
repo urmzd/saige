@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/urmzd/saige/flow/connectors/github"
@@ -82,5 +83,40 @@ func TestAReviewRequestReadsThePullRequestsDescription(t *testing.T) {
 	}
 	if !reflect.DeepEqual(r.References, want) {
 		t.Errorf("References = %+v, want %+v", r.References, want)
+	}
+}
+
+// A reference is refused when its repository still ends in ".git" after the
+// clone suffix is taken off, or when a name is past GitHub's length.
+func TestReadReferencesBoundRepositoryNames(t *testing.T) {
+	owner, repo := strings.Repeat("a", 39), strings.Repeat("r", 100)
+	for reference, want := range map[string]string{
+		"acme/docs.git":                       "github://acme/docs",
+		"acme/docs.git#7":                     "github://acme/docs/issues/7",
+		"https://github.com/acme/docs.git":    "github://acme/docs",
+		owner + "/" + repo + "#7":             "github://" + owner + "/" + repo + "/issues/7",
+		owner + "/" + repo + ".git":           "github://" + owner + "/" + repo,
+		"acme/docs.git.git":                   "",
+		"acme/docs.git.git#7":                 "",
+		"acme/docs.GIT":                       "",
+		"acme/docs.Git.git":                   "",
+		"github://acme/docs.git.git/issues/7": "",
+		"https://github.com/acme/docs.gIt":    "",
+		"acme/.git":                           "",
+		owner + "a/docs#7":                    "",
+		"acme/" + repo + "r#7":                "",
+		"github://acme/" + repo + "r/pull/7":  "",
+		"https://github.com/" + owner + "a/x": "",
+	} {
+		got, err := github.ParseReadReference(reference)
+		if want == "" {
+			if err == nil {
+				t.Errorf("%q was read as %s", reference, got)
+			}
+			continue
+		}
+		if err != nil || got.String() != want {
+			t.Errorf("%q: %s, %v; want %s", reference, got, err, want)
+		}
 	}
 }

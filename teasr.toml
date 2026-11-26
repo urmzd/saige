@@ -12,16 +12,28 @@ type = "terminal"
 name = "agent-basic"
 theme = "dracula"
 cwd = "."
-cols = 100
-rows = 40
+cols = 110
+rows = 10
 
 [[scenes.interactions]]
 type = "type"
-text = "go run ./examples/agent/basic/"
+text = "export PS1='$ ' && clear"
+hidden = true
+[[scenes.interactions]]
+type = "key"
+key = "enter"
+hidden = true
+[[scenes.interactions]]
+type = "wait"
+duration = 500
+hidden = true
+[[scenes.interactions]]
+type = "type"
+text = "saige agent run - --provider ollama --model gpt-oss:20b --system \"Reply in under 15 words.\" \"What is RAG?\""
 speed = 50
 [[scenes.interactions]]
 type = "key"
 key = "enter"
 [[scenes.interactions]]
 type = "wait"
-duration = 15000
+duration = 12000

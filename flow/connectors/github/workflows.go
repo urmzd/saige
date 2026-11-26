@@ -126,7 +126,7 @@ func (c *Connector) workflowStatus(ctx context.Context, target address.Address, 
 	if args.RunID < 0 || args.Page < 0 {
 		return connector.Result{}, fmt.Errorf("github: run ID and page must be positive")
 	}
-	target, err := c.readTarget(target, args.Address)
+	ctx, target, err := c.readTarget(ctx, target, args.Address)
 	if err != nil {
 		return connector.Result{}, err
 	}

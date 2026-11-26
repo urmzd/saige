@@ -374,3 +374,15 @@ func FuzzEnvelopeUnmarshal(f *testing.F) {
 		}
 	})
 }
+
+// A citation carries a passage of a host's corpus, so its catalog entry is
+// marked Sensitive: a marker subscribers read to decide how to handle it.
+func TestCitationIsSensitive(t *testing.T) {
+	e, ok := event.Lookup(event.TypeCitation)
+	if !ok {
+		t.Fatal("citation is not registered")
+	}
+	if !e.Sensitive {
+		t.Error("citation is not marked sensitive")
+	}
+}

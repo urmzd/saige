@@ -3,6 +3,7 @@ package sandbox_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,39 @@ func TestAFailedTurnKeepsItsText(t *testing.T) {
 	}
 	if res.Text != "half" || len(got) != 1 {
 		t.Fatalf("Text = %q, bodies = %v", res.Text, got)
+	}
+}
+
+// The inner Runtime's decision whether a retry would repeat a failure
+// crosses the task boundary with the error's message; a failure it did not
+// decide on stays undecided.
+func TestAFailedTurnKeepsItsRetryDecision(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("model went away")
+	for name, tc := range map[string]struct {
+		err     error
+		repeats bool
+		decided bool
+	}{
+		"repeats":          {err: turn.WithRepeats(cause, true), repeats: true, decided: true},
+		"does not repeat":  {err: turn.WithRepeats(cause, false), decided: true},
+		"wrapped decision": {err: fmt.Errorf("inner: %w", turn.WithRepeats(cause, true)), repeats: true, decided: true},
+		"undecided":        {err: cause},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rt := sandbox.Sandboxed(turn.Func(func(context.Context, turn.Pinned, turn.Input, func(context.Context, event.Body) error) (turn.Result, error) {
+				return turn.Result{}, tc.err
+			}), plane(t))
+			_, err := rt.Turn(t.Context(), pinned(), input(), nil)
+			if err == nil || !strings.Contains(err.Error(), "model went away") {
+				t.Fatalf("err = %v, want the turn's failure", err)
+			}
+			repeats, decided := turn.Repeats(fmt.Errorf("run: %w", err))
+			if repeats != tc.repeats || decided != tc.decided {
+				t.Errorf("Repeats = %v, %v, want %v, %v", repeats, decided, tc.repeats, tc.decided)
+			}
+		})
 	}
 }
 

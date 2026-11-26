@@ -64,7 +64,7 @@ func (a *HTTPAPI) CommitChanges(ctx context.Context, ref Ref, expected, run stri
 	if err := a.client.Do(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d", base, ref.Number), nil, &pull); err != nil {
 		return CommitResult{}, fmt.Errorf("github: read PR for commit: %w", err)
 	}
-	if pull.State != "open" || pull.Head.Ref == "" || !strings.EqualFold(pull.Head.Repo.FullName, ref.Owner+"/"+ref.Repo) {
+	if pull.State != stateOpen || pull.Head.Ref == "" || !strings.EqualFold(pull.Head.Repo.FullName, ref.Owner+"/"+ref.Repo) {
 		return CommitResult{}, fmt.Errorf("github: fixes require an open PR with a branch in the source repository")
 	}
 	marker := mutationMarker(run, expected, args)

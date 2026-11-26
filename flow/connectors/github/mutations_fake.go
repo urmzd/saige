@@ -70,7 +70,7 @@ func (f *Fake) CommitChanges(_ context.Context, ref Ref, expected, run string, a
 		return CommitResult{}, f.Err
 	}
 	current, ok := f.contexts[ref.String()]
-	if !ok || current.Subject.State != "open" {
+	if !ok || current.Subject.State != stateOpen {
 		return CommitResult{}, fmt.Errorf("github: no open PR")
 	}
 	marker := mutationMarker(run, expected, args)

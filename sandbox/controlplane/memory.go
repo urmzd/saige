@@ -269,7 +269,8 @@ func (m *Memory) start(d *deployment, s *slot, t task.Task) {
 }
 
 // execute runs one task on n and records its metrics. A node error becomes
-// the result's Error, so every task ends with a result.
+// the result's Error, so every task ends with a result; the output the node
+// returned with the error is kept beside it.
 func (m *Memory) execute(deployment string, n node.Node, t task.Task) task.Result {
 	labels := []metrics.Label{
 		{Key: labelDeployment, Value: deployment},
@@ -279,7 +280,7 @@ func (m *Memory) execute(deployment string, n node.Node, t task.Task) task.Resul
 	res, err := n.Run(m.base, t)
 	m.rec.Observe("sandbox_task_seconds", time.Since(start).Seconds(), labels...)
 	if err != nil {
-		res = task.Result{NodeID: n.ID(), Error: err.Error()}
+		res = task.Result{NodeID: n.ID(), Output: res.Output, Error: err.Error()}
 	}
 	res.TaskID = t.ID
 	status := "ok"

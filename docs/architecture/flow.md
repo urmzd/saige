@@ -339,10 +339,10 @@ ended, and a replay reads the outcome and announces the same stop.
 
 ### What the thread and the surfaces show
 
-A stopped run journals its exchange like a completed one: the request as the
-agent renders it, then an assistant entry holding the partial answer followed
-by a fixed marker line, or the marker alone when the turn was stopped before it
-said anything.
+A stopped run journals its exchange like a completed one: the request as it
+was asked (see [What the thread journal holds](#what-the-thread-journal-holds)),
+then an assistant entry holding the partial answer followed by a fixed marker
+line, or the marker alone when the turn was stopped before it said anything.
 
 ```
 The deploy failed because
@@ -485,6 +485,26 @@ supplies rate cards of its own. A host holding a USD limit reads `cost` when
 its currency is `USD` and treats anything in `other_costs` as spend it cannot
 compare. A total's `as_of` is the oldest date among its calls, and empty when
 any was priced from a card with no date.
+
+### Which failed turns are retried
+
+A failed turn is retried by running it again, model calls included, so a
+failure that a retry would only repeat fails the run on its first attempt
+(`flow/turn/failure`). Those are: the agent loop reached its iteration limit
+(`ErrMaxIterations`), the model kept asking for the same tool calls with the
+same arguments (`ErrRepeatedToolCalls`), the request was refused locally as
+an invalid model configuration (`ErrInvalidModelConfig`, which a media part
+with no usable locator also matches), and the prompt does not fit the
+model's context window (`ErrContextLength`). A turn under a budget is not
+retried either.
+
+Everything else is retried up to the worker's attempt limit, including a
+tripped guardrail, a run whose tool calls kept failing, any transient
+provider failure, and a fallback chain in which any member failed
+transiently. A turn whose context ended (a worker shutting down, a lost
+claim) never fails its run, whatever error it returned. A `turn.Runtime`
+decides for its own errors with `turn.WithRepeats`; the decision crosses a
+sandbox task with the error.
 
 ### Counted once, across retries and replays
 
@@ -888,6 +908,27 @@ Verified against the code, and honest.
   with the citing agent's own markers; one that repeats a citation already
   published under the same marker and source is dropped. Citations a model
   produces itself (provider-native search) are not translated.
+- **A surface lists only the sources the answer cites.** The event stream
+  carries every passage a turn was given, with its text, and a citation is
+  `Sensitive`. The shared sink that Slack and GitHub render through keeps no
+  passage text: it lists a source as a footnote only when the answer refers
+  to one of its labels (`[2]`, `[1, 3]`, `[1][3]` or `[^2]`, matched without
+  brackets), and a footnote is the label, the title and the link. Brackets in
+  fenced code blocks and inline code spans are program text, not references;
+  a label inside a quotation is a reference. A source the answer refers to by
+  several labels is one footnote listing them. A message shows at most 20
+  footnotes and counts the rest on one line; a title is cut to 200 bytes, and
+  a link longer than 2048 bytes is left out rather than cut. Only an http or
+  https URI with a host is linked, without any user information and encoded
+  for the surface's link syntax; any other source is listed by its title
+  alone. A nested agent's citation (one with a `Parent`) is matched too,
+  but only for a label no citation of the run's own agent gives. Its label
+  is the one the nested agent numbered it with, so sibling delegations can
+  each publish `[1]`, and an answer citing `[1]` then lists both sources. On
+  GitHub a title is shown as text: inline Markdown and HTML punctuation is
+  backslash-escaped, and a zero-width joiner breaks mentions, issue
+  references (`#12`, `owner/repo#5`, `GH-12`), bare URLs and `:emoji:`
+  codes.
 - **durable v1 workflow bodies are single-goroutine.** Parallelism belongs
   inside a sandbox task, not in a forked workflow.
 - **The bus is at-least-once.** Subjects, filters, and cursors cover
@@ -1023,6 +1064,26 @@ with one catalog tool for agents with sub-agents. The host tool must check the
 caller's pinned spawn grant. Without that option, flow retains its existing per-target tools.
 The runtime still owns execution, streaming and sandboxing; the host owns its
 input references, output contracts and answer delivery policy.
+
+### What the thread journal holds
+
+A run's thread journal (`flow/thread`, keyed by tenant, agent and place) holds
+each exchange as it was asked and answered: a user entry with the request as
+it was asked, the trigger as the catalog renders it (its trigger context, then
+its request text), with the request's attachment references, then an assistant
+entry with the answer. Every later run on the same key is shown those entries
+as its history, and `session_read` and session waits read them.
+
+The passages a turn retrieves from its knowledge sources (`runtime.WithKnowledge`,
+`native.Runtime.Knowledge`) are retrieved for that turn's request and sent
+with it, and are not journaled. Each later turn retrieves its own passages for
+its own request. The request exactly as the model was sent it, passages
+included, stays on the turn's own record (`Outcome.Prompt`, `turn.Result.Prompt`),
+which a continuation of a parked turn sends again unchanged. For a turn that
+retrieved nothing the journaled request is the same bytes the model was sent,
+so the next run's request starts with this one's and the prompt cache reads
+the whole conversation; after a turn that retrieved passages, the shared
+prefix ends before that turn's request.
 
 ### Trigger context and private host data
 

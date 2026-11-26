@@ -25,6 +25,7 @@ import (
 	"github.com/urmzd/saige/flow/event"
 	"github.com/urmzd/saige/flow/isolation"
 	turnrt "github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/turn/failure"
 	"github.com/urmzd/saige/flow/turn/native"
 
 	saigetypes "github.com/urmzd/saige/agent/types"
@@ -526,6 +527,16 @@ func (s *Sandbox) stream(ctx context.Context, req Request, deployment, taskID st
 				break
 			}
 			if res.Error != "" {
+				// A turn that failed says how in its output (see call), so
+				// the error keeps what it matches and whether a retry would
+				// repeat it. Any other failed task is known by its message
+				// alone, and is retried.
+				var failed taskFailure
+				if len(res.Output) > 0 && json.Unmarshal(res.Output, &failed) == nil && failed.Failure != nil {
+					if cause := failed.Failure.Err(); cause != nil {
+						return Outcome{}, fmt.Errorf("runtime: run %s: task %s: %w", req.RunID, taskID, cause)
+					}
+				}
 				return Outcome{}, fmt.Errorf("runtime: run %s: task %s: %s", req.RunID, taskID, res.Error)
 			}
 			var out Outcome
@@ -651,7 +662,29 @@ func (s *Sandbox) turn(key string) *turn {
 // It runs on a node's goroutine, with a context that carries neither the run's
 // replay frame nor the caller's cancellation, and with a workspace already scoped
 // to the policy. Everything it needs travels in the task input.
+//
+// A failed turn returns its error and, as its output, that error in the form
+// that crosses the task boundary (taskFailure): the control plane reports a
+// failed task by its message alone.
 func (s *Sandbox) call(ctx context.Context, rt tool.Runtime, input []byte) ([]byte, error) {
+	out, err := s.runTask(ctx, rt, input)
+	if err == nil {
+		return out, nil
+	}
+	described, merr := json.Marshal(taskFailure{Failure: failure.Encode(err)})
+	if merr != nil {
+		return nil, err
+	}
+	return described, err
+}
+
+// taskFailure is the output of a sandbox task whose turn failed.
+type taskFailure struct {
+	Failure *failure.Wire `json:"sandbox_failure,omitempty"`
+}
+
+// runTask is call's body: it decodes the task and runs its turn.
+func (s *Sandbox) runTask(ctx context.Context, rt tool.Runtime, input []byte) ([]byte, error) {
 	var task taskInput
 	if err := json.Unmarshal(input, &task); err != nil {
 		return nil, fmt.Errorf("runtime: sandbox: decode request: %w", err)
@@ -1101,7 +1134,7 @@ func (s *Sandbox) delegateTool(rt tool.Runtime, parent Request, actor event.Acto
 				// tool error and can say so, instead of the turn dying.
 				return "", fmt.Errorf("runtime: delegate to %q: %w", target, err)
 			}
-			res, err := s.call(ctx, childRT, input)
+			res, err := s.runTask(ctx, childRT, input)
 			if err != nil {
 				return "", fmt.Errorf("runtime: delegate to %q: %w", target, err)
 			}

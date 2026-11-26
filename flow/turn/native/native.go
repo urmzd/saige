@@ -23,6 +23,11 @@
 // from saige's CitationDelta, at any depth. A tool's citation that repeats one
 // already published is dropped (see Translator.Delta).
 //
+// Every retrieved passage is published, with its text, whether or not the
+// answer cites it: the stream records what the turn was given. What a
+// surface shows of it is the sink's choice; the shared sink lists only the
+// sources whose label the answer refers to, by title and link.
+//
 // # Context layout
 //
 // A provider's prompt cache reuses a request only up to the first byte that
@@ -65,10 +70,14 @@
 // is the price of a prefix that never changes.
 //
 // That gives a thread the same property a tool loop has. If the caller keeps
-// history append-only and records each exchange as it happened (Result.Prompt
-// is the request message exactly as it was sent, Result.Text is the answer),
-// then the first request of run k is a byte prefix of the first request of
-// run k+1, and a prefix cache reads the whole earlier conversation. The
+// history append-only and records each exchange as it was asked and answered
+// (RequestText(Turn.Text, Turn.Meta) is the request as it was asked,
+// Result.Text is the answer), then for a turn that retrieved nothing the
+// first request of run k is a byte prefix of the first request of run k+1,
+// and a prefix cache reads the whole earlier conversation. A turn that
+// retrieved passages sent them ahead of its request (Result.Prompt); they are
+// retrieved for that turn and not recorded, so the next run's prefix ends
+// before that request, and the next run retrieves its own. The other
 // exception is the same one as inside a turn: a compaction rewrites the
 // middle of the history and keeps the tools, the system prompt, and the
 // oldest message.
@@ -251,10 +260,12 @@ type Result struct {
 	// deltas.
 	Text string
 	// Prompt is the request message exactly as it was sent to the model:
-	// trigger metadata, retrieved passages, and the turn's text. A caller
-	// that keeps history records this, not Turn.Text, as what the user said,
-	// because a later run only shares a request prefix with this one if it
-	// replays the same bytes.
+	// trigger metadata, retrieved passages, and the turn's text. It is the
+	// turn's own record, and what a continuation of a parked turn sends
+	// again. A caller that keeps history for later turns records the request
+	// as it was asked, RequestText(Turn.Text, Turn.Meta), which is Prompt
+	// without the passages retrieved for this turn: each later turn retrieves
+	// its own for its own request.
 	Prompt string
 	// Chunks counts the event bodies the turn emitted, citations included.
 	Chunks int

@@ -1,5 +1,105 @@
 # Changelog
 
+## 0.53.0 (2026-11-24)
+
+### Features
+
+- **github**: carry user IDs and read a pull request's commits ([39e2843](https://github.com/urmzd/saige/commit/39e2843666df841f9938b2df7f77aac268cf4429))
+- **github**: let the host dismiss the app's own review ([b3f9558](https://github.com/urmzd/saige/commit/b3f95580c7b7c004a3245c5ba9189c7a6882d1ba))
+- **github**: let a host hook approve through the review sink ([6bab03d](https://github.com/urmzd/saige/commit/6bab03d9596a583dc0d2a6c89c88bb6402355264))
+
+### Bug Fixes
+
+- **github**: bound each approval confirmation step and keep the hook's reviews with the delivery state ([f56e520](https://github.com/urmzd/saige/commit/f56e520977a841bb977d3118839159eed90df801))
+- **github**: confirm a recovered approval, detach confirmation from the delivery, and source required checks ([f8ebdbb](https://github.com/urmzd/saige/commit/f8ebdbb1d7b01f982b86255075b1f0b30805b280))
+- **github**: confirm a posted approval against the app's reviews, read check suites and commit verification ([5e8b020](https://github.com/urmzd/saige/commit/5e8b0202d59c608db817fac8b84a90405ee31505))
+- **github**: base the approval check rule on the app, and expose reviews and commit authorship ([a29d523](https://github.com/urmzd/saige/commit/a29d52382a647f99bbd2b1a3eb84c2c6ac664eed))
+- **github**: recover only the app's bot review ([dc9fab8](https://github.com/urmzd/saige/commit/dc9fab8a20bc3470b1ee813c2e46a540d65d8126))
+- **github**: own a review only by the app's bot account ([634a40f](https://github.com/urmzd/saige/commit/634a40f0d8dc5f730d1217785c27fc9efbd45da4))
+- **github**: scope the own check to this app and run ([e1f622e](https://github.com/urmzd/saige/commit/e1f622e0881ffad14ee9cda5ac51de50d2dc2982))
+- **github**: tighten host approvals and the commit checks read ([714c4e1](https://github.com/urmzd/saige/commit/714c4e122f8f3d02817f6728dc1eaf0a7071f805))
+
+### Refactoring
+
+- **github**: pass the approval hook a copy and keep recovery under the complexity bound ([f8cad7f](https://github.com/urmzd/saige/commit/f8cad7f38734fa00ea8c3cb001140847f75887c8))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.2...v0.53.0)
+
+
+## 0.52.2 (2026-11-24)
+
+### Bug Fixes
+
+- **flow**: keep flow tests off the agent loop and widen GitHub title escaping ([5a7d090](https://github.com/urmzd/saige/commit/5a7d0907fc02d658572d00011289b46e343d7d1b))
+- **flow**: match nested citations after the run agent's and escape GitHub titles ([3783b55](https://github.com/urmzd/saige/commit/3783b5516de1b6bfbe8cef4ba9b385e6c0ea572a))
+- **flow**: link only http and https footnotes and match top-level citations ([ecb9a36](https://github.com/urmzd/saige/commit/ecb9a36a97cfbf52ac8ce3bd32f81ffafaec84e8))
+- **flow**: list only the sources an answer cites on surfaces ([fa2469d](https://github.com/urmzd/saige/commit/fa2469d57011b770fbfd0c6032f78aac5c40e35c))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.1...v0.52.2)
+
+
+## 0.52.1 (2026-11-24)
+
+### Bug Fixes
+
+- **flow/runtime**: journal each request as it was asked ([4b60f2c](https://github.com/urmzd/saige/commit/4b60f2c12e310b1eb4a06d7097bc1713ddf3b308))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.52.0...v0.52.1)
+
+
+## 0.52.0 (2026-11-24)
+
+### Features
+
+- **github**: typed read refusals, ReadComments and read hook tests ([a3eefd7](https://github.com/urmzd/saige/commit/a3eefd7ea3e6ab02faecd49499a4e9c1d57fbaf8))
+- **github**: MayRead and ReadRefused read hooks; refuse ambiguous read arguments (WIP) ([9620145](https://github.com/urmzd/saige/commit/9620145ffdb6763efce1f470368f4ee4ee5531dd))
+
+### Bug Fixes
+
+- **github**: read a redirect's repository from its escaped path ([f1ab0d0](https://github.com/urmzd/saige/commit/f1ab0d0c9126e044be64d9cfb8e15768ecbde7fb))
+- **github**: give the read hooks lower-case names ([8ab4c05](https://github.com/urmzd/saige/commit/8ab4c051309756d63e5f6238f1a117bff7dd5685))
+- **github**: ask the read hooks for a redirected read's target ([c1aab8c](https://github.com/urmzd/saige/commit/c1aab8c9abe6b7cd0af87381822b65a6b803d2f1))
+- **github**: answer a cross-source read where it was named; bound references ([b93f83b](https://github.com/urmzd/saige/commit/b93f83bb6c54d61905557963769e56efa62ea8a6))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.51.0...v0.52.0)
+
+
+## 0.50.0 (2026-11-23)
+
+### Features
+
+- **github**: read a repository with github_read_context ([d3a03f7](https://github.com/urmzd/saige/commit/d3a03f7deaabc8ec06d410d5843a2993e8c34fc1))
+
+### Bug Fixes
+
+- **github**: mark read results as untrusted data; read owner/repo#N and .git ([cfe6350](https://github.com/urmzd/saige/commit/cfe63502e7fd0273cf922c55d4cfde87705e0530))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.49.0...v0.50.0)
+
+
+## 0.49.0 (2026-11-22)
+
+### Features
+
+- **mcp**: ParseInputSchema refuses a tool schema it cannot represent exactly (#177) ([b22bf49](https://github.com/urmzd/saige/commit/b22bf49e4f059a4bce4149d8e626e55b9f9c384e))
+
+### Misc
+
+- **showcase**: legible hero and dark-mode card image (#178) ([d73aa78](https://github.com/urmzd/saige/commit/d73aa7878665f10733779775d3045d5a6f269736))
+- **showcase**: recapture agent demo with current saige (#176) ([e45bc7c](https://github.com/urmzd/saige/commit/e45bc7cdb605d6969b860a5235a4384183c23e8b))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.48.0...v0.49.0)
+
+
+## 0.48.0 (2026-11-21)
+
+### Features
+
+- **agent**: Prompt runs one text message, with an offline quickstart (#161) ([9301120](https://github.com/urmzd/saige/commit/930112046568680d8609d6718fc6706aa83fd9f2))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.47.0...v0.48.0)
+
+
 ## 0.46.1 (2026-11-20)
 
 ### Bug Fixes

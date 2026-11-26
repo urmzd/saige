@@ -55,14 +55,14 @@ A Go SDK for building AI agents, giving them context and memory (RAG, with knowl
 | `flow/connector/` | What a connector is: the `Trigger`, `Sink`, `Subscriber` and `Actor` faces, roles found by type assertion |
 | `flow/definition/` | saige definitions plus a `Policy` sidecar, per tenant in an insert-only `Source`, pinned by each run; `definitiontest` |
 | `flow/session/`, `flow/thread/` | An agent's continuing conversation keyed by (tenant, parent, agent, label), with admission, grants and budgets; the append-only journal of what was said |
-| `flow/turn/` | The one seam between a run and whatever executes a turn: `turn.Runtime`; `native` (on saige's agent loop), `sandbox` (any Runtime inside `sandbox/`), `runtimetest` |
+| `flow/turn/` | The one seam between a run and whatever executes a turn: `turn.Runtime`; `native` (on saige's agent loop), `sandbox` (any Runtime inside `sandbox/`), `failure` (which failed turns a retry would repeat), `runtimetest` |
 | `flow/runtime/` | The durable turn on `durable/`: accept, pin, stop, compact, usage, parking, child sessions |
 | `flow/message/` | One streamed assistant message for a tree of runs: a `Projector` turns the tree's envelopes into Anthropic-shaped stream events with nested lanes per called agent, and a `Folder` reads the stream back into a `Message`; both pure |
 | `flow/isolation/` | The seam to an isolated instance for a run's tools; `isolate` leases them from `sandbox/isolate` |
 | `flow/connectors/` | The mesh: shared file intake and references for every connector; `internal/` holds what they share (inbound authentication, the sink that edits one message per run, rendering, JSON over HTTP) |
 | `flow/connectors/slack/` | The Slack peer: trigger (Events API, slash commands, stops), sink and actor (messages, reactions, agent sessions) |
 | `flow/connectors/mention/` | Finds the agents a person tagged and the people, places and links a message refers to |
-| `flow/connectors/github/` | The GitHub peer: trigger (webhooks), sink (one comment per run, reviews with inline findings, check runs) and actor; agents never approve (`ErrNoApproval`) |
+| `flow/connectors/github/` | The GitHub peer: trigger (webhooks), sink (one comment per run, reviews with inline findings, check runs, commit check reads) and actor; the model never approves (`ErrNoApproval`), and only a host hook (`Config.MayApprove`) may |
 | `flow/connectors/cron/` | The schedule peer: a trigger only |
 | `flow/membership/`, `flow/egress/` | Which agents are members of which channels and what wakes them; delivery of a run's events to sinks by channel and type prefix |
 | `flow/credential/` | The credential seam: `Source.Token(ctx, connector, Subject{App or User})`, and `Client`, an `*http.Client` that asks the source on every request |
@@ -215,7 +215,7 @@ Angular conventional commits enforced by gitit:
 - **Who a turn acts for comes from the run's record**, never from the task input, trigger context or anything a model produced.
 - **`flow/signature` is a security boundary.** It is the only thing between the public internet and starting a run. Any change needs tests for constant-time comparison, verify-before-parse, the replay window, malformed input and duplicated headers. Default is always deny.
 - **Sinks are idempotent and an ingress adapter chooses no agent.** Render one message per run and edit it, never one per delta; an ingress adapter publishes a typed event on the surface's channel with the agents and references the text names.
-- **Agents never approve a pull request.** The GitHub connector submits `COMMENT` or `REQUEST_CHANGES` only; do not add an approval path behind any option.
+- **The model never approves a pull request; a host hook may.** The model's review tool submits `COMMENT` or `REQUEST_CHANGES` only, and an `APPROVE` through it is refused whatever the host allows. The one approval path is the review sink, and only when `Config.MayApprove` says yes on an open, ready pull request whose head is still the reviewed commit, under a single-use grant; nil refuses with `ErrNoApproval`. Do not add another.
 - **A credential is never a fallback.** A `credential.Source` answers for the subject asked for or returns `ErrNoCredential`; a person's call never acts with the app's token, and a token never reaches a log (`Token.String` redacts).
 - Names stored in databases or on the wire keep their spelling (`fiber_*` tables, `fiber://`, `fiber.*` kinds and record keys).
 

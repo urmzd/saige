@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -40,11 +39,13 @@ const DefaultMaxConsecutiveErrors = 2
 
 var (
 	// ErrToolErrorLimit means every tool call failed for
-	// MaxConsecutiveErrors consecutive turns.
-	ErrToolErrorLimit = errors.New("too many consecutive failed tool turns")
+	// MaxConsecutiveErrors consecutive turns. It is types.ErrToolErrorLimit,
+	// so a caller that sees only the type seam can match it.
+	ErrToolErrorLimit = types.ErrToolErrorLimit
 	// ErrRepeatedToolCalls means the model requested the same tool calls with
 	// the same arguments more often in a row than MaxRepeatIterations allows.
-	ErrRepeatedToolCalls = errors.New("repeated identical tool calls")
+	// It is types.ErrRepeatedToolCalls.
+	ErrRepeatedToolCalls = types.ErrRepeatedToolCalls
 )
 
 // WithOnMaxIter sets what happens when a run reaches a step limit.

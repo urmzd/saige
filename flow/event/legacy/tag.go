@@ -249,6 +249,10 @@ func gitHub(r event.Request, m map[string]string) event.Body {
 		Draft:   take(m, "github_draft") == "true",
 	}
 	g.InstallationID = takeInt(m, "github_installation_id")
+	g.SenderID = takeInt(m, "github_sender_id")
+	g.AuthorID = takeInt(m, "github_author_id")
+	g.RequestedReviewer = take(m, "github_requested_reviewer")
+	g.RequestedReviewerID = takeInt(m, "github_requested_reviewer_id")
 	comment := takeInt(m, "github_comment_id")
 	root := takeInt(m, "github_review_root_id")
 	req := withContext(r, m)

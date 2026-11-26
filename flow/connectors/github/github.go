@@ -39,6 +39,38 @@
 //
 // github_comment, github_request_review and github_add_labels. Each returns the
 // address of what it changed, so the action.taken event can cite it.
+//
+// # Reviews
+//
+// The model reviews through github_create_review, which comments or requests
+// changes and never approves: APPROVE is refused with ErrNoApproval. The host
+// may approve through the review sink alone. Config.Review plans the review,
+// and Config.MayApprove decides an APPROVE it planned on an open pull request
+// that is not a draft: nil fails it with ErrNoApproval, no posts it as a
+// comment, an error retries the delivery, and yes posts the approval while the
+// pull request is still open, not a draft, and on the reviewed commit.
+// CommitChecks reads every check run and commit status on a commit, and
+// ApprovalRequest.ChecksAllow decides from them, leaving out every check of
+// the app's own (ApprovalRequest.OwnCheck). ApprovalRequest.AppReviews lists
+// the app's outstanding reviews, and PullRequestCommits who wrote the change.
+// Connector.DismissReview dismisses the app's own approval or change request,
+// and Connector.OwnReviews lists the app's own reviews; no model tool offers
+// either.
+//
+// # Reads
+//
+// github_read_context, github_read_file, github_workflow_status,
+// github_fix_base and ReadComments take a reference to an issue, a pull
+// request or a repository. A run reads its own repository; any other is a
+// cross-source read, which Config.ReadRepositories or Config.MayRead grants
+// and Config.ReadRefused refuses, before any request is made. A refusal is
+// a *ReadError. The hooks hear the owner and repository in lower case. A
+// cross-source read follows no redirect (ErrReadRedirected), so it returns
+// only the repository the grant was decided for. A run's read of its own
+// repository that is redirected to another repository is decided as a
+// cross-source read of that repository before it is requested, and fails
+// with ErrReadRedirected when it is not granted. No write asks the read
+// hooks.
 package github
 
 import (
@@ -46,6 +78,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -102,6 +135,37 @@ type Config struct {
 	// callback grants no new write and must preserve the host's evidence checks.
 	// Nil reuses Review, which must then reproduce the same historical payload.
 	RecoverReview func(View, []ContextFile, string) (Review, bool, error)
+	// MayApprove is the host's last word on an approval. When Review plans an
+	// APPROVE on an open pull request that is not a draft, the review sink
+	// asks it once, with the pull request and the review it would post
+	// (locations checked, before the delivery markers). Yes posts the
+	// approval, after the sink reads the pull request again and finds it
+	// still open, not a draft, and on the reviewed commit. No posts the same
+	// review as a COMMENT, and so does a closed or draft pull request. An
+	// error posts nothing and the delivery is retried, asking again. Nil
+	// keeps the rule that nothing approves: the planned approval fails with
+	// ErrNoApproval. The model never approves either way:
+	// github_create_review refuses APPROVE whatever this hook would say. A
+	// host that requires passing checks reads them with CommitChecks and
+	// decides with req.ChecksAllow(checks), which leaves out every check of
+	// this app. Once a yes is posted, the sink reads the head and the app's
+	// reviews again and dismisses that approval when the head moved, when a
+	// change request of the app appeared that the hook was not shown, or
+	// when either read fails, also when a retry recovers an approval whose
+	// response was lost, and also when the delivery was cancelled after the
+	// post. A push after those reads is the host's to
+	// handle on synchronize, or GitHub's, with the branch rule that
+	// dismisses stale approvals. New refuses a Config that sets MayApprove
+	// with an API that does not implement ReviewDismissAPI.
+	MayApprove func(ctx context.Context, req ApprovalRequest) (bool, error)
+	// AppID is the numeric ID of the GitHub App the connector acts as. It
+	// identifies the app's own check runs in ApprovalRequest.OwnCheck, by ID
+	// and not only by slug. 0 leaves the slug from Login as the only means.
+	AppID int64
+	// Log receives what the connector does on a best-effort basis, such as
+	// dismissing an approval whose head moved after it was posted. Nil uses
+	// slog.Default().
+	Log *slog.Logger
 
 	// ActionRepositories grants native writes from other surfaces to exact owner/repo names.
 	ActionRepositories []string
@@ -128,6 +192,37 @@ type Config struct {
 	// ReadRepositories grants cross-source read access to exact owner/repo
 	// names. It never grants mutation or delivery access.
 	ReadRepositories []string
+	// MayRead grants a cross-source read of a repository ReadRepositories
+	// does not name, such as one a GitHub App installation covers. A read
+	// that takes a reference (github_read_context, github_read_file,
+	// github_workflow_status, github_fix_base and ReadComments) asks it
+	// before any request, once, with the owner and repository the read
+	// would then request, in lower case: GitHub names are case-insensitive.
+	// It is asked after the owners check, after ReadRefused and after the
+	// ReadRepositories list, and only for a repository other than the
+	// run's own. A read of the run's own repository that GitHub redirects
+	// to another repository asks it about that repository, before the
+	// redirect is followed; the redirect fails with ErrReadRedirected when
+	// it is not granted. A write
+	// never asks it, and neither does a read of an address the host bound
+	// (Messages, PollFeedback). The hook is not told which read is asking:
+	// what it grants, it grants to all of them. Nil grants nothing more,
+	// which is the behavior of a Config without the hooks: a run reads its
+	// own repository and the ReadRepositories, and a refusal is a
+	// *ReadError. A read it grants is answered by that repository or fails
+	// with ErrReadRedirected.
+	MayRead func(ctx context.Context, owner, repo string) bool
+	// ReadRefused keeps a repository to its own runs: a cross-source read of
+	// it is refused whatever ReadRepositories or MayRead grant, while a run
+	// on one of its own issues or pull requests still reads it. It is asked
+	// where MayRead is, first, also in lower case, and also for the
+	// repository a redirect of a run's own read names. Nil refuses nothing.
+	//
+	// With either hook set, a read action refuses arguments whose keys are
+	// ambiguous (a key given twice, two keys that differ only by case, a key
+	// its schema does not declare) before decoding them. With both nil the
+	// arguments are decoded as they were before the hooks existed.
+	ReadRefused func(ctx context.Context, owner, repo string) bool
 
 	// Bots maps a GitHub login to the agent it stands for, and is how a review
 	// request is resolved: GitHub names the reviewer, not the agent. A GitHub App
@@ -213,7 +308,10 @@ type Connector struct {
 	reviewsSink   *sink.Engine
 	reactionsSink *sink.Engine
 	feedbackState deliverystate.Store
-	readRepos     map[string]bool
+	// confirmTimeout bounds each step of confirming a posted approval; zero
+	// uses approvalConfirmTimeout.
+	confirmTimeout time.Duration
+	readRepos      map[string]bool
 	// fetcher downloads attached files; nil when file intake is off.
 	fetcher *intake.Fetcher
 	// redirectForTest, set only by tests, points a GitHub file URL at a
@@ -237,6 +335,12 @@ func New(cfg Config) (*Connector, error) {
 	}
 	if cfg.API == nil {
 		return nil, fmt.Errorf("github: config needs an API")
+	}
+	if cfg.AppID < 0 {
+		return nil, fmt.Errorf("github: AppID must not be negative")
+	}
+	if _, ok := cfg.API.(ReviewDismissAPI); cfg.MayApprove != nil && !ok {
+		return nil, fmt.Errorf("github: MayApprove requires an API that implements ReviewDismissAPI")
 	}
 	if cfg.FixPullRequests {
 		if _, ok := cfg.API.(FixPullAPI); !ok || cfg.AuthorizeFixPull == nil {
@@ -329,7 +433,8 @@ func New(cfg Config) (*Connector, error) {
 		if cfg.Login == "" {
 			return nil, fmt.Errorf("github: native reviews require the app login for recovery")
 		}
-		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
+		dismiss, _ := cfg.API.(ReviewDismissAPI)
+		c.reviewsSink = sink.New(reviewSurface{c: c, api: api, history: history, context: contextAPI, dismiss: dismiss}, reviewBody, sink.WithInterval(interval), sink.WithClock(cfg.Clock), sink.WithState(cfg.DeliveryState, "reviews:"+deliveryScope(cfg.Tenant, cfg.DeliveryScope)))
 	}
 	return c, nil
 }
@@ -626,8 +731,8 @@ func (c *Connector) Actions() []connector.Action {
 	actions := []connector.Action{
 		{
 			Name:        "github_read_context",
-			Description: "Read the issue or pull request, conversation, reviews, diff comments and changed-file patches in this run's repository. Follow next_page until absent. Missing patches are unavailable evidence, not proof that a file has no changes.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{"address":{"type":"string","description":"Optional GitHub issue/PR URL or github:// address. Other repositories require an operator read grant."},"number":{"type":"integer","minimum":1,"description":"Issue or PR number. Defaults to this run's subject."},"page":{"type":"integer","minimum":1,"description":"Page to read, starting at 1."}},"additionalProperties":false}`),
+			Description: "Read a GitHub issue or pull request (its conversation, reviews, diff comments and changed-file patches), or a repository's overview. For an issue or PR, pass its full address, such as github://owner/repo/pull/12 or https://github.com/owner/repo/pull/12, and follow next_page until absent; missing patches are unavailable evidence, not proof that a file has no changes. For a repository, pass owner/repo to get its description, default branch, README head and recent open PRs and issues, each with the address that reads it. With no address, reads this run's own issue or PR.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"address":{"type":"string","description":"What to read. An issue or PR: github://owner/repo/pull/12, github://owner/repo/issues/12, or its https://github.com URL. A repository: owner/repo, github://owner/repo or https://github.com/owner/repo. Repositories other than this run's own require an operator read grant."},"number":{"type":"integer","minimum":1,"description":"Issue or PR number in this run's repository, or in the repository the address names. Defaults to this run's subject."},"page":{"type":"integer","minimum":1,"description":"Page to read, starting at 1. A repository read has one page."}},"additionalProperties":false}`),
 			Invoke:      c.readContext,
 		},
 		{
@@ -683,6 +788,13 @@ func (c *Connector) Actions() []connector.Action {
 	actions = append(actions, c.fileAction(), c.workflowStatusAction(), c.reviewAction())
 	if c.cfg.FixPullRequests {
 		actions = append(actions, c.fixBaseAction(), c.fixPullAction())
+	}
+	if c.cfg.MayRead != nil || c.cfg.ReadRefused != nil {
+		for i, a := range actions {
+			if readActionNames[a.Name] {
+				actions[i] = c.oneKeyEach(a)
+			}
+		}
 	}
 	return actions
 }
@@ -816,4 +928,18 @@ func deliveryScope(tenant, scope string) string {
 	}
 	key, _ := json.Marshal([]string{Name, tenant, scope})
 	return string(key)
+}
+
+// log is Config.Log, or slog.Default() when it is nil.
+func (c *Connector) log() *slog.Logger {
+	if c.cfg.Log != nil {
+		return c.cfg.Log
+	}
+	return slog.Default()
+}
+
+// knownID maps a user or app ID GitHub sent to the one value that means
+// unknown: anything below 1 is 0, and an ID of 0 matches nobody.
+func knownID(id int64) int64 {
+	return max(id, 0)
 }

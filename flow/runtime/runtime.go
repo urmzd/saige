@@ -139,6 +139,7 @@ import (
 	"github.com/urmzd/saige/flow/session"
 	"github.com/urmzd/saige/flow/thread"
 	turnrt "github.com/urmzd/saige/flow/turn"
+	"github.com/urmzd/saige/flow/turn/failure"
 	"github.com/urmzd/saige/flow/turn/native"
 
 	"github.com/urmzd/saige/flow/attachment"
@@ -363,12 +364,11 @@ type Outcome struct {
 	// Text is the agent's final answer.
 	Text string `json:"text"`
 	// Prompt is the request message exactly as the model was sent it:
-	// trigger metadata, retrieved passages, and the request's text. It is what
-	// the thread journal records as the user's message, so that the next run
-	// in the thread replays the same bytes this one sent. A turn that
-	// leaves it empty has the trigger as the catalog renders it recorded
-	// instead, which keeps the conversation and gives up the shared request
-	// prefix.
+	// trigger metadata, retrieved passages, and the request's text. It is
+	// the run's own record. The thread journal does not take it: the journal
+	// records the request as it was asked (the trigger as the catalog
+	// renders it, which is Prompt without the retrieved passages), and every
+	// later run in the thread retrieves its own passages for its own request.
 	Prompt string `json:"prompt,omitempty"`
 	// Chunks counts the event bodies produced.
 	Chunks int `json:"chunks"`
@@ -1139,7 +1139,12 @@ func (r *Runtime) executeAgent(ctx context.Context, in Input, resume *native.Par
 	if settleErr := r.settleTurnBudget(context.WithoutCancel(ctx), in, attempt, mine, req.Budget, err != nil); settleErr != nil {
 		return out, settleErr
 	}
-	if err != nil && req.Budget != nil {
+	// A failure a retry would only repeat fails the run at once: another
+	// attempt pays for the whole turn again to reach the same end. A turn
+	// under a budget is never retried. An attempt whose own context ended
+	// (the worker is shutting down, the claim was lost) decides nothing
+	// about the run, whatever error the turn returned on its way out.
+	if err != nil && (req.Budget != nil || (ctx.Err() == nil && failure.Repeats(err))) {
 		err = durable.NonRetryable(err)
 	}
 	if err != nil {
@@ -1278,9 +1283,13 @@ func historyOf(entries []thread.Entry) []native.Message {
 	return out
 }
 
-// remember appends a completed run's exchange to its thread: what the model
-// was asked, then what it answered, as one atomic append so that no other
-// run's entries can land between a question and its answer.
+// remember appends a completed run's exchange to its thread: what was asked,
+// then what the agent answered, as one atomic append so that no other run's
+// entries can land between a question and its answer.
+//
+// What was asked is the request as it was asked (asked), never Outcome.Prompt:
+// the passages retrieved for a turn are retrieved for that turn, and each
+// later turn in the thread retrieves its own for its own request.
 //
 // It is called from the workflow body, so it runs again on every replay, and
 // the journal makes that safe: an entry is recognized by its run id and role,
@@ -1300,7 +1309,7 @@ func (r *Runtime) remember(ctx context.Context, in Input, out Outcome) error {
 	// was handed, so a later run in the thread is shown them where this run
 	// was: after the request's text.
 	files := in.request().Attachments
-	if said := firstNonEmpty(out.Prompt, in.rendered()); strings.TrimSpace(said) != "" || len(files) > 0 {
+	if said := in.asked(); strings.TrimSpace(said) != "" || len(files) > 0 {
 		entries = append(entries, thread.Entry{
 			Role: thread.RoleUser, Text: said, Actor: in.Actor(),
 			RunID: runID, SurfaceID: r.surfaceID(in), At: in.Trigger.Time,

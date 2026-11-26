@@ -52,6 +52,19 @@ func (in Input) prompt() (string, map[string]string) {
 	return text, context
 }
 
+// asked is the request as it was asked, as the thread journal records it:
+// the trigger as the catalog renders it for a model (its trigger context, then
+// its request text), without anything a turn retrieved for it. A trigger the
+// catalog cannot render is its request text and context as a turn is sent
+// them before retrieval.
+func (in Input) asked() string {
+	if s := in.rendered(); strings.TrimSpace(s) != "" {
+		return s
+	}
+	text, meta := in.prompt()
+	return event.RequestText(text, meta)
+}
+
 // rendered is the trigger as the catalog renders it for a model, and "" when
 // it cannot be rendered.
 func (in Input) rendered() string {

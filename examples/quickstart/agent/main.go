@@ -12,7 +12,6 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/provider/catalog"
 	"github.com/urmzd/saige/agent/provider/preset"
-	"github.com/urmzd/saige/agent/types"
 )
 
 func main() {
@@ -27,7 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := agent.CollectText(a.Invoke(ctx, []types.Message{types.UserMsg(types.Text("What is RAG?"))}))
+	text, err := agent.CollectText(a.Prompt(ctx, "What is RAG?"))
 	if err != nil {
 		log.Fatal(err)
 	}

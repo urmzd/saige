@@ -33,9 +33,13 @@ func TestReviewAnchorsSuggestionsAndApprovalAreValidated(t *testing.T) {
 	}
 }
 
-// Agents comment or request changes; a person approves. Only an
-// approval submitted before that rule is read back, so recovery can match it.
-func TestAgentsNeverApprove(t *testing.T) {
+// The model never approves; a host hook may. PrepareReview, the fake and the
+// HTTP API refuse APPROVE without the review sink's grant for that exact pull
+// request and commit, and the model's review tool never offers it. Recovery
+// still reads an existing approval back, so it can match it.
+func TestModelNeverApprovesHostHookMay(t *testing.T) {
+	ctx := context.Background()
+	ref := Ref{Owner: "acme", Repo: "project", Number: 7}
 	approve := Review{CommitID: "commit", Event: "APPROVE", Body: "Looks good"}
 	if _, err := PrepareReview(approve, nil); !errors.Is(err, ErrNoApproval) {
 		t.Fatalf("approval prepared: %v", err)
@@ -44,18 +48,44 @@ func TestAgentsNeverApprove(t *testing.T) {
 		t.Fatalf("an existing approval cannot be recovered: %v", err)
 	}
 	api := NewFake()
-	if _, err := api.CreateReview(context.Background(), Ref{Owner: "acme", Repo: "project", Number: 7}, approve); !errors.Is(err, ErrNoApproval) {
-		t.Fatalf("approval submitted: %v", err)
+	for name, grant := range map[string]context.Context{
+		"no grant":     ctx,
+		"other pull":   withApproval(ctx, Ref{Owner: "acme", Repo: "project", Number: 8}, "commit"),
+		"other commit": withApproval(ctx, ref, "other"),
+		"other repo":   withApproval(ctx, Ref{Owner: "acme", Repo: "other", Number: 7}, "commit"),
+	} {
+		if _, err := api.CreateReview(grant, ref, approve); !errors.Is(err, ErrNoApproval) {
+			t.Fatalf("%s: approval submitted: %v", name, err)
+		}
+		if _, err := (&HTTPAPI{}).CreateReview(grant, ref, approve); !errors.Is(err, ErrNoApproval) {
+			t.Fatalf("%s: approval sent to GitHub: %v", name, err)
+		}
 	}
-	if _, err := (&HTTPAPI{}).CreateReview(context.Background(), Ref{Owner: "acme", Repo: "project", Number: 7}, approve); !errors.Is(err, ErrNoApproval) {
-		t.Fatalf("approval sent to GitHub: %v", err)
+	if len(api.SubmittedReviews()) != 0 {
+		t.Fatal("a refused approval was recorded")
 	}
-	c, err := New(Config{API: api})
+	asked := false
+	c, err := New(Config{API: api, MayApprove: func(context.Context, ApprovalRequest) (bool, error) { asked = true; return true, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if schema := string(c.reviewAction().Schema); strings.Contains(schema, "APPROVE") {
 		t.Fatalf("review tool offers approval: %s", schema)
+	}
+	// An APPROVE the model sends through its tool is refused even though the
+	// host's hook would say yes, and the hook is never asked.
+	sha := strings.Repeat("a", 40)
+	snapshot := Context{Files: []ContextFile{{Filename: "a.go", Patch: "@@ -1 +1 @@\n-old\n+new"}}}
+	snapshot.Subject.Head.SHA = sha
+	if err := api.SeedContext(ref, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"commit_id":"` + sha + `","event":"APPROVE","body":"Looks good"}`)
+	if _, err := c.createReview(ctx, address.MustParse("github://acme/project/pull/7"), raw); !errors.Is(err, ErrNoApproval) {
+		t.Fatalf("tool approval answered %v, want ErrNoApproval", err)
+	}
+	if asked || len(api.SubmittedReviews()) != 0 {
+		t.Fatalf("tool approval reached the hook (%v) or GitHub (%d)", asked, len(api.SubmittedReviews()))
 	}
 }
 
