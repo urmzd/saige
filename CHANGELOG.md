@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.55.0 (2026-11-26)
+
+### Breaking
+
+- **definition**: native discovery for tools, skills and agents (#191) ([25697a9](https://github.com/urmzd/saige/commit/25697a9ca01fb3a37ea3a0cea701f0610c731790))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.54.0...v0.55.0)
+
+
 ## 0.54.0 (2026-11-26)
 
 ### Breaking
