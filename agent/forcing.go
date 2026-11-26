@@ -343,8 +343,16 @@ const errTruncatedToolCall = "arguments cut off by the output token limit"
 // completed text is kept and a TruncatedDelta names its node and the finish
 // reason. Tool calls in the turn are never run: their arguments may be
 // incomplete. When the turn had tool calls the run ends with a
-// *types.ResponseTruncatedError; a text-only turn ends the run cleanly. done
-// reports whether the turn was truncated.
+// *types.ResponseTruncatedError; a turn that kept text and had none ends the
+// run cleanly. done reports whether the turn was truncated.
+//
+// A turn can reach the limit before it keeps anything: the tokens went to
+// thinking that was still under way, which is dropped at the cut, or the
+// provider sent no parts at all. Nothing is committed then, the delta names
+// no node, and the run ends with a *types.ResponseTruncatedError whose Empty
+// is set. Ending cleanly would hand the caller an empty answer as though the
+// agent had finished, and there is no partial turn for a continuation to
+// resume, so the error is returned whatever WithAutoContinue allows.
 //
 // The committed node carries a TruncationPart marker with the reason. The
 // marker is stripped before the next provider call.
@@ -368,10 +376,11 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 		nodeID = string(node.ID)
 	}
 	stream.send(types.TruncatedDelta{NodeID: nodeID, Reason: reason})
+	empty := nodeID == "" && dropped == 0
 	a.cfg.Logger.Warn("response truncated by the output token limit",
-		"agent", a.cfg.Name, "finish_reason", reason, "dropped_tool_calls", dropped)
-	if dropped == 0 {
+		"agent", a.cfg.Name, "finish_reason", reason, "dropped_tool_calls", dropped, "empty", empty)
+	if dropped == 0 && !empty {
 		return true, nil
 	}
-	return true, &types.ResponseTruncatedError{FinishReason: reason, OutputTokens: usage.CompletionTokens}
+	return true, &types.ResponseTruncatedError{FinishReason: reason, OutputTokens: usage.CompletionTokens, Empty: empty}
 }

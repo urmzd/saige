@@ -606,6 +606,7 @@ Strategies that keep recent turns, select relevant older ones, summarize with a 
 
 A turn that stops at the output token limit is committed and reported with `TruncatedDelta`, which names the node and the finish reason.
 Its tool calls never run. A truncated turn with tool calls fails the run with `ResponseTruncatedError`.
+So does a truncated turn that kept nothing, no text and no tool call: the limit was reached before any answer was produced, for example while the model was still thinking. Nothing is committed, the delta names no node, and the error's `Empty` is set.
 
 | Control | Default | At the limit |
 | --- | --- | --- |
@@ -728,7 +729,7 @@ Limits:
 
 `Agent.Continue` resumes a branch that ends with an assistant turn, such as one cut short by an interrupt or the output limit.
 A provider that declares `CapAssistantPrefill` continues the partial turn. Any other receives `DefaultContinuePrompt`.
-`WithAutoContinue(n)` resumes a text-only turn cut off by the output limit up to n times. A cut-off tool call still fails the run.
+`WithAutoContinue(n)` resumes a text-only turn cut off by the output limit up to n times. A cut-off tool call still fails the run, and so does a cut-off turn that kept nothing: it has no partial turn to resume.
 
 ## Budget and failure limits
 

@@ -223,8 +223,8 @@ type Config struct {
 	ToolChoice *types.ToolChoice
 
 	// AutoContinue lets a run resume up to this many times when the output
-	// token limit cuts a text-only turn short (see WithAutoContinue). 0
-	// disables it.
+	// token limit cuts short a turn that kept text and had no tool call
+	// (see WithAutoContinue). 0 disables it.
 	AutoContinue int
 
 	// InterruptTTL bounds how long a run waits for a decision: an approval,
@@ -1547,7 +1547,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		return resumed, err
 	}
 	// truncated decides what follows a turn the output limit cut short:
-	// end the run with err, or resume it with WithAutoContinue.
+	// end the run with err, or resume it with WithAutoContinue. A turn that
+	// arrives with an error is never resumed: its tool calls were cut off,
+	// or it kept nothing a continuation could go on from.
 	truncated := func(provider types.Provider, err error) (bool, error) {
 		if err != nil || autoContinues >= a.cfg.AutoContinue {
 			return false, err

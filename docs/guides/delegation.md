@@ -292,8 +292,8 @@ Compaction writes a new branch, makes it active, records a `CompactionPart` on i
 
 Output truncation (`agent/forcing.go`, `agent/submit.go`):
 
-- **`max_tokens` cut**: the completed text is committed with a `TruncationPart` marker and reported with `TruncatedDelta{NodeID, Reason}`. Its tool calls never run. A cut turn with tool calls fails the run with `*types.ResponseTruncatedError`. A text-only cut ends the run cleanly.
-- **`WithAutoContinue(n)`**: resume a text-only cut turn up to n times. A provider that declares `CapAssistantPrefill` continues the partial turn; any other receives `DefaultContinuePrompt`.
+- **`max_tokens` cut**: the completed text is committed with a `TruncationPart` marker and reported with `TruncatedDelta{NodeID, Reason}`. Its tool calls never run. A cut turn with tool calls fails the run with `*types.ResponseTruncatedError`. A text-only cut ends the run cleanly. A cut that kept nothing, no text and no tool call, fails the run with the same error, its `Empty` set.
+- **`WithAutoContinue(n)`**: resume a text-only cut turn up to n times. A cut that kept nothing is not resumed. A provider that declares `CapAssistantPrefill` continues the partial turn; any other receives `DefaultContinuePrompt`.
 - **`Agent.Continue(ctx, branch)`**: resume a branch that ends with a text-only assistant turn later.
 - **Interrupt**: `SubmitInterruptReplace` stops the provider call, commits its completed text with reason `interrupted`, drops its tool calls, and sends `InterruptedDelta` and `TruncatedDelta`.
 - **Child failure or cancellation**: the child has no `Output`, and its `Trace` keeps the messages committed before the failure.

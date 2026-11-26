@@ -483,6 +483,11 @@ func treeRoundTrips(msg types.Message) bool {
 // WithAutoContinue lets a run resume up to n times when the output token
 // limit cuts a text-only turn short. A truncated turn with a tool call still
 // fails with ResponseTruncatedError; the cut-off call never runs.
+//
+// So does a truncated turn that kept nothing, no text and no tool call. It is
+// not resumed: there is no partial turn to continue, so a continuation would
+// send the same request to the same limit, or a continue prompt with nothing
+// before it, up to n times.
 func WithAutoContinue(n int) Option {
 	return func(c *Config) { c.AutoContinue = n }
 }

@@ -53,6 +53,12 @@ func TestOnMaxIter(t *testing.T) {
 			wantText: "answer",
 		},
 		{name: "force final with no reply keeps the limit error", policy: MaxIterForceFinal, final: nil, wantErr: types.ErrMaxIterations},
+		{
+			// The output limit took the forced answer before any of it was
+			// kept. That is not a finished run with nothing to say.
+			name: "force final cut short before any answer is a truncation", policy: MaxIterForceFinal,
+			final: []types.Delta{usage(10, 100, "max_tokens")}, wantErr: types.ErrResponseTruncated,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
