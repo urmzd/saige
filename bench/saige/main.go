@@ -287,9 +287,13 @@ func main() {
 				rec.LatencyMS, rec.InputTokens, rec.OutputTokens, rec.ModelRequests, rec.ToolCalls, rec.Reason, rec.Error)
 		}
 	}
-	// Peak resident memory; ru_maxrss is in bytes on macOS.
+	// Peak resident memory; ru_maxrss is in bytes on macOS and KiB on Linux.
 	var ru syscall.Rusage
 	_ = syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
+	maxRSS := float64(ru.Maxrss)
+	if runtime.GOOS != "darwin" {
+		maxRSS *= 1024
+	}
 	_ = enc.Encode(map[string]any{"type": "process", "framework": framework, "init_ms": initMS,
-		"rss_mb": float64(ru.Maxrss) / 1e6, "child_rss_mb": 0, "goos": runtime.GOOS})
+		"rss_mb": maxRSS / 1e6, "child_rss_mb": 0, "goos": runtime.GOOS})
 }

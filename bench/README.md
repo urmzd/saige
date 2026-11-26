@@ -4,9 +4,23 @@ Runs the same six scenarios on saige, Pydantic AI, the OpenAI Agents SDK and
 the Claude Agent SDK, all on one Claude model, and compares latency, tokens,
 memory, startup and the telemetry each one emits. Results: [results.md](results.md).
 
+The benchmark is its own Go module (`bench/saige/go.mod`, with a `replace` to
+the repo root). The root module's `go build ./...`, `go test ./...`, lint and
+CI do not include it, and it needs no API key until you run it.
+
+## Results provenance
+
+`results.md` comes from one local run on 2026-10-29 (macOS, arm64), five rounds,
+against saige as it was before `otel.Config.CaptureToolContent`. The raw JSONL
+and collector output are not committed (`results/` is ignored). Running
+`report.py` on that local raw data reproduces `results.md` exactly. The live
+API run has not been repeated since, so treat the numbers as one sample, not a
+reproducible result.
+
 ## Run it
 
 ```bash
+cd bench
 docker run -d --rm --name bench-otel -p 4318:4318 \
   -v "$PWD/otel/collector.yaml:/etc/otelcol-contrib/config.yaml" \
   -v "$PWD/results/otel:/out" otel/opentelemetry-collector-contrib:0.120.0
@@ -41,3 +55,4 @@ python3 report.py          # writes results.md
 - Pydantic AI treats a plain exception in a tool as fatal by design; tools must raise `ModelRetry` to hand an error back to the model. The `tool_error` failures measure that default, not a crash.
 - Startup is time from process start to first agent built. Go's 1 ms excludes `go build`.
 - The committed `results.md` was recorded before `otel.Config.CaptureToolContent` existed, so it shows saige without tool arguments and results. The runner now turns capture on; a rerun records them.
+- Peak RSS reads `ru_maxrss`, which is bytes on macOS and KiB on Linux; both runners convert to MB for either.

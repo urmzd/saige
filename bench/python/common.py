@@ -7,6 +7,7 @@ import json
 import os
 import re
 import resource
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -107,10 +108,11 @@ class Writer:
               f"tools={rec.tool_calls} {rec.reason or rec.error[:80]}", flush=True)
 
     def close(self) -> None:
-        # Peak resident memory; ru_maxrss is in bytes on macOS. Children
-        # covers subprocesses such as the Claude Code CLI.
-        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
-        children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1e6
+        # Peak resident memory; ru_maxrss is in bytes on macOS and KiB on
+        # Linux. Children covers subprocesses such as the Claude Code CLI.
+        unit = 1 if sys.platform == "darwin" else 1024
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit / 1e6
+        children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * unit / 1e6
         self.fh.write(json.dumps({"type": "process", "framework": self.framework,
                                   "init_ms": self.init_ms, "rss_mb": rss,
                                   "child_rss_mb": children}) + "\n")
