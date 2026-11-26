@@ -52,7 +52,7 @@ Remote servers loaded from a file use `SafeHTTPClient(false)` by default, which 
 | Block internal addresses | `SafeHTTPClient(blockPrivate)`, or `netguard.Client` with a policy of your own |
 | Test a connection | `Probe`, `Pool.Health`, `Pool.Preflight` |
 
-The identity covers the transport, header names with a hash of their values, the allowlist, and the prefix.
+The identity covers the transport, header names with a hash of their values, the allowlist, the tool pins, and the prefix.
 Two specs with different `AllowedTools` never share a session.
 Policy fields such as `Gate`, `TokenFunc`, `HTTPClient`, retries, limits, and timeouts are not part of the identity.
 A pool refuses to share a session between two specs with one identity whose policy fields differ, so a second spec's gate or credential is never silently dropped.
@@ -97,14 +97,35 @@ if err := drift.Within(0, "search", "fetch"); err != nil {
 
 A server you approved once can rewrite a tool's description later to carry instructions to the model.
 Set `ServerSpec.PinnedTools` to the fingerprints you approved, and the client imports only tools that still match them.
-A tool the server added or rewrote is withheld, and a call to it is refused locally, as for a removed tool.
+A tool the server added or rewrote is withheld.
+A call to a tool registered before the rewrite is checked against its pin before the client sends it.
+When the client has no cached tool list, after `tools/list_changed` or a reconnect, it lists the tools again first.
+A tool that does not match its pin, or a pin that the client cannot check, gets an error result, and the call never reaches the server.
 `Client.PinDrift` reports what was withheld, so a host can show it and ask before pinning again.
+It compares only the tools that `AllowedTools` lets through.
+
+`nil` pins turn pinning off. An empty map pins to nothing, so the client imports no tools.
+`Catalog.Fingerprints` returns an empty map, not `nil`, for a server approved with no tools.
 
 ```go
-cat, _ := client.Catalog(ctx)
+approved, err := pool.Acquire(ctx, spec)
+if err != nil {
+    return err
+}
+cat, err := approved.Catalog(ctx)
+if err != nil {
+    return err
+}
 spec.PinnedTools = cat.Fingerprints() // record on first approval, store with the config
 
-drift, _ := pinned.PinDrift(ctx)
+client, err := pool.Acquire(ctx, spec) // a new identity, so a new client that checks the pins
+if err != nil {
+    return err
+}
+drift, err := client.PinDrift(ctx)
+if err != nil {
+    return err
+}
 // drift.Added: new tools, drift.Changed: rewritten tools, both withheld
 ```
 

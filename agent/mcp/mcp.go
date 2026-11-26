@@ -54,6 +54,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -137,8 +138,14 @@ type ServerSpec struct {
 	// still match its pin is imported. A tool the server added, or one it
 	// rewrote under the same name, is withheld until it is pinned again: a
 	// changed description is how a server that was trusted once turns
-	// hostile. Calls to a withheld tool are refused locally. PinDrift reports
-	// what was withheld. Empty imports tools without checking them.
+	// hostile. A call to a tool registered earlier is checked against its pin
+	// before it is sent: when no listing is cached, the client lists the tools
+	// again first, and a call to a withheld tool never reaches the server.
+	// PinDrift reports what was withheld.
+	//
+	// nil imports tools without checking them. A non-nil empty map pins to
+	// nothing: no tool is imported until it is pinned, which is what a server
+	// approved with no tools records (Catalog.Fingerprints never returns nil).
 	PinnedTools map[string]string
 	// Gate is applied to this server's tools. Compose it into the agent's gate
 	// via Pool.Gate. nil means no server-specific policy.
@@ -628,23 +635,43 @@ func (c *Client) toolDef(name string, t CatalogTool) types.ToolDef {
 	}
 }
 
-// offers reports whether the server still advertises a remote tool. Before
-// the catalog is known, or while it is being refreshed, a tool counts as
-// offered unless an earlier listing withdrew it, and the server is the judge.
-func (c *Client) offers(remote string) bool {
+// callable reports whether a call to a remote tool may be sent now.
+//
+// Without pins, a tool in the cached catalog is offered. Before the catalog
+// is known, or while it is being refreshed, a tool counts as offered unless
+// an earlier listing withdrew it, and the server is the judge.
+//
+// With pins, the tool must match its pin in a current listing. A dropped
+// catalog (after tools/list_changed or a reconnect) does not show that a
+// tool still matches: the server may have rewritten it without withdrawing
+// it. So the client lists the tools again and checks the new listing.
+func (c *Client) callable(ctx context.Context, remote string) (bool, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.catalog == nil {
-		return !c.withdrawn[remote]
+	if c.spec.PinnedTools == nil || c.catalog != nil {
+		defer c.mu.RUnlock()
+		if c.catalog == nil {
+			return !c.withdrawn[remote], nil
+		}
+		t, ok := c.byName[remote]
+		return ok && c.pinned(t), nil
 	}
-	t, ok := c.byName[remote]
-	return ok && c.pinned(t)
+	c.mu.RUnlock()
+	cat, err := c.Catalog(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, t := range cat.Tools {
+		if t.Name == remote {
+			return c.pinned(t), nil
+		}
+	}
+	return false, nil
 }
 
 // pinned reports whether a catalog tool may be imported under the spec's
-// pins. Without pins every tool may.
+// pins. Without pins (nil) every tool may; an empty map admits none.
 func (c *Client) pinned(t CatalogTool) bool {
-	if len(c.spec.PinnedTools) == 0 {
+	if c.spec.PinnedTools == nil {
 		return true
 	}
 	want, ok := c.spec.PinnedTools[t.Name]
@@ -654,20 +681,33 @@ func (c *Client) pinned(t CatalogTool) bool {
 // PinDrift compares the server's current catalog with the spec's pins:
 // tools added since pinning, pinned tools no longer listed, and tools whose
 // fingerprint changed. Added and changed tools are the ones Tools withholds.
-// Without pins it reports no drift.
+// Only tools AllowedTools lets through are compared, on both sides, so a
+// tool the spec never imports is not reported. Without pins (nil) it reports
+// no drift.
 func (c *Client) PinDrift(ctx context.Context) (CatalogDrift, error) {
-	if len(c.spec.PinnedTools) == 0 {
+	if c.spec.PinnedTools == nil {
 		return CatalogDrift{}, nil
 	}
 	cat, err := c.Catalog(ctx)
 	if err != nil {
 		return CatalogDrift{}, err
 	}
-	pinned := Catalog{Server: cat.Server}
-	for name, fp := range c.spec.PinnedTools {
-		pinned.Tools = append(pinned.Tools, CatalogTool{Name: name, Fingerprint: fp})
+	inScope := func(string) bool { return true }
+	if len(c.spec.AllowedTools) > 0 {
+		inScope = func(name string) bool { return slices.Contains(c.spec.AllowedTools, name) }
 	}
-	return DiffCatalogs(pinned, cat), nil
+	pinned, current := Catalog{Server: cat.Server}, Catalog{Server: cat.Server}
+	for name, fp := range c.spec.PinnedTools {
+		if inScope(name) {
+			pinned.Tools = append(pinned.Tools, CatalogTool{Name: name, Fingerprint: fp})
+		}
+	}
+	for _, t := range cat.Tools {
+		if inScope(t.Name) {
+			current.Tools = append(current.Tools, t)
+		}
+	}
+	return DiffCatalogs(pinned, current), nil
 }
 
 // isIdempotent reports whether a remote tool may be repeated after an
@@ -722,8 +762,8 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 	stop := context.AfterFunc(t.client.closing, cancel)
 	defer stop()
 
-	if !t.client.offers(t.remote) {
-		return errorResult("mcp: server %q no longer offers tool %s", t.server, t.remote), nil
+	if refused, ok := t.refusal(ctx); ok {
+		return refused, nil
 	}
 
 	if sem := t.client.sem; sem != nil {
@@ -764,12 +804,30 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		if !t.idempotent {
 			return errorResult("mcp: server %q lost its session during %s and was reconnected; the call was not retried because the tool is not known to be idempotent and may have run", t.server, t.remote), nil
 		}
+		// The new session may list a different tool under the same name.
+		if refused, ok := t.refusal(ctx); ok {
+			return refused, nil
+		}
 		res, err = fresh.CallTool(ctx, params)
 	}
 	if err != nil {
 		return errorResult("mcp: call %s on %q failed: %v", t.remote, t.server, err), nil
 	}
 	return t.convert(res), nil
+}
+
+// refusal returns the error result for a call that must not be sent: the
+// server no longer offers the tool, or, under pins, a current listing does
+// not show it matching its pin or cannot be fetched.
+func (t *serverTool) refusal(ctx context.Context) (types.ToolResult, bool) {
+	ok, err := t.client.callable(ctx, t.remote)
+	switch {
+	case err != nil:
+		return errorResult("mcp: call %s on %q refused: its pin could not be checked: %v", t.remote, t.server, err), true
+	case !ok:
+		return errorResult("mcp: server %q no longer offers tool %s", t.server, t.remote), true
+	}
+	return types.ToolResult{}, false
 }
 
 func errorResult(format string, args ...any) types.ToolResult {

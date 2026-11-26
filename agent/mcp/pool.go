@@ -61,11 +61,12 @@ func (p *Pool) initLocked() {
 
 // Identity returns a stable key for the connection a spec describes: SHA-256
 // over the transport fields, the header names with a hash of their values,
-// the allowlist, the tool pins and the prefix. Two specs with the same identity share one
-// session in a Pool.
+// the allowlist, the tool pins and the prefix. Two specs with the same
+// identity share one session in a Pool.
 //
-// The allowlist and pins are part of the key on purpose: two agents restricted to
-// different tool subsets must never share a session and its tool list.
+// The allowlist and pins are part of the key on purpose: two agents
+// restricted to different tool subsets must never share a session and its
+// tool list.
 //
 // Policy fields (Gate, credentials, HTTPClient, retries, limits, timeouts and
 // hooks) are not part of the key. A Pool refuses to share a client between two
@@ -81,16 +82,15 @@ func (s ServerSpec) Identity() string {
 	sort.Strings(headers)
 	allowed := append([]string(nil), s.AllowedTools...)
 	sort.Strings(allowed)
-	pins := make([]string, 0, len(s.PinnedTools))
-	for name, fp := range s.PinnedTools {
-		pins = append(pins, name+"="+fp)
-	}
-	sort.Strings(pins)
+	// encoding/json writes map keys sorted, so the pins encode canonically and
+	// no tool name or fingerprint can run into the next. nil encodes as null
+	// and an empty map as {}: no pinning and pinned to nothing differ.
 	raw, _ := json.Marshal(struct {
 		Name, Command, WorkDir, URL, Prefix string
-		Args, Env, Headers, Allowed, Pins   []string
+		Args, Env, Headers, Allowed         []string
+		Pins                                map[string]string
 		TrustHints                          bool
-	}{s.Name, s.Command, s.WorkDir, s.URL, s.prefix(), s.Args, s.Env, headers, allowed, pins, s.TrustHints})
+	}{s.Name, s.Command, s.WorkDir, s.URL, s.prefix(), s.Args, s.Env, headers, allowed, s.PinnedTools, s.TrustHints})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
