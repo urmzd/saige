@@ -1,6 +1,7 @@
 """Aggregate bench/results/*.jsonl and the collector output into results.md."""
 
 import collections
+import datetime
 import json
 import statistics
 from pathlib import Path
@@ -121,8 +122,39 @@ def overhead(sp):
     return out
 
 
+def provenance(spans):
+    """Run date, platform, saige commit and model, from results/raw/meta.json
+    when run_all.sh wrote one, else from the raw data itself, else "unknown"."""
+    meta_path = RESULTS / "raw" / "meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    raw = sorted((RESULTS / "raw").glob("*.jsonl"))
+    date = meta.get("date")
+    if not date and raw:
+        first = min(p.stat().st_mtime for p in raw)
+        date = datetime.datetime.fromtimestamp(first).strftime("%Y-%m-%d") + " (from raw file times)"
+    platform = meta.get("platform")
+    if not platform:
+        for path in raw:
+            for line in path.read_text().splitlines():
+                rec = json.loads(line)
+                if rec["type"] == "process" and rec.get("goos"):
+                    platform = rec["goos"] + " (from the saige process record)"
+                    break
+            if platform:
+                break
+    model = meta.get("model")
+    if not model:
+        seen = sorted({a["gen_ai.request.model"] for sp in spans.values() for s in sp
+                       for a in [attrs(s)] if a.get("gen_ai.request.model")})
+        if seen:
+            model = ", ".join(f"`{m}`" for m in seen) + " (from model spans)"
+    return (f"Run date: {date or 'unknown'}. Platform: {platform or 'unknown'}. "
+            f"saige commit: {meta.get('saige_commit') or 'unknown'}. Model: {model or 'unknown'}.")
+
+
 def main():
     runs, procs = load_runs()
+    spans, logs, metrics = load_otel()
     by = collections.defaultdict(list)
     for r in runs:
         by[(r["scenario"], r["framework"])].append(r)
@@ -131,21 +163,26 @@ def main():
     out = ["# Agent framework benchmark", "",
            f"Model `{json.loads((HERE / 'scenarios.json').read_text())['model']}` for every framework. "
            f"{len(runs)} measured runs in interleaved rounds. Latency is wall time for one full agent run, "
-           "TTFT is time to the first streamed model delta.", ""]
+           "TTFT is time to the first streamed model delta.", "", provenance(spans), ""]
 
-    out += ["## Summary", "", "| Framework | Pass | p50 latency | p50 TTFT | Input tok / run | Output tok / run "
+    out += ["## Summary", "", "Latency, TTFT, tokens and requests cover passing runs only; n is passing / measured runs. "
+            "Startup and peak RSS are per process.", "",
+            "| Framework | n | p50 latency | p50 TTFT | Input tok / run | Output tok / run "
             "| Requests / run | Startup | Peak RSS |", "|---|---|---|---|---|---|---|---|---|"]
     for fw in frameworks:
         rs = [r for r in runs if r["framework"] == fw]
+        ok = [r for r in rs if r["ok"]]
+        mean = lambda key: statistics.mean(r[key] for r in ok) if ok else None  # noqa: E731
         p = procs.get(fw, {})
         rss = p.get("rss_mb", 0) + p.get("child_rss_mb", 0)
+        requests = mean("model_requests")
         out.append(
-            f"| **{fw}** | {sum(r['ok'] for r in rs)}/{len(rs)} "
-            f"| {fmt(pct([r['latency_ms'] for r in rs], .5), ' ms')} "
-            f"| {fmt(pct([r['ttft_ms'] for r in rs if r['ttft_ms']], .5), ' ms')} "
-            f"| {fmt(statistics.mean(r['input_tokens'] for r in rs))} "
-            f"| {fmt(statistics.mean(r['output_tokens'] for r in rs))} "
-            f"| {statistics.mean(r['model_requests'] for r in rs):.1f} "
+            f"| **{fw}** | n={len(ok)}/{len(rs)} "
+            f"| {fmt(pct([r['latency_ms'] for r in ok], .5), ' ms')} "
+            f"| {fmt(pct([r['ttft_ms'] for r in ok if r['ttft_ms']], .5), ' ms')} "
+            f"| {fmt(mean('input_tokens'))} "
+            f"| {fmt(mean('output_tokens'))} "
+            f"| {'n/a' if requests is None else f'{requests:.1f}'} "
             f"| {fmt(p.get('init_ms'), ' ms')} | {fmt(rss, ' MB')} |")
 
     out += ["", "## Latency by scenario (p50 / max, ms)", "",
@@ -174,15 +211,10 @@ def main():
     failures = [r for r in runs if not r["ok"]]
     if failures:
         out += ["", "## Failures", "", "| Framework | Scenario | Run | Reason |", "|---|---|---|---|"]
-        seen = set()
-        for r in failures:
-            reason = (r["error"] or r["reason"]).replace("|", "/")[:120]
-            key = (r["framework"], r["scenario"], reason)
-            if key in seen:
-                continue
-            seen.add(key)
-            n = sum(1 for f in failures if (f["framework"], f["scenario"]) == key[:2])
-            out.append(f"| {r['framework']} | {r['scenario']} | {n}x | {reason} |")
+        reason = lambda r: (r["error"] or r["reason"]).replace("|", "/")[:120]  # noqa: E731
+        counts = collections.Counter((r["framework"], r["scenario"], reason(r)) for r in failures)
+        for (fw, sc, why), n in counts.items():
+            out.append(f"| {fw} | {sc} | {n}x | {why} |")
 
     all_runs = collections.Counter()
     for path in (RESULTS / "raw").glob("*.jsonl"):
@@ -190,7 +222,6 @@ def main():
             rec = json.loads(line)
             if rec["type"] == "run":
                 all_runs[rec["framework"]] += 1
-    spans, logs, metrics = load_otel()
     obs = {fw: observability(fw, all_runs, spans, logs, metrics) for fw in frameworks}
     out += ["", "## Framework overhead (from traces)", "",
             "Root span time minus model-call time, per run. This removes API speed from the comparison. "
@@ -198,14 +229,21 @@ def main():
             "number is not meaningful; its startup cost shows up as wall time minus the others on `plain`.", "",
             "| Framework | p50 | p90 |", "|---|---|---|"]
     for fw in frameworks:
-        o = overhead(spans.get(fw, []))
-        if fw == "claude-agent-sdk" or not o:
+        if fw == "claude-agent-sdk":
             plain = [r["latency_ms"] for r in runs if r["framework"] == fw and r["scenario"] == "plain"]
             others = [r["latency_ms"] for r in runs if r["framework"] != fw and r["scenario"] == "plain"]
-            out.append(f"| {fw} | ~{fmt(pct(plain, .5) - pct(others, .5), ' ms')} per query (CLI subprocess) | n/a |")
-        else:
+            if plain and others:
+                gap = pct(plain, .5) - pct(others, .5)
+                out.append(f"| {fw} | ~{fmt(gap, ' ms')} per query (CLI subprocess) | n/a |")
+            else:
+                out.append(f"| {fw} | n/a (no plain runs to compare) | n/a |")
+            continue
+        o = overhead(spans.get(fw, []))
+        if o:
             out.append(f"| {fw} | {fmt(pct(o, .5), ' ms')} | {fmt(pct(o, .9), ' ms')} |")
-    rows = list(next(iter(obs.values())).keys())
+        else:
+            out.append(f"| {fw} | n/a (no spans) | n/a |")
+    rows = list(next(iter(obs.values())).keys()) if obs else []
     out += ["", "## Observability (from the shared OTel collector, warmups included)", "",
             "| Signal | " + " | ".join(frameworks) + " |", "|---|" + "---|" * len(frameworks)]
     for row in rows:

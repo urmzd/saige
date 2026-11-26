@@ -10,18 +10,24 @@ CI do not include it, and it needs no API key until you run it.
 
 ## Results provenance
 
-`results.md` comes from one local run on 2026-10-29 (macOS, arm64), five rounds,
-against saige as it was before `otel.Config.CaptureToolContent`. The raw JSONL
+`results.md` comes from one local run on 2026-10-29 (macOS, architecture not
+recorded), five rounds, against saige as it was before
+`otel.Config.CaptureToolContent`. The raw JSONL
 and collector output are not committed (`results/` is ignored). Running
 `report.py` on that local raw data reproduces `results.md` exactly. The live
 API run has not been repeated since, so treat the numbers as one sample, not a
 reproducible result.
 
+`report.py` puts a provenance line at the top of `results.md`. `run_all.sh`
+writes `results/raw/meta.json` with the date, platform, saige commit and model.
+The 2026-10-29 run predates that file, so its date comes from file times and
+its saige commit is unknown.
+
 ## Run it
 
 ```bash
 cd bench
-docker run -d --rm --name bench-otel -p 4318:4318 \
+docker run -d --rm --name bench-otel -p 127.0.0.1:4318:4318 \
   -v "$PWD/otel/collector.yaml:/etc/otelcol-contrib/config.yaml" \
   -v "$PWD/results/otel:/out" otel/opentelemetry-collector-contrib:0.120.0
 (cd python && uv sync)

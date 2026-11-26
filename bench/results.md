@@ -2,14 +2,18 @@
 
 Model `claude-haiku-5-5` for every framework. 120 measured runs in interleaved rounds. Latency is wall time for one full agent run, TTFT is time to the first streamed model delta.
 
+Run date: 2026-10-29 (from raw file times). Platform: darwin (from the saige process record). saige commit: unknown. Model: `anthropic/claude-haiku-5-5`, `claude-haiku-5-5` (from model spans).
+
 ## Summary
 
-| Framework | Pass | p50 latency | p50 TTFT | Input tok / run | Output tok / run | Requests / run | Startup | Peak RSS |
+Latency, TTFT, tokens and requests cover passing runs only; n is passing / measured runs. Startup and peak RSS are per process.
+
+| Framework | n | p50 latency | p50 TTFT | Input tok / run | Output tok / run | Requests / run | Startup | Peak RSS |
 |---|---|---|---|---|---|---|---|---|
-| **saige** | 30/30 | 1,626 ms | 690 ms | 935 | 99 | 1.8 | 1 ms | 47 MB |
-| **pydantic-ai** | 25/30 | 2,124 ms | 679 ms | 728 | 79 | 1.5 | 991 ms | 158 MB |
-| **openai-agents** | 30/30 | 1,695 ms | 671 ms | 931 | 112 | 1.8 | 1,906 ms | 300 MB |
-| **claude-agent-sdk** | 30/30 | 2,667 ms | 1,295 ms | 1,942 | 112 | 1.8 | 470 ms | 403 MB |
+| **saige** | n=30/30 | 1,626 ms | 690 ms | 935 | 99 | 1.8 | 1 ms | 47 MB |
+| **pydantic-ai** | n=25/30 | 2,517 ms | 719 ms | 874 | 95 | 1.8 | 991 ms | 158 MB |
+| **openai-agents** | n=30/30 | 1,695 ms | 671 ms | 931 | 112 | 1.8 | 1,906 ms | 300 MB |
+| **claude-agent-sdk** | n=30/30 | 2,667 ms | 1,295 ms | 1,942 | 112 | 1.8 | 470 ms | 403 MB |
 
 ## Latency by scenario (p50 / max, ms)
 

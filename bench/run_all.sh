@@ -11,6 +11,12 @@ FRAMEWORKS=(saige pydantic_ai openai_agents claude_agent_sdk)
 
 (cd saige && go build -o ../results/saige-bench .)
 mkdir -p results/raw
+# Provenance for report.py's header line.
+commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+git diff --quiet HEAD -- .. 2>/dev/null || commit="$commit-dirty"
+python3 -c 'import json, sys; print(json.dumps({"date": sys.argv[1], "platform": sys.argv[2],
+  "saige_commit": sys.argv[3], "model": json.load(open("scenarios.json"))["model"]}))' \
+  "$(date -u +%Y-%m-%dT%H:%MZ)" "$(uname -sm)" "$commit" > results/raw/meta.json
 run() {
   local fw="$1" out="results/raw/${1//_/-}-r$2.jsonl"
   if [ "$fw" = saige ]; then
