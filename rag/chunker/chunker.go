@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/urmzd/saige/rag/tokenizer"
@@ -63,8 +64,12 @@ func NewRecursive(cfg *Config) *RecursiveChunker {
 	return &RecursiveChunker{cfg: normalized}
 }
 
+// countTokens is the tokenizer the chunkers measure with. Tests replace it
+// to count how much text is tokenized.
+var countTokens = tokenizer.CountTokens
+
 func estimateTokens(text string) int {
-	return tokenizer.CountTokens(text)
+	return countTokens(text)
 }
 
 // Chunk splits long sections in the document into smaller ones.
@@ -227,31 +232,87 @@ func (c *RecursiveChunker) splitRecursive(text string, sepIdx, budget int) []str
 	return result
 }
 
+// hardSplit cuts text into pieces of at most budget tokens at UTF-8 rune
+// boundaries. Each cut point is found by galloping from a known-good prefix
+// and then binary searching the bracketed window, so tokenization cost per
+// chunk is proportional to the chunk, not to the remaining text.
 func hardSplit(text string, budget int) []string {
 	var chunks []string
-	for estimateTokens(text) > budget {
-		boundaries := runeBoundaries(text)
-		// Binary search for the largest rune-boundary split point within budget.
-		lo, hi := 0, len(boundaries)-1
-		for lo < hi {
-			mid := (lo + hi + 1) / 2
-			if estimateTokens(text[:boundaries[mid]]) <= budget {
-				lo = mid
-			} else {
-				hi = mid - 1
-			}
-		}
-		split := boundaries[lo]
-		if split == 0 {
-			split = boundaries[1] // ensure progress, even for a single oversized rune
-		}
+	for text != "" {
+		split := hardSplitPoint(text, budget)
 		chunks = append(chunks, text[:split])
 		text = text[split:]
 	}
-	if text != "" {
-		chunks = append(chunks, text)
-	}
 	return chunks
+}
+
+// hardSplitPoint returns the largest rune-boundary prefix length of text whose
+// token count fits budget, or the first rune's length when even that is over
+// budget, so the caller always makes progress.
+func hardSplitPoint(text string, budget int) int {
+	n := len(text)
+	fits := func(i int) bool { return estimateTokens(text[:i]) <= budget }
+
+	// Every token covers at least one byte, so a prefix of budget bytes fits.
+	lo := runeFloor(text, min(max(budget, 0), n))
+	if lo == n {
+		return n
+	}
+
+	// Gallop: double the probe until it no longer fits or reaches the end.
+	hi := n
+	for probe := lo; ; {
+		probe = runeFloor(text, min(n, 2*probe+utf8.UTFMax))
+		if probe <= lo {
+			break
+		}
+		if !fits(probe) {
+			hi = probe
+			break
+		}
+		lo = probe
+		if probe == n {
+			return n
+		}
+	}
+
+	// Binary search for the boundary in (lo, hi): lo fits, hi does not.
+	for hi-lo > 1 {
+		m := runeFloor(text, lo+(hi-lo)/2)
+		if m <= lo {
+			m = runeCeil(text, lo+1)
+			if m >= hi {
+				break
+			}
+		}
+		if fits(m) {
+			lo = m
+		} else {
+			hi = m
+		}
+	}
+
+	if lo == 0 {
+		_, size := utf8.DecodeRuneInString(text)
+		return size
+	}
+	return lo
+}
+
+// runeFloor moves i back to the nearest rune start at or before it.
+func runeFloor(text string, i int) int {
+	for k := 0; k < utf8.UTFMax-1 && i > 0 && i < len(text) && !utf8.RuneStart(text[i]); k++ {
+		i--
+	}
+	return i
+}
+
+// runeCeil moves i forward to the nearest rune start at or after it.
+func runeCeil(text string, i int) int {
+	for k := 0; k < utf8.UTFMax-1 && i < len(text) && !utf8.RuneStart(text[i]); k++ {
+		i++
+	}
+	return i
 }
 
 // applyOverlap prefixes each chunk after the first with the tail of the
@@ -308,17 +369,4 @@ func wordStarts(text string) []int {
 		prevSpace = space
 	}
 	return starts
-}
-
-func runeBoundaries(text string) []int {
-	boundaries := []int{0}
-	for i := range text {
-		if i != 0 {
-			boundaries = append(boundaries, i)
-		}
-	}
-	if boundaries[len(boundaries)-1] != len(text) {
-		boundaries = append(boundaries, len(text))
-	}
-	return boundaries
 }
