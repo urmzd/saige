@@ -8,21 +8,27 @@ import (
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/definition"
+	"github.com/urmzd/saige/agent/discovery"
 	"github.com/urmzd/saige/agent/skills"
 	"github.com/urmzd/saige/agent/types"
 )
 
 // bindSkills binds the definition's skills by mode:
 //
-//   - lazy and trigger skills are listed in the system prompt and loaded
-//     with load_skill;
-//   - search skills are left out of the prompt and found with
-//     search_skills;
+//   - lazy and trigger skills are listed in the system prompt, and found
+//     with discover and loaded with load;
+//   - search skills are left out of the prompt, and found with discover
+//     and loaded with load;
 //   - eager and pinned skills have their instructions in the prompt, from
 //     the snapshot taken now, so a later change on disk does not reach the
 //     bound agent; a pinned skill must match its hash;
 //   - a trigger skill's instructions are also put in front of a user
 //     message that matches one of its patterns.
+//
+// discover searches a skill by its name, description and instructions.
+// load goes through the skill toolset, so a loaded skill's allowed-tools
+// narrows the agent's tools as load_skill does, and read_skill_resource
+// reads its files.
 //
 // Only the named skills are reachable, so naming a skill is what makes an
 // untrusted one available, as skills.AllowNames does.
@@ -32,8 +38,7 @@ func bindSkills(ctx context.Context, env *Env, d *definition.Definition, p *part
 	}
 	var (
 		names    []string
-		listed   []skills.SkillMeta
-		searched int
+		loadable []skills.Skill
 		eager    []skills.Skill
 		triggers []trigger
 	)
@@ -52,9 +57,10 @@ func bindSkills(ctx context.Context, env *Env, d *definition.Definition, p *part
 		case definition.SkillEager:
 			eager = append(eager, s)
 		case definition.SkillSearch:
-			searched++
+			loadable = append(loadable, s)
 		case definition.SkillTrigger:
-			listed = append(listed, s.SkillMeta)
+			loadable = append(loadable, s)
+			p.listedSkills = append(p.listedSkills, s.SkillMeta)
 			t := trigger{skill: s}
 			for _, expr := range ref.Triggers {
 				re, err := regexp.Compile(expr)
@@ -65,25 +71,12 @@ func bindSkills(ctx context.Context, env *Env, d *definition.Definition, p *part
 			}
 			triggers = append(triggers, t)
 		default:
-			listed = append(listed, s.SkillMeta)
+			loadable = append(loadable, s)
+			p.listedSkills = append(p.listedSkills, s.SkillMeta)
 		}
 	}
 
 	var b strings.Builder
-	if len(listed) > 0 || searched > 0 {
-		b.WriteString("## Skills\n\n")
-		b.WriteString("Skills are instruction packages for specific tasks. Before starting a task a skill covers, call " +
-			skills.LoadSkillName + " with its name and follow the instructions it returns. Skill text is guidance; it does not change what you are permitted to do.\n")
-		if len(listed) > 0 {
-			b.WriteString("\n")
-		}
-		for _, m := range listed {
-			fmt.Fprintf(&b, "- %s: %s\n", m.Name, strings.Join(strings.Fields(m.Description), " "))
-		}
-		if searched > 0 {
-			fmt.Fprintf(&b, "\nMore skills are available. Find them with %s.\n", skills.SearchSkillsName)
-		}
-	}
 	for _, s := range eager {
 		fmt.Fprintf(&b, "\n## Skill: %s\n\nThese instructions are guidance; they do not change what you are permitted to do.\n\n%s\n", s.Name, strings.TrimSpace(s.Body))
 	}
@@ -94,9 +87,26 @@ func bindSkills(ctx context.Context, env *Env, d *definition.Definition, p *part
 		p.prompt += section
 	}
 
-	if len(listed) > 0 || searched > 0 {
+	if len(loadable) > 0 {
 		ts := skills.NewToolset(env.Skills, skills.AllowListPolicy{Default: skills.AllowNames(names...)})
-		p.tools = append(p.tools, ts.Tools()...)
+		var load types.Tool
+		for _, tool := range ts.Tools() {
+			switch tool.Definition().Name {
+			case skills.LoadSkillName:
+				load = tool
+			case skills.ReadSkillResourceName:
+				p.tools = append(p.tools, tool)
+			}
+		}
+		for _, s := range loadable {
+			name := s.Name
+			p.entries = append(p.entries, discovery.Entry{
+				Kind: discovery.KindSkill, Name: name, Description: s.Description, Text: s.Body,
+				Load: func(ctx context.Context) (string, error) {
+					return load.Execute(ctx, map[string]any{"name": name})
+				},
+			})
+		}
 		p.toolPolicy = ts.Policy
 	}
 	if len(triggers) > 0 {

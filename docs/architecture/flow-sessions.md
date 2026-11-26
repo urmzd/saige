@@ -87,8 +87,8 @@ without session metadata and keep their original journal identity.
 ## Budgets and live usage
 
 A standalone session run requires a positive `limits.budget`. Each subagent call
-also requires its own explicit `subagents[].budget` allocation. Zero grants no
-work. `BudgetStore` atomically reserves parent capacity across concurrent calls,
+reserves the callee's own `limits.budget`, read from the version the call runs;
+a callee without one cannot be called. Zero grants no work. `BudgetStore` atomically reserves parent capacity across concurrent calls,
 persists integer cost, token and request caps, and settles immutable receipts.
 Each native turn receives the remaining reservation through saige's budget.
 Unpriced models require token or request caps without a money ceiling. Unknown

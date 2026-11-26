@@ -18,6 +18,7 @@ import (
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/agenttest"
 	"github.com/urmzd/saige/agent/definition"
+	"github.com/urmzd/saige/agent/discovery"
 	"github.com/urmzd/saige/agent/mcp"
 	"github.com/urmzd/saige/agent/memory"
 	"github.com/urmzd/saige/agent/provider"
@@ -350,7 +351,7 @@ func TestBindSkills(t *testing.T) {
 		"\n  - name: hidden\n    mode: search\n  - name: release\n    mode: trigger\n    triggers: [\"(?i)\\\\brelease\\\\b\"]\n"
 	b := bind(t, resolve(t, "a", file("a", spec, "BASE PROMPT")), env)
 	prompt := b.Config.SystemPrompt
-	for _, want := range []string{"BASE PROMPT", "- lazy-one:", "- release:", "EAGER BODY", "PINNED BODY", skills.SearchSkillsName} {
+	for _, want := range []string{"BASE PROMPT", "## Discovery", "- lazy-one:", "- release:", "EAGER BODY", "PINNED BODY", discovery.DiscoverName} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt lacks %q:\n%s", want, prompt)
 		}
@@ -360,8 +361,26 @@ func TestBindSkills(t *testing.T) {
 			t.Fatalf("prompt has %q:\n%s", unwanted, prompt)
 		}
 	}
-	if got := names(b.Config.Tools); !slices.Contains(got, skills.LoadSkillName) || b.Config.ToolPolicy == nil {
+	got := names(b.Config.Tools)
+	if !slices.Contains(got, discovery.LoadName) || !slices.Contains(got, discovery.DiscoverName) ||
+		!slices.Contains(got, skills.ReadSkillResourceName) || slices.Contains(got, skills.LoadSkillName) ||
+		slices.Contains(got, skills.SearchSkillsName) || b.Config.ToolPolicy == nil {
 		t.Fatalf("skill tools %v", got)
+	}
+
+	// discover finds a search skill by its instructions, and load returns
+	// a skill's instructions through the skill toolset.
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	if out := run(t, b.Config.Tools, discovery.DiscoverName, ctx, map[string]any{"query": "search body"}); !strings.Contains(out, `"name":"hidden"`) {
+		t.Fatalf("discover: %s", out)
+	}
+	for skill, body := range map[string]string{"lazy-one": "LAZY BODY", "hidden": "SEARCH BODY"} {
+		if out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "skill", "name": skill}); !strings.Contains(out, body) {
+			t.Fatalf("load %s: %s", skill, out)
+		}
+	}
+	if _, err := tool(t, b.Config.Tools, discovery.LoadName).Execute(ctx, map[string]any{"kind": "skill", "name": "eager-one"}); err == nil {
+		t.Fatal("an eager skill loaded as if it were held back")
 	}
 
 	// A trigger puts the skill's instructions in front of a matching
@@ -452,23 +471,24 @@ func TestBindSubagents(t *testing.T) {
 	env.Preset = fakePreset{&agenttest.ScriptedProvider{}}
 	env.Harness = tools.HarnessOptions{Root: t.TempDir()}
 	res := resolve(t, "lead",
-		file("lead", "subagents:\n  - ref: worker@^1\n    description: Do the work.\n    budget:\n      max_iterations: 3\n      timeout: 1m\n      max_cost: 0.5\n"+
-			"  - ref: bg\n    mode: spawn\n  - ref: peer\n    mode: handoff\n    budget:\n      max_iterations: 2\n", "lead"),
-		file("worker", "description: Works.\nmodel: anthropic/claude-haiku-5-5\ntools:\n  harness: [read]\n"+
+		file("lead", "subagents:\n  - worker@^1\n  - ref: bg\n", "lead"),
+		file("worker", "description: Works through review queues.\nmodel: anthropic/claude-haiku-5-5\ntools:\n  harness: [read]\n"+
 			"approval:\n  deny: [read_file]\ncompaction:\n  strategy: keep_recent\n  keep_turns: 2\ndials:\n  creativity: deterministic\n"+
-			"limits:\n  max_iterations: 9\n  tool_timeout: 5s\nguardrails:\n  output: [pii]\n", "WORKER PROMPT"),
-		file("bg", "", "bg"),
-		file("peer", "description: A peer.\ndials:\n  creativity: creative\n", "PEER PROMPT"))
+			"limits:\n  max_iterations: 3\n  timeout: 1m\n  tool_timeout: 5s\n  budget:\n    max_cost: 0.5\nguardrails:\n  output: [pii]\n", "WORKER PROMPT about flaky tests"),
+		file("bg", "", "bg"))
 	b := bind(t, res, env)
 	if len(b.Config.SubAgents) != 2 {
 		t.Fatalf("sub-agents %+v", b.Config.SubAgents)
 	}
+	// A sub-agent is its own definition: its description, prompt and
+	// limits are the ones the parent delegates to.
 	w := b.Config.SubAgents[0]
-	if w.Name != "worker" || w.Description != "Do the work." || w.SystemPrompt != "WORKER PROMPT" || w.MaxIter != 3 ||
-		w.Timeout != time.Minute || w.Provider == nil || !slices.Contains(names(w.Tools), "read_file") {
+	if w.Name != "worker" || w.Description != "Works through review queues." || w.SystemPrompt != "WORKER PROMPT about flaky tests" || w.MaxIter != 3 || w.Timeout != time.Minute ||
+		w.Mode != agent.SubAgentDelegate || w.Provider == nil || !slices.Contains(names(w.Tools), "read_file") {
 		t.Fatalf("worker %+v", w)
 	}
-	if bg := b.Config.SubAgents[1]; bg.Mode != agent.SubAgentSpawn || bg.Provider != nil || bg.MaxIter != 0 {
+	if bg := b.Config.SubAgents[1]; bg.Mode != agent.SubAgentDelegate || bg.Provider != nil || bg.MaxIter != 0 ||
+		bg.Description != "Delegate a task to the bg agent." {
 		t.Fatalf("bg %+v", bg)
 	}
 	if !slices.Equal(rec.models(), []string{"anthropic/claude-haiku-5-5"}) {
@@ -476,7 +496,7 @@ func TestBindSubagents(t *testing.T) {
 	}
 
 	// The worker's options replace what its definition declares on top of
-	// the inherited config.
+	// the inherited config, its budget included.
 	parent := agent.Config{ToolGate: types.AllowAllGate{}, LLMTimeout: time.Hour, Budget: types.NewBudget(types.BudgetPolicy{})}
 	cfg := parent
 	for _, o := range w.Options {
@@ -492,23 +512,145 @@ func TestBindSubagents(t *testing.T) {
 		t.Fatalf("the worker's own approval rules do not apply: %v", got)
 	}
 
-	// The handoff member arrives through an option.
-	var full agent.Config
-	for _, o := range b.Options {
-		o(&full)
+	// The parent finds a sub-agent by its prompt and reads it with load.
+	if !strings.Contains(b.Config.SystemPrompt, "## Discovery") {
+		t.Fatalf("prompt %q", b.Config.SystemPrompt)
 	}
-	if len(full.Handoffs) != 1 || full.Handoffs[0].Name != "peer" || full.Handoffs[0].MaxIter != 2 ||
-		full.Handoffs[0].SystemPrompt != "PEER PROMPT" || *full.Handoffs[0].Dials.Creativity != types.CreativityCreative {
-		t.Fatalf("handoffs %+v", full.Handoffs)
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "lead", Conversation: "c"})
+	if out := run(t, b.Config.Tools, discovery.DiscoverName, ctx, map[string]any{"query": "flaky", "kind": "agent"}); !strings.Contains(out, `"name":"worker"`) || strings.Contains(out, `"name":"bg"`) {
+		t.Fatalf("discover: %s", out)
 	}
+	out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "agent", "name": "worker"})
+	if !strings.Contains(out, "WORKER PROMPT about flaky tests") || !strings.Contains(out, "delegate_to_worker") ||
+		!strings.Contains(out, "<agent-instructions-") || strings.Contains(out, "<instructions>") {
+		t.Fatalf("load: %s", out)
+	}
+}
 
-	// A handoff member cannot carry its own run policy.
-	_, err := Bind(context.Background(), resolve(t, "lead",
-		file("lead", "subagents:\n  - ref: peer\n    mode: handoff\n", "lead"),
-		file("peer", "approval:\n  deny: [x]\ncompaction:\n  strategy: none\n", "p")), env)
-	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "approval, compaction") {
-		t.Fatalf("got %v", err)
+// A parent's held tools are its own: a sub-agent inherits the parent's
+// ToolPolicy, and still sees its own tools, holding only what it declares.
+func TestBindDiscoverIsPerAgent(t *testing.T) {
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}}
+	for _, worker := range []string{"tools:\n  harness: [read]\n", "tools:\n  harness: [read]\n  discover: [glob]\n"} {
+		b := bind(t, resolve(t, "lead",
+			file("lead", "tools:\n  harness: [read]\n  discover: [grep]\nsubagents: [worker]\n", "lead"),
+			file("worker", worker, "worker")), env)
+		w := b.Config.SubAgents[0]
+		cfg := agent.Config{ToolPolicy: b.Config.ToolPolicy} // as inheritConfig copies it
+		for _, o := range w.Options {
+			o(&cfg)
+		}
+		ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "worker", Conversation: "c"})
+		got, err := cfg.ToolPolicy.Select(ctx, "worker", w.Tools.Definitions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		holds := strings.Contains(worker, "discover")
+		if !slices.Contains(got, "grep") || slices.Contains(got, "glob") != !holds {
+			t.Fatalf("worker (%q) offered %v", worker, got)
+		}
+		lead := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "lead", Conversation: "c"})
+		if got, _ := b.Config.ToolPolicy.Select(lead, "lead", b.Config.Tools.Definitions()); slices.Contains(got, "grep") {
+			t.Fatalf("lead offered %v", got)
+		}
 	}
+}
+
+// A durable store in Env keeps what a conversation loaded for another
+// binding of the same definition, as a run resumed elsewhere has.
+func TestBindDiscoveryStore(t *testing.T) {
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}, DiscoveryStore: &discovery.MemoryStore{}}
+	res := resolve(t, "a", file("a", "tools:\n  harness: [read]\n  discover: [glob]\n", "p"))
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	first := bind(t, res, env)
+	if _, err := first.Config.ToolPolicy.Select(ctx, "a", first.Config.Tools.Definitions()); err != nil {
+		t.Fatal(err)
+	}
+	run(t, first.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "tool", "name": "glob"})
+	resumed := bind(t, res, env)
+	if got, _ := resumed.Config.ToolPolicy.Select(ctx, "a", resumed.Config.Tools.Definitions()); !slices.Contains(got, "glob") {
+		t.Fatalf("resumed binding offered %v", got)
+	}
+}
+
+// A loaded skill's allowed-tools narrows held tools too: discover does not
+// reveal a tool the skill leaves out.
+func TestBindSkillNarrowsHeldTools(t *testing.T) {
+	fsys := fstest.MapFS{"focus/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: focus\ndescription: Read only.\nallowed-tools: [read_file]\n---\nFOCUS BODY\n")}}
+	cat, err := skills.NewCatalog(context.Background(), []skills.SkillSource{skills.NewFSSource("test", fsys, ".")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}, Skills: cat}
+	b := bind(t, resolve(t, "a", file("a", "tools:\n  harness: [read]\n  discover: [glob]\nskills: [focus]\n", "p")), env)
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	all := b.Config.Tools.Definitions()
+	if _, err := b.Config.ToolPolicy.Select(ctx, "a", all); err != nil {
+		t.Fatal(err)
+	}
+	if out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "skill", "name": "focus"}); !strings.Contains(out, "FOCUS BODY") {
+		t.Fatalf("load: %s", out)
+	}
+	got, err := b.Config.ToolPolicy.Select(ctx, "a", all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "glob") || slices.Contains(got, "grep") || !slices.Contains(got, discovery.LoadName) {
+		t.Fatalf("narrowed %v", got)
+	}
+	if out := run(t, b.Config.Tools, discovery.DiscoverName, ctx, map[string]any{"query": "", "kind": "tool"}); strings.Contains(out, "glob") {
+		t.Fatalf("discover revealed a narrowed tool: %s", out)
+	}
+}
+
+// TestBindDiscoverHoldsTools holds tools back until load.
+func TestBindDiscoverHoldsTools(t *testing.T) {
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}}
+	b := bind(t, resolve(t, "a", file("a", "tools:\n  harness: [read]\n  discover: [\"grep*\", glob]\n", "p")), env)
+	all := b.Config.Tools.Definitions()
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	offered := func() []string {
+		got, err := b.Config.ToolPolicy.Select(ctx, "a", all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := offered()
+	if slices.Contains(first, "grep") || slices.Contains(first, "glob") || !slices.Contains(first, "read_file") ||
+		!slices.Contains(first, discovery.DiscoverName) || !slices.Contains(first, discovery.LoadName) {
+		t.Fatalf("offered %v", first)
+	}
+	if out := run(t, b.Config.Tools, discovery.DiscoverName, ctx, map[string]any{"query": "", "kind": "tool"}); !strings.Contains(out, `"name":"glob"`) || strings.Contains(out, `"name":"read_file"`) {
+		t.Fatalf("discover: %s", out)
+	}
+	if out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "tool", "name": "glob"}); !strings.Contains(out, `"parameters"`) {
+		t.Fatalf("load: %s", out)
+	}
+	if got := offered(); !slices.Contains(got, "glob") || slices.Contains(got, "grep") {
+		t.Fatalf("after load %v", got)
+	}
+	if !strings.Contains(b.Config.SystemPrompt, "More tools are available") {
+		t.Fatalf("prompt %q", b.Config.SystemPrompt)
+	}
+}
+
+func tool(t *testing.T, r *types.ToolRegistry, name string) types.Tool {
+	t.Helper()
+	got, ok := r.Get(name)
+	if !ok {
+		t.Fatalf("no tool %s in %v", name, names(r))
+	}
+	return got
+}
+
+func run(t *testing.T, r *types.ToolRegistry, name string, ctx context.Context, args map[string]any) string {
+	t.Helper()
+	out, err := tool(t, r, name).Execute(ctx, args)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return out
 }
 
 func TestBindLimitsGuardrailsCompaction(t *testing.T) {
@@ -573,6 +715,19 @@ func TestBindMCP(t *testing.T) {
 	b = bind(t, resolve(t, "a", file("a", "tools:\n  mcp: [demo]\n", "p")), env)
 	if got := names(b.Config.Tools); !slices.Equal(got, []string{"demo_echo", "demo_shout"}) {
 		t.Fatalf("tools %v", got)
+	}
+
+	// mcp:<server> names the server as the definition does, the host's key,
+	// whatever name the host's spec gives it.
+	keyed := env
+	keyed.MCPServers = map[string]mcp.ServerSpec{"gh": mcp.Remote("github", srv.URL)}
+	b = bind(t, resolve(t, "a", file("a", "tools:\n  mcp: [gh]\n  discover: [\"mcp:gh\"]\n", "p")), keyed)
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	if got, _ := b.Config.ToolPolicy.Select(ctx, "a", b.Config.Tools.Definitions()); slices.Contains(got, "github_echo") || slices.Contains(got, "github_shout") {
+		t.Fatalf("held server offered %v", got)
+	}
+	if err := b.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := Bind(context.Background(), resolve(t, "a", file("a", "tools:\n  mcp: [ghost]\n", "p")), env); !errors.Is(err, ErrUnsupported) {

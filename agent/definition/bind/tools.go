@@ -49,6 +49,7 @@ func bindTools(ctx context.Context, env *Env, d *definition.Definition, p *parts
 	if len(spec.MCP) > 0 {
 		pool := mcp.NewPool()
 		b.closers = append(b.closers, pool.Close)
+		var clients []namedClient
 		for _, ref := range spec.MCP {
 			server, ok := env.MCPServers[ref.Server]
 			if !ok {
@@ -65,9 +66,11 @@ func bindTools(ctx context.Context, env *Env, d *definition.Definition, p *parts
 				}
 				server.AllowedTools = slices.Clone(ref.Allow)
 			}
-			if _, err := pool.Add(ctx, server); err != nil {
+			c, err := pool.Add(ctx, server)
+			if err != nil {
 				return fmt.Errorf("agent %s: MCP server %s: %w", d.Name, ref.Server, err)
 			}
+			clients = append(clients, namedClient{ref.Server, c})
 		}
 		reg := types.NewToolRegistry()
 		if _, err := pool.RegisterAll(ctx, reg); err != nil {
@@ -77,8 +80,27 @@ func bindTools(ctx context.Context, env *Env, d *definition.Definition, p *parts
 			p.tools = append(p.tools, unmark(t))
 		}
 		*mcpGate = pool.Gate()
+		// tools.discover may hold back a whole server, by the name the
+		// definition gives it, so remember which server each tool came from.
+		p.mcpServer = map[string]string{}
+		for _, nc := range clients {
+			list, err := nc.client.Tools(ctx)
+			if err != nil {
+				return fmt.Errorf("agent %s: MCP tools of %s: %w", d.Name, nc.name, err)
+			}
+			for _, t := range list {
+				p.mcpServer[t.Definition().Name] = nc.name
+			}
+		}
 	}
+	p.hold = slices.Clone(spec.Discover)
 	return nil
+}
+
+// namedClient is an MCP client under the name tools.mcp gives its server.
+type namedClient struct {
+	name   string
+	client *mcp.Client
 }
 
 func toolNames(r *types.ToolRegistry) []string {

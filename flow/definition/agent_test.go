@@ -36,7 +36,6 @@ func TestParseRefusesWhatFiberCannotHonor(t *testing.T) {
 		"approval allow":                {front: "model: offline/a\ntools:\n  registry: [x]\napproval:\n  allow: [x]\n"},
 		"approval of an ungranted tool": {front: "model: offline/a\napproval:\n  ask: [x]\n"},
 		"approvers without approvals":   {front: "model: offline/a\n", policy: definition.Policy{Approvers: []string{"ada"}}},
-		"handoff sub-agent":             {front: "model: offline/a\nsubagents:\n  - ref: writer\n    mode: handoff\n"},
 		"unrepresentable budget":        {front: "model: offline/a\nlimits:\n  budget:\n    max_cost: 0.0000001\n"},
 		"bad name":                      {front: "model: offline/a\n"},
 	}
@@ -57,7 +56,7 @@ func TestParseRefusesWhatFiberCannotHonor(t *testing.T) {
 func TestParseCompilesTheSpec(t *testing.T) {
 	front := "description: Docs.\nmodel:\n  use: anthropic/claude\n  fallback: [openai/gpt]\n" +
 		"tools:\n  registry: [search, github_comment]\n  mcp:\n    - server: linear\n" +
-		"subagents:\n  - ref: writer\n    budget:\n      max_cost: 0.25\n" +
+		"subagents:\n  - writer\n" +
 		"approval:\n  ask: [github_comment, tag_writer]\n" +
 		"limits:\n  budget:\n    max_cost: 1.5\n    max_tokens: 1000\n"
 	policy := definition.Policy{
@@ -85,8 +84,8 @@ func TestParseCompilesTheSpec(t *testing.T) {
 	if s.SystemPrompt != "Answer." || s.Description != "Docs." || len(s.Sources) != 1 || s.FallbackOn[0] != "auth" {
 		t.Errorf("spec = %+v", s)
 	}
-	if a.Budget.MaxCostMicros != 1_500_000 || a.Budget.MaxTokens != 1000 || a.Subagents["writer"].MaxCostMicros != 250_000 {
-		t.Errorf("budgets = %+v, %+v", a.Budget, a.Subagents)
+	if a.Budget.MaxCostMicros != 1_500_000 || a.Budget.MaxTokens != 1000 {
+		t.Errorf("budget = %+v", a.Budget)
 	}
 }
 

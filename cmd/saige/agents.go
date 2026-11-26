@@ -381,7 +381,6 @@ type shownAgent struct {
 
 type shownSubagent struct {
 	Ref     string `json:"ref"`
-	Mode    string `json:"mode"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Digest  string `json:"digest"`
@@ -410,7 +409,7 @@ func newAgentShowCmd(ctx context.Context) *cobra.Command {
 			}
 			out := shownAgent{listedAgent: listed(res.Definition), ResolvedDigest: res.Digest, Definition: res.Definition, Prompt: res.Prompt}
 			for _, s := range res.Subagents {
-				out.Subagents = append(out.Subagents, shownSubagent{Ref: s.Ref, Mode: s.EffectiveMode(), Name: s.Agent.Name,
+				out.Subagents = append(out.Subagents, shownSubagent{Ref: s.Ref, Name: s.Agent.Name,
 					Version: s.Agent.Version, Digest: s.Agent.Digest})
 			}
 			if sk, err := skillCatalog(ctx); err == nil {
@@ -431,7 +430,7 @@ func newAgentShowCmd(ctx context.Context) *cobra.Command {
 			fmt.Fprintf(w, "digest:   %s\n", res.Definition.Digest)
 			fmt.Fprintf(w, "resolved: %s\n", res.Digest)
 			for _, s := range out.Subagents {
-				fmt.Fprintf(w, "subagent: %s -> %s@%s (%s)\n", s.Ref, s.Name, s.Version, s.Mode)
+				fmt.Fprintf(w, "subagent: %s -> %s@%s\n", s.Ref, s.Name, s.Version)
 			}
 			for _, s := range out.Skills {
 				fmt.Fprintf(w, "skill:    %s (%s) %s\n", s.Name, s.Mode, s.Hash)

@@ -10,6 +10,7 @@ tools:
   harness: [read]
 limits:
   max_iterations: 6
+  timeout: 2m
 metadata:
   owner: examples
 ---

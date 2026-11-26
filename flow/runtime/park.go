@@ -1353,12 +1353,24 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 		id, err := r.childStarter(WithLineage(ctx, in.Lineage), parent, call)
 		return finish(id, err)
 	}
-	if err := r.reserveChildBudget(ctx, parent, &in); err != nil {
-		return finish("", durable.NonRetryable(err))
+	reserved, err := r.reserveChildBudget(ctx, parent, &in)
+	if err != nil {
+		// A refused budget, a missing or broken definition and a missing
+		// or invalid account are final, as on every other path that
+		// resolves a pin; only a store or source that failed may answer on
+		// a retry.
+		if finalReserveError(err) {
+			err = durable.NonRetryable(err)
+		}
+		return finish("", err)
 	}
 	// The child runs the version its parent pinned for it, when it pinned
-	// one; a target outside the pin resolves its latest.
+	// one; a target outside the pin resolves its latest, once: the version
+	// whose budget was reserved is the version started.
 	version, _ := parent.Pin.SubagentVersion(definition.NormalizeName(target))
+	if reserved != "" {
+		version = reserved
+	}
 	acc, err := r.start(context.WithoutCancel(ctx), in, version)
 	if err != nil {
 		if acc.RunID != "" {
@@ -1479,4 +1491,16 @@ func (r *Runtime) answerParent(ctx context.Context, in Input, text string, stopp
 		return
 	}
 	r.wake(ctx, in.Parent.RunID)
+}
+
+// finalReserveError reports whether reserving a child's budget failed in a
+// way a retry would repeat.
+func finalReserveError(err error) bool {
+	for _, final := range []error{session.ErrBudget, session.ErrNotFound, session.ErrInvalid,
+		definition.ErrNotFound, definition.ErrRetired, definition.ErrInvalid, definition.ErrPin} {
+		if errors.Is(err, final) {
+			return true
+		}
+	}
+	return false
 }

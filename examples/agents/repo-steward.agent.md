@@ -9,11 +9,7 @@ model:
 tools:
   harness: [read, exec]
 subagents:
-  - ref: assistant@^1.0
-    description: Hand the assistant a question that needs files read and summarized.
-    budget:
-      max_iterations: 4
-      timeout: 2m
+  - assistant@^1.0
 approval:
   allow:
     - Bash(git status:*)

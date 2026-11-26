@@ -2,6 +2,7 @@ package definition
 
 import (
 	"fmt"
+	pathpkg "path"
 	"regexp"
 	"slices"
 	"strings"
@@ -182,6 +183,20 @@ func checkTools(t *ToolsSpec, found *issues) {
 		}
 	}
 	checkUnique(found, "tools.registry", t.Registry)
+	for i, pattern := range t.Discover {
+		path := fmt.Sprintf("tools.discover[%d]", i)
+		switch server, isMCP := strings.CutPrefix(pattern, MCPDiscoverPrefix); {
+		case strings.TrimSpace(pattern) == "":
+			found.add(path, 0, CodeMissing, "a tool name, a glob or mcp:<server> is required")
+		case isMCP && !slices.Contains(servers, server):
+			found.add(path, 0, CodeBadValue, "MCP server %q is not listed in tools.mcp", server)
+		case !isMCP:
+			if _, err := pathpkg.Match(pattern, ""); err != nil {
+				found.add(path, 0, CodeBadValue, "%q is not a valid glob: %v", pattern, err)
+			}
+		}
+	}
+	checkUnique(found, "tools.discover", t.Discover)
 }
 
 func checkSkills(list []SkillRef, found *issues) {
@@ -268,19 +283,6 @@ func checkSubagents(self string, list []SubagentRef, found *issues) {
 			found.add(path+".ref", 0, CodeBadValue, "sub-agent %q is listed twice", ref.Name)
 		}
 		seen[ref.Name] = true
-		mode := s.EffectiveMode()
-		if s.Mode != "" {
-			oneOf(found, path+".mode", s.Mode, []string{SubagentDelegate, SubagentSpawn, SubagentHandoff})
-		}
-		if b := s.Budget; b != nil {
-			if b.MaxIterations < 0 || b.Timeout < 0 || b.MaxCost < 0 || b.MaxTokens < 0 || b.MaxRequests < 0 {
-				found.add(path+".budget", 0, CodeBadValue, "budget values must not be negative")
-			}
-			if mode == SubagentHandoff && (b.Timeout != 0 || b.MaxCost != 0 || b.MaxTokens != 0 || b.MaxRequests != 0) {
-				found.add(path+".budget", 0, CodeBadValue,
-					"a handoff member shares the entry agent's run and budget; only max_iterations applies")
-			}
-		}
 	}
 }
 
@@ -372,7 +374,7 @@ func checkLimits(l *LimitsSpec, found *issues) {
 	if l.MaxIterations < 0 {
 		found.add("limits.max_iterations", 0, CodeBadValue, "must not be negative")
 	}
-	if l.LLMTimeout < 0 || l.ToolTimeout < 0 {
+	if l.Timeout < 0 || l.LLMTimeout < 0 || l.ToolTimeout < 0 {
 		found.add("limits", 0, CodeBadValue, "timeouts must not be negative")
 	}
 	b := l.Budget
