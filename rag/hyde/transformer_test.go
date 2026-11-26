@@ -93,7 +93,8 @@ func TestHyDEPartialFailures(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "one failure keeps the rest", llm: &scriptedLLM{replies: []string{"answer"}, failOn: map[int]bool{1: true}}, want: 3, wantErr: true},
+		{name: "one failure keeps the rest", llm: &scriptedLLM{replies: []string{"a1", "a2", "a3"}, failOn: map[int]bool{1: true}}, want: 3, wantErr: true},
+		{name: "identical hypotheticals collapse", llm: &scriptedLLM{replies: []string{"same"}}, want: 2},
 		{name: "all fail keeps raw query", llm: &scriptedLLM{replies: []string{"x"}, failOn: map[int]bool{0: true, 1: true, 2: true}}, want: 1, wantErr: true},
 		{name: "blank hypotheticals dropped", llm: &scriptedLLM{replies: []string{"  \n", "answer"}}, want: 2},
 	}
@@ -147,5 +148,15 @@ func TestHyDERenderErrorDoesNotPanic(t *testing.T) {
 	}
 	if len(queries) != 1 || queries[0] != "q" {
 		t.Errorf("queries = %q, want only the original", queries)
+	}
+}
+
+// HyDE's extra queries are invented answers, so the transformer must say so
+// for the pipeline to keep them away from lexical retrievers.
+func TestHyDEReportsHypotheticalQueries(t *testing.T) {
+	var tr any = hyde.New(hyde.Config{LLM: &scriptedLLM{replies: []string{"x"}}})
+	h, ok := tr.(interface{ HypotheticalQueries() bool })
+	if !ok || !h.HypotheticalQueries() {
+		t.Fatal("hyde transformer does not report hypothetical queries")
 	}
 }

@@ -46,6 +46,12 @@ func (r *Retriever) Remove(ctx context.Context, documentUUID string) error {
 	return nil
 }
 
+// Dense forwards types.DenseRetriever from the inner retriever.
+func (r *Retriever) Dense() bool {
+	d, ok := r.inner.(types.DenseRetriever)
+	return ok && d.Dense()
+}
+
 // Name reports the inner retriever's name, so stats and weighted fusion see
 // the wrapped retriever under the name it has without the wrapper. It is
 // empty when the inner retriever has no name.

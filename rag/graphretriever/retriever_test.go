@@ -132,3 +132,47 @@ func TestGraphRetrieverWithProvenance(t *testing.T) {
 		t.Errorf("expected resolved variant text, got %q", hits[0].Variant.Text)
 	}
 }
+
+// Several facts from one passage must yield that passage once, at its best
+// rank, so the duplicates do not use up the limit.
+func TestGraphRetrieverReturnsPassageOnce(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	doc := &ragtypes.Document{
+		UUID:      "doc1",
+		SourceURI: "http://example.com",
+		Sections: []ragtypes.Section{{
+			UUID: "sec1", DocumentUUID: "doc1", Heading: "Introduction",
+			Variants: []ragtypes.ContentVariant{{
+				UUID: "var1", SectionUUID: "sec1", ContentType: ragtypes.ContentText,
+				Text: "Alice works at Acme. Alice lives in Paris.",
+			}},
+		}},
+	}
+	if err := store.CreateDocument(ctx, doc); err != nil {
+		t.Fatal(err)
+	}
+	intro := []knowledgetypes.Episode{{UUID: "ep1", Name: "Introduction", Source: "http://example.com", GroupID: "doc1"}}
+	graph := &mockGraph{
+		facts: []knowledgetypes.Fact{
+			{UUID: "f1", FactText: "Alice works at Acme"},
+			{UUID: "f2", FactText: "Alice lives in Paris"},
+			{UUID: "f3", FactText: "Bob knows Alice"},
+		},
+		episodes: map[string][]knowledgetypes.Episode{"f1": intro, "f2": intro},
+	}
+
+	hits, err := graphretriever.New(graph, store).Retrieve(ctx, "alice", &ragtypes.SearchOptions{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("got %d hits, want 2 (var1 once, then f3)", len(hits))
+	}
+	if hits[0].Variant.UUID != "var1" || hits[1].Variant.Text != "Bob knows Alice" {
+		t.Errorf("hits = %q, %q; want var1 then the f3 fact text", hits[0].Variant.UUID, hits[1].Variant.Text)
+	}
+	if hits[0].Score <= hits[1].Score {
+		t.Errorf("var1 score %v should keep its best rank above %v", hits[0].Score, hits[1].Score)
+	}
+}

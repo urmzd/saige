@@ -126,3 +126,13 @@ func TestRetrieveRejectsMalformedQueryEmbedding(t *testing.T) {
 		})
 	}
 }
+
+// The vector retriever must report itself dense, or the pipeline would
+// withhold HyDE's hypothetical passages from it.
+func TestVectorRetrieverIsDense(t *testing.T) {
+	var r types.Retriever = vectorretriever.New(nil, nil)
+	d, ok := r.(types.DenseRetriever)
+	if !ok || !d.Dense() {
+		t.Fatal("vector retriever does not report types.DenseRetriever")
+	}
+}

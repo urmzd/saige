@@ -433,7 +433,12 @@ func WithContextAssembly(maxTokens int) SearchOption {
 // halfLife is the age at which the recency factor reaches 0.5; weight in [0,1]
 // controls how much recency influences the final score:
 //
-//	score = (1-weight)*score + weight*score*recencyFactor
+//	score = score - weight*(1-recencyFactor)*|score|
+//
+// For a positive score that is (1-weight)*score + weight*score*recencyFactor.
+// Using |score| keeps older hits lower when scores are negative, as
+// cross-encoder logits and z-score fusion can be. A reranker that replaces
+// scores (ScoringReranker) gets recency applied again to its scores.
 //
 // A non-positive halfLife is a no-op, preserving today's behavior. Hits with a
 // zero timestamp are treated as having no decay (recency factor 1.0).
@@ -793,6 +798,22 @@ type QueryTransformer interface {
 	Transform(ctx context.Context, query string) ([]string, error)
 }
 
+// HypotheticalExpander is implemented by query transformers whose extra
+// queries are hypothetical answer passages rather than rewrites of the
+// question, as HyDE's are. When HypotheticalQueries reports true, the
+// pipeline sends those extra queries only to retrievers that report
+// DenseRetriever; every other retriever gets the original query alone.
+type HypotheticalExpander interface {
+	HypotheticalQueries() bool
+}
+
+// DenseRetriever is implemented by retrievers that match by embedding
+// similarity, such as vectorretriever. Only they receive hypothetical
+// queries (see HypotheticalExpander). Wrappers should forward it.
+type DenseRetriever interface {
+	Dense() bool
+}
+
 // Retriever retrieves search hits for a query.
 //
 // A retriever that produces usable hits but fails part of its work (for
@@ -808,6 +829,15 @@ type Retriever interface {
 // returned list to the search limit, so a reranker may return every input.
 type Reranker interface {
 	Rerank(ctx context.Context, query string, hits []SearchHit) ([]SearchHit, error)
+}
+
+// ScoringReranker is implemented by rerankers that replace each hit's Score
+// with their own, as a cross-encoder does. When ReplacesScores reports true,
+// the pipeline applies recency (WithRecency) again to the new scores, since
+// the reranker discarded the fused scores it was blended into. Rerankers that
+// only reorder, such as MMR, keep the fused scores and need no second pass.
+type ScoringReranker interface {
+	ReplacesScores() bool
 }
 
 // ContextAssembler builds a prompt with inline citations from search hits.

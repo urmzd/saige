@@ -357,3 +357,18 @@ func TestParentRetrieverShiftsHighlightSpans(t *testing.T) {
 		t.Error("expansion modified the inner retriever's highlight")
 	}
 }
+
+type denseRetriever struct{ mockRetriever }
+
+func (denseRetriever) Dense() bool { return true }
+
+// Wrapping must not hide that the inner retriever is dense.
+func TestParentRetrieverForwardsDense(t *testing.T) {
+	store := memstore.New()
+	if d := parentretriever.New(&denseRetriever{}, store); !d.Dense() {
+		t.Error("wrapped dense retriever reports Dense() = false")
+	}
+	if d := parentretriever.New(&mockRetriever{}, store); d.Dense() {
+		t.Error("wrapped lexical retriever reports Dense() = true")
+	}
+}

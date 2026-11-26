@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/urmzd/saige/rag/types"
 )
@@ -53,7 +55,8 @@ func (c *SemanticChunker) Chunk(ctx context.Context, doc *types.Document) (*type
 func (c *SemanticChunker) splitSemantic(ctx context.Context, text string) ([]string, error) {
 	sentences := splitIntoSentences(text)
 	if len(sentences) <= 1 {
-		return sentences, nil
+		// No boundary to measure, but the result must still respect MaxTokens.
+		return c.enforceTokenLimits(sentences), nil
 	}
 
 	// Embed each sentence.
@@ -79,49 +82,81 @@ func (c *SemanticChunker) splitSemantic(ctx context.Context, text string) ([]str
 		sims[i] = cosineSimilarity(embeddings[i], embeddings[i+1])
 	}
 
-	// Determine threshold.
-	threshold := c.cfg.Threshold
-	if threshold == 0 {
-		threshold = percentile(sims, 10)
+	// Determine where to split. A configured threshold splits where
+	// similarity drops strictly below it. The auto threshold is the
+	// interpolated 10th percentile and splits at or below it, unless every
+	// similarity is equal, in which case there is no topic change to split on.
+	isBreak := func(sim float64) bool { return sim < c.cfg.Threshold }
+	if c.cfg.Threshold == 0 {
+		threshold := percentile(sims, 10)
+		if threshold < slices.Max(sims) {
+			isBreak = func(sim float64) bool { return sim <= threshold }
+		} else {
+			isBreak = func(float64) bool { return false }
+		}
 	}
 
 	// Split where similarity drops below threshold.
 	var chunks []string
-	current := sentences[0]
+	var current strings.Builder
+	current.WriteString(sentences[0])
+	currentTokens := estimateTokens(sentences[0])
 	for i := 0; i < len(sims); i++ {
-		if sims[i] < threshold && estimateTokens(current) >= c.cfg.MinTokens {
-			chunks = append(chunks, current)
-			current = sentences[i+1]
+		next := sentences[i+1]
+		if isBreak(sims[i]) && currentTokens >= c.cfg.MinTokens {
+			chunks = append(chunks, current.String())
+			current.Reset()
+			currentTokens = 0
 		} else {
-			current += " " + sentences[i+1]
+			current.WriteByte(' ')
 		}
+		current.WriteString(next)
+		currentTokens += estimateTokens(next)
 	}
-	if current != "" {
-		chunks = append(chunks, current)
+	if current.Len() > 0 {
+		chunks = append(chunks, current.String())
 	}
 
 	// Merge small chunks and split large ones.
-	chunks = c.enforceTokenLimits(chunks)
-
-	return chunks, nil
+	return c.enforceTokenLimits(chunks), nil
 }
 
+// isSentenceEnd reports whether r ends a sentence regardless of what follows
+// it: full-width CJK terminators and line breaks.
+func isSentenceEnd(r rune) bool {
+	switch r {
+	case '\n', '。', '！', '？', '｡':
+		return true
+	}
+	return false
+}
+
+// splitIntoSentences splits text after ASCII terminators (. ! ?) followed by
+// whitespace or the end of text, after full-width CJK terminators, and at line
+// breaks, so code, lists and CJK prose still yield several units.
 func splitIntoSentences(text string) []string {
-	// Split on sentence-ending punctuation followed by space or end.
 	var sentences []string
-	current := ""
+	var current strings.Builder
+	flush := func() {
+		if s := strings.TrimSpace(current.String()); s != "" {
+			sentences = append(sentences, s)
+		}
+		current.Reset()
+	}
 	for i, r := range text {
-		current += string(r)
-		if (r == '.' || r == '!' || r == '?') && (i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n') {
-			sentences = append(sentences, strings.TrimSpace(current))
-			current = ""
+		current.WriteRune(r)
+		next := i + utf8.RuneLen(r)
+		switch {
+		case isSentenceEnd(r):
+			flush()
+		case (r == '.' || r == '!' || r == '?') &&
+			(next >= len(text) || text[next] == ' ' || text[next] == '\t' || text[next] == '\r'):
+			flush()
 		}
 	}
-	if strings.TrimSpace(current) != "" {
-		sentences = append(sentences, strings.TrimSpace(current))
-	}
-	if len(sentences) == 0 {
-		return []string{text}
+	flush()
+	if len(sentences) == 0 && strings.TrimSpace(text) != "" {
+		return []string{strings.TrimSpace(text)}
 	}
 	return sentences
 }
@@ -129,22 +164,27 @@ func splitIntoSentences(text string) []string {
 func (c *SemanticChunker) enforceTokenLimits(chunks []string) []string {
 	// Merge small chunks.
 	var merged []string
-	current := ""
+	var current strings.Builder
+	currentTokens := 0
 	for _, chunk := range chunks {
-		if current == "" {
-			current = chunk
+		if current.Len() == 0 {
+			current.WriteString(chunk)
+			currentTokens = estimateTokens(chunk)
 			continue
 		}
-		combined := current + " " + chunk
-		if estimateTokens(current) < c.cfg.MinTokens {
-			current = combined
+		if currentTokens < c.cfg.MinTokens {
+			current.WriteByte(' ')
+			current.WriteString(chunk)
+			currentTokens += estimateTokens(chunk)
 		} else {
-			merged = append(merged, current)
-			current = chunk
+			merged = append(merged, current.String())
+			current.Reset()
+			current.WriteString(chunk)
+			currentTokens = estimateTokens(chunk)
 		}
 	}
-	if current != "" {
-		merged = append(merged, current)
+	if current.Len() > 0 {
+		merged = append(merged, current.String())
 	}
 
 	// Split large chunks using recursive chunker as fallback.
@@ -178,6 +218,8 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dot / denom
 }
 
+// percentile returns the p-th percentile of vals with linear interpolation
+// between closest ranks, so small samples do not collapse to the minimum.
 func percentile(vals []float64, p float64) float64 {
 	if len(vals) == 0 {
 		return 0
@@ -185,9 +227,14 @@ func percentile(vals []float64, p float64) float64 {
 	sorted := make([]float64, len(vals))
 	copy(sorted, vals)
 	sort.Float64s(sorted)
-	idx := int(math.Floor(p / 100.0 * float64(len(sorted))))
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
+	rank := p / 100.0 * float64(len(sorted)-1)
+	if rank <= 0 {
+		return sorted[0]
 	}
-	return sorted[idx]
+	if rank >= float64(len(sorted)-1) {
+		return sorted[len(sorted)-1]
+	}
+	lo := int(math.Floor(rank))
+	frac := rank - float64(lo)
+	return sorted[lo] + frac*(sorted[lo+1]-sorted[lo])
 }
