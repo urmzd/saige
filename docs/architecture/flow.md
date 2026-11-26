@@ -969,7 +969,12 @@ Verified against the code, and honest.
   `event.MaxToolArguments` (8 KiB); larger arguments are left out whole and
   sized in `arguments_bytes`. They go to every subscriber, chat
   sinks render a short prefix of them, and only `native.WithToolArguments`
-  scrubs them first. flow emits no tracing spans of its own.
+  scrubs them first. While a model writes a call's arguments, the requested
+  `run.delta.tool.call.v1` is repeated with the bytes received so far in
+  `arguments_bytes`, about once per KiB (`event.ToolArgumentsStep`): that
+  size is published for every call, counted before any scrubbing, and it is
+  all that is published before the call is complete. flow emits no tracing
+  spans of its own.
 - **A stop wraps up the turn, not its side effects.** Tool calls already
   finished stay done, and a tool that ignores its context delays the stop until
   the grace period (ten seconds by default) cancels the turn. A turn that is

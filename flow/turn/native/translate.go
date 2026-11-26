@@ -50,6 +50,9 @@ type openCall struct {
 	id   string
 	name string
 	args strings.Builder
+	// steps is how many steps of event.ToolArgumentsStep the arguments had
+	// passed when their size was last published.
+	steps int
 }
 
 // ToolArguments rewrites a tool call's arguments before any event carries
@@ -113,9 +116,21 @@ func (t *Translator) maps() {
 //
 // The executing delta.tool.call and the delta.tool.done carry the call's
 // arguments (see event.MaxToolArguments and ToolArguments). The requested
-// one does not: it is published as the model starts the call, before its
-// arguments exist. A delta.tool.marker carries none: a subscriber finds them
-// on the call it names.
+// one never does: it is published as the model starts the call, before its
+// arguments exist, and no argument is published before the call is complete,
+// because ToolArguments scrubs whole arguments and cannot scrub a fragment.
+// A delta.tool.marker carries none: a subscriber finds them on the call it
+// names.
+//
+// A model can take a long time to write a call's arguments, a file's whole
+// content for one, and until it has there is nothing else to publish. So the
+// requested delta.tool.call is repeated while the arguments arrive, with the
+// same id, name and Parent, and ArgumentsBytes set to the bytes received so
+// far: once each time they pass another event.ToolArgumentsStep, not once per
+// fragment, so a long call cannot flood the bus. Arguments that never reach
+// the first step repeat nothing, and neither does a call with no id, which a
+// subscriber could not tell from a second call. A producer that sends a call
+// whole, with no fragments, repeats nothing either.
 //
 // A CitationDelta is a source a tool attributed its result to, numbered by
 // the citing agent: its label is the marker that agent's answer uses. The
@@ -154,8 +169,12 @@ func (t *Translator) delta(path []string, d saigetypes.Delta) (event.Body, bool)
 		case v.Thinking != "":
 			return event.Thinking{Text: v.Thinking, Parent: path}, true
 		case v.Args != "":
-			t.fragment(scope, v.Index, v.Args)
-			return nil, false
+			c, ok := t.fragment(scope, v.Index, v.Args)
+			if !ok {
+				return nil, false
+			}
+			c.Parent = path
+			return c, true
 		default:
 			return nil, false
 		}
@@ -346,12 +365,31 @@ func (t *Translator) open(scope string, index int, id, name string) {
 	t.parts[partKey(scope, index)] = &openCall{id: id, name: name}
 }
 
-func (t *Translator) fragment(scope string, index int, args string) {
+// fragment keeps a fragment of an open tool call part's arguments. When it
+// takes them past another event.ToolArgumentsStep, it returns the requested
+// ToolCall that reports their size so far. A fragment that passes several
+// steps at once is reported once, with the size it reached. The body carries
+// the size alone, never the fragments. A fragment for a part that was never
+// opened is dropped.
+func (t *Translator) fragment(scope string, index int, args string) (event.ToolCall, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if c := t.parts[partKey(scope, index)]; c != nil {
-		c.args.WriteString(args)
+	c := t.parts[partKey(scope, index)]
+	if c == nil {
+		return event.ToolCall{}, false
 	}
+	c.args.WriteString(args)
+	steps := c.args.Len() / event.ToolArgumentsStep
+	if steps <= c.steps {
+		return event.ToolCall{}, false
+	}
+	c.steps = steps
+	if c.id == "" {
+		return event.ToolCall{}, false
+	}
+	return event.ToolCall{
+		ID: c.id, Name: c.name, Phase: event.PhaseRequested, ArgumentsBytes: c.args.Len(),
+	}, true
 }
 
 // close records the arguments of a completed tool call part: the part's own,

@@ -239,6 +239,55 @@ func TestToolCallAndCompletionJoinOnTheirIDInEitherOrder(t *testing.T) {
 	}
 }
 
+// A call is requested again, with a size, while the model writes its
+// arguments. Those repeats are the same call: one line, and no change for a
+// sink to write.
+func TestARepeatedRequestIsTheSameCallAndReportsNoChange(t *testing.T) {
+	d := render.New()
+	if changed := d.Apply(ev(1, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"requested"}`)); !changed {
+		t.Fatal("the first request reported no change")
+	}
+	before := d.View()
+	for i, size := range []int{1030, 2050, 3075} {
+		data := fmt.Sprintf(`{"id":"t1","name":"file_write","phase":"requested","arguments_bytes":%d}`, size)
+		if changed := d.Apply(ev(uint64(2+i), event.TypeToolCall, data)); changed {
+			t.Errorf("a repeated request sized %d reported a change", size)
+		}
+	}
+	if tools := d.View().Tools; len(tools) != 1 || tools[0] != before.Tools[0] {
+		t.Fatalf("repeated requests left %+v, want the one call %+v", tools, before.Tools)
+	}
+
+	if changed := d.Apply(ev(5, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"executing","arguments":{"path":"a.md"}}`)); !changed {
+		t.Error("the executing call, which brings the arguments, reported no change")
+	}
+	if changed := d.Apply(ev(6, event.TypeToolDone, `{"id":"t1","name":"file_write","result":"ok"}`)); !changed {
+		t.Error("the done event reported no change")
+	}
+	tools := d.View().Tools
+	if len(tools) != 1 {
+		t.Fatalf("got %d tools, want the one call: %+v", len(tools), tools)
+	}
+	if got := tools[0]; got.ID != "t1" || got.Name != "file_write" || got.Args != `{"path":"a.md"}` || got.Result != "ok" || !got.Done {
+		t.Errorf("tool = %+v", got)
+	}
+}
+
+// A call first seen out of order is still placed by its earliest event, and
+// moving it is a change.
+func TestAnEarlierEventOfAKnownCallIsAChange(t *testing.T) {
+	d := render.New()
+	d.Apply(ev(5, event.TypeToolCall, `{"id":"t2","name":"grep","phase":"requested"}`))
+	d.Apply(ev(7, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"requested","arguments_bytes":1030}`))
+	if changed := d.Apply(ev(3, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"requested"}`)); !changed {
+		t.Error("an earlier event of a known call, which reorders it, reported no change")
+	}
+	tools := d.View().Tools
+	if len(tools) != 2 || tools[0].ID != "t1" || tools[1].ID != "t2" {
+		t.Errorf("tools = %+v, want t1 then t2", tools)
+	}
+}
+
 func TestTextKeepsItsWhitespaceAndAnEmptyBodyAddsNothing(t *testing.T) {
 	tests := []struct {
 		name string

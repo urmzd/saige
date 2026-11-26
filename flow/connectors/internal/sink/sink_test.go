@@ -412,6 +412,52 @@ func TestAnUnrenderableEventCostsNoRoundTrip(t *testing.T) {
 	}
 }
 
+// While a model writes a long call, the call is requested again with the
+// size of its arguments so far. The message shows one line for the call and
+// is not edited for the repeats.
+func TestARepeatedToolRequestIsOneLineAndCostsNoRoundTrip(t *testing.T) {
+	surface := newFakeSurface()
+	eng := sink.New(surface, layout, sink.WithInterval(0))
+	ctx := context.Background()
+
+	for _, e := range []event.Envelope{
+		ev(1, event.TypeStarted, ""),
+		ev(2, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"requested"}`),
+	} {
+		if err := eng.Deliver(ctx, target, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handle, ok := eng.Handle("run_1", channel)
+	if !ok {
+		t.Fatal("no message was created")
+	}
+	calls, body := len(surface.calls()), surface.body(handle)
+	if strings.Count(body, "file_write") != 1 {
+		t.Fatalf("the message names the call %d times:\n%s", strings.Count(body, "file_write"), body)
+	}
+
+	for i, size := range []int{1030, 2050, 3075} {
+		data := fmt.Sprintf(`{"id":"t1","name":"file_write","phase":"requested","arguments_bytes":%d}`, size)
+		if err := eng.Deliver(ctx, target, ev(uint64(3+i), event.TypeToolCall, data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(surface.calls()); got != calls {
+		t.Errorf("%d calls for repeated requests, want 0: %v", got-calls, surface.calls()[calls:])
+	}
+	if got := surface.body(handle); got != body {
+		t.Errorf("repeated requests changed the message:\n%s\nwas\n%s", got, body)
+	}
+
+	if err := eng.Deliver(ctx, target, ev(6, event.TypeToolCall, `{"id":"t1","name":"file_write","phase":"executing","arguments":{"path":"a.md"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := surface.body(handle); strings.Count(got, "file_write") != 1 || !strings.Contains(got, `{"path":"a.md"}`) {
+		t.Errorf("the executing call is not the one line:\n%s", got)
+	}
+}
+
 func TestConcurrentDeliveriesForOneRunStillCreateOneMessage(t *testing.T) {
 	surface := newFakeSurface()
 	eng := sink.New(surface, layout, sink.WithInterval(0))

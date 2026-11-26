@@ -88,7 +88,7 @@ one. Nothing else in the envelope says what `data` holds.
 | `run.child.parked.v1` | `ChildParked` | |
 | `run.delta.text.v1` | `Text` | |
 | `run.delta.thinking.v1` | `Thinking` | |
-| `run.delta.tool.call.v1` | `ToolCall` | |
+| `run.delta.tool.call.v1` | `ToolCall` | One call per `id`: `requested` as the model starts it, `requested` again with `arguments_bytes` so far while its arguments are written, then `executing` with the arguments |
 | `run.delta.tool.done.v1` | `ToolDone` | |
 | `run.delta.citation.v1` | `Citation` | Sensitive: carries the passage text. Surfaces list only the sources the answer cites, without it |
 | `run.delta.tool.marker.v1` | `ToolMarker` | A tool call waiting for a decision |
@@ -102,6 +102,17 @@ one. Nothing else in the envelope says what `data` holds.
 Each run event has its own body, so `run.failed.v1` carries an error and
 `run.parked.v1` carries the question, and neither carries fields that belong
 to the other.
+
+A tool call is one `id` (within its `parent`), however many
+`run.delta.tool.call.v1` events name it. The first has phase `requested`, as
+the model starts the call. While the model writes the call's arguments, the
+same `requested` event is repeated with `arguments_bytes`, the bytes received
+so far: once each time they pass another `event.ToolArgumentsStep` (1 KiB),
+so a call with short arguments is not repeated and a long one publishes about
+one event per KiB. A repeat never carries `arguments`: nothing of them is
+published before the call is complete. Then one event has phase `executing`
+and the arguments. A reader keeps one call per `id` and reads each event as
+that call's latest state.
 
 ### Ingress types
 

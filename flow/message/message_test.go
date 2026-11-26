@@ -405,6 +405,57 @@ func TestDuplicatesAndOtherRoots(t *testing.T) {
 	}
 }
 
+// TestRepeatedRequest: a call requested again while the model writes its
+// arguments, with their size so far, is the same call. The repeat adds
+// nothing to the stream: no second block, no second status, at any depth.
+func TestRepeatedRequest(t *testing.T) {
+	for _, sc := range []struct {
+		name string
+		envs func() []event.Envelope
+	}{{"in-run nested", inRunNested}, {"parallel agents", parallelAgents}, {"stopped", stopped}} {
+		t.Run(sc.name, func(t *testing.T) {
+			want := wire(t, project(sc.envs(), nil))
+
+			// Each request is followed by two repeats of it, at the same
+			// time, so that only what the repeats add can differ.
+			var envs []event.Envelope
+			repeat := map[int]bool{}
+			seq := map[string]uint64{}
+			add := func(e event.Envelope) {
+				seq[e.Run]++
+				e.Seq = seq[e.Run]
+				e.ID = fmt.Sprintf("ev_%d", len(envs)+1)
+				envs = append(envs, e)
+			}
+			for _, e := range sc.envs() {
+				add(e)
+				c, ok := e.Data.(event.ToolCall)
+				if !ok || c.Phase != event.PhaseRequested {
+					continue
+				}
+				for n := 1; n <= 2; n++ {
+					c.ArgumentsBytes = n * event.ToolArgumentsStep
+					e.Data = c
+					repeat[len(envs)] = true
+					add(e)
+				}
+			}
+			if len(repeat) == 0 {
+				t.Fatal("the scenario requests no call")
+			}
+
+			got := project(envs, func(i int, _ *message.Projector, added []message.Event) {
+				if repeat[i] && added != nil {
+					t.Errorf("envelope %d, a repeated request, added %d events: %s", i, len(added), wire(t, added))
+				}
+			})
+			if !bytes.Equal(wire(t, got), want) {
+				t.Errorf("repeated requests changed the stream:\n%s\nwant\n%s", wire(t, got), want)
+			}
+		})
+	}
+}
+
 // checkHeld: the root's end waits for the agent it called, not for the
 // background task.
 func checkHeld(t *testing.T, p *message.Projector, i int, added []message.Event) {
