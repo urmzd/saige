@@ -242,7 +242,7 @@ func main() {
 	}
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(resource.NewSchemaless(semconv.ServiceName(framework))))
-	defer tp.Shutdown(ctx)
+	defer func() { _ = tp.Shutdown(ctx) }()
 	gootel.SetTracerProvider(tp)
 
 	provider, err := anthropic.New(anthropic.Config{APIKey: os.Getenv("ANTHROPIC_API_KEY"), Model: types.ModelID(s.Model)},
@@ -253,14 +253,14 @@ func main() {
 	all := tools(s)
 	initMS := float64(time.Since(start).Microseconds()) / 1000
 
-	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*out), 0o750); err != nil {
 		log.Fatal(err)
 	}
 	f, err := os.Create(*out)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	enc := json.NewEncoder(f)
 	ids := map[string]bool{}
 	for _, id := range strings.Split(*only, ",") {
