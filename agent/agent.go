@@ -1549,7 +1549,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 	// truncated decides what follows a turn the output limit cut short:
 	// end the run with err, or resume it with WithAutoContinue. A turn that
 	// arrives with an error is never resumed: its tool calls were cut off,
-	// or it kept nothing a continuation could go on from.
+	// or it kept no answer a continuation could go on from.
 	truncated := func(provider types.Provider, err error) (bool, error) {
 		if err != nil || autoContinues >= a.cfg.AutoContinue {
 			return false, err

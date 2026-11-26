@@ -11,9 +11,19 @@ import (
 	"github.com/urmzd/saige/internal/must"
 )
 
-// A turn the output limit cut short before it kept anything is not an
-// answer. The run must not end as though it had finished: a caller would
-// read the empty result as the agent's whole answer.
+// thought is a completed thinking part, as a provider that closes its blocks
+// at the cut sends one.
+func thought(index int) []types.Delta {
+	return []types.Delta{
+		types.PartStart{Index: index, Kind: types.KindThinking},
+		types.PartDelta{Index: index, Thinking: "weighing every option at length"},
+		types.PartEnd{Index: index},
+	}
+}
+
+// A turn the output limit cut short before it kept anything a caller can use
+// is not an answer. The run must not end as though it had finished: a caller
+// would read the empty result as the agent's whole answer.
 func TestATruncatedTurnThatKeptNothingFailsTheRun(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -39,6 +49,33 @@ func TestATruncatedTurnThatKeptNothingFailsTheRun(t *testing.T) {
 				types.PartStart{Index: 0, Kind: types.KindText},
 				usage(10, 4096, "length"),
 			},
+		},
+		{
+			// The whole limit went to thinking, and the provider closed
+			// the block at the cut. Thinking is not an answer.
+			name:     "only a completed thinking part",
+			response: withUsage(thought(0), usage(10, 4096, "max_tokens")),
+		},
+		{
+			name: "only redacted thinking",
+			response: []types.Delta{
+				types.PartStart{Index: 0, Kind: types.KindThinking},
+				types.PartEnd{Index: 0, Part: types.ThinkingPart{Redacted: true, Signature: "ciphertext"}},
+				usage(10, 4096, "max_tokens"),
+			},
+		},
+		{
+			// A router's record of who served the turn is kept beside the
+			// thinking. It is metadata, and no more of an answer.
+			name: "only thinking, served through a router",
+			response: append([]types.Delta{types.RouteDelta{Provider: "anthropic", Model: "m"}},
+				withUsage(thought(0), usage(10, 4096, "max_tokens"))...),
+		},
+		{
+			name: "thinking, then a text part with nothing in it",
+			response: withUsage(append(thought(0),
+				types.PartStart{Index: 1, Kind: types.KindText}, types.PartEnd{Index: 1}),
+				usage(10, 4096, "max_tokens")),
 		},
 	}
 	for _, tt := range tests {
@@ -85,4 +122,59 @@ func TestATruncatedTurnThatKeptNothingFailsTheRun(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Thinking does not make an answer, and it does not unmake one: a truncated
+// turn that kept something beside its thinking is handled as it was.
+func TestATruncatedTurnThatKeptMoreThanThinkingIsUnchanged(t *testing.T) {
+	t.Run("thinking and text end the run cleanly", func(t *testing.T) {
+		response := withUsage(append(thought(0), types.PartStart{Index: 1, Kind: types.KindText},
+			types.PartDelta{Index: 1, Text: "partial ans"}), usage(10, 4096, "max_tokens"))
+		script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{response, agenttest.TextResponse("never")}}
+		a := must.Get(New(Config{Provider: script, SystemPrompt: "sys"}))
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
+		agenttest.CollectDeltas(stream.Deltas())
+		if err := stream.Wait(); err != nil {
+			t.Fatalf("run failed: %v", err)
+		}
+		tip, _ := a.Tree().Tip(a.Tree().Active())
+		am, ok := tip.Message.(types.AssistantMessage)
+		if !ok || !strings.Contains(types.MessagesToText([]types.Message{am}), "partial ans") {
+			t.Fatalf("tip = %+v, want the partial answer", tip.Message)
+		}
+	})
+
+	t.Run("thinking and text are continued", func(t *testing.T) {
+		response := withUsage(append(thought(0), types.PartStart{Index: 1, Kind: types.KindText},
+			types.PartDelta{Index: 1, Text: "partial ans"}), usage(10, 4096, "max_tokens"))
+		script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{response, agenttest.TextResponse(" and the rest")}}
+		a := must.Get(New(Config{Provider: script, SystemPrompt: "sys"}, WithAutoContinue(1)))
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
+		agenttest.CollectDeltas(stream.Deltas())
+		if err := stream.Wait(); err != nil {
+			t.Fatalf("run failed: %v", err)
+		}
+		if got := script.CallCount(); got != 2 {
+			t.Fatalf("calls = %d, want 2: the partial answer is resumed", got)
+		}
+	})
+
+	t.Run("thinking and a cut-off tool call fail as a tool call does", func(t *testing.T) {
+		response := append(thought(0),
+			types.PartStart{Index: 1, Kind: types.KindToolCall, ID: "c1", Name: "act"},
+			types.PartDelta{Index: 1, Args: `{"x":`},
+			usage(10, 4096, "max_tokens"))
+		script := &agenttest.ScriptedProvider{Responses: [][]types.Delta{response, agenttest.TextResponse("never")}}
+		tool := &agenttest.MockTool{Def: types.ToolDef{Name: "act"}, Result: "acted"}
+		a := must.Get(New(Config{Provider: script, SystemPrompt: "sys", Tools: types.NewToolRegistry(tool)}))
+		stream := a.Invoke(context.Background(), []types.Message{types.UserMsg(types.Text("go"))})
+		agenttest.CollectDeltas(stream.Deltas())
+		var te *types.ResponseTruncatedError
+		if err := stream.Wait(); !errors.As(err, &te) || te.Empty {
+			t.Fatalf("err = %v, want a ResponseTruncatedError that is not an empty turn's", err)
+		}
+		if tool.CallCount() != 0 {
+			t.Fatal("a truncated tool call must never run")
+		}
+	})
 }

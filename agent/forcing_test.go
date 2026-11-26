@@ -59,6 +59,12 @@ func TestOnMaxIter(t *testing.T) {
 			name: "force final cut short before any answer is a truncation", policy: MaxIterForceFinal,
 			final: []types.Delta{usage(10, 100, "max_tokens")}, wantErr: types.ErrResponseTruncated,
 		},
+		{
+			// Thinking is not an answer: a forced answer that is cut short
+			// with only its thinking kept is no answer either.
+			name: "force final cut short with only its thinking kept is a truncation", policy: MaxIterForceFinal,
+			final: withUsage(thought(0), usage(10, 100, "max_tokens")), wantErr: types.ErrResponseTruncated,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

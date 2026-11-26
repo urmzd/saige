@@ -422,9 +422,10 @@ type ResponseTruncatedError struct {
 	FinishReason    string // FinishReasonMaxTokens for an output-limit stop, whatever the provider called it
 	OutputTokens    int    // tokens produced, 0 when unknown
 	MaxOutputTokens int    // configured limit, 0 when unknown
-	// Empty reports that the limit was reached before the turn kept
-	// anything: no text and no tool call. The tokens went to output that is
-	// not kept when it is cut off, such as thinking still under way.
+	// Empty reports that the limit was reached before the turn produced
+	// anything a caller can use: no text, no tool call, nothing but
+	// thinking. The tokens went to thinking, or to output that is not kept
+	// when it is cut off.
 	Empty bool
 }
 

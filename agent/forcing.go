@@ -343,16 +343,25 @@ const errTruncatedToolCall = "arguments cut off by the output token limit"
 // completed text is kept and a TruncatedDelta names its node and the finish
 // reason. Tool calls in the turn are never run: their arguments may be
 // incomplete. When the turn had tool calls the run ends with a
-// *types.ResponseTruncatedError; a turn that kept text and had none ends the
-// run cleanly. done reports whether the turn was truncated.
+// *types.ResponseTruncatedError; a turn that kept an answer and had none ends
+// the run cleanly. done reports whether the turn was truncated.
 //
-// A turn can reach the limit before it keeps anything: the tokens went to
-// thinking that was still under way, which is dropped at the cut, or the
-// provider sent no parts at all. Nothing is committed then, the delta names
-// no node, and the run ends with a *types.ResponseTruncatedError whose Empty
-// is set. Ending cleanly would hand the caller an empty answer as though the
-// agent had finished, and there is no partial turn for a continuation to
-// resume, so the error is returned whatever WithAutoContinue allows.
+// A turn can reach the limit before it keeps anything a caller can use (see
+// answerless): the provider sent no parts at all, or the tokens went to
+// thinking, which is dropped at the cut when it is still open and is all
+// that is kept when the provider closed it. The run then ends with a
+// *types.ResponseTruncatedError whose Empty is set. Ending cleanly would hand
+// the caller an empty answer as though the agent had finished, and there is
+// no partial answer for a continuation to resume, so the error is returned
+// whatever WithAutoContinue allows.
+//
+// Nothing of such a turn is committed, its thinking included, and the delta
+// names no node. A thinking part with no answer after it is not a turn a
+// later request can carry: a provider that verifies thinking signatures
+// refuses a block cut off before it was signed, and one may refuse an
+// assistant turn that ends in thinking. Left out, the branch still ends where
+// the failed call began, so a retry or the next turn sends the history the
+// call was made with, and Continue has nothing to resume.
 //
 // The committed node carries a TruncationPart marker with the reason. The
 // marker is stripped before the next provider call.
@@ -367,8 +376,9 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 		partial = withoutToolCalls(*msg)
 		dropped = len(msg.Parts) - len(partial.Parts)
 	}
+	empty := dropped == 0 && answerless(partial.Parts)
 	nodeID := ""
-	if len(partial.Parts) > 0 {
+	if len(partial.Parts) > 0 && !empty {
 		node, err := a.appendNode(ctx, tr, branch, withTruncationMarker(partial, reason))
 		if err != nil {
 			return true, err
@@ -376,11 +386,34 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 		nodeID = string(node.ID)
 	}
 	stream.send(types.TruncatedDelta{NodeID: nodeID, Reason: reason})
-	empty := nodeID == "" && dropped == 0
 	a.cfg.Logger.Warn("response truncated by the output token limit",
 		"agent", a.cfg.Name, "finish_reason", reason, "dropped_tool_calls", dropped, "empty", empty)
 	if dropped == 0 && !empty {
 		return true, nil
 	}
 	return true, &types.ResponseTruncatedError{FinishReason: reason, OutputTokens: usage.CompletionTokens, Empty: empty}
+}
+
+// answerless reports whether parts, what a truncated turn kept, hold nothing
+// a caller can use as an answer or act on. Thinking is not an answer, whether
+// it is readable, a summary or redacted. Neither is run metadata, such as the
+// record of the route that served the turn, which is kept beside the parts of
+// every routed turn, nor a text part with nothing but space in it. Any other
+// part is: text, media, a refusal, a citation, a server tool's call or
+// result.
+func answerless(parts []types.AssistantPart) bool {
+	for _, p := range parts {
+		switch v := p.(type) {
+		case types.ThinkingPart:
+		case types.TextPart:
+			if strings.TrimSpace(v.Text) != "" {
+				return false
+			}
+		default:
+			if !types.IsMetadata(p) {
+				return false
+			}
+		}
+	}
+	return true
 }
