@@ -29,6 +29,7 @@ tools:
   harness: [read]
 limits:
   max_iterations: 6
+  timeout: 2m
 metadata:
   owner: examples
 ---
@@ -115,7 +116,7 @@ The digest is `sha256:` over the file with line endings normalized, so a checkou
 | `approval` | `capabilities`, `allow`, `ask` and `deny` rules, `grant`, `deny_after`, `ramp_after`, `hide_denied` (see below) |
 | `compaction` | The catalog's compaction form: `strategy` and its parameters, or a `chain` (see [context management](context-management.md)) |
 | `guardrails` | `input` and `output` lists of built-ins: `pii`, `regex` (with `patterns` of `label` and `expr`), `max_length` (with `max`), `classifier` (with `policy`); `redact` and `parallel` where they apply |
-| `limits` | `max_iterations`, `llm_timeout`, `tool_timeout`, and a `budget` with `max_cost`, `max_tokens`, `max_requests`, `warn_at`, `on_exceed` (`stop` or `ask`), `allow_unpriced` |
+| `limits` | `max_iterations`, `timeout` (a whole run when another agent delegates to this one), `llm_timeout`, `tool_timeout`, and a `budget` with `max_cost`, `max_tokens`, `max_requests`, `warn_at`, `on_exceed` (`stop` or `ask`), `allow_unpriced` |
 | `metadata` | Free-form strings. Never changes behavior |
 
 ### Skill modes
@@ -247,7 +248,7 @@ a, err := b.NewAgent()
 | `approval` | A `ToolGate` behind `Env.ToolGate`, and `agent.ApprovalPolicy` |
 | `compaction` | `agent.Config.CompactCfg` |
 | `guardrails` | `agent.InputGuardrail` and `agent.OutputGuardrail` from `agent/guardrail`; a classifier runs on the agent's model |
-| `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`. Each `Bound.NewAgent` call, and each delegation, gets a budget of its own |
+| `limits` | `MaxIter`, `LLMTimeout`, `ToolTimeout`, and a `types.Budget`; `timeout` is a delegation's `SubAgentDef.Timeout`. Each `Bound.NewAgent` call, and each delegation, gets a budget of its own |
 
 A sub-agent inherits its parent's run policy as every sub-agent does (see [delegation](delegation.md)), and its own definition replaces what it declares: its approval rules (still behind the host's gate), compaction, dials, timeouts and budget. A sub-agent with no approval block keeps its parent's. What a delegation may spend is the sub-agent's own `limits`.
 

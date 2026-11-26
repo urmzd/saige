@@ -1353,12 +1353,22 @@ func (r *Runtime) startChild(ctx context.Context, parent Input, q event.Question
 		id, err := r.childStarter(WithLineage(ctx, in.Lineage), parent, call)
 		return finish(id, err)
 	}
-	if err := r.reserveChildBudget(ctx, parent, &in); err != nil {
-		return finish("", durable.NonRetryable(err))
+	reserved, err := r.reserveChildBudget(ctx, parent, &in)
+	if err != nil {
+		// A refused budget is final; a store or source that failed may
+		// answer on a retry. Verify marks a broken pin final itself.
+		if errors.Is(err, session.ErrBudget) {
+			err = durable.NonRetryable(err)
+		}
+		return finish("", err)
 	}
 	// The child runs the version its parent pinned for it, when it pinned
-	// one; a target outside the pin resolves its latest.
+	// one; a target outside the pin resolves its latest, once: the version
+	// whose budget was reserved is the version started.
 	version, _ := parent.Pin.SubagentVersion(definition.NormalizeName(target))
+	if reserved != "" {
+		version = reserved
+	}
 	acc, err := r.start(context.WithoutCancel(ctx), in, version)
 	if err != nil {
 		if acc.RunID != "" {

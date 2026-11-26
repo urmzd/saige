@@ -374,7 +374,7 @@ func checkLimits(l *LimitsSpec, found *issues) {
 	if l.MaxIterations < 0 {
 		found.add("limits.max_iterations", 0, CodeBadValue, "must not be negative")
 	}
-	if l.LLMTimeout < 0 || l.ToolTimeout < 0 {
+	if l.Timeout < 0 || l.LLMTimeout < 0 || l.ToolTimeout < 0 {
 		found.add("limits", 0, CodeBadValue, "timeouts must not be negative")
 	}
 	b := l.Budget

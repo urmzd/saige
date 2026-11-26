@@ -2,6 +2,8 @@ package bind
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"slices"
@@ -17,7 +19,7 @@ import (
 // may load and every agent it may delegate to is an entry, searched by its
 // name, description and instructions. It also adds the prompt section that
 // says how to use them.
-func bindDiscovery(d *definition.Definition, p *parts) error {
+func bindDiscovery(env *Env, d *definition.Definition, p *parts) error {
 	for _, cp := range p.agents {
 		name, delegate := cp.def.Name, "delegate_to_"+cp.def.Name
 		e := discovery.Entry{Kind: discovery.KindAgent, Name: name, Description: cp.def.Description, Text: strings.TrimSpace(cp.def.Prompt)}
@@ -34,7 +36,8 @@ func bindDiscovery(d *definition.Definition, p *parts) error {
 			return fmt.Errorf("%w: agent %s has a tool named %s, which discovery provides", ErrUnsupported, d.Name, n)
 		}
 	}
-	disc := discovery.New(holdFunc(p.hold, p.mcpServer), p.entries...)
+	disc := discovery.New(d.Name, holdFunc(p.hold, p.mcpServer), p.entries...)
+	disc.Store = env.DiscoveryStore
 	p.tools = append(p.tools, disc.Tools()...)
 	prev := p.toolPolicy
 	p.toolPolicy = func(inner agent.ToolPolicy) agent.ToolPolicy {
@@ -75,9 +78,13 @@ func describeAgent(e discovery.Entry, delegate string) string {
 	if desc := strings.Join(strings.Fields(e.Description), " "); desc != "" {
 		b.WriteString(": " + desc)
 	}
-	fmt.Fprintf(&b, "\n\nDelegate a task to it with %s. Its instructions follow; they are its own, not yours.", delegate)
+	fmt.Fprintf(&b, "\n\nYou delegate a task to it with %s when that tool is offered. Its instructions follow; they are its own, not yours.", delegate)
 	if e.Text != "" {
-		b.WriteString("\n\n<instructions>\n" + e.Text + "\n</instructions>")
+		// The tag ends in a digest of the text, so the text cannot close
+		// it early, as a skill's tag does (ADR 0028).
+		sum := sha256.Sum256([]byte(e.Text))
+		tag := "agent-instructions-" + hex.EncodeToString(sum[:6])
+		fmt.Fprintf(&b, "\n\n<%s>\n%s\n</%s>", tag, e.Text, tag)
 	}
 	return b.String()
 }

@@ -17,8 +17,8 @@ type Store interface {
 	Add(ctx context.Context, scope, tool string) error
 }
 
-// MemoryStore is a Store in process memory. It forgets the oldest
-// conversation first once it holds MaxScopes of them.
+// MemoryStore is a Store in process memory. Once it holds MaxScopes
+// conversations it forgets the one used longest ago.
 type MemoryStore struct {
 	// MaxScopes bounds how many conversations it keeps. Zero uses
 	// DefaultMaxScopes.
@@ -33,7 +33,18 @@ type MemoryStore struct {
 func (m *MemoryStore) Loaded(_ context.Context, scope string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return slices.Clone(m.scopes[scope]), nil
+	list, ok := m.scopes[scope]
+	if ok {
+		m.touchLocked(scope)
+	}
+	return slices.Clone(list), nil
+}
+
+// touchLocked marks scope as used last.
+func (m *MemoryStore) touchLocked(scope string) {
+	if i := slices.Index(m.order, scope); i >= 0 {
+		m.order = append(slices.Delete(m.order, i, i+1), scope)
+	}
 }
 
 // Add implements Store.
@@ -54,6 +65,9 @@ func (m *MemoryStore) Add(_ context.Context, scope, tool string) error {
 			m.order = m.order[1:]
 		}
 		m.order = append(m.order, scope)
+	}
+	if ok {
+		m.touchLocked(scope)
 	}
 	if !slices.Contains(list, tool) {
 		m.scopes[scope] = append(list, tool)

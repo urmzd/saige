@@ -81,7 +81,7 @@ func found(t *testing.T, out string) []string {
 }
 
 func TestPolicyHoldsToolsUntilLoaded(t *testing.T) {
-	d := discovery.New(held("github_search", "github_comment"))
+	d := discovery.New("a", held("github_search", "github_comment"))
 	tools := append(defs("read_file", "github_search", "github_comment"), d.Tools()[0].Definition(), d.Tools()[1].Definition())
 	policy := d.Policy(nil)
 	ctx := scope("c1")
@@ -129,7 +129,7 @@ func TestStoreKeepsLoadsAcrossProcesses(t *testing.T) {
 }
 
 func TestDiscoverRanksByTextAcrossKinds(t *testing.T) {
-	d := discovery.New(held("deploy"),
+	d := discovery.New("a", held("deploy"),
 		discovery.Entry{Kind: discovery.KindSkill, Name: "release-notes", Description: "Write release notes.", Text: "Group changes by area. Mention breaking changes first."},
 		discovery.Entry{Kind: discovery.KindAgent, Name: "reviewer", Description: "Reviews diffs.", Text: "You review pull requests. Flag flaky tests and missing coverage."},
 		discovery.Entry{Kind: discovery.KindAgent, Name: "writer", Description: "Writes docs.", Text: "You write user guides."},
@@ -168,7 +168,7 @@ func TestDiscoverRanksByTextAcrossKinds(t *testing.T) {
 
 func TestLoadEntries(t *testing.T) {
 	loaded := ""
-	d := discovery.New(nil,
+	d := discovery.New("a", nil,
 		discovery.Entry{Kind: discovery.KindSkill, Name: "go-style", Description: "Go style.", Text: "Use gofmt.",
 			Load: func(context.Context) (string, error) { loaded = "go-style"; return "SKILL TEXT", nil }},
 		discovery.Entry{Kind: discovery.KindAgent, Name: "reviewer", Description: "Reviews diffs.", Text: "You review."},
@@ -196,7 +196,7 @@ func TestLoadEntries(t *testing.T) {
 // discover never reveals a tool another policy hides, and discover and load
 // stay offered whatever the inner policy narrows.
 func TestInnerPolicyNarrows(t *testing.T) {
-	d := discovery.New(held("secret", "visible"))
+	d := discovery.New("a", held("secret", "visible"))
 	tools := append(defs("read_file", "secret", "visible"), d.Tools()[0].Definition(), d.Tools()[1].Definition())
 	inner := agent.ToolPolicyFunc(func(_ context.Context, _ string, defs []types.ToolDef) ([]string, error) {
 		return []string{"read_file", "visible"}, nil
@@ -214,9 +214,23 @@ func TestInnerPolicyNarrows(t *testing.T) {
 	}
 }
 
+// Lowercasing can change a string's byte length; the excerpt still finds
+// the match.
+func TestExcerptFindsTheMatchAfterWideRunes(t *testing.T) {
+	text := strings.Repeat("İ", 400) + " needle " + strings.Repeat("x", 400)
+	d := discovery.New("a", nil, discovery.Entry{Kind: discovery.KindAgent, Name: "ops", Text: text})
+	var m matches
+	if err := json.Unmarshal([]byte(call(t, d, discovery.DiscoverName, scope("c1"), map[string]any{"query": "needle"})), &m); err != nil {
+		t.Fatal(err)
+	}
+	if ex := m.Matches[0].Excerpt; !strings.Contains(ex, "needle") {
+		t.Fatalf("excerpt %q", ex)
+	}
+}
+
 func TestExcerptCentersOnTheMatch(t *testing.T) {
 	text := strings.Repeat("filler words here. ", 40) + "The rollback procedure needs two approvals. " + strings.Repeat("more filler. ", 40)
-	d := discovery.New(nil, discovery.Entry{Kind: discovery.KindAgent, Name: "ops", Text: text})
+	d := discovery.New("a", nil, discovery.Entry{Kind: discovery.KindAgent, Name: "ops", Text: text})
 	var m matches
 	if err := json.Unmarshal([]byte(call(t, d, discovery.DiscoverName, scope("c1"), map[string]any{"query": "rollback"})), &m); err != nil {
 		t.Fatal(err)
@@ -227,19 +241,57 @@ func TestExcerptCentersOnTheMatch(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreForgetsOldest(t *testing.T) {
+// The store forgets the conversation used longest ago, not the one that
+// loaded first.
+func TestMemoryStoreForgetsLeastRecentlyUsed(t *testing.T) {
 	s := &discovery.MemoryStore{MaxScopes: 2}
 	ctx := context.Background()
-	for _, scope := range []string{"a", "b", "c"} {
+	for _, scope := range []string{"a", "b"} {
 		if err := s.Add(ctx, scope, "t"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_ = s.Add(ctx, "c", "t")
-	if got, _ := s.Loaded(ctx, "a"); len(got) != 0 {
-		t.Fatalf("oldest kept: %v", got)
+	if _, err := s.Loaded(ctx, "a"); err != nil { // a is in use again
+		t.Fatal(err)
 	}
-	if got, _ := s.Loaded(ctx, "c"); !slices.Equal(got, []string{"t"}) {
-		t.Fatalf("c: %v", got)
+	if err := s.Add(ctx, "c", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Loaded(ctx, "b"); len(got) != 0 {
+		t.Fatalf("least recently used kept: %v", got)
+	}
+	for _, scope := range []string{"a", "c"} {
+		if got, _ := s.Loaded(ctx, scope); !slices.Equal(got, []string{"t"}) {
+			t.Fatalf("%s: %v", scope, got)
+		}
+	}
+}
+
+// A sub-agent inherits its parent's ToolPolicy. The parent's Discovery
+// passes the sub-agent's turns through, so the parent's holds stay its own.
+func TestPolicyPassesOtherAgentsThrough(t *testing.T) {
+	d := discovery.New("lead", held("grep"))
+	tools := defs("read_file", "grep")
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "worker", Conversation: "c"})
+	got, err := d.Policy(nil).Select(ctx, "worker", tools)
+	if err != nil || !slices.Equal(got, []string{"read_file", "grep"}) {
+		t.Fatalf("worker offered %v %v", got, err)
+	}
+	ctx = agent.WithRunScope(context.Background(), agent.RunScope{Agent: "lead", Conversation: "c"})
+	if got, _ := d.Policy(nil).Select(ctx, "lead", tools); slices.Contains(got, "grep") {
+		t.Fatalf("lead offered %v", got)
+	}
+}
+
+// Outside an agent loop the policy and the tools use the same key.
+func TestNoRunScopeSharesTheOwnersKey(t *testing.T) {
+	d := discovery.New("a", held("deploy"))
+	ctx := context.Background()
+	if _, err := d.Policy(nil).Select(ctx, "a", defs("deploy")); err != nil {
+		t.Fatal(err)
+	}
+	call(t, d, discovery.LoadName, ctx, map[string]any{"kind": "tool", "name": "deploy"})
+	if got, _ := d.Policy(nil).Select(ctx, "a", defs("deploy")); !slices.Contains(got, "deploy") {
+		t.Fatalf("offered %v", got)
 	}
 }

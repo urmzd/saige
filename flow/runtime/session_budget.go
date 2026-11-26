@@ -51,15 +51,19 @@ func (r *Runtime) openRunBudget(ctx context.Context, in *Input) error {
 	}
 	return store.OpenBudget(ctx, in.Trigger.Tenant, in.runID(), *in.Budget)
 }
-func (r *Runtime) reserveChildBudget(ctx context.Context, parent Input, in *Input) error {
+
+// reserveChildBudget reserves a delegation's allowance from its parent: the
+// callee's own limits.budget, read from the version the child runs, the one
+// its parent pinned for it or else its latest. It returns that version, so
+// the child is started at the version whose budget was reserved; "" when no
+// budget applies, and the child resolves its version as before.
+func (r *Runtime) reserveChildBudget(ctx context.Context, parent Input, in *Input) (string, error) {
 	if r.sessions == nil || r.childStarter != nil {
-		return nil
+		return "", nil
 	}
 	if parent.Budget == nil {
-		return session.ErrBudget
+		return "", session.ErrBudget
 	}
-	// The child's allowance is its own limits.budget, read from the version
-	// it will run: the one its parent pinned for it, or its latest.
 	name := definition.NormalizeName(in.Subscriber)
 	var (
 		pin definition.Pin
@@ -71,28 +75,28 @@ func (r *Runtime) reserveChildBudget(ctx context.Context, parent Input, in *Inpu
 		pin, err = r.defs.Resolve(ctx, parent.Trigger.Tenant, name)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	loaded, err := r.defs.Verify(ctx, parent.Trigger.Tenant, pin)
 	if err != nil {
-		return err
+		return "", err
 	}
 	want := allowance(loaded.Agent.Budget)
 	// Calling an agent grants neither an unbounded nor an implicit money
 	// budget: a callee without limits.budget cannot be called.
 	if !want.Valid() {
-		return session.ErrBudget
+		return "", session.ErrBudget
 	}
 	store, ok := r.sessions.(session.BudgetStore)
 	if !ok {
-		return session.ErrBudget
+		return "", session.ErrBudget
 	}
 	granted, err := store.ReserveBudget(ctx, parent.Trigger.Tenant, parent.runID(), "child:"+in.runID(), want)
 	if err != nil {
-		return err
+		return "", err
 	}
 	in.Budget = &granted
-	return nil
+	return pin.Version, nil
 }
 func (r *Runtime) reserveTurnBudget(ctx context.Context, in Input, attempt int) (*turnrt.Budget, error) {
 	if in.Budget == nil || r.childStarter != nil {

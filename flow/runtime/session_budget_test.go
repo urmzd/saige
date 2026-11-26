@@ -212,15 +212,22 @@ func TestChildBudgetIsTheCalleesOwnLimit(t *testing.T) {
 	if err := s.OpenBudget(ctx, "t", parent.runID(), *parent.Budget); err != nil {
 		t.Fatal(err)
 	}
-	child := Input{Trigger: trigger("child"), Subscriber: "child", Parent: &ParentRef{RunID: parent.runID()}}
-	if err := rt.reserveChildBudget(ctx, parent, &child); err != nil {
+	// A newer callee version does not change what the pinned parent
+	// reserves: the reservation reads the version the parent pinned.
+	put2 := "---\napiVersion: saige/v1\nname: child\nversion: 1.1.0\nmodel: offline/echo\nlimits:\n  budget:\n    max_requests: 7\n---\nPrompt.\n"
+	if _, err := src.Put(ctx, definition.Record{Tenant: "t", Content: put2, CreatedBy: "ada"}); err != nil {
 		t.Fatal(err)
 	}
-	if child.Budget == nil || child.Budget.Requests != 3 {
-		t.Fatalf("child budget %+v", child.Budget)
+	child := Input{Trigger: trigger("child"), Subscriber: "child", Parent: &ParentRef{RunID: parent.runID()}}
+	version, err := rt.reserveChildBudget(ctx, parent, &child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Budget == nil || child.Budget.Requests != 3 || version != "1.0.0" {
+		t.Fatalf("child budget %+v at %q", child.Budget, version)
 	}
 	bare := Input{Trigger: trigger("bare"), Subscriber: "bare", Parent: &ParentRef{RunID: parent.runID()}}
-	if err := rt.reserveChildBudget(ctx, parent, &bare); !errors.Is(err, session.ErrBudget) {
+	if _, err := rt.reserveChildBudget(ctx, parent, &bare); !errors.Is(err, session.ErrBudget) {
 		t.Fatalf("a callee without limits.budget: %v", err)
 	}
 }

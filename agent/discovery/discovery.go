@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/urmzd/saige/agent"
 	"github.com/urmzd/saige/agent/selector"
@@ -88,6 +89,11 @@ type Entry struct {
 // serves many conversations; per-conversation state is keyed by
 // agent.RunScope.
 type Discovery struct {
+	// Owner is the agent the Discovery serves. A sub-agent inherits its
+	// parent's ToolPolicy, so the policy passes another agent's turns
+	// through unchanged: a parent's held tools are the parent's alone.
+	// Empty serves every agent.
+	Owner string
 	// Hold reports whether a tool is held back from the tool list until it
 	// is loaded. Nil holds none.
 	Hold func(name string) bool
@@ -100,7 +106,8 @@ type Discovery struct {
 	// DefaultResults.
 	Results int
 	// MaxScopes bounds how many conversations keep a tool list for
-	// discover; the oldest is forgotten first. Zero uses DefaultMaxScopes.
+	// discover; the one used longest ago is forgotten first. Zero uses
+	// DefaultMaxScopes.
 	MaxScopes int
 
 	once   sync.Once
@@ -110,10 +117,10 @@ type Discovery struct {
 	order  []string
 }
 
-// New returns a Discovery that holds the tools hold names and offers
-// entries.
-func New(hold func(name string) bool, entries ...Entry) *Discovery {
-	return &Discovery{Hold: hold, Entries: entries}
+// New returns a Discovery for owner that holds the tools hold names and
+// offers entries.
+func New(owner string, hold func(name string) bool, entries ...Entry) *Discovery {
+	return &Discovery{Owner: owner, Hold: hold, Entries: entries}
 }
 
 // Tools returns discover and load.
@@ -137,6 +144,9 @@ func (d *Discovery) Policy(inner agent.ToolPolicy) agent.ToolPolicy {
 				names = append(names, def.Name)
 			}
 		}
+		if d.Owner != "" && owner != d.Owner {
+			return names, nil
+		}
 		// discover searches what inner offers, so it never reveals a tool
 		// another policy hides, such as one a loaded skill narrows away.
 		offered := make([]types.ToolDef, 0, len(names))
@@ -145,7 +155,7 @@ func (d *Discovery) Policy(inner agent.ToolPolicy) agent.ToolPolicy {
 				offered = append(offered, def)
 			}
 		}
-		key := scopeKey(ctx, owner)
+		key := d.scopeKey(ctx, owner)
 		d.remember(key, offered)
 		loaded, err := d.store().Loaded(ctx, key)
 		if err != nil {
@@ -207,6 +217,8 @@ func (d *Discovery) remember(key string, defs []types.ToolDef) {
 			d.order = d.order[1:]
 		}
 		d.order = append(d.order, key)
+	} else if i := slices.Index(d.order, key); i >= 0 {
+		d.order = append(slices.Delete(d.order, i, i+1), key)
 	}
 	d.scopes[key] = slices.Clone(defs)
 }
@@ -265,9 +277,14 @@ func (d *Discovery) candidates(ctx context.Context, key string, kind Kind) ([]En
 	return out, nil
 }
 
-func scopeKey(ctx context.Context, owner string) string {
+// scopeKey is the conversation's key: its RunScope, or, outside an agent
+// loop, the owner's. The policy and the tools fall back to the same key.
+func (d *Discovery) scopeKey(ctx context.Context, owner string) string {
 	if scope, ok := agent.RunScopeFromContext(ctx); ok {
 		return scope.Key()
+	}
+	if owner == "" {
+		owner = d.Owner
 	}
 	return agent.RunScope{Agent: owner}.Key()
 }
@@ -293,7 +310,8 @@ func paramText(def types.ToolDef) string {
 }
 
 // excerpt is up to ExcerptLen characters of text around the first query
-// term it contains, or its start.
+// term it contains, or its start. It searches rune by rune, lowercased one
+// rune at a time, so the position found is the position in text.
 func excerpt(text, query string) string {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
@@ -303,16 +321,19 @@ func excerpt(text, query string) string {
 	if len(runes) <= ExcerptLen {
 		return text
 	}
-	lower := strings.ToLower(text)
+	lower := make([]rune, len(runes))
+	for i, r := range runes {
+		lower[i] = unicode.ToLower(r)
+	}
 	at := -1
 	for _, term := range selector.Tokenize(query) {
-		if i := strings.Index(lower, term); i >= 0 && (at < 0 || i < at) {
+		if i := runeIndex(lower, []rune(term)); i >= 0 && (at < 0 || i < at) {
 			at = i
 		}
 	}
 	start := 0
 	if at > 0 {
-		start = max(0, len([]rune(text[:min(at, len(text))]))-ExcerptLen/4)
+		start = max(0, at-ExcerptLen/4)
 	}
 	end := min(len(runes), start+ExcerptLen)
 	out := string(runes[start:end])
@@ -323,6 +344,19 @@ func excerpt(text, query string) string {
 		out += "…"
 	}
 	return out
+}
+
+// runeIndex is the index of the first sub in s, or -1.
+func runeIndex(s, sub []rune) int {
+	if len(sub) == 0 {
+		return -1
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if slices.Equal(s[i:i+len(sub)], sub) {
+			return i
+		}
+	}
+	return -1
 }
 
 type discoverTool struct{ d *Discovery }
@@ -372,8 +406,7 @@ func (t *discoverTool) Execute(ctx context.Context, args map[string]any) (string
 	}
 	k = min(k, MaxResults)
 
-	scope, _ := agent.RunScopeFromContext(ctx)
-	all, err := t.d.candidates(ctx, scope.Key(), kind)
+	all, err := t.d.candidates(ctx, t.d.scopeKey(ctx, ""), kind)
 	if err != nil {
 		return "", err
 	}
@@ -440,8 +473,7 @@ func (t *loadTool) Execute(ctx context.Context, args map[string]any) (string, er
 	if name == "" {
 		return "", fmt.Errorf("%s: name is required", LoadName)
 	}
-	scope, _ := agent.RunScopeFromContext(ctx)
-	key := scope.Key()
+	key := t.d.scopeKey(ctx, "")
 	if kind == KindTool {
 		return t.loadTool(ctx, key, name)
 	}

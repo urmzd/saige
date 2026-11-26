@@ -311,10 +311,13 @@ type PatternSpec struct {
 
 // LimitsSpec bounds one run.
 type LimitsSpec struct {
-	MaxIterations int              `json:"max_iterations,omitempty"`
-	LLMTimeout    catalog.Duration `json:"llm_timeout,omitzero"`
-	ToolTimeout   catalog.Duration `json:"tool_timeout,omitzero"`
-	Budget        *BudgetSpec      `json:"budget,omitempty"`
+	MaxIterations int `json:"max_iterations,omitempty"`
+	// Timeout bounds a whole run of this agent when another agent
+	// delegates to it.
+	Timeout     catalog.Duration `json:"timeout,omitzero"`
+	LLMTimeout  catalog.Duration `json:"llm_timeout,omitzero"`
+	ToolTimeout catalog.Duration `json:"tool_timeout,omitzero"`
+	Budget      *BudgetSpec      `json:"budget,omitempty"`
 }
 
 // Budget actions.

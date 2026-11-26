@@ -474,7 +474,7 @@ func TestBindSubagents(t *testing.T) {
 		file("lead", "subagents:\n  - worker@^1\n  - ref: bg\n", "lead"),
 		file("worker", "description: Works through review queues.\nmodel: anthropic/claude-haiku-5-5\ntools:\n  harness: [read]\n"+
 			"approval:\n  deny: [read_file]\ncompaction:\n  strategy: keep_recent\n  keep_turns: 2\ndials:\n  creativity: deterministic\n"+
-			"limits:\n  max_iterations: 3\n  tool_timeout: 5s\n  budget:\n    max_cost: 0.5\nguardrails:\n  output: [pii]\n", "WORKER PROMPT about flaky tests"),
+			"limits:\n  max_iterations: 3\n  timeout: 1m\n  tool_timeout: 5s\n  budget:\n    max_cost: 0.5\nguardrails:\n  output: [pii]\n", "WORKER PROMPT about flaky tests"),
 		file("bg", "", "bg"))
 	b := bind(t, res, env)
 	if len(b.Config.SubAgents) != 2 {
@@ -483,7 +483,7 @@ func TestBindSubagents(t *testing.T) {
 	// A sub-agent is its own definition: its description, prompt and
 	// limits are the ones the parent delegates to.
 	w := b.Config.SubAgents[0]
-	if w.Name != "worker" || w.Description != "Works through review queues." || w.SystemPrompt != "WORKER PROMPT about flaky tests" || w.MaxIter != 3 ||
+	if w.Name != "worker" || w.Description != "Works through review queues." || w.SystemPrompt != "WORKER PROMPT about flaky tests" || w.MaxIter != 3 || w.Timeout != time.Minute ||
 		w.Mode != agent.SubAgentDelegate || w.Provider == nil || !slices.Contains(names(w.Tools), "read_file") {
 		t.Fatalf("worker %+v", w)
 	}
@@ -521,8 +521,85 @@ func TestBindSubagents(t *testing.T) {
 		t.Fatalf("discover: %s", out)
 	}
 	out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "agent", "name": "worker"})
-	if !strings.Contains(out, "WORKER PROMPT about flaky tests") || !strings.Contains(out, "delegate_to_worker") {
+	if !strings.Contains(out, "WORKER PROMPT about flaky tests") || !strings.Contains(out, "delegate_to_worker") ||
+		!strings.Contains(out, "<agent-instructions-") || strings.Contains(out, "<instructions>") {
 		t.Fatalf("load: %s", out)
+	}
+}
+
+// A parent's held tools are its own: a sub-agent inherits the parent's
+// ToolPolicy, and still sees its own tools, holding only what it declares.
+func TestBindDiscoverIsPerAgent(t *testing.T) {
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}}
+	for _, worker := range []string{"tools:\n  harness: [read]\n", "tools:\n  harness: [read]\n  discover: [glob]\n"} {
+		b := bind(t, resolve(t, "lead",
+			file("lead", "tools:\n  harness: [read]\n  discover: [grep]\nsubagents: [worker]\n", "lead"),
+			file("worker", worker, "worker")), env)
+		w := b.Config.SubAgents[0]
+		cfg := agent.Config{ToolPolicy: b.Config.ToolPolicy} // as inheritConfig copies it
+		for _, o := range w.Options {
+			o(&cfg)
+		}
+		ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "worker", Conversation: "c"})
+		got, err := cfg.ToolPolicy.Select(ctx, "worker", w.Tools.Definitions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		holds := strings.Contains(worker, "discover")
+		if !slices.Contains(got, "grep") || slices.Contains(got, "glob") != !holds {
+			t.Fatalf("worker (%q) offered %v", worker, got)
+		}
+		lead := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "lead", Conversation: "c"})
+		if got, _ := b.Config.ToolPolicy.Select(lead, "lead", b.Config.Tools.Definitions()); slices.Contains(got, "grep") {
+			t.Fatalf("lead offered %v", got)
+		}
+	}
+}
+
+// A durable store in Env keeps what a conversation loaded for another
+// binding of the same definition, as a run resumed elsewhere has.
+func TestBindDiscoveryStore(t *testing.T) {
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}, DiscoveryStore: &discovery.MemoryStore{}}
+	res := resolve(t, "a", file("a", "tools:\n  harness: [read]\n  discover: [glob]\n", "p"))
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	first := bind(t, res, env)
+	if _, err := first.Config.ToolPolicy.Select(ctx, "a", first.Config.Tools.Definitions()); err != nil {
+		t.Fatal(err)
+	}
+	run(t, first.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "tool", "name": "glob"})
+	resumed := bind(t, res, env)
+	if got, _ := resumed.Config.ToolPolicy.Select(ctx, "a", resumed.Config.Tools.Definitions()); !slices.Contains(got, "glob") {
+		t.Fatalf("resumed binding offered %v", got)
+	}
+}
+
+// A loaded skill's allowed-tools narrows held tools too: discover does not
+// reveal a tool the skill leaves out.
+func TestBindSkillNarrowsHeldTools(t *testing.T) {
+	fsys := fstest.MapFS{"focus/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: focus\ndescription: Read only.\nallowed-tools: [read_file]\n---\nFOCUS BODY\n")}}
+	cat, err := skills.NewCatalog(context.Background(), []skills.SkillSource{skills.NewFSSource("test", fsys, ".")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Preset: fakePreset{&agenttest.ScriptedProvider{}}, Harness: tools.HarnessOptions{Root: t.TempDir()}, Skills: cat}
+	b := bind(t, resolve(t, "a", file("a", "tools:\n  harness: [read]\n  discover: [glob]\nskills: [focus]\n", "p")), env)
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	all := b.Config.Tools.Definitions()
+	if _, err := b.Config.ToolPolicy.Select(ctx, "a", all); err != nil {
+		t.Fatal(err)
+	}
+	if out := run(t, b.Config.Tools, discovery.LoadName, ctx, map[string]any{"kind": "skill", "name": "focus"}); !strings.Contains(out, "FOCUS BODY") {
+		t.Fatalf("load: %s", out)
+	}
+	got, err := b.Config.ToolPolicy.Select(ctx, "a", all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "glob") || slices.Contains(got, "grep") || !slices.Contains(got, discovery.LoadName) {
+		t.Fatalf("narrowed %v", got)
+	}
+	if out := run(t, b.Config.Tools, discovery.DiscoverName, ctx, map[string]any{"query": "", "kind": "tool"}); strings.Contains(out, "glob") {
+		t.Fatalf("discover revealed a narrowed tool: %s", out)
 	}
 }
 
@@ -638,6 +715,19 @@ func TestBindMCP(t *testing.T) {
 	b = bind(t, resolve(t, "a", file("a", "tools:\n  mcp: [demo]\n", "p")), env)
 	if got := names(b.Config.Tools); !slices.Equal(got, []string{"demo_echo", "demo_shout"}) {
 		t.Fatalf("tools %v", got)
+	}
+
+	// mcp:<server> names the server as the definition does, the host's key,
+	// whatever name the host's spec gives it.
+	keyed := env
+	keyed.MCPServers = map[string]mcp.ServerSpec{"gh": mcp.Remote("github", srv.URL)}
+	b = bind(t, resolve(t, "a", file("a", "tools:\n  mcp: [gh]\n  discover: [\"mcp:gh\"]\n", "p")), keyed)
+	ctx := agent.WithRunScope(context.Background(), agent.RunScope{Agent: "a", Conversation: "c"})
+	if got, _ := b.Config.ToolPolicy.Select(ctx, "a", b.Config.Tools.Definitions()); slices.Contains(got, "github_echo") || slices.Contains(got, "github_shout") {
+		t.Fatalf("held server offered %v", got)
+	}
+	if err := b.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := Bind(context.Background(), resolve(t, "a", file("a", "tools:\n  mcp: [ghost]\n", "p")), env); !errors.Is(err, ErrUnsupported) {

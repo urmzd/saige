@@ -61,6 +61,10 @@ type Env struct {
 	// ToolGate is the host's own gate. It applies to every agent of the
 	// tree, before each agent's approval rules.
 	ToolGate types.ToolGate
+	// DiscoveryStore keeps the tools each conversation loaded with load,
+	// for every agent of the tree. Nil keeps them in memory; a host whose
+	// runs resume in another process passes a durable one.
+	DiscoveryStore discovery.Store
 }
 
 func (e *Env) catalog() *catalog.Catalog {
@@ -199,6 +203,7 @@ type parts struct {
 	compact     *types.CompactConfig
 	dials       *types.Dials
 	maxIter     int
+	timeout     time.Duration
 	llmTimeout  time.Duration
 	toolTimeout time.Duration
 	budget      *types.Budget
@@ -289,6 +294,7 @@ func bindParts(ctx context.Context, env *Env, res *definition.Resolved, root boo
 	}
 	if l := d.Limits; l != nil {
 		p.maxIter = l.MaxIterations
+		p.timeout = time.Duration(l.Timeout)
 		p.llmTimeout = time.Duration(l.LLMTimeout)
 		p.toolTimeout = time.Duration(l.ToolTimeout)
 		if l.Budget != nil {
@@ -307,7 +313,7 @@ func bindParts(ctx context.Context, env *Env, res *definition.Resolved, root boo
 			gate.free["delegate_to_"+cp.def.Name] = true
 		}
 	}
-	if err := bindDiscovery(d, p); err != nil {
+	if err := bindDiscovery(env, d, p); err != nil {
 		return nil, err
 	}
 	if gate != nil {
@@ -344,6 +350,7 @@ func subAgentDef(env *Env, cp *parts) agent.SubAgentDef {
 		Tools:        cp.registry(),
 		SubAgents:    cp.subagents,
 		MaxIter:      cp.maxIter,
+		Timeout:      cp.timeout,
 	}
 	if sd.Description == "" {
 		sd.Description = "Delegate a task to the " + cp.def.Name + " agent."
