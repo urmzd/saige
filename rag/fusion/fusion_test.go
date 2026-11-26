@@ -237,3 +237,23 @@ func TestMergeDuplicateKeepsHighlight(t *testing.T) {
 		t.Errorf("merged highlight = %+v, want the lexical hit's", got.Highlight)
 	}
 }
+
+func TestRankFusionCountsKeyOncePerList(t *testing.T) {
+	// The graph retriever can return one passage behind several facts.
+	lists := []types.RankedList{list("vector", "a", "b"), list("graph", "b", "b", "b", "b")}
+	got := scores(RRF{}.Fuse(lists, types.FuseOptions{}))
+	want := 1.0/61 + 1.0/62
+	if !near(got["b"], want) {
+		t.Errorf("b = %v, want %v (one vote from graph, at its best rank)", got["b"], want)
+	}
+	if ceiling := (RRF{}).MaxFusedScore(lists, types.FuseOptions{}); got["b"] > ceiling {
+		t.Errorf("b = %v exceeds ceiling %v", got["b"], ceiling)
+	}
+}
+
+func TestRankCeilingSkipsEmptyLists(t *testing.T) {
+	lists := []types.RankedList{list("vector", "a"), list("bm25")}
+	if got, want := (RRF{}).MaxFusedScore(lists, types.FuseOptions{}), 1.0/61; !near(got, want) {
+		t.Errorf("ceiling = %v, want %v", got, want)
+	}
+}

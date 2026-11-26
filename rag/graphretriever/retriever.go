@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/urmzd/saige/rag/fusion"
 	knowledgetypes "github.com/urmzd/saige/rag/knowledge/types"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
@@ -90,6 +91,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts *ragtypes.S
 
 	res := &resolver{r: r, opts: opts, sections: make(map[string][]ragtypes.Section)}
 	hits := make([]ragtypes.SearchHit, 0, min(limit, len(result.Facts)))
+	seen := make(map[string]bool, len(result.Facts))
 	for rank, fact := range result.Facts {
 		if len(hits) >= limit {
 			break
@@ -106,9 +108,17 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts *ragtypes.S
 		if err != nil {
 			partial = append(partial, err)
 		}
-		if ok {
-			hits = append(hits, hit)
+		if !ok {
+			continue
 		}
+		// Several facts often come from one passage. Keep the passage once,
+		// at its best rank, so duplicates do not use up the limit.
+		key := fusion.Key(&hit)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		hits = append(hits, hit)
 	}
 
 	if len(partial) > 0 {
