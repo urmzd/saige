@@ -189,7 +189,7 @@ func (c *SemanticChunker) enforceTokenLimits(chunks []string) []string {
 
 	// Split large chunks using recursive chunker as fallback.
 	var result []string
-	rc := NewRecursive(&Config{MaxTokens: c.cfg.MaxTokens, Overlap: 0, Separators: []string{"\n", ". ", "。", " "}})
+	rc := NewRecursive(&Config{MaxTokens: c.cfg.MaxTokens, Overlap: 0, Separators: []string{". ", " "}})
 	for _, chunk := range merged {
 		if estimateTokens(chunk) > c.cfg.MaxTokens {
 			result = append(result, rc.split(chunk)...)

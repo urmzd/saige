@@ -64,6 +64,7 @@ func TestChainReplacesScoresFollowsLastStage(t *testing.T) {
 		{"empty", reranker.Chain{}, false},
 		{"scoring last", reranker.Chain{reranker.NewMMR(0.5), scoring}, true},
 		{"mmr last", reranker.Chain{scoring, reranker.NewMMR(0.5)}, false},
+		{"last stage keeps scores", reranker.Chain{scoring, appendReranker{calls: &calls}}, false},
 	}
 	for _, tt := range tests {
 		if got := tt.chain.ReplacesScores(); got != tt.want {
