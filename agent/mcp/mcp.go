@@ -54,6 +54,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,6 +64,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/urmzd/saige/agent/types"
+	"golang.org/x/sync/singleflight"
 )
 
 // DefaultCallTimeout bounds a single tool call when the spec sets none. An MCP
@@ -131,6 +134,23 @@ type ServerSpec struct {
 	// Empty imports everything advertised, which for a remote server means
 	// trusting a list that can change between connections.
 	AllowedTools []string
+	// PinnedTools maps remote tool names (before prefixing) to the
+	// fingerprint each was approved with, as Catalog.Fingerprints records it.
+	// When set, only a tool whose current name, description and input schema
+	// still match its pin is imported. A tool the server added, or one it
+	// rewrote under the same name, is withheld until it is pinned again: a
+	// changed description is how a server that was trusted once turns
+	// hostile. A call to a tool registered earlier is checked against its pin
+	// before it is sent: when no listing is cached, the client lists the tools
+	// again first, reconnecting once if that listing finds the session dead,
+	// and a call to a withheld tool never reaches the server. The server can
+	// still change a tool between that listing and the call; a pin cannot
+	// close that gap. PinDrift reports what was withheld.
+	//
+	// nil imports tools without checking them. A non-nil empty map pins to
+	// nothing: no tool is imported until it is pinned, which is what a server
+	// approved with no tools records (Catalog.Fingerprints never returns nil).
+	PinnedTools map[string]string
 	// Gate is applied to this server's tools. Compose it into the agent's gate
 	// via Pool.Gate. nil means no server-specific policy.
 	Gate types.ToolGate
@@ -273,6 +293,10 @@ type Client struct {
 	// calls counts in-flight tool calls so Close can let them unwind before
 	// closing the session.
 	calls sync.WaitGroup
+
+	// listings shares one pin-check listing among concurrent calls, keyed
+	// by catalogGen.
+	listings singleflight.Group
 }
 
 // Connect dials the server and completes the MCP handshake. The caller owns
@@ -401,6 +425,9 @@ func (c *Client) Tools(ctx context.Context) ([]types.Tool, error) {
 	defer c.mu.Unlock()
 	for _, t := range cat.Tools {
 		if len(allowed) > 0 && !allowed[t.Name] {
+			continue
+		}
+		if !c.pinned(t) {
 			continue
 		}
 		st := &serverTool{
@@ -616,17 +643,122 @@ func (c *Client) toolDef(name string, t CatalogTool) types.ToolDef {
 	}
 }
 
-// offers reports whether the server still advertises a remote tool. Before
-// the catalog is known, or while it is being refreshed, a tool counts as
-// offered unless an earlier listing withdrew it, and the server is the judge.
-func (c *Client) offers(remote string) bool {
+// callable reports whether a call to a remote tool may be sent now.
+//
+// Without pins, a tool in the cached catalog is offered. Before the catalog
+// is known, or while it is being refreshed, a tool counts as offered unless
+// an earlier listing withdrew it, and the server is the judge.
+//
+// With pins, the tool must match its pin in a current listing. A dropped
+// catalog (after tools/list_changed or a reconnect) does not show that a
+// tool still matches: the server may have rewritten it without withdrawing
+// it. So the client lists the tools again and checks the new listing.
+func (c *Client) callable(ctx context.Context, remote string) (bool, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.catalog == nil {
-		return !c.withdrawn[remote]
+	if c.spec.PinnedTools == nil || c.catalog != nil {
+		defer c.mu.RUnlock()
+		if c.catalog == nil {
+			return !c.withdrawn[remote], nil
+		}
+		t, ok := c.byName[remote]
+		return ok && c.pinned(t), nil
 	}
-	_, ok := c.byName[remote]
-	return ok
+	c.mu.RUnlock()
+	cat, err := c.pinListing(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, t := range cat.Tools {
+		if t.Name == remote {
+			return c.pinned(t), nil
+		}
+	}
+	return false, nil
+}
+
+// pinListing lists the tools for a pin check. A listing that finds its
+// session dead reconnects once and lists again on the new session, as a call
+// would, so a restarted server does not leave a pinned client refusing every
+// call. The new listing is checked like any other: a reconnect never skips
+// the check.
+//
+// Concurrent checks while no catalog is cached share one listing. The shared
+// listing is bounded by the call timeout rather than by any one caller's
+// context, so a caller that gives up does not fail the others; each caller
+// still stops waiting when its own context ends.
+func (c *Client) pinListing(ctx context.Context) (Catalog, error) {
+	c.mu.RLock()
+	gen := c.catalogGen
+	c.mu.RUnlock()
+	ch := c.listings.DoChan(strconv.FormatUint(gen, 10), func() (any, error) {
+		return c.listReconnecting(context.WithoutCancel(ctx))
+	})
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return Catalog{}, r.Err
+		}
+		return r.Val.(Catalog), nil
+	case <-ctx.Done():
+		return Catalog{}, ctx.Err()
+	}
+}
+
+// listReconnecting lists the tools within the call timeout, and on a dead
+// session reconnects once and lists again on the new session.
+func (c *Client) listReconnecting(ctx context.Context) (Catalog, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.spec.callTimeout())
+	defer cancel()
+	cat, session, err := c.listCatalog(ctx)
+	if err != nil && session != nil && isDeadSession(err) && ctx.Err() == nil {
+		if _, rerr := c.reconnect(ctx, session); rerr != nil {
+			return Catalog{}, fmt.Errorf("%w; reconnect failed: %v", err, rerr)
+		}
+		cat, _, err = c.listCatalog(ctx)
+	}
+	return cat, err
+}
+
+// pinned reports whether a catalog tool may be imported under the spec's
+// pins. Without pins (nil) every tool may; an empty map admits none.
+func (c *Client) pinned(t CatalogTool) bool {
+	if c.spec.PinnedTools == nil {
+		return true
+	}
+	want, ok := c.spec.PinnedTools[t.Name]
+	return ok && want == t.Fingerprint
+}
+
+// PinDrift compares the server's current catalog with the spec's pins:
+// tools added since pinning, pinned tools no longer listed, and tools whose
+// fingerprint changed. Added and changed tools are the ones Tools withholds.
+// Only tools AllowedTools lets through are compared, on both sides, so a
+// tool the spec never imports is not reported. Without pins (nil) it reports
+// no drift.
+func (c *Client) PinDrift(ctx context.Context) (CatalogDrift, error) {
+	if c.spec.PinnedTools == nil {
+		return CatalogDrift{}, nil
+	}
+	cat, err := c.Catalog(ctx)
+	if err != nil {
+		return CatalogDrift{}, err
+	}
+	inScope := func(string) bool { return true }
+	if len(c.spec.AllowedTools) > 0 {
+		inScope = func(name string) bool { return slices.Contains(c.spec.AllowedTools, name) }
+	}
+	pinned, current := Catalog{Server: cat.Server}, Catalog{Server: cat.Server}
+	for name, fp := range c.spec.PinnedTools {
+		if inScope(name) {
+			pinned.Tools = append(pinned.Tools, CatalogTool{Name: name, Fingerprint: fp})
+		}
+	}
+	for _, t := range cat.Tools {
+		if inScope(t.Name) {
+			current.Tools = append(current.Tools, t)
+		}
+	}
+	return DiffCatalogs(pinned, current), nil
 }
 
 // isIdempotent reports whether a remote tool may be repeated after an
@@ -681,10 +813,6 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 	stop := context.AfterFunc(t.client.closing, cancel)
 	defer stop()
 
-	if !t.client.offers(t.remote) {
-		return errorResult("mcp: server %q no longer offers tool %s", t.server, t.remote), nil
-	}
-
 	if sem := t.client.sem; sem != nil {
 		select {
 		case sem <- struct{}{}:
@@ -692,6 +820,12 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		case <-ctx.Done():
 			return errorResult("mcp: call %s on %q waited for a free slot until %v", t.remote, t.server, ctx.Err()), nil
 		}
+	}
+
+	// Inside the slot: a pin check may list the tools, and MaxConcurrent
+	// bounds that request to the server too.
+	if refused, ok := t.refusal(ctx); ok {
+		return refused, nil
 	}
 
 	if fn := t.client.spec.ArgTransform; fn != nil {
@@ -723,12 +857,30 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		if !t.idempotent {
 			return errorResult("mcp: server %q lost its session during %s and was reconnected; the call was not retried because the tool is not known to be idempotent and may have run", t.server, t.remote), nil
 		}
+		// The new session may list a different tool under the same name.
+		if refused, ok := t.refusal(ctx); ok {
+			return refused, nil
+		}
 		res, err = fresh.CallTool(ctx, params)
 	}
 	if err != nil {
 		return errorResult("mcp: call %s on %q failed: %v", t.remote, t.server, err), nil
 	}
 	return t.convert(res), nil
+}
+
+// refusal returns the error result for a call that must not be sent: the
+// server no longer offers the tool, or, under pins, a current listing does
+// not show it matching its pin or cannot be fetched.
+func (t *serverTool) refusal(ctx context.Context) (types.ToolResult, bool) {
+	ok, err := t.client.callable(ctx, t.remote)
+	switch {
+	case err != nil:
+		return errorResult("mcp: call %s on %q refused: its pin could not be checked: %v", t.remote, t.server, err), true
+	case !ok:
+		return errorResult("mcp: server %q no longer offers tool %s", t.server, t.remote), true
+	}
+	return types.ToolResult{}, false
 }
 
 func errorResult(format string, args ...any) types.ToolResult {
