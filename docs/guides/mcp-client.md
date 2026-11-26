@@ -100,7 +100,10 @@ Set `ServerSpec.PinnedTools` to the fingerprints you approved, and the client im
 A tool the server added or rewrote is withheld.
 A call to a tool registered before the rewrite is checked against its pin before the client sends it.
 When the client has no cached tool list, after `tools/list_changed` or a reconnect, it lists the tools again first.
+If that listing finds the session dead, the client reconnects once and checks the listing from the new session.
+Concurrent calls share one such listing, and each call lists only after it has a `MaxConcurrent` slot.
 A tool that does not match its pin, or a pin that the client cannot check, gets an error result, and the call never reaches the server.
+The check and the call are two requests, so a server can still change a tool between them. A pin cannot close that gap.
 `Client.PinDrift` reports what was withheld, so a host can show it and ask before pinning again.
 It compares only the tools that `AllowedTools` lets through.
 

@@ -74,16 +74,23 @@ func Fingerprint(name, description string, schema json.RawMessage) string {
 // the server sends tools/list_changed or the session is replaced. The returned
 // value is a copy.
 func (c *Client) Catalog(ctx context.Context) (Catalog, error) {
+	cat, _, err := c.listCatalog(ctx)
+	return cat, err
+}
+
+// listCatalog is Catalog, and also returns the session a failed listing ran
+// on, so a caller can reconnect that session when it turns out to be dead.
+func (c *Client) listCatalog(ctx context.Context) (Catalog, *mcpsdk.ClientSession, error) {
 	c.mu.RLock()
 	cached, gen := c.catalog, c.catalogGen
 	c.mu.RUnlock()
 	if cached != nil {
-		return cached.clone(), nil
+		return cached.clone(), nil, nil
 	}
 
 	ctx, session, done, err := c.useSession(ctx)
 	if err != nil {
-		return Catalog{}, err
+		return Catalog{}, nil, err
 	}
 	defer done()
 	cat := Catalog{Server: c.spec.Name, CapturedAt: time.Now()}
@@ -91,7 +98,7 @@ func (c *Client) Catalog(ctx context.Context) (Catalog, error) {
 	// drop every tool after the first page.
 	for t, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			return Catalog{}, fmt.Errorf("mcp: list tools on %q: %w", c.spec.Name, err)
+			return Catalog{}, session, fmt.Errorf("mcp: list tools on %q: %w", c.spec.Name, err)
 		}
 		cat.Tools = append(cat.Tools, catalogTool(t))
 	}
@@ -110,7 +117,7 @@ func (c *Client) Catalog(ctx context.Context) (Catalog, error) {
 		}
 	}
 	c.mu.Unlock()
-	return cat.clone(), nil
+	return cat.clone(), nil, nil
 }
 
 // InvalidateCatalog drops the cached tool list so the next Catalog or Tools

@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,6 +64,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/urmzd/saige/agent/types"
+	"golang.org/x/sync/singleflight"
 )
 
 // DefaultCallTimeout bounds a single tool call when the spec sets none. An MCP
@@ -140,8 +142,10 @@ type ServerSpec struct {
 	// changed description is how a server that was trusted once turns
 	// hostile. A call to a tool registered earlier is checked against its pin
 	// before it is sent: when no listing is cached, the client lists the tools
-	// again first, and a call to a withheld tool never reaches the server.
-	// PinDrift reports what was withheld.
+	// again first, reconnecting once if that listing finds the session dead,
+	// and a call to a withheld tool never reaches the server. The server can
+	// still change a tool between that listing and the call; a pin cannot
+	// close that gap. PinDrift reports what was withheld.
 	//
 	// nil imports tools without checking them. A non-nil empty map pins to
 	// nothing: no tool is imported until it is pinned, which is what a server
@@ -289,6 +293,10 @@ type Client struct {
 	// calls counts in-flight tool calls so Close can let them unwind before
 	// closing the session.
 	calls sync.WaitGroup
+
+	// listings shares one pin-check listing among concurrent calls, keyed
+	// by catalogGen.
+	listings singleflight.Group
 }
 
 // Connect dials the server and completes the MCP handshake. The caller owns
@@ -656,7 +664,7 @@ func (c *Client) callable(ctx context.Context, remote string) (bool, error) {
 		return ok && c.pinned(t), nil
 	}
 	c.mu.RUnlock()
-	cat, err := c.Catalog(ctx)
+	cat, err := c.pinListing(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -666,6 +674,49 @@ func (c *Client) callable(ctx context.Context, remote string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// pinListing lists the tools for a pin check. A listing that finds its
+// session dead reconnects once and lists again on the new session, as a call
+// would, so a restarted server does not leave a pinned client refusing every
+// call. The new listing is checked like any other: a reconnect never skips
+// the check.
+//
+// Concurrent checks while no catalog is cached share one listing. The shared
+// listing is bounded by the call timeout rather than by any one caller's
+// context, so a caller that gives up does not fail the others; each caller
+// still stops waiting when its own context ends.
+func (c *Client) pinListing(ctx context.Context) (Catalog, error) {
+	c.mu.RLock()
+	gen := c.catalogGen
+	c.mu.RUnlock()
+	ch := c.listings.DoChan(strconv.FormatUint(gen, 10), func() (any, error) {
+		return c.listReconnecting(context.WithoutCancel(ctx))
+	})
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return Catalog{}, r.Err
+		}
+		return r.Val.(Catalog), nil
+	case <-ctx.Done():
+		return Catalog{}, ctx.Err()
+	}
+}
+
+// listReconnecting lists the tools within the call timeout, and on a dead
+// session reconnects once and lists again on the new session.
+func (c *Client) listReconnecting(ctx context.Context) (Catalog, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.spec.callTimeout())
+	defer cancel()
+	cat, session, err := c.listCatalog(ctx)
+	if err != nil && session != nil && isDeadSession(err) && ctx.Err() == nil {
+		if _, rerr := c.reconnect(ctx, session); rerr != nil {
+			return Catalog{}, fmt.Errorf("%w; reconnect failed: %v", err, rerr)
+		}
+		cat, _, err = c.listCatalog(ctx)
+	}
+	return cat, err
 }
 
 // pinned reports whether a catalog tool may be imported under the spec's
@@ -762,10 +813,6 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 	stop := context.AfterFunc(t.client.closing, cancel)
 	defer stop()
 
-	if refused, ok := t.refusal(ctx); ok {
-		return refused, nil
-	}
-
 	if sem := t.client.sem; sem != nil {
 		select {
 		case sem <- struct{}{}:
@@ -773,6 +820,12 @@ func (t *serverTool) ExecuteRich(ctx context.Context, args map[string]any) (type
 		case <-ctx.Done():
 			return errorResult("mcp: call %s on %q waited for a free slot until %v", t.remote, t.server, ctx.Err()), nil
 		}
+	}
+
+	// Inside the slot: a pin check may list the tools, and MaxConcurrent
+	// bounds that request to the server too.
+	if refused, ok := t.refusal(ctx); ok {
+		return refused, nil
 	}
 
 	if fn := t.client.spec.ArgTransform; fn != nil {
