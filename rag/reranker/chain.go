@@ -25,7 +25,9 @@ func (c Chain) Rerank(ctx context.Context, query string, hits []types.SearchHit)
 // ReplacesScores reports whether the chain's final scores come from a
 // scoring stage and no later stage reorders them away from score order:
 // true when the last stage is a scoring reranker. With MMR last, the order
-// is MMR's and the pipeline must not re-sort by score.
+// is MMR's and a caller must not re-sort by score. The rag pipeline does
+// not call it: it runs a Chain stage by stage and applies recency after
+// each stage that replaces scores.
 func (c Chain) ReplacesScores() bool {
 	if len(c) == 0 {
 		return false

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/urmzd/saige/rag/contextassembler"
 	"github.com/urmzd/saige/rag/internal/pipeline"
 	"github.com/urmzd/saige/rag/memstore"
+	"github.com/urmzd/saige/rag/reranker"
 	"github.com/urmzd/saige/rag/types"
 )
 
@@ -135,7 +137,7 @@ func (r rescoringReranker) Rerank(_ context.Context, _ string, hits []types.Sear
 
 func (rescoringReranker) ReplacesScores() bool { return true }
 
-func recencyOrder(t *testing.T, scores rescoringReranker) []string {
+func recencyOrder(t *testing.T, r types.Reranker) []string {
 	t.Helper()
 	old, fresh := textHit("old"), textHit("fresh")
 	old.Timestamp = time.Now().Add(-30 * 24 * time.Hour)
@@ -144,7 +146,7 @@ func recencyOrder(t *testing.T, scores rescoringReranker) []string {
 		Store:            memstore.New(),
 		ContentExtractor: &simpleExtractor{},
 		Retrievers:       []types.Retriever{&scriptedRetriever{hits: []types.SearchHit{old, fresh}}},
-		Reranker:         scores,
+		Reranker:         r,
 	})
 	result, err := pipe.Search(context.Background(), "q", types.WithRecency(24*time.Hour, 1))
 	if err != nil {
@@ -193,5 +195,54 @@ func TestPipelinePartialAssemblyIsKept(t *testing.T) {
 	}
 	if result == nil || result.Context == nil || len(result.Context.Blocks) != 1 {
 		t.Fatalf("result = %+v, want the partial context kept", result)
+	}
+}
+
+// Cross-encoder then MMR: recency must decay the cross-encoder scores
+// before MMR orders them, or MMR ranks raw scores that ignore age.
+func TestPipelineRecencyAppliesInsideChain(t *testing.T) {
+	chain := reranker.Chain{rescoringReranker{"old": 0.9, "fresh": 0.8}, reranker.NewMMR(1)}
+	if got := recencyOrder(t, chain); !slices.Equal(got, []string{"fresh", "old"}) {
+		t.Errorf("order = %v, want the month-old hit decayed below the fresh one before MMR", got)
+	}
+}
+
+// Recency must leave non-finite scores as they are: 0*Inf is NaN, and a NaN
+// score breaks the sort.
+func TestPipelineRecencyKeepsNonFiniteScores(t *testing.T) {
+	now := time.Now()
+	hit := func(id string, age time.Duration) types.SearchHit {
+		h := textHit(id)
+		if age >= 0 {
+			h.Timestamp = now.Add(-age)
+		}
+		return h
+	}
+	hits := []types.SearchHit{
+		hit("undated-top", -1), hit("old-top", 30*24*time.Hour),
+		hit("mid", time.Hour),
+		hit("undated-bottom", -1), hit("old-bottom", 30*24*time.Hour),
+	}
+	scores := rescoringReranker{
+		"undated-top": math.Inf(1), "old-top": math.Inf(1), "mid": 0.5,
+		"undated-bottom": math.Inf(-1), "old-bottom": math.Inf(-1),
+	}
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers:       []types.Retriever{&scriptedRetriever{hits: hits}},
+		Reranker:         scores,
+	})
+	result, err := pipe.Search(context.Background(), "q", types.WithRecency(24*time.Hour, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range result.Hits {
+		if want := scores[h.Variant.UUID]; h.Score != want && !(h.Variant.UUID == "mid" && h.Score < want) {
+			t.Errorf("%s score = %v, want %v", h.Variant.UUID, h.Score, want)
+		}
+	}
+	if len(result.Hits) != 5 || !math.IsInf(result.Hits[0].Score, 1) || result.Hits[2].Variant.UUID != "mid" {
+		t.Errorf("hits = %+v, want both +Inf hits first, then mid", result.Hits)
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/urmzd/saige/rag/contextassembler"
 	"github.com/urmzd/saige/rag/fusion"
+	"github.com/urmzd/saige/rag/reranker"
 	ragtypes "github.com/urmzd/saige/rag/types"
 )
 
@@ -23,8 +24,9 @@ const ln2 = 0.6931471805599453
 // blended by the configured weight: score - weight*(1-decay)*|score|. For a
 // positive score that is score*(1-weight+weight*decay). Using |score| keeps
 // older hits lower when scores are negative (z-score fusion, cross-encoder
-// logits), where multiplying would pull them up toward zero. It is a no-op
-// unless WithRecency supplied a positive half-life.
+// logits), where multiplying would pull them up toward zero. Non-finite
+// scores and hits with no decay keep their score. It is a no-op unless
+// WithRecency supplied a positive half-life.
 func applyRecency(hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) {
 	if cfg.RecencyHalfLife <= 0 {
 		return
@@ -42,8 +44,17 @@ func applyRecency(hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) {
 	}
 	halfLife := float64(cfg.RecencyHalfLife)
 	for i := range hits {
+		// A non-finite score (a scorer's -Inf for "irrelevant") stays as it
+		// is: 0*Inf is NaN, and NaN breaks the sort.
+		score := hits[i].Score
+		if math.IsInf(score, 0) || math.IsNaN(score) {
+			continue
+		}
 		recency := recencyFactor(hits[i].Timestamp, now, halfLife)
-		hits[i].Score -= weight * (1 - recency) * math.Abs(hits[i].Score)
+		if recency == 1 {
+			continue
+		}
+		hits[i].Score = score - weight*(1-recency)*math.Abs(score)
 	}
 }
 
@@ -197,16 +208,10 @@ func (p *pipelineImpl) Search(ctx context.Context, query string, opts ...ragtype
 func (p *pipelineImpl) rerank(ctx context.Context, query string, merged []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) (hits []ragtypes.SearchHit, partialErr, err error) {
 	stageCtx, stage := p.cfg.Observer.StartSpan(ctx, ragtypes.SpanRerank,
 		ragtypes.Attr(ragtypes.AttrCandidates, len(merged)))
-	reranked, err := p.cfg.Reranker.Rerank(stageCtx, query, merged)
+	reranked, err := runReranker(stageCtx, p.cfg.Reranker, query, merged, cfg)
 	endSpan(stage, err)
 	switch {
 	case err == nil:
-		// A reranker that rescores hits discards the recency blended into
-		// the fused scores, so blend it into the new scores.
-		if r, ok := p.cfg.Reranker.(ragtypes.ScoringReranker); ok && r.ReplacesScores() && cfg.RecencyHalfLife > 0 {
-			applyRecency(reranked, cfg)
-			sortByScore(reranked)
-		}
 		return reranked, nil, nil
 	case ctx.Err() != nil:
 		return nil, nil, fmt.Errorf("rerank: %w", errors.Join(ctx.Err(), err))
@@ -214,6 +219,32 @@ func (p *pipelineImpl) rerank(ctx context.Context, query string, merged []ragtyp
 		p.cfg.Logger.WarnContext(ctx, "rerank failed; keeping fused order", "error", err)
 		return merged, fmt.Errorf("rerank: %w", err), nil
 	}
+}
+
+// runReranker runs r over hits. A stage that replaces scores
+// (ragtypes.ScoringReranker) discards the recency blended into the fused
+// scores, so recency is blended into its scores and the hits re-sorted. A
+// reranker.Chain runs stage by stage, so a later stage such as MMR sees the
+// decayed scores and its order is kept.
+func runReranker(ctx context.Context, r ragtypes.Reranker, query string, hits []ragtypes.SearchHit, cfg *ragtypes.SearchConfig) ([]ragtypes.SearchHit, error) {
+	if chain, ok := r.(reranker.Chain); ok {
+		for _, stage := range chain {
+			var err error
+			if hits, err = runReranker(ctx, stage, query, hits, cfg); err != nil {
+				return nil, err
+			}
+		}
+		return hits, nil
+	}
+	out, err := r.Rerank(ctx, query, hits)
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := r.(ragtypes.ScoringReranker); ok && s.ReplacesScores() && cfg.RecencyHalfLife > 0 {
+		applyRecency(out, cfg)
+		sortByScore(out)
+	}
+	return out, nil
 }
 
 // assemble builds the cited context for the final page. A per-search budget
