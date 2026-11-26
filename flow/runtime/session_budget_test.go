@@ -236,7 +236,8 @@ func TestChildBudgetIsTheCalleesOwnLimit(t *testing.T) {
 // account fails the delegation at once.
 func TestFinalReserveErrors(t *testing.T) {
 	for _, err := range []error{session.ErrBudget, session.ErrNotFound, session.ErrInvalid,
-		fmt.Errorf("x: %w", definition.ErrNotFound), definition.ErrInvalid, definition.ErrPin} {
+		fmt.Errorf("x: %w", definition.ErrNotFound), fmt.Errorf("child: sub-agent grand: %w", definition.ErrRetired),
+		definition.ErrInvalid, definition.ErrPin} {
 		if !finalReserveError(err) {
 			t.Errorf("%v retries", err)
 		}

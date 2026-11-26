@@ -1497,7 +1497,7 @@ func (r *Runtime) answerParent(ctx context.Context, in Input, text string, stopp
 // way a retry would repeat.
 func finalReserveError(err error) bool {
 	for _, final := range []error{session.ErrBudget, session.ErrNotFound, session.ErrInvalid,
-		definition.ErrNotFound, definition.ErrInvalid, definition.ErrPin} {
+		definition.ErrNotFound, definition.ErrRetired, definition.ErrInvalid, definition.ErrPin} {
 		if errors.Is(err, final) {
 			return true
 		}
