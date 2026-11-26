@@ -1,5 +1,22 @@
 # Upgrading to this release
 
+## RAG retrieval defaults and fixes
+
+What changes for existing callers of `rag.New` and the `rag` packages:
+
+| Change | Effect |
+| --- | --- |
+| A pipeline with embedders and no chunker chunks with `chunker.DefaultConfig()` (512 tokens, 50 overlap) | Long documents are no longer embedded whole and cut off at the embedder's input limit. Pass `rag.WithoutChunker()` to store sections whole. Ingest again to rechunk stored documents. |
+| A pipeline with automatic retrievers over a store that implements `types.KeywordSearcher` fuses keyword search, as if `rag.WithBM25` were set | Exact terms such as IDs and error codes are found on `rag/pgstore` without extra options. Pass `rag.WithoutKeywordSearch()` to stay vector-only. Explicit `rag.WithRetrievers` are unchanged. |
+| `rag.WithCrossEncoder` with `rag.WithMMR` runs both, cross-encoder first (`reranker.Chain`) | Before, the cross-encoder alone ran. |
+| A failed reranker keeps the fused order and returns `types.ErrPartialSearch` | Before, the search failed. A done context still fails it. |
+| HyDE's hypothetical passages reach only retrievers that implement `types.DenseRetriever` | Keyword and graph retrievers get the original query alone. Custom dense retrievers and wrappers implement `Dense() bool`. |
+| MMR gives a hit without a comparable embedding the mean similarity of the comparable pairs | Keyword and graph hits are no longer ranked as duplicates of every selected hit. |
+| RRF counts a key once per list and ignores empty lists in its ceiling | A passage behind several graph facts no longer outvotes other lists, and `WithMinScore` no longer drops every hit when one retriever returns nothing. |
+| Recency lowers negative scores, and is applied again after a reranker that implements `types.ScoringReranker` | Cross-encoder scores now decay with age like fused scores. |
+| `DefaultAssembler` and `CompressingAssembler` budget the whole prompt and skip a hit that does not fit | One oversized top hit no longer empties the context. `WithContextAssembly(n)` now also bounds a configured assembler. A failed compression call keeps that hit's original text and returns `types.ErrPartialSearch`. |
+| The semantic chunker enforces `MaxTokens` on text without sentence punctuation and splits after CJK terminators and at line breaks | Chunk boundaries of stored semantic chunks can differ after ingesting again. |
+
 ## New models, and Fireworks and Groq as hosted vendors
 
 The embedded catalog (revision `2026-11-20.2`) adds claude-fable-5-2 and claude-mythos-5-2, gpt-6.1-terra, gpt-6.2-sol and gpt-6.2-astra, the four Gemini 4 models (hydrogen, neon, argon, carbon) and gemini-embedding-2, priced as of 2026-11-20. It also adds a `fireworks` vendor with 14 open chat models and one embedding model that Fireworks serves serverless, and a `groq` vendor with gpt-oss-120b, gpt-oss-20b and qwen3.8-27b. See [hosted vendors](../reference/catalog.md#hosted-vendors).

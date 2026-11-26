@@ -1,11 +1,15 @@
 package pipeline_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/urmzd/saige/rag/contextassembler"
 	"github.com/urmzd/saige/rag/internal/pipeline"
@@ -113,5 +117,81 @@ func TestPipelinePerSearchBudgetReachesConfiguredAssembler(t *testing.T) {
 	}
 	if result.Context == nil || result.Context.TokenCount > 50 || len(result.Context.Blocks) != 1 {
 		t.Fatalf("context = %+v, want one block within 50 tokens", result.Context)
+	}
+}
+
+// rescoringReranker replaces each hit's score from a table and sorts, as a
+// cross-encoder does.
+type rescoringReranker map[string]float64
+
+func (r rescoringReranker) Rerank(_ context.Context, _ string, hits []types.SearchHit) ([]types.SearchHit, error) {
+	out := slices.Clone(hits)
+	for i := range out {
+		out[i].Score = r[out[i].Variant.UUID]
+	}
+	slices.SortStableFunc(out, func(a, b types.SearchHit) int { return cmp.Compare(b.Score, a.Score) })
+	return out, nil
+}
+
+func (rescoringReranker) ReplacesScores() bool { return true }
+
+func recencyOrder(t *testing.T, scores rescoringReranker) []string {
+	t.Helper()
+	old, fresh := textHit("old"), textHit("fresh")
+	old.Timestamp = time.Now().Add(-30 * 24 * time.Hour)
+	fresh.Timestamp = time.Now()
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers:       []types.Retriever{&scriptedRetriever{hits: []types.SearchHit{old, fresh}}},
+		Reranker:         scores,
+	})
+	result, err := pipe.Search(context.Background(), "q", types.WithRecency(24*time.Hour, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range result.Hits {
+		got = append(got, h.Variant.UUID)
+	}
+	return got
+}
+
+// A reranker that replaces scores drops the recency blended into the fused
+// scores, so the pipeline applies it again.
+func TestPipelineRecencyAppliesAfterScoringReranker(t *testing.T) {
+	if got := recencyOrder(t, rescoringReranker{"old": 0.9, "fresh": 0.8}); !slices.Equal(got, []string{"fresh", "old"}) {
+		t.Errorf("order = %v, want the month-old hit decayed below the fresh one", got)
+	}
+}
+
+// Recency must lower a negative score, not pull it up toward zero.
+func TestPipelineRecencyLowersNegativeScores(t *testing.T) {
+	if got := recencyOrder(t, rescoringReranker{"old": -1.0, "fresh": -1.2}); !slices.Equal(got, []string{"fresh", "old"}) {
+		t.Errorf("order = %v, want the month-old hit decayed below the fresh one", got)
+	}
+}
+
+// partialAssembler returns a usable context together with a partial error.
+type partialAssembler struct{}
+
+func (partialAssembler) Assemble(_ context.Context, _ string, hits []types.SearchHit) (*types.AssembledContext, error) {
+	return &types.AssembledContext{Prompt: "ctx", Blocks: []types.ContextBlock{{Text: hits[0].Variant.Text}}},
+		fmt.Errorf("%w: one compression call failed", types.ErrPartialSearch)
+}
+
+func TestPipelinePartialAssemblyIsKept(t *testing.T) {
+	pipe := pipeline.New(pipeline.Config{
+		Store:            memstore.New(),
+		ContentExtractor: &simpleExtractor{},
+		Retrievers:       []types.Retriever{&scriptedRetriever{hits: []types.SearchHit{textHit("a")}}},
+		ContextAssembler: partialAssembler{},
+	})
+	result, err := pipe.Search(context.Background(), "q", types.WithContextAssembly(0))
+	if !errors.Is(err, types.ErrPartialSearch) {
+		t.Fatalf("err = %v, want partial", err)
+	}
+	if result == nil || result.Context == nil || len(result.Context.Blocks) != 1 {
+		t.Fatalf("result = %+v, want the partial context kept", result)
 	}
 }

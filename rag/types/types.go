@@ -433,7 +433,12 @@ func WithContextAssembly(maxTokens int) SearchOption {
 // halfLife is the age at which the recency factor reaches 0.5; weight in [0,1]
 // controls how much recency influences the final score:
 //
-//	score = (1-weight)*score + weight*score*recencyFactor
+//	score = score - weight*(1-recencyFactor)*|score|
+//
+// For a positive score that is (1-weight)*score + weight*score*recencyFactor.
+// Using |score| keeps older hits lower when scores are negative, as
+// cross-encoder logits and z-score fusion can be. A reranker that replaces
+// scores (ScoringReranker) gets recency applied again to its scores.
 //
 // A non-positive halfLife is a no-op, preserving today's behavior. Hits with a
 // zero timestamp are treated as having no decay (recency factor 1.0).

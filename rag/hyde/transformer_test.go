@@ -150,3 +150,13 @@ func TestHyDERenderErrorDoesNotPanic(t *testing.T) {
 		t.Errorf("queries = %q, want only the original", queries)
 	}
 }
+
+// HyDE's extra queries are invented answers, so the transformer must say so
+// for the pipeline to keep them away from lexical retrievers.
+func TestHyDEReportsHypotheticalQueries(t *testing.T) {
+	var tr any = hyde.New(hyde.Config{LLM: &scriptedLLM{replies: []string{"x"}}})
+	h, ok := tr.(interface{ HypotheticalQueries() bool })
+	if !ok || !h.HypotheticalQueries() {
+		t.Fatal("hyde transformer does not report hypothetical queries")
+	}
+}
