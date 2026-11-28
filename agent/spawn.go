@@ -472,7 +472,12 @@ func (a *Agent) spawnSubAgent(ctx context.Context, stream *EventStream, tc types
 // has not received, one user message each, in completion order. It runs only
 // at safe points.
 func (a *Agent) injectSpawned(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID) (int, error) {
-	finished := stream.spawns.takeFinished()
+	return a.appendSpawned(ctx, stream, tr, branch, stream.spawns.takeFinished())
+}
+
+// appendSpawned appends the results of finished, children already taken from
+// the registry, and reports how many it appended.
+func (a *Agent) appendSpawned(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, finished []*SubAgentHandle) (int, error) {
 	for _, h := range finished {
 		node, err := a.appendNode(ctx, tr, branch, spawnResultMessage(h))
 		if err != nil {

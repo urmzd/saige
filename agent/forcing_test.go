@@ -53,6 +53,18 @@ func TestOnMaxIter(t *testing.T) {
 			wantText: "answer",
 		},
 		{name: "force final with no reply keeps the limit error", policy: MaxIterForceFinal, final: nil, wantErr: types.ErrMaxIterations},
+		{
+			// The output limit took the forced answer before any of it was
+			// kept. That is not a finished run with nothing to say.
+			name: "force final cut short before any answer is a truncation", policy: MaxIterForceFinal,
+			final: []types.Delta{usage(10, 100, "max_tokens")}, wantErr: types.ErrResponseTruncated,
+		},
+		{
+			// Thinking is not an answer: a forced answer that is cut short
+			// with only its thinking kept is no answer either.
+			name: "force final cut short with only its thinking kept is a truncation", policy: MaxIterForceFinal,
+			final: withUsage(thought(0), usage(10, 100, "max_tokens")), wantErr: types.ErrResponseTruncated,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,6 +80,14 @@ func TestOnMaxIter(t *testing.T) {
 			_, err := runAgent(t, a)
 			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if errors.Is(tt.wantErr, types.ErrResponseTruncated) {
+				// The run still ended at its step limit, and a caller
+				// that asks for that is told so.
+				var te *types.ResponseTruncatedError
+				if !errors.Is(err, types.ErrMaxIterations) || !errors.As(err, &te) || !te.Empty {
+					t.Fatalf("err = %v, want the step limit and an empty truncated answer", err)
+				}
 			}
 			if tt.policy != MaxIterForceFinal {
 				if script.CallCount() != 2 {

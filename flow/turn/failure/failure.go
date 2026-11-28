@@ -26,6 +26,9 @@ import (
 // differently, and a check that itself failed says nothing about the input)
 // and a run whose tool calls kept failing (the tools' faults may have been
 // passing ones).
+//
+// A turn the output limit cut short repeats too, and has no sentinel of its
+// own to list: see outputLimit.
 var repeating = []error{
 	// The agent loop used every iteration it was given.
 	saigetypes.ErrMaxIterations,
@@ -61,7 +64,35 @@ func Repeats(err error) bool {
 			return true
 		}
 	}
-	return false
+	return outputLimit(err)
+}
+
+// outputLimit reports whether err is a turn the model's output limit cut
+// short: a tool call it could not finish writing, or a limit spent before
+// any answer. The same input meets the same limit, and each attempt spends
+// the whole of it first, so a retry costs the most a model call can and
+// ends where the last one did. The caller is told instead, and can ask for
+// less.
+//
+// A stream that only ended early (types.ErrResponseTruncated with no output
+// limit behind it, as when a connection drops while a tool call is open) is
+// not this, and is retried.
+//
+// Nor is an output limit under a guardrail that tripped or a run whose tool
+// calls kept failing. Those are retried for what a new attempt changes (see
+// repeating), and the limit below them was met by a check's own model call,
+// or by the answer forced after the tools had failed: an attempt that goes
+// another way does not reach it.
+func outputLimit(err error) bool {
+	if errors.Is(err, saigetypes.ErrGuardrailTripped) || errors.Is(err, saigetypes.ErrToolErrorLimit) {
+		return false
+	}
+	var cut *saigetypes.ResponseTruncatedError
+	if errors.As(err, &cut) {
+		return true
+	}
+	var p *saigetypes.ProviderError
+	return errors.As(err, &p) && p.Kind == saigetypes.ErrorKindTruncated
 }
 
 // interrupted reports whether err is a turn that was cut short and did not

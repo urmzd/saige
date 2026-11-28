@@ -606,6 +606,8 @@ Strategies that keep recent turns, select relevant older ones, summarize with a 
 
 A turn that stops at the output token limit is committed and reported with `TruncatedDelta`, which names the node and the finish reason.
 Its tool calls never run. A truncated turn with tool calls fails the run with `ResponseTruncatedError`.
+So does a truncated turn that kept no answer: the limit was reached before any was produced, and the turn kept nothing, or only its thinking or the calls and results of tools the provider ran. Nothing is committed, the thinking included, the delta names no node, and the error's `Empty` is set.
+Text, media, a refusal or a citation is an answer, and such a turn is committed.
 
 | Control | Default | At the limit |
 | --- | --- | --- |
@@ -728,7 +730,9 @@ Limits:
 
 `Agent.Continue` resumes a branch that ends with an assistant turn, such as one cut short by an interrupt or the output limit.
 A provider that declares `CapAssistantPrefill` continues the partial turn. Any other receives `DefaultContinuePrompt`.
-`WithAutoContinue(n)` resumes a text-only turn cut off by the output limit up to n times. A cut-off tool call still fails the run.
+`WithAutoContinue(n)` resumes a text-only turn cut off by the output limit up to n times. A cut-off tool call still fails the run, and so does a cut-off turn that kept no answer: it has no partial answer to resume.
+A continuation that is cut off with no answer added ends the run without an error, on the partial answer it was continuing. The continue prompt joins the branch only once the continuation has added to the answer, so a continuation that fails or adds nothing leaves the branch ending with the partial answer.
+A message that joins the branch before the continuation's call (a steering or interrupting message, a background child's result, the wrap-up note) ends the continuation. The prompt is written before the message, the call answers the message, and a call cut off with no answer then fails the run like any other turn.
 
 ## Budget and failure limits
 

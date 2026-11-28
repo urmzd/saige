@@ -422,6 +422,11 @@ type ResponseTruncatedError struct {
 	FinishReason    string // FinishReasonMaxTokens for an output-limit stop, whatever the provider called it
 	OutputTokens    int    // tokens produced, 0 when unknown
 	MaxOutputTokens int    // configured limit, 0 when unknown
+	// Empty reports that the limit was reached before the turn produced
+	// anything a caller can use: no text, no tool call, nothing but
+	// thinking. The tokens went to thinking, or to output that is not kept
+	// when it is cut off.
+	Empty bool
 }
 
 func (e *ResponseTruncatedError) Error() string {
@@ -429,8 +434,16 @@ func (e *ResponseTruncatedError) Error() string {
 	if e.FinishReason != "" {
 		msg += " (finish reason " + e.FinishReason + ")"
 	}
-	if e.MaxOutputTokens > 0 {
+	if e.Empty {
+		// Not "token limit": ClassifyErrorMessage reads those words as a
+		// prompt too long for the context window.
+		msg += ": the output limit was reached before any answer was produced"
+	}
+	switch {
+	case e.MaxOutputTokens > 0:
 		msg += fmt.Sprintf(": %d of %d output tokens", e.OutputTokens, e.MaxOutputTokens)
+	case e.Empty && e.OutputTokens > 0:
+		msg += fmt.Sprintf(", after %d output tokens", e.OutputTokens)
 	}
 	return msg
 }

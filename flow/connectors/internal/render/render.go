@@ -442,9 +442,20 @@ func (d *Doc) builder(str stream) *strings.Builder {
 	return &d.text
 }
 
+// addToolCall files a call event under its call. A call is one id however
+// many events name it: it is requested as the model starts it, requested again
+// with a size while the model writes its arguments, and executing as its tool
+// starts. An event that tells the document nothing new about a call it knows,
+// as a repeated request does, reports no change, so the size of a call's
+// arguments never costs a surface an edit.
 func (d *Doc) addToolCall(seq uint64, p event.ToolCall) bool {
 	if p.Name == "" && p.ID == "" {
 		return false
+	}
+	var was Tool
+	at, known := d.toolAt[p.ID]
+	if known {
+		was = d.tools[at]
 	}
 	t := d.tool(p.ID, seq)
 	if p.Name != "" {
@@ -453,7 +464,7 @@ func (d *Doc) addToolCall(seq uint64, p event.ToolCall) bool {
 	if args := compact(p.Arguments); args != "" {
 		d.tools[t].Args = args
 	}
-	return true
+	return !known || d.tools[t] != was
 }
 
 func (d *Doc) addToolDone(seq uint64, p event.ToolDone) bool {

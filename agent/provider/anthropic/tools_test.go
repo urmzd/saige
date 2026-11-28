@@ -182,6 +182,56 @@ func TestToolChoiceValidation(t *testing.T) {
 	}
 }
 
+// Eager tool input is asked for on the tools the caller defines, and only when
+// the adapter is told to: a server tool has no such field, and the hidden tool
+// that carries structured output stays checked by the API.
+func TestEagerToolInputWire(t *testing.T) {
+	eager := func(t *testing.T, opts []Option, req types.Request) map[string]any {
+		t.Helper()
+		server, bodies := captureServer(t)
+		a := must.Get(New(Config{APIKey: "k", Model: types.ModelID(testModel)}, append(opts, WithBaseURL(server.URL))...))
+		req.Messages = []types.Message{types.UserMsg(types.Text("go"))}
+		ch, err := a.Stream(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drain(ch)
+		out := map[string]any{}
+		tools, _ := (*bodies)[0]["tools"].([]any)
+		for _, raw := range tools {
+			tool, _ := raw.(map[string]any)
+			out[fmt.Sprint(tool["name"])] = tool["eager_input_streaming"]
+		}
+		return out
+	}
+	if got := eager(t, nil, types.Request{Tools: testTools}); got["lookup"] != nil || got["write"] != nil {
+		t.Fatalf("unset: eager_input_streaming = %v, want absent", got)
+	}
+	got := eager(t, []Option{WithEagerToolInput(), WithServerTools(types.WebSearchTool(1))}, types.Request{Tools: testTools})
+	if got["lookup"] != true || got["write"] != true {
+		t.Fatalf("set: client tools = %v, want eager", got)
+	}
+	if got["web_search"] != nil {
+		t.Fatalf("set: a server tool carries eager_input_streaming = %v", got["web_search"])
+	}
+
+	// A response schema on a model that takes it as a forced tool adds the
+	// hidden tool to the request. Its input is the answer, and it stays
+	// checked by the API whatever the caller's tools are sent with.
+	schema := &types.ParameterSchema{Type: "object", Properties: map[string]types.PropertyDef{"answer": {Type: "string"}}, Required: []string{"answer"}}
+	got = eager(t, []Option{WithEagerToolInput()}, types.Request{Tools: testTools, Schema: schema})
+	hidden, sent := got[structuredToolName]
+	if !sent {
+		t.Fatalf("schema: the request has no %s tool; the test's model must take a schema as a forced tool: %v", structuredToolName, got)
+	}
+	if hidden != nil {
+		t.Fatalf("schema: the hidden tool carries eager_input_streaming = %v", hidden)
+	}
+	if got["lookup"] != true || got["write"] != true {
+		t.Fatalf("schema: client tools = %v, want eager", got)
+	}
+}
+
 func TestServerToolsWire(t *testing.T) {
 	server, bodies := captureServer(t)
 	ws := types.WebSearchTool(4)

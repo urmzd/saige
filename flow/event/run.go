@@ -48,6 +48,14 @@ const (
 // compact JSON. Arguments over it are left out whole, never cut.
 const MaxToolArguments = 8 << 10
 
+// ToolArgumentsStep is how many more bytes of a tool call's arguments a model
+// writes between two reports of their size: a requested ToolCall is repeated
+// each time the arguments pass another step (see ToolCall.ArgumentsBytes). It
+// is a size and not a time so that the number of events a call publishes is
+// bounded by the size of its arguments, about one per KiB, however the model
+// paces its fragments.
+const ToolArgumentsStep = 1 << 10
+
 // Question kinds: what a run is waiting on a person for.
 const (
 	QuestionApproval   = "approval"
@@ -160,13 +168,35 @@ type Thinking struct {
 }
 
 // ToolCall is the body of run.delta.tool.call.v1 (was delta.tool.call).
+//
+// A call is one ID, however many of these name it. It is requested once as
+// the model starts it, requested again while the model writes its arguments,
+// and executing once as its tool starts. A reader keeps one call per ID
+// (within its Parent) and reads each event as that call's latest state, never
+// as another call.
 type ToolCall struct {
-	ID             string          `json:"id"`
-	Name           string          `json:"name"`
-	Phase          string          `json:"phase"`
-	Arguments      json.RawMessage `json:"arguments,omitempty"`
-	ArgumentsBytes int             `json:"arguments_bytes,omitempty"`
-	Parent         []string        `json:"parent,omitempty"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phase string `json:"phase"`
+	// Arguments is what the call was made with, as compact JSON. Only the
+	// executing phase carries it: nothing of the arguments is published
+	// before the model has finished the call.
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// ArgumentsBytes is a size in place of the arguments.
+	//
+	// In the requested phase it is progress: the bytes of the arguments the
+	// model has written so far, as the model streams them. It is absent on
+	// the first requested event and grows on each one after it, which comes
+	// when the arguments pass another ToolArgumentsStep. Arguments shorter
+	// than one step are never sized this way.
+	//
+	// In the executing phase it is the size of the whole arguments, as
+	// compact JSON, set only when they are over MaxToolArguments and were
+	// left out. The two are counted differently (streamed bytes, then
+	// compact JSON after any scrubbing), so the last progress size need not
+	// equal it.
+	ArgumentsBytes int      `json:"arguments_bytes,omitempty"`
+	Parent         []string `json:"parent,omitempty"`
 }
 
 // ToolDone is the body of run.delta.tool.done.v1 (was delta.tool.done).

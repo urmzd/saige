@@ -494,14 +494,18 @@ failure that a retry would only repeat fails the run on its first attempt
 (`ErrMaxIterations`), the model kept asking for the same tool calls with the
 same arguments (`ErrRepeatedToolCalls`), the request was refused locally as
 an invalid model configuration (`ErrInvalidModelConfig`, which a media part
-with no usable locator also matches), and the prompt does not fit the
-model's context window (`ErrContextLength`). A turn under a budget is not
-retried either.
+with no usable locator also matches), the prompt does not fit the model's
+context window (`ErrContextLength`), and the model's output limit cut the
+turn short (a `*ResponseTruncatedError`, or a provider error of kind
+`truncated`): each attempt spends the whole limit before it ends the same
+way. A turn under a budget is not retried either.
 
 Everything else is retried up to the worker's attempt limit, including a
-tripped guardrail, a run whose tool calls kept failing, any transient
-provider failure, and a fallback chain in which any member failed
-transiently. A turn whose context ended (a worker shutting down, a lost
+tripped guardrail and a run whose tool calls kept failing (each also when an
+output limit is somewhere under it: a check's own model call, or the answer
+forced after the tools failed), any transient
+provider failure, a fallback chain in which any member failed
+transiently, and a stream that ended early with a tool call still open. A turn whose context ended (a worker shutting down, a lost
 claim) never fails its run, whatever error it returned. A `turn.Runtime`
 decides for its own errors with `turn.WithRepeats`; the decision crosses a
 sandbox task with the error.
@@ -969,7 +973,12 @@ Verified against the code, and honest.
   `event.MaxToolArguments` (8 KiB); larger arguments are left out whole and
   sized in `arguments_bytes`. They go to every subscriber, chat
   sinks render a short prefix of them, and only `native.WithToolArguments`
-  scrubs them first. flow emits no tracing spans of its own.
+  scrubs them first. While a model writes a call's arguments, the requested
+  `run.delta.tool.call.v1` is repeated with the bytes received so far in
+  `arguments_bytes`, about once per KiB (`event.ToolArgumentsStep`): that
+  size is published for every call, counted before any scrubbing, and it is
+  all that is published before the call is complete. flow emits no tracing
+  spans of its own.
 - **A stop wraps up the turn, not its side effects.** Tool calls already
   finished stay done, and a tool that ignores its context delays the stop until
   the grace period (ten seconds by default) cancels the turn. A turn that is

@@ -275,6 +275,53 @@ func TestResponseTruncatedError(t *testing.T) {
 	}
 }
 
+// The message is what an operator reads in a log or a failed run. It keeps
+// its opening words, which readers match on, and an empty turn says that the
+// limit was reached before there was an answer.
+func TestResponseTruncatedErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		err  ResponseTruncatedError
+		want string
+	}{
+		{"bare", ResponseTruncatedError{}, "response truncated"},
+		{"reason", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 100}, "response truncated (finish reason max_tokens)"},
+		{
+			"limit known", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 100, MaxOutputTokens: 100},
+			"response truncated (finish reason max_tokens): 100 of 100 output tokens",
+		},
+		{
+			"empty", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 4096, Empty: true},
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced, after 4096 output tokens",
+		},
+		{
+			"empty, tokens unknown", ResponseTruncatedError{FinishReason: "max_tokens", Empty: true},
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced",
+		},
+		{
+			"empty, limit known", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 4096, MaxOutputTokens: 4096, Empty: true},
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced: 4096 of 4096 output tokens",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Errorf("Error() = %q, want %q", got, tt.want)
+			}
+			if !errors.Is(&tt.err, ErrResponseTruncated) {
+				t.Error("does not match ErrResponseTruncated")
+			}
+			// The message crosses process boundaries as text, and a reader
+			// classifies it by its words. It is about the output limit: it
+			// must not read as a prompt too long for the context window,
+			// which is answered by compacting the conversation.
+			if kind, ok := ClassifyErrorMessage(tt.err.Error()); ok {
+				t.Errorf("the message classifies as %v: %q", kind, tt.err.Error())
+			}
+		})
+	}
+}
+
 func TestIsContentFilterFinishReason(t *testing.T) {
 	for reason, want := range map[string]bool{
 		"content_filter": true, "refusal": true, "SAFETY": true, "PROHIBITED_CONTENT": true,

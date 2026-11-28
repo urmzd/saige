@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/urmzd/saige/main/agent/provider/catalog/catalog.schema.json",
   "version": 2,
-  "revision": "2026-11-20.2",
+  "revision": "2026-11-27.1",
   "model_templates": {
     "anthropic.base": {
       "limits": {
@@ -178,7 +178,10 @@
     "anthropic/claude-haiku-4": {
       "extends": "anthropic.base",
       "tier": "economy",
-      "superseded_by": "claude-haiku-5-5"
+      "superseded_by": "claude-haiku-5-5",
+      "limits": {
+        "max_output_tokens": 64000
+      }
     },
     "anthropic/claude-haiku-5": {
       "extends": "anthropic.base",
@@ -225,7 +228,10 @@
     "anthropic/claude-opus-4": {
       "extends": "anthropic.base",
       "tier": "frontier",
-      "superseded_by": "claude-opus-5-5"
+      "superseded_by": "claude-opus-5-5",
+      "limits": {
+        "max_output_tokens": 64000
+      }
     },
     "anthropic/claude-opus-4-6": {
       "extends": "anthropic.base",
@@ -274,7 +280,10 @@
     "anthropic/claude-sonnet-4": {
       "extends": "anthropic.base",
       "tier": "standard",
-      "superseded_by": "claude-sonnet-5-5"
+      "superseded_by": "claude-sonnet-5-5",
+      "limits": {
+        "max_output_tokens": 64000
+      }
     },
     "anthropic/claude-sonnet-4-6": {
       "extends": "anthropic.base",

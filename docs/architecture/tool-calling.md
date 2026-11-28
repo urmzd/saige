@@ -74,6 +74,7 @@ Only tool execution holds a slot. Approval waits and delegated sub-agents do not
 Two independent controls:
 
 - **Model side:** whether the model may put several calls in one turn. Set it with the `parallel` dial, the raw `parallel_tools` option, or an adapter's `WithParallelToolCalls`. OpenAI sends `parallel_tool_calls`; Anthropic sends `disable_parallel_tool_use` on the tool choice. The Gemini API and Ollama have no such control: a raw `parallel_tools` option is rejected there, and `parallel: false` is a contractual dial, so it fails the attempt (a router skips that member). `parallel: true` is advisory and dropped where it cannot apply (`agent/types/dials_compile.go`).
+- **Input as it is written:** Anthropic holds each tool-input parameter back until it is whole and checked, so a call that carries a document sends no argument fragment until the document is written. An adapter built with `WithEagerToolInput` asks for the fragments as they are generated, on the tools the caller defines. The API then checks nothing, and the agent loop refuses arguments that do not decode, that the output limit cut off, or that do not fit the tool's parameters. Without it, the progress `flow` reports while a call is written (`event.ToolArgumentsStep`) arrives all at once, just before the call runs.
 - **saige side:** whether saige runs the calls it received at the same time: `MaxParallelTools`.
 
 | | saige parallel (`MaxParallelTools` 0 or > 1) | saige sequential (`MaxParallelTools` 1) |

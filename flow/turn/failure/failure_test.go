@@ -34,9 +34,26 @@ var cases = []struct {
 	{"context length", provider(saigetypes.ErrorKindContextLength), true},
 	{"wrapped twice", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", saigetypes.ErrMaxIterations)), true},
 	{"after retries", &saigetypes.RetryError{Attempts: 3, Last: provider(saigetypes.ErrorKindContextLength)}, true},
+	// The output limit: each attempt spends the whole of it and ends the same way.
+	{"output limit, as a provider reports it", provider(saigetypes.ErrorKindTruncated), true},
+	{"output limit, a tool call cut off", &saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096}, true},
+	{"output limit, nothing produced", &saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096, Empty: true}, true},
+	{"output limit, wrapped", fmt.Errorf("turn: %w", &saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens}), true},
 
 	{"tool error limit", saigetypes.ErrToolErrorLimit, false},
 	{"guardrail tripped", saigetypes.ErrGuardrailTripped, false},
+	// Both stay retried with an output limit somewhere under them: the
+	// retry's tools may not fail, and its check sees new output.
+	{"tool error limit, its forced answer cut short", fmt.Errorf("%w: the forced final answer was cut short: %w", saigetypes.ErrToolErrorLimit,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096, Empty: true}), false},
+	{"guardrail tripped, its check cut short", fmt.Errorf("%w: check failed: %w", saigetypes.ErrGuardrailTripped,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096}), false},
+	{"guardrail tripped, its check cut short at the provider", fmt.Errorf("%w: check failed: %w", saigetypes.ErrGuardrailTripped,
+		provider(saigetypes.ErrorKindTruncated)), false},
+	// The step limit repeats, and so does the limit that cut its forced
+	// answer short.
+	{"max iterations, its forced answer cut short", fmt.Errorf("%w: the forced final answer was cut short: %w", saigetypes.ErrMaxIterations,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096, Empty: true}), true},
 	{"budget exceeded", saigetypes.ErrBudgetExceeded, false},
 	{"transient", provider(saigetypes.ErrorKindTransient), false},
 	{"rate limited", provider(saigetypes.ErrorKindRateLimit), false},
@@ -44,9 +61,11 @@ var cases = []struct {
 	{"auth", provider(saigetypes.ErrorKindAuth), false},
 	{"permanent", provider(saigetypes.ErrorKindPermanent), false},
 	{"invalid request", provider(saigetypes.ErrorKindInvalidRequest), false},
-	{"truncated", provider(saigetypes.ErrorKindTruncated), false},
 	{"content filter", provider(saigetypes.ErrorKindContentFilter), false},
 	{"rate limited after retries", &saigetypes.RetryError{Attempts: 3, Last: provider(saigetypes.ErrorKindRateLimit)}, false},
+
+	// A stream that ended early with a call open may be a dropped connection.
+	{"a stream that ended with a tool call open", fmt.Errorf("%w: stream ended with open tool calls [c1]", saigetypes.ErrResponseTruncated), false},
 
 	{"canceled", context.Canceled, false},
 	{"deadline exceeded", context.DeadlineExceeded, false},
@@ -67,6 +86,8 @@ var cases = []struct {
 	{"chain: context length, then rate limited", chain(provider(saigetypes.ErrorKindContextLength), provider(saigetypes.ErrorKindRateLimit)), false},
 	{"chain in a chain: rate limited inside", chain(chain(provider(saigetypes.ErrorKindRateLimit), provider(saigetypes.ErrorKindAuth)), provider(saigetypes.ErrorKindContextLength)), false},
 	{"chain, wrapped: rate limited, then context length", fmt.Errorf("turn: %w", chain(provider(saigetypes.ErrorKindRateLimit), provider(saigetypes.ErrorKindContextLength))), false},
+	{"chain: output limit twice", chain(provider(saigetypes.ErrorKindTruncated), provider(saigetypes.ErrorKindTruncated)), true},
+	{"chain: rate limited, then output limit", chain(provider(saigetypes.ErrorKindRateLimit), provider(saigetypes.ErrorKindTruncated)), false},
 	{"chain: empty", chain(), false},
 }
 
