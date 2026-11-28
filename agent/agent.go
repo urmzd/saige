@@ -1582,17 +1582,16 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		// steering and interrupting messages can be appended here.
 		// A message that joins the branch here comes after the prompt of
 		// a continuation under way, as it did when that prompt was written
-		// at once.
+		// at once, and ends the continuation: the next call answers the
+		// message.
 		interrupted, err := a.injectAtSafePoint(ctx, stream, tr, branch, func() error {
-			return a.writeContinuePrompt(ctx, tr, branch, &cont)
+			return a.endContinuation(ctx, tr, branch, &cont)
 		})
 		if err != nil {
 			return err
 		}
 		if interrupted {
-			// The interrupting message starts a new user turn, which has
-			// kept no answer of its own.
-			turnStart, pendingWork, guards, wrapped, cont = iterCount, false, loopGuards{}, false, continuation{}
+			turnStart, pendingWork, guards, wrapped = iterCount, false, loopGuards{}, false
 		}
 
 		// Flatten the branch to get current message history.
@@ -1644,7 +1643,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			// The note joins the branch at this safe point, and the turn
 			// is prepared again so the next call carries it.
 			wrapped = true
-			if err := a.writeContinuePrompt(ctx, tr, branch, &cont); err != nil {
+			if err := a.endContinuation(ctx, tr, branch, &cont); err != nil {
 				return err
 			}
 			if err := a.injectWrapUp(ctx, stream, tr, branch, iterCount-turnStart, resolved.maxIter, out); err != nil {

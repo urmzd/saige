@@ -505,6 +505,10 @@ func treeRoundTrips(msg types.Message) bool {
 // that answer, where Continue can resume it. A provider that takes no prefill
 // is asked with DefaultContinuePrompt, which joins the branch only once the
 // continuation has added to the answer.
+//
+// A message that joins the branch before the continuation's call ends the
+// continuation: the call answers that message, and when it is cut short with
+// no answer the run fails, as it does for any turn.
 func WithAutoContinue(n int) Option {
 	return func(c *Config) { c.AutoContinue = n }
 }
@@ -557,6 +561,13 @@ func supportsPrefill(provider types.Provider) bool {
 // ending with the partial answer, where Continue or the next message can go
 // on from it. Anything else that writes to the branch first writes the prompt
 // before it, so the branch reads in the order the model was asked.
+//
+// A continuation is one call with nothing between it and the partial answer.
+// A message that joins the branch before that call (a steering or
+// interrupting message, a background child's result, the wrap-up note) ends
+// the continuation: the call then answers that message, and is judged as any
+// turn is. Cut short with no answer, it fails the run, because the message
+// got none; it is not a continuation that added nothing.
 type continuation struct {
 	// kept is the node of the partial answer being continued. Empty means
 	// no continuation is under way.
@@ -585,6 +596,15 @@ func (a *Agent) writeContinuePrompt(ctx context.Context, tr *tree.Tree, branch t
 	}
 	cont.prompted = false
 	return a.appendToBranch(context.WithoutCancel(ctx), tr, branch, continuePrompt())
+}
+
+// endContinuation ends the continuation under way, if there is one, because
+// a message is about to join the branch ahead of its call. The prompt is
+// written first.
+func (a *Agent) endContinuation(ctx context.Context, tr *tree.Tree, branch types.BranchID, cont *continuation) error {
+	err := a.writeContinuePrompt(ctx, tr, branch, cont)
+	*cont = continuation{}
+	return err
 }
 
 // settleContinuation runs when the model call of a continuation has
