@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.56.0 (2026-11-28)
+
+### Features
+
+- **flow**: report tool argument progress; fail an empty truncated turn (#192) ([d26b5b7](https://github.com/urmzd/saige/commit/d26b5b7c9203d741d08ffc1aa827730f9371145b))
+
+[Full Changelog](https://github.com/urmzd/saige/compare/v0.55.0...v0.56.0)
+
+
 ## 0.55.0 (2026-11-26)
 
 ### Breaking
