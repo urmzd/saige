@@ -1,5 +1,21 @@
 # Upgrading to this release
 
+## Turns the output limit cuts short, and tool call progress
+
+What changes for existing callers of the agent loop, `flow` and the Anthropic adapter:
+
+| Change | Effect |
+| --- | --- |
+| A turn the output limit cut short with no answer kept ends the run with `*types.ResponseTruncatedError`, its `Empty` set | Before, the run ended without an error and with an empty answer. A turn kept no answer when it kept nothing, or only thinking, run metadata, blank text, or the calls and results of tools the provider ran. Nothing of it is committed and `TruncatedDelta` names no node. Match `types.ErrResponseTruncated`, and raise the model's output limit or lower its thinking budget. A turn that kept text, media, a refusal or a citation is unchanged. |
+| `WithAutoContinue` does not resume a turn that kept no answer | Before, it sent the same request again, or a continue prompt with nothing before it. A continuation that is itself cut short with no answer added ends the run without an error, on the partial answer it was continuing. |
+| `DefaultContinuePrompt` joins the branch only once the continuation has added to the answer | Before, it was written as the continuation started. A continuation that fails, or adds nothing, now leaves the branch ending with the partial answer, so `Agent.Continue` can resume it. A branch whose continuation answered reads as before. |
+| `MaxIterForceFinal`: a forced answer cut short with no answer kept, or in a tool call, returns an error that matches both the limit's error and `types.ErrResponseTruncated` | Before, an empty one ended the run without an error and with no answer, and one cut in a tool call returned the truncation alone. `errors.Is(err, types.ErrMaxIterations)` now holds for both. |
+| The ACP server answers a turn the output limit cut short with the `max_tokens` stop reason, also when the run failed for it | Before, a cut-off tool call was answered with an internal error. |
+| `flow` does not retry a turn the output limit cut short (`flow/turn/failure`) | Before, the turn was run again up to the worker's attempt limit, each attempt spending the whole limit. The run now fails on the first attempt. A tripped guardrail and a run whose tool calls kept failing are still retried, also with an output limit under them, and so is a stream that only ended early. |
+| A requested `run.delta.tool.call.v1` is repeated while the model writes the call's arguments, with `arguments_bytes` so far | One event each time the arguments pass another `event.ToolArgumentsStep` (1 KiB), with the same `id`, `name` and `parent` and no `arguments`. A reader that counts a call per `requested` event counts one call several times: key a call by its `id` within its `parent`. `flow/message` and the Slack and GitHub connectors already do. |
+| `anthropic.WithEagerToolInput()` is new | Additive. It sets `eager_input_streaming` on the tools the caller defines, so their input streams as the model writes it and the progress above is spread over the call. Without it Anthropic holds each tool input back until it is whole. The API then checks nothing of the input; the agent loop does. Leave it unset behind a gateway that may not know the field. |
+| The embedded catalog (revision `2026-11-27.1`) gives the `claude-haiku-4`, `claude-sonnet-4` and `claude-opus-4` family rows a maximum output of 64,000 tokens | Before, they reported 0, so a caller that set a request's output cap from `ModelCapabilities.MaxOutputTokens` fell back to the adapter's 4096. The figure is what the API reports for claude-haiku-4-5, claude-sonnet-4-5 and claude-opus-4-5. An output cap set on a request for those rows is now checked against 64,000, and the max-output dial is lowered to it. `claude-3-7-sonnet` is retired and stays 0. |
+
 ## RAG retrieval defaults and fixes
 
 What changes for existing callers of `rag.New` and the `rag` packages:
