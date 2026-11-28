@@ -214,6 +214,22 @@ func TestEagerToolInputWire(t *testing.T) {
 	if got["web_search"] != nil {
 		t.Fatalf("set: a server tool carries eager_input_streaming = %v", got["web_search"])
 	}
+
+	// A response schema on a model that takes it as a forced tool adds the
+	// hidden tool to the request. Its input is the answer, and it stays
+	// checked by the API whatever the caller's tools are sent with.
+	schema := &types.ParameterSchema{Type: "object", Properties: map[string]types.PropertyDef{"answer": {Type: "string"}}, Required: []string{"answer"}}
+	got = eager(t, []Option{WithEagerToolInput()}, types.Request{Tools: testTools, Schema: schema})
+	hidden, sent := got[structuredToolName]
+	if !sent {
+		t.Fatalf("schema: the request has no %s tool; the test's model must take a schema as a forced tool: %v", structuredToolName, got)
+	}
+	if hidden != nil {
+		t.Fatalf("schema: the hidden tool carries eager_input_streaming = %v", hidden)
+	}
+	if got["lookup"] != true || got["write"] != true {
+		t.Fatalf("schema: client tools = %v, want eager", got)
+	}
 }
 
 func TestServerToolsWire(t *testing.T) {
