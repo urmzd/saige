@@ -415,6 +415,14 @@ func TestAnUnrenderableEventCostsNoRoundTrip(t *testing.T) {
 // While a model writes a long call, the call is requested again with the
 // size of its arguments so far. The message shows one line for the call and
 // is not edited for the repeats.
+//
+// This guards what a surface sees: one line per call id, and no create or
+// update for an event that changes nothing shown. The engine holds that by
+// two means, and this test passes with either alone: the document reports no
+// change for a repeat, and the engine drops a write whose body is the one it
+// last wrote. That the document reports no change is pinned where it is
+// decided, by TestARepeatedRequestIsTheSameCallAndReportsNoChange in the
+// render package.
 func TestARepeatedToolRequestIsOneLineAndCostsNoRoundTrip(t *testing.T) {
 	surface := newFakeSurface()
 	eng := sink.New(surface, layout, sink.WithInterval(0))

@@ -181,6 +181,10 @@ func (t *Translator) delta(path []string, d saigetypes.Delta) (event.Body, bool)
 
 	case saigetypes.PartStart:
 		if v.Kind != saigetypes.KindToolCall {
+			// A tool call part that never ended is over once another
+			// part starts at its index: what streams there now is not
+			// that call's arguments.
+			t.forget(scope, v.Index)
 			return nil, false
 		}
 		t.open(scope, v.Index, v.ID, v.Name)
@@ -363,6 +367,13 @@ func (t *Translator) open(scope string, index int, id, name string) {
 	defer t.mu.Unlock()
 	t.maps()
 	t.parts[partKey(scope, index)] = &openCall{id: id, name: name}
+}
+
+// forget drops the open tool call part at index, if there is one.
+func (t *Translator) forget(scope string, index int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.parts, partKey(scope, index))
 }
 
 // fragment keeps a fragment of an open tool call part's arguments. When it

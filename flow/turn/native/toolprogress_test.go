@@ -255,3 +255,49 @@ func TestProgressNeedsAnOpenCallWithAnID(t *testing.T) {
 		t.Errorf("a call with no id published %d progress events: %+v", len(got), got)
 	}
 }
+
+// A tool call part that never ended is over once another part starts at its
+// index. The arguments of whatever starts there are not that call's: a server
+// tool's input must not be sized as the progress of an earlier client call,
+// and a new call at the index starts from nothing.
+func TestAPartStartingAtAnOpenCallsIndexEndsItsProgress(t *testing.T) {
+	t.Parallel()
+
+	arguments := document(3 * event.ToolArgumentsStep)
+
+	t.Run("another kind of part", func(t *testing.T) {
+		t.Parallel()
+		tr := native.NewTranslator()
+		tr.Delta(saigetypes.PartStart{Index: 0, Kind: saigetypes.KindToolCall, ID: "c1", Name: "file_write"})
+		tr.Delta(saigetypes.PartDelta{Index: 0, Args: `{"path":`})
+		// The call's part never ends. A server tool call starts at its index.
+		if c, ok := tr.Delta(saigetypes.PartStart{Index: 0, Kind: saigetypes.KindServerToolCall, ID: "srv_1", Name: "web_search"}); ok {
+			t.Fatalf("a server tool call's start produced %s", raw(c))
+		}
+		if got := streamArguments(t, tr, nil, 0, arguments, 128); len(got) != 0 {
+			t.Errorf("a server tool's input was reported as progress of the call it replaced: %+v", got)
+		}
+	})
+
+	t.Run("another tool call", func(t *testing.T) {
+		t.Parallel()
+		tr := native.NewTranslator()
+		tr.Delta(saigetypes.PartStart{Index: 0, Kind: saigetypes.KindToolCall, ID: "c1", Name: "file_write"})
+		if got := streamArguments(t, tr, nil, 0, document(event.ToolArgumentsStep), 128); len(got) != 1 {
+			t.Fatalf("the first call published %d progress events, want 1", len(got))
+		}
+		tr.Delta(saigetypes.PartStart{Index: 0, Kind: saigetypes.KindToolCall, ID: "c2", Name: "file_write"})
+		got := streamArguments(t, tr, nil, 0, arguments, 128)
+		if len(got) != 3 {
+			t.Fatalf("the second call published %d progress events, want 3", len(got))
+		}
+		for _, c := range got {
+			if c.ID != "c2" {
+				t.Errorf("progress names call %q, want c2", c.ID)
+			}
+		}
+		if first := got[0].ArgumentsBytes; first != event.ToolArgumentsStep {
+			t.Errorf("the second call's first progress is %d bytes, want %d: it starts from nothing", first, event.ToolArgumentsStep)
+		}
+	})
+}

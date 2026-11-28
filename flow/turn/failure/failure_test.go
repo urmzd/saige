@@ -42,6 +42,18 @@ var cases = []struct {
 
 	{"tool error limit", saigetypes.ErrToolErrorLimit, false},
 	{"guardrail tripped", saigetypes.ErrGuardrailTripped, false},
+	// Both stay retried with an output limit somewhere under them: the
+	// retry's tools may not fail, and its check sees new output.
+	{"tool error limit, its forced answer cut short", fmt.Errorf("%w: the forced final answer was cut short: %w", saigetypes.ErrToolErrorLimit,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096, Empty: true}), false},
+	{"guardrail tripped, its check cut short", fmt.Errorf("%w: check failed: %w", saigetypes.ErrGuardrailTripped,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096}), false},
+	{"guardrail tripped, its check cut short at the provider", fmt.Errorf("%w: check failed: %w", saigetypes.ErrGuardrailTripped,
+		provider(saigetypes.ErrorKindTruncated)), false},
+	// The step limit repeats, and so does the limit that cut its forced
+	// answer short.
+	{"max iterations, its forced answer cut short", fmt.Errorf("%w: the forced final answer was cut short: %w", saigetypes.ErrMaxIterations,
+		&saigetypes.ResponseTruncatedError{FinishReason: saigetypes.FinishReasonMaxTokens, OutputTokens: 4096, Empty: true}), true},
 	{"budget exceeded", saigetypes.ErrBudgetExceeded, false},
 	{"transient", provider(saigetypes.ErrorKindTransient), false},
 	{"rate limited", provider(saigetypes.ErrorKindRateLimit), false},

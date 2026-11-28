@@ -501,7 +501,9 @@ turn short (a `*ResponseTruncatedError`, or a provider error of kind
 way. A turn under a budget is not retried either.
 
 Everything else is retried up to the worker's attempt limit, including a
-tripped guardrail, a run whose tool calls kept failing, any transient
+tripped guardrail and a run whose tool calls kept failing (each also when an
+output limit is somewhere under it: a check's own model call, or the answer
+forced after the tools failed), any transient
 provider failure, a fallback chain in which any member failed
 transiently, and a stream that ended early with a tool call still open. A turn whose context ended (a worker shutting down, a lost
 claim) never fails its run, whatever error it returned. A `turn.Runtime`
