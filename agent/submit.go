@@ -325,18 +325,27 @@ func (a *Agent) injectSubmissions(ctx context.Context, stream *EventStream, tr *
 // point. Queued messages wait for the run to finish. It reports whether an
 // interrupting message was appended: that message replaces the stopped turn,
 // so the run treats it as a new user turn with fresh step limits.
-func (a *Agent) injectAtSafePoint(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID) (bool, error) {
+//
+// before runs once, ahead of the first message appended, and not at all when
+// there is nothing to append.
+func (a *Agent) injectAtSafePoint(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, before func() error) (bool, error) {
 	subs := stream.inbox.take(false)
+	finished := stream.spawns.takeFinished()
 	interrupt := false
 	for _, sub := range subs {
 		if sub.Mode == SubmitInterruptReplace {
 			interrupt = true
 		}
 	}
+	if len(subs)+len(finished) > 0 {
+		if err := before(); err != nil {
+			return interrupt, err
+		}
+	}
 	if err := a.injectSubmissions(ctx, stream, tr, branch, subs); err != nil {
 		return interrupt, err
 	}
-	_, err := a.injectSpawned(ctx, stream, tr, branch)
+	_, err := a.appendSpawned(ctx, stream, tr, branch, finished)
 	return interrupt, err
 }
 
@@ -485,9 +494,17 @@ func treeRoundTrips(msg types.Message) bool {
 // fails with ResponseTruncatedError; the cut-off call never runs.
 //
 // So does a truncated turn that kept no answer: nothing at all, or only its
-// thinking. It is not resumed: there is no partial answer to continue, so a
-// continuation would send the same request to the same limit, or a continue
-// prompt with nothing before it, up to n times.
+// thinking or the calls of tools the provider ran. It is not resumed: there
+// is no partial answer to continue, so a continuation would send the same
+// request to the same limit, or a continue prompt with nothing before it, up
+// to n times.
+//
+// A continuation that is itself cut short with no answer added does not fail
+// the run: the partial answer it was continuing stands, the run ends without
+// an error as it does when no continuation is left, and the branch ends with
+// that answer, where Continue can resume it. A provider that takes no prefill
+// is asked with DefaultContinuePrompt, which joins the branch only once the
+// continuation has added to the answer.
 func WithAutoContinue(n int) Option {
 	return func(c *Config) { c.AutoContinue = n }
 }
@@ -529,14 +546,73 @@ func supportsPrefill(provider types.Provider) bool {
 	return known && caps.Supports(types.CapAssistantPrefill)
 }
 
-// appendContinuation prepares the branch for an automatic continuation: a
-// prefill-capable provider continues the committed partial turn as is, and
-// any other gets the continue prompt.
-func (a *Agent) appendContinuation(ctx context.Context, tr *tree.Tree, branch types.BranchID, provider types.Provider) error {
-	if supportsPrefill(provider) {
+// continuation is an automatic continuation between the truncated turn that
+// started it and the model call that makes it (see WithAutoContinue).
+//
+// A provider that takes a prefill continues the partial turn as it is. Any
+// other is asked with the continue prompt, and that prompt is not written to
+// the branch when the continuation starts. It is a message of the loop's, not
+// of the user's, and it belongs on the branch only with the answer it got. A
+// call that fails, or that adds nothing to the answer, leaves the branch
+// ending with the partial answer, where Continue or the next message can go
+// on from it. Anything else that writes to the branch first writes the prompt
+// before it, so the branch reads in the order the model was asked.
+type continuation struct {
+	// kept is the node of the partial answer being continued. Empty means
+	// no continuation is under way.
+	kept types.NodeID
+	// prompted reports that the call is asked with the continue prompt and
+	// the branch does not hold it yet.
+	prompted bool
+}
+
+// errContinuedNothing ends a run whose continuation added nothing to the
+// answer it continued. It never leaves the loop: the run ends without an
+// error, on the partial answer.
+var errContinuedNothing = errors.New("the continuation added nothing")
+
+// continuePrompt is the message a continuation is asked with.
+func continuePrompt() types.UserMessage {
+	return types.UserMsg(types.Text(DefaultContinuePrompt))
+}
+
+// writeContinuePrompt writes the prompt of the continuation under way to the
+// branch, if it is still to be written. The write is not cancelled with the
+// run: what follows it on the branch is written the same way.
+func (a *Agent) writeContinuePrompt(ctx context.Context, tr *tree.Tree, branch types.BranchID, cont *continuation) error {
+	if cont == nil || !cont.prompted {
 		return nil
 	}
-	return a.appendToBranch(ctx, tr, branch, types.UserMsg(types.Text(DefaultContinuePrompt)))
+	cont.prompted = false
+	return a.appendToBranch(context.WithoutCancel(ctx), tr, branch, continuePrompt())
+}
+
+// settleContinuation runs when the model call of a continuation has
+// returned, before anything of the call is written. It ends the continuation
+// and decides what becomes of its prompt.
+//
+// A call that failed writes nothing, and the continuation stays under way
+// for a retry of the call. A call the output limit cut short with no answer
+// kept (see answerless) added nothing: the prompt is dropped, and the node of
+// the partial answer is returned for handleTruncation, which ends the run on
+// it. Any other call, a stopped or interrupted one included, is written to
+// the branch, so its prompt is written first.
+func (a *Agent) settleContinuation(ctx context.Context, tr *tree.Tree, branch types.BranchID, cont *continuation, msg *types.AssistantMessage, usage *types.UsageDelta, callErr error) (types.NodeID, error) {
+	if cont == nil || cont.kept == "" {
+		return "", nil
+	}
+	cut := stopRequested(ctx) || errors.Is(callErr, errInterruptRequested)
+	if callErr != nil && !cut {
+		return "", nil
+	}
+	kept := cont.kept
+	if !cut && !interruptedTurn(msg) && truncationReason(usage) != "" && cutShortEmpty(msg) {
+		*cont = continuation{}
+		return kept, nil
+	}
+	err := a.writeContinuePrompt(ctx, tr, branch, cont)
+	*cont = continuation{}
+	return "", err
 }
 
 // ── Agent.Submit ────────────────────────────────────────────────────

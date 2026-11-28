@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,8 +23,12 @@ const (
 	MaxIterError MaxIterPolicy = iota
 	// MaxIterForceFinal makes one more model call with tools disabled and an
 	// instruction to answer now, and records that reply as the final answer.
-	// The run then ends without an error. If the call fails or produces no
-	// text, the limit's error is returned.
+	// The run then ends without an error. If the call produces nothing, the
+	// limit's error is returned. If the call fails, its own error is. If the
+	// output limit cuts the reply short with no answer kept, or in the
+	// middle of a tool call, the error returned matches both the limit's
+	// error and types.ErrResponseTruncated: the run ended at its limit, and
+	// a *types.ResponseTruncatedError in it says why there is no answer.
 	MaxIterForceFinal
 )
 
@@ -245,7 +250,7 @@ func skipToolCalls(stream *EventStream, calls []types.ToolCallPart, reason strin
 // ── Limits and the forced final answer ───────────────────────────────
 
 // finishAtLimit ends a run that reached a step limit with work pending.
-func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, active activeContext, limitErr error) error {
+func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, active activeContext, limitErr error, cont *continuation) error {
 	if a.cfg.OnMaxIter != MaxIterForceFinal {
 		return limitErr
 	}
@@ -277,6 +282,11 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	}
 	finalStep := fmt.Sprintf("llm-%s-final", branch)
 	msg, usage, err := a.getAssistantMessage(a.withConversion(ctx, active.modality), stream, active.provider, messages, tools, opts, finalStep)
+	// The forced answer can be the call of a continuation under way.
+	continued, settleErr := a.settleContinuation(ctx, tr, branch, cont, msg, usage, err)
+	if settleErr != nil {
+		return settleErr
+	}
 	if stopped, err := a.stopAfterCall(ctx, stream, tr, branch, active.provider, msg, usage, finalStep); stopped {
 		return err
 	}
@@ -289,7 +299,16 @@ func (a *Agent) finishAtLimit(ctx context.Context, stream *EventStream, tr *tree
 	if err := a.guardOutput(ctx, stream, tr, branch, msg, fmt.Sprintf("llm-%s-final", branch)); err != nil {
 		return err
 	}
-	if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
+	if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage, continued); done {
+		if errors.Is(err, errContinuedNothing) {
+			return nil
+		}
+		if types.IsTruncated(err) {
+			// The run ended at its limit, and that is what a caller
+			// asking why it ended matches. The truncation says why the
+			// limit left no answer.
+			return fmt.Errorf("%w: the forced final answer was cut short: %w", limitErr, err)
+		}
 		return err
 	}
 	if msg == nil {
@@ -363,9 +382,16 @@ const errTruncatedToolCall = "arguments cut off by the output token limit"
 // the failed call began, so a retry or the next turn sends the history the
 // call was made with, and Continue has nothing to resume.
 //
+// One such turn is not a failure: the call of an automatic continuation,
+// which has a partial answer behind it. continued names that answer's node,
+// and is empty for any other call. The continuation added nothing, so the
+// partial answer stands as it does when no continuation is left: the delta
+// names its node again and errContinuedNothing tells the caller to end the
+// run without an error and without continuing once more.
+//
 // The committed node carries a TruncationPart marker with the reason. The
 // marker is stripped before the next provider call.
-func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, msg *types.AssistantMessage, usage *types.UsageDelta) (bool, error) {
+func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *tree.Tree, branch types.BranchID, msg *types.AssistantMessage, usage *types.UsageDelta, continued types.NodeID) (bool, error) {
 	reason := truncationReason(usage)
 	if reason == "" {
 		return false, nil
@@ -377,6 +403,12 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 		dropped = len(msg.Parts) - len(partial.Parts)
 	}
 	empty := dropped == 0 && answerless(partial.Parts)
+	if empty && continued != "" {
+		stream.send(types.TruncatedDelta{NodeID: string(continued), Reason: reason})
+		a.cfg.Logger.Warn("response truncated by the output token limit",
+			"agent", a.cfg.Name, "finish_reason", reason, "dropped_tool_calls", dropped, "empty", empty, "continued", continued)
+		return true, errContinuedNothing
+	}
 	nodeID := ""
 	if len(partial.Parts) > 0 && !empty {
 		node, err := a.appendNode(ctx, tr, branch, withTruncationMarker(partial, reason))
@@ -395,16 +427,22 @@ func (a *Agent) handleTruncation(ctx context.Context, stream *EventStream, tr *t
 }
 
 // answerless reports whether parts, what a truncated turn kept, hold nothing
-// a caller can use as an answer or act on. Thinking is not an answer, whether
-// it is readable, a summary or redacted. Neither is run metadata, such as the
+// a caller can use as an answer. Thinking is not an answer, whether it is
+// readable, a summary or redacted. Neither is run metadata, such as the
 // record of the route that served the turn, which is kept beside the parts of
-// every routed turn, nor a text part with nothing but space in it. Any other
-// part is: text, media, a refusal, a citation, a server tool's call or
-// result.
+// every routed turn, nor a text part with nothing but space in it. A tool the
+// provider ran is work toward an answer and not one: its call, and its
+// result when the result carries no media, leave the caller with nothing to
+// read. Any other part is an answer: text, media (a server tool's outputs
+// included), a refusal, a citation.
 func answerless(parts []types.AssistantPart) bool {
 	for _, p := range parts {
 		switch v := p.(type) {
-		case types.ThinkingPart:
+		case types.ThinkingPart, types.ServerToolCallPart:
+		case types.ServerToolResultPart:
+			if len(v.Outputs) > 0 {
+				return false
+			}
 		case types.TextPart:
 			if strings.TrimSpace(v.Text) != "" {
 				return false
@@ -416,4 +454,14 @@ func answerless(parts []types.AssistantPart) bool {
 		}
 	}
 	return true
+}
+
+// cutShortEmpty reports whether msg, a turn the output limit cut short, has
+// no tool call and kept no answer.
+func cutShortEmpty(msg *types.AssistantMessage) bool {
+	if msg == nil {
+		return true
+	}
+	kept := withoutToolCalls(*msg)
+	return len(kept.Parts) == len(msg.Parts) && answerless(kept.Parts)
 }

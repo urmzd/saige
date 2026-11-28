@@ -56,6 +56,11 @@ func (s *acpServer) Prompt(ctx context.Context, req acp.PromptRequest) (acp.Prom
 		return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 	case errors.Is(runErr, types.ErrMaxIterations):
 		return acp.PromptResponse{StopReason: acp.StopReasonMaxTurnRequests}, nil
+	case t.maxTokens && types.IsTruncated(runErr):
+		// The output limit cut the turn short with a tool call half
+		// written or with no answer kept. The run fails for it, and the
+		// client is told which limit it was, not that the agent broke.
+		return acp.PromptResponse{StopReason: acp.StopReasonMaxTokens}, nil
 	case runErr != nil:
 		return acp.PromptResponse{}, acp.NewInternalError(map[string]any{"error": runErr.Error()})
 	case t.maxTokens:

@@ -289,6 +289,63 @@ func TestACPPromptTextAndImage(t *testing.T) {
 	}
 }
 
+// A turn the output limit cut short ends with the max_tokens stop reason,
+// also when it kept no answer and the run failed for it. An internal error
+// would tell the client that the agent broke.
+func TestACPReportsMaxTokensForATurnCutShort(t *testing.T) {
+	cut := types.UsageDelta{CompletionTokens: 4096, FinishReasons: []string{"max_tokens"}}
+	thinking := []types.Delta{
+		types.PartStart{Index: 0, Kind: types.KindThinking},
+		types.PartDelta{Index: 0, Thinking: "weighing every option"},
+		types.PartEnd{Index: 0},
+		cut,
+	}
+	tests := []struct {
+		name     string
+		response []types.Delta
+	}{
+		{"with a partial answer", append(agenttest.TextResponse("partial"), cut)},
+		{"with no answer", thinking},
+		{"with a cut-off tool call", []types.Delta{
+			types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "act"},
+			types.PartDelta{Index: 0, Args: `{"x":`},
+			cut,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{tt.response}}
+			f := newACPFixture(t, acpOptions{}, scriptedACPAgent(p))
+			if res := f.prompt(f.newSession(), acp.TextBlock("write")); res.StopReason != acp.StopReasonMaxTokens {
+				t.Fatalf("stop = %s, want %s", res.StopReason, acp.StopReasonMaxTokens)
+			}
+		})
+	}
+}
+
+// A run that used its steps and whose forced final answer was then cut short
+// with no answer still ended at the step limit.
+func TestACPReportsTheStepLimitWhenTheForcedAnswerIsCutShort(t *testing.T) {
+	tool := &agenttest.MockTool{Def: types.ToolDef{Name: "step"}, Result: "ok"}
+	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{
+		agenttest.ToolCallResponse("c1", "step", map[string]any{"n": 1}),
+		{types.UsageDelta{CompletionTokens: 4096, FinishReasons: []string{"max_tokens"}}},
+	}}
+	bind := func(req acpBindRequest) (*agentsdk.Agent, *types.ToolRegistry) {
+		opts := []agentsdk.Option{agentsdk.WithApprovalPolicy(agentsdk.ApprovalPolicy{})}
+		if req.tree != nil {
+			opts = append(opts, agentsdk.WithTree(req.tree))
+		}
+		cfg := agentsdk.Config{Name: req.agent, Provider: p, MaxIter: 1, OnMaxIter: agentsdk.MaxIterForceFinal,
+			Tools: types.NewToolRegistry(tool)}
+		return must.Get(agentsdk.New(cfg, opts...)), cfg.Tools
+	}
+	f := newACPFixture(t, acpOptions{}, bind)
+	if res := f.prompt(f.newSession(), acp.TextBlock("go")); res.StopReason != acp.StopReasonMaxTurnRequests {
+		t.Fatalf("stop = %s, want %s", res.StopReason, acp.StopReasonMaxTurnRequests)
+	}
+}
+
 func TestACPPermissionRoundTrip(t *testing.T) {
 	tests := []struct {
 		name     string

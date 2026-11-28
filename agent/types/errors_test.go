@@ -292,15 +292,15 @@ func TestResponseTruncatedErrorMessage(t *testing.T) {
 		},
 		{
 			"empty", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 4096, Empty: true},
-			"response truncated (finish reason max_tokens): the output token limit was reached before any answer was produced, after 4096 output tokens",
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced, after 4096 output tokens",
 		},
 		{
 			"empty, tokens unknown", ResponseTruncatedError{FinishReason: "max_tokens", Empty: true},
-			"response truncated (finish reason max_tokens): the output token limit was reached before any answer was produced",
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced",
 		},
 		{
 			"empty, limit known", ResponseTruncatedError{FinishReason: "max_tokens", OutputTokens: 4096, MaxOutputTokens: 4096, Empty: true},
-			"response truncated (finish reason max_tokens): the output token limit was reached before any answer was produced: 4096 of 4096 output tokens",
+			"response truncated (finish reason max_tokens): the output limit was reached before any answer was produced: 4096 of 4096 output tokens",
 		},
 	}
 	for _, tt := range tests {
@@ -310,6 +310,13 @@ func TestResponseTruncatedErrorMessage(t *testing.T) {
 			}
 			if !errors.Is(&tt.err, ErrResponseTruncated) {
 				t.Error("does not match ErrResponseTruncated")
+			}
+			// The message crosses process boundaries as text, and a reader
+			// classifies it by its words. It is about the output limit: it
+			// must not read as a prompt too long for the context window,
+			// which is answered by compacting the conversation.
+			if kind, ok := ClassifyErrorMessage(tt.err.Error()); ok {
+				t.Errorf("the message classifies as %v: %q", kind, tt.err.Error())
 			}
 		})
 	}

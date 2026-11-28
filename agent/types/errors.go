@@ -435,7 +435,9 @@ func (e *ResponseTruncatedError) Error() string {
 		msg += " (finish reason " + e.FinishReason + ")"
 	}
 	if e.Empty {
-		msg += ": the output token limit was reached before any answer was produced"
+		// Not "token limit": ClassifyErrorMessage reads those words as a
+		// prompt too long for the context window.
+		msg += ": the output limit was reached before any answer was produced"
 	}
 	switch {
 	case e.MaxOutputTokens > 0:

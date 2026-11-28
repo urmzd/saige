@@ -81,6 +81,14 @@ func TestOnMaxIter(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
+			if errors.Is(tt.wantErr, types.ErrResponseTruncated) {
+				// The run still ended at its step limit, and a caller
+				// that asks for that is told so.
+				var te *types.ResponseTruncatedError
+				if !errors.Is(err, types.ErrMaxIterations) || !errors.As(err, &te) || !te.Empty {
+					t.Fatalf("err = %v, want the step limit and an empty truncated answer", err)
+				}
+			}
 			if tt.policy != MaxIterForceFinal {
 				if script.CallCount() != 2 {
 					t.Fatalf("calls = %d, want 2", script.CallCount())

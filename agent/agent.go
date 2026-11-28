@@ -1546,17 +1546,29 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		}
 		return resumed, err
 	}
+	// cont is the automatic continuation the next model call makes, if any.
+	var cont continuation
 	// truncated decides what follows a turn the output limit cut short:
 	// end the run with err, or resume it with WithAutoContinue. A turn that
 	// arrives with an error is never resumed: its tool calls were cut off,
-	// or it kept no answer a continuation could go on from.
+	// or it kept no answer a continuation could go on from. A continuation
+	// that added nothing to the answer it continued ends the run as a
+	// continuation does when there is none left: the partial answer stands.
 	truncated := func(provider types.Provider, err error) (bool, error) {
+		if errors.Is(err, errContinuedNothing) {
+			return false, nil
+		}
 		if err != nil || autoContinues >= a.cfg.AutoContinue {
+			return false, err
+		}
+		tip, err := tr.Tip(branch)
+		if err != nil {
 			return false, err
 		}
 		autoContinues++
 		pendingWork = true
-		return true, a.appendContinuation(ctx, tr, branch, provider)
+		cont = continuation{kept: tip.ID, prompted: !supportsPrefill(provider)}
+		return true, nil
 	}
 
 	for {
@@ -1568,18 +1580,30 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 
 		// Safe point: every tool_use on the branch has its result, so
 		// steering and interrupting messages can be appended here.
-		interrupted, err := a.injectAtSafePoint(ctx, stream, tr, branch)
+		// A message that joins the branch here comes after the prompt of
+		// a continuation under way, as it did when that prompt was written
+		// at once.
+		interrupted, err := a.injectAtSafePoint(ctx, stream, tr, branch, func() error {
+			return a.writeContinuePrompt(ctx, tr, branch, &cont)
+		})
 		if err != nil {
 			return err
 		}
 		if interrupted {
-			turnStart, pendingWork, guards, wrapped = iterCount, false, loopGuards{}, false
+			// The interrupting message starts a new user turn, which has
+			// kept no answer of its own.
+			turnStart, pendingWork, guards, wrapped, cont = iterCount, false, loopGuards{}, false, continuation{}
 		}
 
 		// Flatten the branch to get current message history.
 		messages, err := tr.FlattenBranch(branch)
 		if err != nil {
 			return err
+		}
+		if cont.prompted {
+			// The call is asked with the prompt. The branch gets it once
+			// the call has added to the answer (see continuation).
+			messages = append(messages, continuePrompt())
 		}
 
 		// Resolve config + active agent (handoff group only). With no group this
@@ -1620,6 +1644,9 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			// The note joins the branch at this safe point, and the turn
 			// is prepared again so the next call carries it.
 			wrapped = true
+			if err := a.writeContinuePrompt(ctx, tr, branch, &cont); err != nil {
+				return err
+			}
 			if err := a.injectWrapUp(ctx, stream, tr, branch, iterCount-turnStart, resolved.maxIter, out); err != nil {
 				return err
 			}
@@ -1638,7 +1665,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			limitErr = types.ErrMaxIterations
 		}
 		if limitErr != nil {
-			return a.finishAtLimit(ctx, stream, tr, branch, active, limitErr)
+			return a.finishAtLimit(ctx, stream, tr, branch, active, limitErr, &cont)
 		}
 
 		if a.handoffs != nil && resolved.compactCfg.Enabled() {
@@ -1703,6 +1730,10 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		}
 		interruptedBy := stream.inbox.endTurn()
 		cancelTurn(nil)
+		continued, err := a.settleContinuation(ctx, tr, branch, &cont, msg, usage, llmErr)
+		if err != nil {
+			return err
+		}
 		if guard != nil {
 			// The first call's turn is kept only if the guardrails pass.
 			err := a.finishParallelGuard(ctx, stream, tr, branch, guard, active.provider, usage)
@@ -1773,7 +1804,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 		if err := a.guardTruncated(ctx, stream, tr, branch, msg, usage, autoContinues, stepName); err != nil {
 			return err
 		}
-		if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
+		if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage, continued); done {
 			if resume, err := truncated(active.provider, err); resume || err != nil {
 				if err != nil {
 					return err
@@ -1807,7 +1838,7 @@ func (a *Agent) run(ctx context.Context, stream *EventStream, input []types.Mess
 			if err := a.guardTruncated(ctx, stream, tr, branch, msg, usage, autoContinues, stepName); err != nil {
 				return err
 			}
-			if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage); done {
+			if done, err := a.handleTruncation(ctx, stream, tr, branch, msg, usage, ""); done {
 				if resume, err := truncated(active.provider, err); resume || err != nil {
 					if err != nil {
 						return err
