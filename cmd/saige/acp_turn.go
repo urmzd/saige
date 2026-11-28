@@ -56,7 +56,7 @@ func (s *acpServer) Prompt(ctx context.Context, req acp.PromptRequest) (acp.Prom
 		return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 	case errors.Is(runErr, types.ErrMaxIterations):
 		return acp.PromptResponse{StopReason: acp.StopReasonMaxTurnRequests}, nil
-	case t.maxTokens && types.IsTruncated(runErr):
+	case cutByOutputLimit(runErr):
 		// The output limit cut the turn short with a tool call half
 		// written or with no answer kept. The run fails for it, and the
 		// client is told which limit it was, not that the agent broke.
@@ -69,6 +69,21 @@ func (s *acpServer) Prompt(ctx context.Context, req acp.PromptRequest) (acp.Prom
 		return acp.PromptResponse{StopReason: acp.StopReasonRefusal}, nil
 	}
 	return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+}
+
+// cutByOutputLimit reports whether err is a run the model's output limit
+// ended: a *types.ResponseTruncatedError in its chain whose finish reason is
+// the limit. The agent loop builds one for a turn cut short with no answer or
+// in a tool call, and an adapter ends a stream whose tool call the limit cut
+// off with one, inside its provider error, without a TruncatedDelta.
+//
+// A stream that only ended early matches types.ErrResponseTruncated and is
+// not this: it carries the sentinel alone, with no finish reason, because the
+// provider never sent one. That is a failure of the call, a dropped
+// connection for one, and it stays an error.
+func cutByOutputLimit(err error) bool {
+	var cut *types.ResponseTruncatedError
+	return errors.As(err, &cut) && types.IsTruncationFinishReason(cut.FinishReason)
 }
 
 // workspaceOf is the directory a session's relative tool paths are under.

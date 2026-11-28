@@ -311,6 +311,16 @@ func TestACPReportsMaxTokensForATurnCutShort(t *testing.T) {
 			types.PartDelta{Index: 0, Args: `{"x":`},
 			cut,
 		}},
+		// The Anthropic and OpenAI adapters end a stream whose tool call
+		// the limit cut off with an error of kind truncated, after the
+		// usage. The run fails with it and sends no TruncatedDelta.
+		{"with a cut-off tool call, as an adapter reports it", []types.Delta{
+			types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "act"},
+			types.PartDelta{Index: 0, Args: `{"x":`},
+			cut,
+			types.ErrorDelta{Error: &types.ProviderError{Provider: "anthropic", Model: "m", Kind: types.ErrorKindTruncated,
+				Err: &types.ResponseTruncatedError{FinishReason: types.FinishReasonMaxTokens, OutputTokens: 4096, MaxOutputTokens: 4096}}},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -320,6 +330,27 @@ func TestACPReportsMaxTokensForATurnCutShort(t *testing.T) {
 				t.Fatalf("stop = %s, want %s", res.StopReason, acp.StopReasonMaxTokens)
 			}
 		})
+	}
+}
+
+// A stream that only ended early, with a tool call still open and no finish
+// reason, was not cut by the output limit: a connection may have dropped. It
+// matches types.ErrResponseTruncated too, and is still an error to the
+// client, not a max_tokens stop.
+func TestACPDoesNotReportMaxTokensForAStreamThatEndedEarly(t *testing.T) {
+	p := &agenttest.ScriptedProvider{Responses: [][]types.Delta{{
+		types.PartStart{Index: 0, Kind: types.KindToolCall, ID: "c1", Name: "act"},
+		types.PartDelta{Index: 0, Args: `{"x":`},
+	}}}
+	f := newACPFixture(t, acpOptions{}, scriptedACPAgent(p))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res, err := f.conn.Prompt(ctx, acp.PromptRequest{SessionId: f.newSession(), Prompt: []acp.ContentBlock{acp.TextBlock("write")}})
+	if err == nil {
+		t.Fatalf("stop = %s, want an error", res.StopReason)
+	}
+	if !strings.Contains(err.Error(), "stream ended with open tool calls") {
+		t.Fatalf("err = %v, want the stream's early end", err)
 	}
 }
 
